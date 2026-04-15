@@ -4,7 +4,24 @@ Adds Feishu/Lark streaming card support to [Hermes Gateway](https://github.com/j
 
 ---
 
-## Features
+## 🤔 Tired of these problems?
+
+| Pain Point | Description |
+|---|---|
+| 🔴 **Message Spam** | Agent thinking floods your chat with scattered messages — thinking fragments, tool logs, all mixed together |
+| 🔴 **Waiting Anxiety** | You send a message and get nothing back. Is it dead? Still thinking? No idea how long to wait |
+| 🔴 **Format Lost** | Markdown turns into plain text in Feishu — tables, code blocks, lists all broken |
+| 🔴 **Debug Blindspot** | Tool calls are invisible. You have no idea what tools the Agent is using or how far it's gotten |
+
+## ✨ One card. Solves all of it.
+
+**Feishu Streaming Card** upgrades Feishu messages into a real-time collaboration panel:
+
+- 📌 **No message spam** — AI thinking streams word-by-word into a single card, chat stays clean
+- ⏳ **Status is obvious** — 🤔Thinking → ⚡Running → ✅Completed, clear at every stage
+- 🎨 **Native format preserved** — Markdown tables, code blocks, lists render natively in Feishu
+- 🔍 **Tools are transparent** — Real-time tool call count and content, full visibility into Agent behavior
+- 📊 **Stats auto-generated** — Elapsed time, token usage, context usage, all in the footer
 
 | Feature | Description |
 |---|---|
