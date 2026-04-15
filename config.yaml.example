@@ -1,0 +1,24 @@
+# ============================================================
+# Feishu Streaming Card — Configuration
+# ============================================================
+# Copy this section into your hermes-agent config.yaml
+#
+# The full config key is: feishu_streaming_card
+# ============================================================
+
+feishu_streaming_card:
+  # Card header title — the large text at the top of the card
+  # This is the first thing the user sees
+  # Default: "主人，苏菲为您服务！"
+  greeting: "主人，苏菲为您服务！"
+
+  # Enable or disable the streaming card feature
+  # Set to false to use normal messages (no card)
+  # Default: true
+  enabled: true
+
+  # How long send_progress_messages waits for the card to be created
+  # before sending a normal message as fallback.
+  # Increase this if your model takes longer than 30s to initialize.
+  # Default: 30 (seconds)
+  pending_timeout: 30
