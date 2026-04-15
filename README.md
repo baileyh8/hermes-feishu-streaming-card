@@ -69,6 +69,54 @@
 
 ---
 
+## 飞书 Bot 权限配置
+
+流式卡片依赖飞书 CardKit API 和 IM 消息接口，Bot 需要以下权限：
+
+### 1. 开通 Bot 能力
+在 [飞书开放平台](https://open.feishu.cn/) → 你的应用 → **添加应用能力** → 选 **机器人**
+
+### 2. 配置权限（订阅消息 → 权限管理）
+
+| 权限 | 用途 |
+|---|---|
+| `im:message` | 发送卡片消息到聊天 |
+| `im:message:send_as_bot` | 以机器人身份发消息 |
+| `cardkit:card` | 创建和更新 CardKit 卡片 |
+| `tenant_access_token` | 调用 APIs 获取 tenant access token |
+
+### 3. 开启长连接模式
+→ 应用 → **消息订阅** → 订阅方式 → 选 **长连接（WebSocket）**
+
+### 4. 启用 CardKit
+→ 应用 → **添加应用能力** → 搜索 **CardKit** → 开启
+
+### 5. 配置 lark-cli（token 获取工具）
+流式卡片通过 `lark-cli` 获取 tenant access token，需提前配置好：
+
+```bash
+# 检查是否已安装
+which lark-cli || npm list -g | grep lark-cli
+
+# 登录认证
+lark-cli auth login
+
+# 验证可用
+lark-cli api POST /open-apis/auth/v3/tenant_access_token/internal \
+  --data '{"app_id":"你的app_id","app_secret":"你的app_secret"}'
+```
+
+### 快速检查清单
+
+- [ ] 机器人能力已开通
+- [ ] `im:message` + `cardkit:card` 权限已申请并审核通过
+- [ ] WebSocket 长连接模式已开启
+- [ ] CardKit 能力已添加
+- [ ] `lark-cli auth login` 已完成
+- [ ] `.env` 中 `FEISHU_APP_ID` + `FEISHU_APP_SECRET` 已配置
+
+---
+
 ## 安装
 
 ### 一步安装

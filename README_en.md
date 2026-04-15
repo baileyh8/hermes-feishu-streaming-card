@@ -67,6 +67,54 @@ Adds Feishu/Lark streaming card support to [Hermes Gateway](https://github.com/j
 
 ---
 
+## Feishu Bot Permission Setup
+
+The streaming card relies on Feishu CardKit API and IM message APIs. Your bot needs the following permissions:
+
+### 1. Enable Bot Capability
+Go to [Feishu Open Platform](https://open.feishu.cn/) → your app → **Add App Capabilities** → select **Bot**
+
+### 2. Configure Permissions (Message Subscription → Permission Management)
+
+| Permission | Purpose |
+|---|---|
+| `im:message` | Send card messages to chat |
+| `im:message:send_as_bot` | Send messages as bot |
+| `cardkit:card` | Create and update CardKit cards |
+| `tenant_access_token` | Get tenant access token via API |
+
+### 3. Enable Long Connection (WebSocket) Mode
+→ App → **Message Subscription** → Subscription Method → select **Long Connection (WebSocket)**
+
+### 4. Enable CardKit
+→ App → **Add App Capability** → search **CardKit** → enable
+
+### 5. Configure lark-cli (Token Generation Tool)
+The streaming card uses `lark-cli` to obtain tenant access token:
+
+```bash
+# Check if installed
+which lark-cli || npm list -g | grep lark-cli
+
+# Authenticate
+lark-cli auth login
+
+# Verify
+lark-cli api POST /open-apis/auth/v3/tenant_access_token/internal \
+  --data '{"app_id":"your_app_id","app_secret":"your_app_secret"}'
+```
+
+### Quick Checklist
+
+- [ ] Bot capability enabled
+- [ ] `im:message` + `cardkit:card` permissions approved
+- [ ] WebSocket long connection mode enabled
+- [ ] CardKit capability added
+- [ ] `lark-cli auth login` completed
+- [ ] `FEISHU_APP_ID` + `FEISHU_APP_SECRET` in `.env`
+
+---
+
 ## Installation
 
 ### One-step install
