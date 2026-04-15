@@ -36,6 +36,19 @@
 
 ---
 
+## 更新日志
+
+### v1.1.0（2026-04-15）
+- ✨ **支持最新版 Hermes**：重写 patch 引擎，适配 NousResearch/hermes-agent 最新版代码结构（send() 方法签名变化）
+- 🔧 **版本自动检测**：`installer.py --check` 自动识别目标 Hermes 版本，已安装则跳过
+- 🐛 修复：Agent footer 不再混入 thinking_content 正文
+
+### v1.0.0（2026-04-15）
+- 🎉 首发版本
+- 流式打字机卡片、工具调用追踪、Token 统计 footer
+
+---
+
 ## 效果预览
 
 | 思考中 | 已完成 |
