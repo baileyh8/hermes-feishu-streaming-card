@@ -39,11 +39,29 @@
 ## 更新日志
 
 ### v2.0.0 (2026-04-16)
+#### 核心改进
 - 🛡️ **安全安装流程**: 安装前先做语法校验 + 注入点验证，确认无误才写入文件
 - 💾 **自动备份**: 每次安装前自动备份 feishu.py 和 run.py，保留最近 5 份
--♻️ **一键恢复**: `installer.py --uninstall` 从最新备份恢复，`--restore BACKUP_ID` 恢复指定版本
-- 📋 **安装检查**: `installer.py --check` 逐项检查注入状态，结果更清晰
+- ♻️ **一键恢复**: `installer.py --uninstall` 从最新备份恢复，`--restore BACKUP_ID` 恢复指定版本
 - 🔍 **Dry-run 模式**: `installer.py --validate-only` 只校验不写入，方便 CI/测试
+
+#### 补丁重写（feishu_patch.py / run_patch.py）
+- 🔧 **版本感知注入**: 自动识别 Hermes 不同版本的 send() 结构，适配旧版和最新版 NousResearch/hermes-agent
+- 🏷️ **greeting / model 动态读取**: 卡片标题和模型名从 config.yaml 实时读取，不再硬编码
+- 🧵 **per-chat asyncio.Lock**: 每个聊天独立锁，序列化所有卡片更新，防止 code=300317 sequence 冲突
+- ⏱️ **pending 超时兜底**: 卡片创建超时 30s 后自动降级为普通消息，不卡死对话
+- 📝 **Agent footer 彻底移除**: thinking_content 正文不再混入 Agent footer 残留
+
+#### Bug 修复
+- 🐛 SEND_STREAMING_PRELUDE 缩进修复（12格→8格），解决 IndentationError
+- 🐛 send() 注入点定位修复
+- 🐛 Agent regex 缩进修复
+- 🐛 run_patch.py 注入点修复
+- 🐛 installer 误判"已安装"逻辑修复：改用 `"Feishu Streaming Card routing"` 强判断，防止半注入状态被跳过
+
+#### 文档更新
+- 📋 **Bot 权限配置**: 明确 CardKit、lark-cli（必装）、WebSocket 长连接模式的配置步骤
+- ⚠️ **lark-cli 必装说明**: 澄清 lark-cli 是必需依赖而非可选，重启后需重新认证
 
 ### v1.1.0 (2026-04-15)
 - ✨ **支持最新版 Hermes** (commit `da8bab7`): 重写 patch 引擎，适配 NousResearch/hermes-agent 最新版代码结构 (send() 方法签名变化)
