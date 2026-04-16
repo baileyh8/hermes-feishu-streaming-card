@@ -38,6 +38,13 @@
 
 ## 更新日志
 
+### v2.0.0 (2026-04-16)
+- 🛡️ **安全安装流程**: 安装前先做语法校验 + 注入点验证，确认无误才写入文件
+- 💾 **自动备份**: 每次安装前自动备份 feishu.py 和 run.py，保留最近 5 份
+-♻️ **一键恢复**: `installer.py --uninstall` 从最新备份恢复，`--restore BACKUP_ID` 恢复指定版本
+- 📋 **安装检查**: `installer.py --check` 逐项检查注入状态，结果更清晰
+- 🔍 **Dry-run 模式**: `installer.py --validate-only` 只校验不写入，方便 CI/测试
+
 ### v1.1.0 (2026-04-15)
 - ✨ **支持最新版 Hermes** (commit `da8bab7`): 重写 patch 引擎，适配 NousResearch/hermes-agent 最新版代码结构 (send() 方法签名变化)
 - 🔧 **版本自动检测**: `installer.py --check` 自动识别目标 Hermes 版本，已安装则跳过
