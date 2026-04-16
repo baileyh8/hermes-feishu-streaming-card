@@ -288,7 +288,38 @@ hermes-feishu-streaming-card/
 
 ## 故障排查
 
-**卡片没有出现？**
+### Gateway 启动失败
+
+```bash
+# 1. 先看具体报错
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
+python -m hermes_cli.main gateway start 2>&1
+```
+
+**常见报错及处理：**
+
+| 报错信息 | 原因 | 处理办法 |
+|---------|------|---------|
+| `IndentationError` | 补丁注入后有缩进错误 | `python installer.py --restore` 恢复备份，然后重装 |
+| `SyntaxError` | feishu.py / run.py 语法错误 | `python installer.py --check` 检查，或恢复备份 |
+| `ModuleNotFoundError: No module named 'xxx'` | 缺少依赖包 | `pip install -r ~/github/hermes-feishu-streaming-card/requirements.txt` |
+| `ImportError` feishu_patch / run_patch | patch 文件路径问题 | 确认在正确目录运行 installer |
+| 卡住不动，无输出 | lark-cli 认证过期 | 重新 `lark-cli auth login` |
+
+**快速恢复（不排查直接恢复）：**
+```bash
+cd ~/github/hermes-feishu-streaming-card
+python installer.py --uninstall    # 从最新备份恢复
+# 然后重启
+cd ~/.hermes/hermes-agent && source venv/bin/activate
+python -m hermes_cli.main gateway restart
+```
+
+---
+
+### 卡片没有出现？
+
 ```bash
 # 检查补丁状态
 python installer.py --check
@@ -297,10 +328,10 @@ python installer.py --check
 tail -f ~/.hermes/logs/agent.log | grep -i "feishu\|streaming\|card"
 ```
 
-**Sequence 冲突错误（300317）？**
+### Sequence 冲突错误（300317）？
 确保 hermes-agent 是最新版本，旧版本可能缺少必要的锁机制。
 
-**卡片标题/状态不更新？**
+### 卡片标题/状态不更新？
 检查飞书 Bot 是否使用 WebSocket 长连接模式（WS 模式才支持 CardKit 更新）。
 
 ---
