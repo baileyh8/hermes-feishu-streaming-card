@@ -158,20 +158,47 @@ python installer.py --greeting "你的自定义问候语"
 
 `--hermes-dir` 可指定 hermes-agent 路径（默认：`~/.hermes/hermes-agent`）。
 
-### 手动安装（不自动检测）
+安装时会自动：
+1. 校验 Hermes 代码结构和注入点
+2. 备份当前 feishu.py / run.py 到 `~/.hermes/hermes-agent/.fsc_backups/`
+3. 写入补丁
+4. 语法检查
+
+### Dry-run（不写入）
 
 ```bash
-python installer.py \
-  --hermes-dir /path/to/hermes-agent \
-  --greeting "主人，苏菲为您服务！" \
-  --pending-timeout 30
+python installer.py --validate-only
 ```
+
+只校验注入点和语法，不写入任何文件。适合测试环境验证兼容性。
 
 ### 安装后检查
 
 ```bash
 python installer.py --check
 ```
+
+逐项检查 9 个注入点，输出每项状态（✓/✗）。
+
+### 备份与恢复
+
+```bash
+# 列出所有备份
+python installer.py --list-backups
+
+# 从最新备份恢复（相当于卸载补丁）
+python installer.py --uninstall
+
+# 从指定备份恢复
+python installer.py --restore 20260416_085616
+
+# 恢复后重启生效
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
+python -m hermes_cli.main gateway restart
+```
+
+备份存储在 `~/.hermes/hermes-agent/.fsc_backups/{timestamp}/`，保留最近 5 份，每次安装自动触发。手动备份不会自动清理。
 
 ---
 
@@ -199,16 +226,6 @@ feishu_streaming_card:
 ```bash
 cd ~/.hermes/hermes-agent
 source venv/bin/activate
-python -m hermes_cli.main gateway restart
-```
-
----
-
-## 卸载
-
-```bash
-python installer.py --uninstall
-# 然后重启 hermes
 python -m hermes_cli.main gateway restart
 ```
 
