@@ -64,16 +64,22 @@ Feishu Card
 
 ## ⚠️ IMPORTANT: Hermes Version Requirements
 
-**This plugin only supports the following Hermes versions:**
+**This plugin supports all Hermes versions that contain `_msg_start_time = time.time()` in gateway/run.py.**
 
-| Supported | Version | Tag | Notes |
-|-----------|---------|-----|-------|
+| Supported | Version | Tag/Commit | Notes |
+|-----------|---------|------------|-------|
+| ✅ v0.10.0+ | `v2026.4.x` or `main` | Supported (user verified) |
 | ✅ v0.8.0 | `v2026.4.8` or `main` | Latest supported |
 | ✅ v0.7.0 | `v2026.4.3` | Supported |
 | ✅ v0.6.0 | `v2026.3.30` | Supported |
 | ✅ v0.5.0 | `v2026.3.28` | Supported |
 | ✅ v0.4.0 | `v2026.3.23` | Supported |
 | ❌ v0.3.x or earlier | `v2026.3.17` or older | **NOT supported** (function names changed) |
+
+> **💡 How to check if supported?** Run this command - if it outputs `_msg_start_time`, it's supported:
+> ```bash
+> grep -n "_msg_start_time.*time.time" ~/.hermes/hermes-agent/gateway/run.py
+> ```
 
 ### How to Check Your Hermes Version?
 
