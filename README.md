@@ -249,6 +249,76 @@ python -m hermes_cli.main gateway start 2>&1
 
 ---
 
+
+## 🗑️ 卸载与恢复
+
+### 方式一：使用安装脚本自动卸载
+
+```bash
+cd ~/github/hermes-feishu-streaming-card
+python installer_v2.py --uninstall
+```
+
+安装脚本会自动：
+1. 从备份恢复 Gateway 原始文件
+2. 删除 sidecar 配置文件
+3. 删除复制的适配器文件
+
+### 方式二：手动恢复
+
+如果安装脚本不工作，手动恢复步骤：
+
+**1. 停止 Sidecar**
+```bash
+# 查找并停止 sidecar 进程
+ps aux | grep sidecar | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
+
+# 确认已停止
+curl http://localhost:8765/health
+```
+
+**2. 恢复 Gateway 原始文件**
+
+安装脚本会在 `~/.hermes/.fsc_backups/` 目录保存备份：
+```bash
+# 查看可用备份
+ls -la ~/.hermes/.fsc_backups/
+
+# 恢复最新的备份
+cp ~/.hermes/.fsc_backups/backup_YYYYMMDD_HHMMSS/* ~/.hermes/hermes-agent/gateway/
+```
+
+**3. 删除配置文件**
+```bash
+rm ~/.hermes/feishu-sidecar.yaml
+```
+
+**4. 重启 Gateway**
+```bash
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
+python -m hermes_cli.main gateway restart
+```
+
+### 验证卸载成功
+
+```bash
+# 1. Sidecar 应该无响应
+curl http://localhost:8765/health
+# 预期：Connection refused
+
+# 2. Gateway 正常启动
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
+python -m hermes_cli.main gateway start
+# 预期：无报错，正常启动
+
+# 3. 测试 Bot
+给 Bot 发一条消息，应该以普通文本方式回复（不再是卡片）
+```
+
+---
+
 ## 📝 更新日志
 
 ### v2.3 (2026-04-19)

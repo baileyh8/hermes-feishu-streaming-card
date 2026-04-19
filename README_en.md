@@ -247,6 +247,76 @@ python -m hermes_cli.main gateway start 2>&1
 
 ---
 
+
+## 🗑️ Uninstall & Restore
+
+### Option 1: Auto Uninstall with Installer
+
+```bash
+cd ~/github/hermes-feishu-streaming-card
+python installer_v2.py --uninstall
+```
+
+The installer will automatically:
+1. Restore Gateway files from backup
+2. Delete sidecar config
+3. Remove copied adapter files
+
+### Option 2: Manual Restore
+
+If the installer doesn't work, manual restore steps:
+
+**1. Stop Sidecar**
+```bash
+# Find and stop sidecar process
+ps aux | grep sidecar | grep -v grep | awk '{print $2}' | xargs kill 2>/dev/null
+
+# Verify stopped
+curl http://localhost:8765/health
+```
+
+**2. Restore Gateway Files from Backup**
+
+The installer saves backups in `~/.hermes/.fsc_backups/`:
+```bash
+# List available backups
+ls -la ~/.hermes/.fsc_backups/
+
+# Restore latest backup
+cp ~/.hermes/.fsc_backups/backup_YYYYMMDD_HHMMSS/* ~/.hermes/hermes-agent/gateway/
+```
+
+**3. Delete Config Files**
+```bash
+rm ~/.hermes/feishu-sidecar.yaml
+```
+
+**4. Restart Gateway**
+```bash
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
+python -m hermes_cli.main gateway restart
+```
+
+### Verify Uninstall Success
+
+```bash
+# 1. Sidecar should not respond
+curl http://localhost:8765/health
+# Expected: Connection refused
+
+# 2. Gateway should start normally
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
+python -m hermes_cli.main gateway start
+# Expected: No errors, starts normally
+
+# 3. Test Bot
+Send a message to the Bot — should reply as plain text (not card)
+```
+
+---
+
 ## 📝 Changelog
 
 ### v2.3 (2026-04-19)
