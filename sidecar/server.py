@@ -191,7 +191,7 @@ class SidecarServer:
                     chat_id=data['chat_id'],
                     message_id=data.get('message_id', ''),
                     user_id=data.get('user_id', ''),
-                    greeting=data.get('greeting', ''),
+                    greeting=data.get('greeting') or self.config.get('feishu_streaming_card', {}).get('greeting', ''),
                     model=data.get('model', ''),
                     user_input=data.get('text', ''),
                 )
@@ -258,7 +258,7 @@ class SidecarServer:
                 chat_id=data['chat_id'],
                 message_id=data.get('message_id', ''),
                 user_id=data.get('user_id', ''),
-                greeting=data.get('greeting', ''),
+                greeting=data.get('greeting') or self.config.get('feishu_streaming_card', {}).get('greeting', ''),
                 model=data.get('model', ''),
                 user_input=data.get('text', ''),
             )

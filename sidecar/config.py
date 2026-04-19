@@ -46,6 +46,9 @@ DEFAULT_CONFIG = {
         'max_age_seconds': 3600,
         'persistence': False,
     },
+    'feishu_streaming_card': {
+        'greeting': '主人，苏菲为您服务！',
+    },
 }
 
 
