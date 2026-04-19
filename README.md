@@ -55,7 +55,7 @@ Feishu Streaming Sidecar（独立进程）
 | 要求 | 版本 | 说明 |
 |------|------|------|
 | Python | 3.9+ | Sidecar 运行环境 |
-| Hermes Gateway | v0.10.0+ | 已安装并配置好 WS 长连接 |
+| Hermes Gateway | v0.4.0 - v0.6.0 | Hermes v0.7+ (main) 代码结构已变化，暂不支持 |
 | 飞书 Bot | - | 已开通机器人能力 + CardKit |
 | Node.js | 18+ | 用于 lark-cli 获取 token |
 | lark-cli | `@larksuite/oapi-cli` | 必装，用于获取 tenant token |
@@ -246,6 +246,24 @@ python -m hermes_cli.main gateway start 2>&1
 ```
 
 查看具体报错信息。
+
+### Patch 失败（Hermes 版本不兼容）
+
+如果安装时报错 `Could not find _msg_start_time` 或 `Could not find _handle_message_with_agent`：
+
+**原因**：你安装的 Hermes 版本可能太新（v0.7+）或太旧（< v0.4.0），代码结构与插件不兼容。
+
+**解决方案**：
+1. 检查 Hermes 版本：
+   ```bash
+   cd ~/.hermes/hermes-agent && git log --oneline -1
+   ```
+2. 如果版本过新，安装兼容版本：
+   ```bash
+   cd ~/.hermes/hermes-agent
+   git checkout v2026.3.30  # 或 v0.6.0
+   ```
+3. 重新安装插件
 
 ---
 

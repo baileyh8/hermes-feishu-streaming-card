@@ -55,7 +55,7 @@ Feishu Card
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Python | 3.9+ | Sidecar runtime |
-| Hermes Gateway | v0.10.0+ | Installed with WS long connection |
+| Hermes Gateway | v0.4.0 - v0.6.0 | Hermes v0.7+ (main) code structure changed, not yet supported |
 | Feishu Bot | - | Bot capability + CardKit enabled |
 | Node.js | 18+ | For lark-cli |
 | lark-cli | `@larksuite/oapi-cli` | Required for tenant token |
