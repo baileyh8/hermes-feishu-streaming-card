@@ -55,7 +55,7 @@ Feishu Streaming Sidecar（独立进程）
 | 要求 | 版本 | 说明 |
 |------|------|------|
 | Python | 3.9+ | Sidecar 运行环境 |
-| Hermes Gateway | **v0.4.0 - v0.8.0** 或 **v2026.3.23 - v2026.3.30** | ⚠️ 必须在此范围内，见下方详细说明 |
+| Hermes Gateway | **v0.4.0 - v0.10.0+** 或 **v2026.3.23+** | ⚠️ 见下方详细版本说明 |
 | 飞书 Bot | - | 已开通机器人能力 + CardKit |
 | Node.js | 18+ | 用于 lark-cli 获取 token |
 | lark-cli | `@larksuite/oapi-cli` | 必装，用于获取 tenant token |
