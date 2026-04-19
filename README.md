@@ -166,7 +166,7 @@ lark-cli auth login
    - `im:message:send_as_bot` — 以机器人身份发消息
    - `cardkit:card` — 创建和更新卡片
 3. **开启长连接**：消息订阅 → 订阅方式 → 长连接（WebSocket）
-4. **启用 CardKit**：添加应用能力 → 搜索 CardKit → 开启
+4. **启用 CardKit**：应用权限 → 搜索 CardKit → 添加
 
 > ⚠️ 权限申请后需等待审核通过（通常几分钟~几小时）
 

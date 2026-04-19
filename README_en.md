@@ -163,7 +163,7 @@ On [Feishu Open Platform](https://open.feishu.cn/):
    - `im:message:send_as_bot` — Send as bot
    - `cardkit:card` — Create and update cards
 3. **Enable Long Connection**: Message Subscription → Subscription Method → Long Connection (WebSocket)
-4. **Enable CardKit**: Add App Capability → search CardKit → enable
+4. **Enable CardKit**: App Permissions → search CardKit → add
 
 > ⚠️ Permissions require review (usually a few minutes to hours)
 
