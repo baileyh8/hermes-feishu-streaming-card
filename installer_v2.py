@@ -172,6 +172,32 @@ def detect_current_mode():
 
 # ── Installation ──────────────────────────────────────────────────────────────
 
+
+def check_and_reserve_port(preferred_port=8765, max_attempts=10):
+    """检查端口是否可用，如果被占用则自动选择其他端口。
+    
+    Returns:
+        tuple: (port, was_available) — 被选中的端口和是否首选端口被占用
+    """
+    import socket
+    
+    for attempt in range(max_attempts):
+        port = preferred_port + attempt
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                s.bind(('localhost', port))
+                info(f"Port {port} is available")
+                return port, (attempt == 0)
+        except OSError as e:
+            if e.args[0] == 48:  # Address already in use
+                warning(f"Port {port} is in use, trying {port + 1}...")
+                continue
+            else:
+                raise
+    error(f"Could not find an available port after {max_attempts} attempts")
+    return None, False
+
 def check_requirements():
     """Verify system meets installation requirements."""
     info("Checking requirements...")
@@ -203,6 +229,16 @@ def check_requirements():
 def install_sidecar_mode():
     """Install in sidecar mode (non-invasive)."""
     info("Installing in SIDECAR mode...")
+
+    # 0. Check and reserve port
+    port, was_available = check_and_reserve_port()
+    if port is None:
+        error("No available port found, aborting installation")
+        return
+
+    if not was_available:
+        warning(f"Preferred port 8765 was in use. Using port {port} instead.")
+        info(f"Please update ~/.hermes/feishu-sidecar.yaml if needed (server.port should be {port})")
 
     # 1. Backup current state
     backup_id = create_backup("pre-sidecar-install")

@@ -113,12 +113,13 @@ python installer_v2.py --mode sidecar
 ```
 
 Installation will:
-1. Check environment dependencies
-2. Backup existing config
-3. Install sidecar to `~/.hermes/feishu-sidecar/`
-4. Modify gateway event forwarding (~50 lines)
-5. Start sidecar service
-6. Verify running status
+1. Check port conflict (auto-select alternative if 8765 is in use)
+2. Check environment dependencies
+3. Backup existing config
+4. Install sidecar to `~/.hermes/feishu-sidecar/`
+5. Modify gateway event forwarding (~50 lines)
+6. Start sidecar service
+7. Verify running status
 
 ### Step 6: Configure Gateway
 

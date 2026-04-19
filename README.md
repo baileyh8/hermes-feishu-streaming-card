@@ -113,12 +113,13 @@ python installer_v2.py --mode sidecar
 ```
 
 安装流程：
-1. 检查环境依赖
-2. 备份现有配置
-3. 安装 sidecar 到 `~/.hermes/feishu-sidecar/`
-4. 修改 gateway 事件转发（约 50 行）
-5. 启动 sidecar 服务
-6. 验证运行状态
+1. 检查端口冲突（8765 端口被占用时自动选用其他端口）
+2. 检查环境依赖
+3. 备份现有配置
+4. 安装 sidecar 到 `~/.hermes/feishu-sidecar/`
+5. 修改 gateway 事件转发（约 50 行）
+6. 启动 sidecar 服务
+7. 验证运行状态
 
 ### 第六步：配置 Gateway
 
