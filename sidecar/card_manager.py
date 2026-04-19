@@ -378,9 +378,14 @@ class CardManager:
             # 更新 sent_thinking_content 为完整累积内容
             info.sent_thinking_content = content
 
+            # 如果没有内容和工具，直接返回
             if not content and not tools:
                 info.pending_updates.clear()
                 return
+
+            # 始终使用 info 中的最新 tool_count 和 tool_lines（on_tool_call 可能后于 on_thinking 触发）
+            tool_count = info._tool_count
+            tool_lines = info._tool_lines.copy()
 
             try:
                 await self.cardkit.update_card_message(
