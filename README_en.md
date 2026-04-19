@@ -170,7 +170,7 @@ Usually no modification needed.
 ## 📊 Card Footer Format (v2.3)
 
 ```
-minimax-M2.7  ⏱️ 30s  81.1k↑  1.2k↓ ctx 82k/204k 40%
+minimax-M2.7  ⏱️ 30s  81.1k↑  1.2k↓ ctx 82k/204k
 ```
 
 | Field | Description |
@@ -179,8 +179,7 @@ minimax-M2.7  ⏱️ 30s  81.1k↑  1.2k↓ ctx 82k/204k 40%
 | `30s` | Processing time |
 | `81.1k↑` | Input tokens (k/m abbreviated) |
 | `1.2k↓` | Output tokens |
-| `ctx 82k/204k` | Context current/window size |
-| `40%` | Context usage percentage |
+| `ctx 82k/204k` | Context current/window size (for reference only, may not reflect actual usage) |
 
 ---
 

@@ -398,15 +398,13 @@ class CardKitClient:
         )
         total_toks = input_toks + output_toks
 
-        # 计算上下文百分比（假设上下文窗口 204k）
+        # 注意：input_tokens 来自 Hermes 返回值，可能是累计值而非当前上下文窗口使用量
+        # 因此 ctx 百分比仅供参考，不能反映真实上下文使用情况
         ctx_window = 204800  # 假设 204k 上下文窗口
-        ctx_ratio = (input_toks + cache_read) / ctx_window if input_toks else 0
-        ctx_pct = int(ctx_ratio * 100)
-        ctx_pct_str = f"{ctx_pct}%" if ctx_ratio <= 1 else f">{ctx_pct}%"
 
         return (
             f"{model}  ⏱️ {elapsed}s  {format_num(input_toks)}↑  {format_num(output_toks)}↓  "
-            f"ctx {format_num(input_toks + cache_read)}/{format_num(ctx_window)}  {ctx_pct_str}"
+            f"ctx {format_num(input_toks + cache_read)}/{format_num(ctx_window)}"
         )
 
     def _build_settings(self, config: Dict[str, Any]) -> str:
