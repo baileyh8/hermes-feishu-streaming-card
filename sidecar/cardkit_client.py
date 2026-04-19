@@ -400,11 +400,13 @@ class CardKitClient:
 
         # 计算上下文百分比（假设上下文窗口 204k）
         ctx_window = 204800  # 假设 204k 上下文窗口
-        ctx_pct = min(100, int((input_toks + cache_read) / ctx_window * 100)) if input_toks else 0
+        ctx_ratio = (input_toks + cache_read) / ctx_window if input_toks else 0
+        ctx_pct = int(ctx_ratio * 100)
+        ctx_pct_str = f"{ctx_pct}%" if ctx_ratio <= 1 else f">{ctx_pct}%"
 
         return (
             f"{model}  ⏱️ {elapsed}s  {format_num(input_toks)}↑  {format_num(output_toks)}↓  "
-            f"ctx {format_num(input_toks + cache_read)}/{format_num(ctx_window)}  {ctx_pct}%"
+            f"ctx {format_num(input_toks + cache_read)}/{format_num(ctx_window)}  {ctx_pct_str}"
         )
 
     def _build_settings(self, config: Dict[str, Any]) -> str:
