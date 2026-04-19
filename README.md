@@ -322,6 +322,12 @@ python -m hermes_cli.main gateway start
 
 ## 📝 更新日志
 
+### v2.4 (2026-04-19)
+- ✅ **修复工具调用追踪**：`_flush_updates` 使用最新的 `tool_count/tool_lines`，解决过程中工具调用不显示的问题
+- ✅ **支持配置 greeting**：在 `feishu_streaming_card.greeting` 中配置卡片标题
+- ✅ **端口冲突检测**：安装时自动检测端口是否被占用，冲突时自动选用其他端口
+- ✅ **Patch 语法验证**：修复 `gateway_run_patch.py` 的字符串括号处理 bug，防止语法错误
+
 ### v2.3 (2026-04-19)
 - ✅ **Footer 显示优化**：模型名称 + 时间 + Token（k/m缩略）+ 上下文百分比
 - ✅ **Footer 字号**：x-small

@@ -320,6 +320,12 @@ Send a message to the Bot — should reply as plain text (not card)
 
 ## 📝 Changelog
 
+### v2.4 (2026-04-19)
+- ✅ **Fix tool call tracking**: `_flush_updates` now uses latest `tool_count/tool_lines`, fixing missing tool calls during streaming
+- ✅ **Configurable greeting**: Set card title via `feishu_streaming_card.greeting`
+- ✅ **Port conflict detection**: Auto-detect port conflicts during install, auto-select alternative port
+- ✅ **Patch syntax validation**: Fixed `find_pattern_end` string brace handling bug
+
 ### v2.3 (2026-04-19)
 - ✅ **Footer optimization**: Model name + time + tokens (k/m) + context percentage
 - ✅ **Footer font size**: x-small
