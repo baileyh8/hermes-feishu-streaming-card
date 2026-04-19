@@ -400,8 +400,9 @@ def main():
     parser.add_argument("--check", action="store_true", help="Check installation status")
     parser.add_argument("--list-backups", action="store_true", help="List all backups")
     parser.add_argument("--restore", action="store_true", help="Restore from latest backup")
-    parser.add_argument("--mode", choices=["sidecar", "legacy"], help="Installation mode")
+    parser.add_argument("--mode", choices=["sidecar", "legacy"], help="Installation mode (default: sidecar)")
     parser.add_argument("--uninstall", action="store_true", help="Uninstall completely")
+    parser.add_argument("--yes", "-y", action="store_true", help="Non-interactive mode, accept defaults")
     args = parser.parse_args()
 
     # Change to project directory
@@ -430,6 +431,23 @@ def main():
 
     if args.uninstall:
         uninstall()
+        sys.exit(0)
+
+    # Auto mode: --mode or --yes means non-interactive with defaults
+    if args.mode or args.yes:
+        mode = args.mode or "sidecar"
+        print("═══════════════════════════════════════════════════════")
+        print("  Feishu Streaming Card v2.0 — Auto Install")
+        print("═══════════════════════════════════════════════════════")
+        print(f"Mode: {mode}")
+        print("")
+        
+        if mode == "sidecar":
+            check_requirements()
+            install_sidecar_mode()
+        elif mode == "legacy":
+            check_requirements()
+            install_legacy_mode()
         sys.exit(0)
 
     # Interactive install
