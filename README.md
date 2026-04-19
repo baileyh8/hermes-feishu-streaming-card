@@ -55,10 +55,69 @@ Feishu Streaming Sidecar（独立进程）
 | 要求 | 版本 | 说明 |
 |------|------|------|
 | Python | 3.9+ | Sidecar 运行环境 |
-| Hermes Gateway | v0.4.0 - v0.6.0 | Hermes v0.7+ (main) 代码结构已变化，暂不支持 |
+| Hermes Gateway | **v0.4.0 - v0.8.0** 或 **v2026.3.23 - v2026.3.30** | ⚠️ 必须在此范围内，见下方详细说明 |
 | 飞书 Bot | - | 已开通机器人能力 + CardKit |
 | Node.js | 18+ | 用于 lark-cli 获取 token |
 | lark-cli | `@larksuite/oapi-cli` | 必装，用于获取 tenant token |
+
+---
+
+## ⚠️ 重要：Hermes 版本要求
+
+**本插件仅支持以下 Hermes 版本：**
+
+| 支持的版本 | Tag 名 | 说明 |
+|-----------|--------|------|
+| ✅ v0.8.0 | `v2026.4.8` 或 `main` | 最新支持版本 |
+| ✅ v0.7.0 | `v2026.4.3` | 支持 |
+| ✅ v0.6.0 | `v2026.3.30` | 支持 |
+| ✅ v0.5.0 | `v2026.3.28` | 支持 |
+| ✅ v0.4.0 | `v2026.3.23` | 支持 |
+| ❌ v0.3.x 及更早 | `v2026.3.17` 之前 | **不支持**（函数名已改变） |
+
+### 如何确认你的 Hermes 版本？
+
+```bash
+cd ~/.hermes/hermes-agent && git log --oneline -1
+```
+
+或查看 tag：
+
+```bash
+cd ~/.hermes/hermes-agent && git describe --tags
+```
+
+### 如果版本不对怎么办？
+
+**降级到 v2026.3.30（推荐）：**
+
+```bash
+cd ~/.hermes/hermes-agent
+
+# 方法1：使用 tag
+git checkout v2026.3.30
+
+# 方法2：使用版本号
+git checkout v0.6.0
+```
+
+**升级到最新 main：**
+
+```bash
+cd ~/.hermes/hermes-agent
+git checkout main
+git pull
+```
+
+⚠️ 切换版本后需要重新运行安装脚本：
+
+```bash
+cd ~/github/hermes-feishu-streaming-card
+python installer_v2.py --mode sidecar
+```
+
+---
+
 
 ---
 

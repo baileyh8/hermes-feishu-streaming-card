@@ -55,10 +55,66 @@ Feishu Card
 | Requirement | Version | Notes |
 |-------------|---------|-------|
 | Python | 3.9+ | Sidecar runtime |
-| Hermes Gateway | v0.4.0 - v0.6.0 | Hermes v0.7+ (main) code structure changed, not yet supported |
+| Hermes Gateway | **v0.4.0 - v0.8.0** or **v2026.3.23 - v2026.3.30** | ⚠️ Must be within this range, see details below |
 | Feishu Bot | - | Bot capability + CardKit enabled |
 | Node.js | 18+ | For lark-cli |
 | lark-cli | `@larksuite/oapi-cli` | Required for tenant token |
+
+---
+
+## ⚠️ IMPORTANT: Hermes Version Requirements
+
+**This plugin only supports the following Hermes versions:**
+
+| Supported | Version | Tag | Notes |
+|-----------|---------|-----|-------|
+| ✅ v0.8.0 | `v2026.4.8` or `main` | Latest supported |
+| ✅ v0.7.0 | `v2026.4.3` | Supported |
+| ✅ v0.6.0 | `v2026.3.30` | Supported |
+| ✅ v0.5.0 | `v2026.3.28` | Supported |
+| ✅ v0.4.0 | `v2026.3.23` | Supported |
+| ❌ v0.3.x or earlier | `v2026.3.17` or older | **NOT supported** (function names changed) |
+
+### How to Check Your Hermes Version?
+
+```bash
+cd ~/.hermes/hermes-agent && git log --oneline -1
+```
+
+Or check the tag:
+
+```bash
+cd ~/.hermes/hermes-agent && git describe --tags
+```
+
+### If Your Version Is Wrong?
+
+**Downgrade to v2026.3.30 (recommended):**
+
+```bash
+cd ~/.hermes/hermes-agent
+
+# Method 1: Use tag
+git checkout v2026.3.30
+
+# Method 2: Use version number  
+git checkout v0.6.0
+```
+
+**Upgrade to latest main:**
+
+```bash
+cd ~/.hermes/hermes-agent
+git checkout main
+git pull
+```
+
+⚠️ After switching versions, re-run the installation script:
+
+```bash
+cd ~/github/hermes-feishu-streaming-card
+python installer_v2.py --mode sidecar
+```
 
 ---
 
