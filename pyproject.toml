@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "hermes-feishu-streaming-card"
 version = "0.1.0"
@@ -21,3 +25,6 @@ hermes-feishu-card = "hermes_feishu_card.cli:main"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["hermes_feishu_card*"]
