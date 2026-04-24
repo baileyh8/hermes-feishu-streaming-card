@@ -9,3 +9,4 @@ env/
 *.egg-info/
 dist/
 build/
+.superpowers/
