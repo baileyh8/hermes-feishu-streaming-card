@@ -50,8 +50,11 @@ class SidecarEvent:
                 raise EventValidationError(f"missing required field: {key}")
         if payload["schema_version"] != "1":
             raise EventValidationError("unsupported schema_version")
-        if payload["event"] not in SUPPORTED_EVENTS:
-            raise EventValidationError(f"unknown event: {payload['event']}")
+        event = payload["event"]
+        if not isinstance(event, str) or not event.strip():
+            raise EventValidationError("event must be a non-empty string")
+        if event not in SUPPORTED_EVENTS:
+            raise EventValidationError(f"unknown event: {event}")
         if payload["platform"] != "feishu":
             raise EventValidationError("platform must be feishu")
         if (
@@ -73,7 +76,7 @@ class SidecarEvent:
             raise EventValidationError("data must be an object")
         return cls(
             schema_version=payload["schema_version"],
-            event=payload["event"],
+            event=event,
             conversation_id=payload["conversation_id"],
             message_id=payload["message_id"],
             chat_id=payload["chat_id"],

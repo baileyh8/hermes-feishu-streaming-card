@@ -28,6 +28,12 @@ def test_rejects_unknown_event_name():
         SidecarEvent.from_dict(valid_payload(event="bad.event"))
 
 
+@pytest.mark.parametrize("event", [[], "", {}, "   "])
+def test_rejects_invalid_event_name_type(event):
+    with pytest.raises(EventValidationError, match="event"):
+        SidecarEvent.from_dict(valid_payload(event=event))
+
+
 def test_rejects_missing_chat_id():
     payload = valid_payload()
     del payload["chat_id"]
