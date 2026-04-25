@@ -244,10 +244,10 @@ def _validate_existing_install_state(
         return
 
     if backup_exists and not manifest_exists:
-        backup_text = backup_path.read_text(encoding="utf-8")
-        if current != apply_patch(backup_text):
-            raise ValueError("run.py changed since install; refusing to install")
-        return
+        raise ValueError(
+            "install state incomplete; manifest missing; "
+            "restore or remove patch before installing"
+        )
 
     if not backup_exists:
         manifest = _read_manifest(manifest_path)

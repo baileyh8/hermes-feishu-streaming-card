@@ -185,8 +185,26 @@ def test_reinstall_without_manifest_refuses_user_edited_run_py(tmp_path):
     reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
 
     assert reinstall.returncode != 0
-    assert "run.py changed since install" in reinstall.stderr
+    assert "install state incomplete" in reinstall.stderr
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_reinstall_without_manifest_refuses_unedited_patched_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    manifest_path(hermes_dir).unlink()
+    original_backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert reinstall.returncode != 0
+    assert "install state incomplete" in reinstall.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
     assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
     assert not manifest_path(hermes_dir).exists()
 
