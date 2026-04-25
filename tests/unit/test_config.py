@@ -34,6 +34,15 @@ card:
     assert config["card"] == {"max_wait_ms": 800, "max_chars": 120}
 
 
+def test_load_config_accepts_yaml_string_port_and_normalizes_to_int(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("server:\n  port: '9003'\n", encoding="utf-8")
+
+    config = load_config(path)
+
+    assert config["server"]["port"] == 9003
+
+
 def test_load_config_empty_file_returns_defaults(tmp_path):
     path = tmp_path / "empty.yaml"
     path.write_text("", encoding="utf-8")
@@ -52,6 +61,25 @@ def test_load_config_rejects_non_mapping_top_level(tmp_path):
         load_config(path)
 
 
+@pytest.mark.parametrize("section", ["server", "feishu", "card"])
+def test_load_config_rejects_non_mapping_known_sections(tmp_path, section):
+    path = tmp_path / "bad.yaml"
+    path.write_text(f"{section}: 1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=f"{section}.*mapping"):
+        load_config(path)
+
+
+@pytest.mark.parametrize("port", [True, False, 0, -1, 65536, "not-a-port"])
+def test_load_config_rejects_invalid_yaml_ports(tmp_path, port):
+    path = tmp_path / "bad.yaml"
+    value = repr(port).lower() if isinstance(port, bool) else repr(port)
+    path.write_text(f"server:\n  port: {value}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="server.port"):
+        load_config(path)
+
+
 def test_load_config_applies_supported_environment_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_FEISHU_CARD_HOST", "0.0.0.0")
     monkeypatch.setenv("HERMES_FEISHU_CARD_PORT", "9001")
@@ -66,6 +94,14 @@ def test_load_config_applies_supported_environment_overrides(tmp_path, monkeypat
 
 def test_load_config_rejects_invalid_environment_port(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_FEISHU_CARD_PORT", "not-a-port")
+
+    with pytest.raises(ValueError, match="HERMES_FEISHU_CARD_PORT"):
+        load_config(tmp_path / "missing.yaml")
+
+
+@pytest.mark.parametrize("port", ["0", "-1", "65536", "true"])
+def test_load_config_rejects_out_of_range_environment_port(tmp_path, monkeypatch, port):
+    monkeypatch.setenv("HERMES_FEISHU_CARD_PORT", port)
 
     with pytest.raises(ValueError, match="HERMES_FEISHU_CARD_PORT"):
         load_config(tmp_path / "missing.yaml")
