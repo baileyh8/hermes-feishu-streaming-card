@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import pytest
+import yaml
 
 from hermes_feishu_card.config import load_config
 
@@ -25,6 +28,15 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
         "feishu": {"app_id": "", "app_secret": ""},
         "card": {"max_wait_ms": 800, "max_chars": 240},
     }
+
+
+def test_example_config_uses_current_sidecar_schema():
+    config = load_config("config.yaml.example")
+    raw = yaml.safe_load(Path("config.yaml.example").read_text(encoding="utf-8"))
+
+    assert "feishu" in raw
+    assert "cardkit" not in raw
+    assert config["feishu"] == {"app_id": "", "app_secret": ""}
 
 
 def test_load_config_shallow_merges_yaml_sections(tmp_path):

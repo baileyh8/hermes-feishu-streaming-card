@@ -1,52 +1,17 @@
-# Feishu Streaming Card v2 — Sidecar Mode Configuration
-# Copy to ~/.hermes/feishu-sidecar.yaml and edit
+# Hermes Feishu Streaming Card sidecar-only configuration
+# Copy to a local path and fill credentials from your environment or secret store.
 
-mode: sidecar  # "sidecar" | "legacy" | "disabled"
-
-# ── Sidecar Server ────────────────────────────────────────────────────────────
 server:
   host: 127.0.0.1
   port: 8765
-  # Health check endpoint: http://localhost:8765/health
 
-# ── CardKit Credentials ───────────────────────────────────────────────────────
-# Get from Feishu Open Platform: https://open.feishu.cn/
-cardkit:
+feishu:
+  # Prefer FEISHU_APP_ID and FEISHU_APP_SECRET in real deployments.
   app_id: ""
   app_secret: ""
-  # Optional: custom encrypt key for event verification
-  # encrypt_key: ""
 
-# ── Card Appearance ───────────────────────────────────────────────────────────
 card:
-  # Greeting message shown at top of streaming card
-  greeting: "🤖 AI 正在思考..."
-  # Subtitle below greeting
-  subtitle: "思考过程会逐字显示"
-  # Icon (optional, Feishu image key or URL)
-  icon: ""
-  # Theme: "default" | "modern" | "minimal"
-  theme: "default"
-
-# ── Behavior ─────────────────────────────────────────────────────────────────
-behavior:
-  # Auto-finalize card when agent finishes (send final result)
-  auto_finalize: true
-  # Card update interval (ms, lower = smoother but more API calls)
-  update_interval_ms: 500
-  # Max card updates before force-finalize (prevent runaway updates)
-  max_updates: 200
-  # If sidecar fails, fall back to legacy mode (if installed)
-  fallback_to_legacy: true
-
-# ── Logging ───────────────────────────────────────────────────────────────────
-logging:
-  level: "INFO"  # "DEBUG" | "INFO" | "WARNING"
-  # Log file (optional)
-  # file: "~/.hermes/logs/sidecar.log"
-
-# ── Advanced ──────────────────────────────────────────────────────────────────
-# Custom endpoint override (for testing)
-# endpoint: "http://localhost:8765"
-# Enable verbose request/response logging
-# debug: false
+  # Flush partial streaming text after this many milliseconds.
+  max_wait_ms: 800
+  # Flush partial streaming text after this many buffered characters.
+  max_chars: 240

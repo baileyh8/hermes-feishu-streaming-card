@@ -34,6 +34,15 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             reason="gateway/run.py missing",
         )
 
+    if run_py.is_symlink():
+        return HermesDetection(
+            root=hermes_root,
+            version=version,
+            run_py=run_py,
+            supported=False,
+            reason="gateway/run.py must not be a symlink",
+        )
+
     if version_error is not None:
         return HermesDetection(
             root=hermes_root,

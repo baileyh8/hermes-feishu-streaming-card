@@ -54,6 +54,20 @@ def test_detect_hermes_rejects_missing_gateway_run_py(tmp_path):
     assert "missing" in result.reason.lower()
 
 
+def test_detect_hermes_rejects_symlinked_gateway_run_py(tmp_path):
+    target = tmp_path / "target_run.py"
+    target.write_text(_supported_run_py(), encoding="utf-8")
+    gateway = tmp_path / "gateway"
+    gateway.mkdir()
+    (tmp_path / "VERSION").write_text("v2026.4.23\n", encoding="utf-8")
+    (gateway / "run.py").symlink_to(target)
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "symlink" in result.reason.lower()
+
+
 def test_detect_hermes_rejects_missing_required_anchor(tmp_path):
     gateway = tmp_path / "gateway"
     gateway.mkdir()
