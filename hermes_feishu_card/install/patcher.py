@@ -14,12 +14,12 @@ def apply_patch(content: str) -> str:
         return content
 
     tree = _parse_content(content)
-    handler_body = _find_handler_body_location(tree)
+    lines = content.splitlines(keepends=True)
+    handler_body = _find_handler_body_location(tree, lines)
     if handler_body is None:
         raise ValueError("could not find safe handler")
 
     newline = _detect_newline(content)
-    lines = content.splitlines(keepends=True)
     insert_at, body_indent = handler_body
     hook = _render_hook_block(body_indent, newline)
 
@@ -44,38 +44,48 @@ def _parse_content(content: str):
         raise ValueError("could not find safe handler") from exc
 
 
-def _find_handler_body_location(tree):
+def _find_handler_body_location(tree, lines):
     for node in tree.body:
         if _is_handler(node):
-            return _body_location(node)
+            return _body_location(node, lines)
 
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             for child in node.body:
                 if _is_handler(child):
-                    return _body_location(child)
+                    return _body_location(child, lines)
 
     return None
 
 
-def _body_location(node):
+def _body_location(node, lines):
     if not node.body:
         return None
 
-    insert_before = _first_patchable_body_node(node)
-    if insert_before is None or insert_before.lineno is None:
+    if _is_docstring_expr(node.body[0]):
+        return _body_location_after_docstring(node, lines)
+
+    insert_before = node.body[0]
+    if insert_before.lineno is None:
         return None
     insert_at = insert_before.lineno - 1
-    body_indent = getattr(insert_before, "col_offset", node.col_offset + 4)
-    return insert_at, " " * body_indent
+    return insert_at, _line_indent(lines, insert_at)
 
 
-def _first_patchable_body_node(node):
-    if not _is_docstring_expr(node.body[0]):
-        return node.body[0]
-    if len(node.body) < 2:
+def _body_location_after_docstring(node, lines):
+    if len(node.body) > 1:
+        insert_before = node.body[1]
+        if insert_before.lineno is None:
+            return None
+        insert_at = insert_before.lineno - 1
+        return insert_at, _line_indent(lines, insert_at)
+
+    docstring = node.body[0]
+    end_lineno = getattr(docstring, "end_lineno", docstring.lineno)
+    if end_lineno is None or docstring.lineno is None:
         return None
-    return node.body[1]
+    insert_at = end_lineno
+    return insert_at, _line_indent(lines, docstring.lineno - 1)
 
 
 def _is_docstring_expr(node) -> bool:
@@ -104,7 +114,7 @@ def _find_owned_block(content: str):
     if begin_index is None or end_index is None or begin_index >= end_index:
         raise ValueError("corrupt patch markers")
 
-    indent = _leading_spaces(_strip_line_ending(lines[begin_index]))
+    indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = _render_hook_block(indent, newline)
     actual = lines[begin_index : end_index + 1]
@@ -113,7 +123,7 @@ def _find_owned_block(content: str):
         raise ValueError("corrupt patch markers")
 
     tree = _parse_content_with_markers(content)
-    handler_body = _find_handler_body_location(tree)
+    handler_body = _find_handler_body_location(tree, lines)
     if handler_body is None:
         raise ValueError("corrupt patch markers")
 
@@ -133,13 +143,13 @@ def _parse_content_with_markers(content: str):
 def _exact_marker_line_index(lines, marker: str):
     for index, line in enumerate(lines):
         body = _strip_line_ending(line)
-        if body == _leading_spaces(body) + marker:
+        if body == _leading_whitespace(body) + marker:
             return index
     return None
 
 
 def _render_hook_block(indent: str, newline: str):
-    inner_indent = indent + " " * 4
+    inner_indent = _child_indent(indent)
     return [
         f"{indent}{PATCH_BEGIN}{newline}",
         f"{indent}try:{newline}",
@@ -148,6 +158,18 @@ def _render_hook_block(indent: str, newline: str):
         f"{inner_indent}pass{newline}",
         f"{indent}{PATCH_END}{newline}",
     ]
+
+
+def _child_indent(indent: str) -> str:
+    if indent.endswith("\t"):
+        return indent + "\t"
+    return indent + " " * 4
+
+
+def _line_indent(lines, index: int) -> str:
+    if index < 0 or index >= len(lines):
+        return ""
+    return _leading_whitespace(_strip_line_ending(lines[index]))
 
 
 def _detect_newline(content: str) -> str:
@@ -174,5 +196,5 @@ def _strip_line_ending(line: str) -> str:
     return line
 
 
-def _leading_spaces(line: str) -> str:
-    return line[: len(line) - len(line.lstrip(" "))]
+def _leading_whitespace(line: str) -> str:
+    return line[: len(line) - len(line.lstrip(" \t"))]

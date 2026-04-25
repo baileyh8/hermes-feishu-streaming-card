@@ -293,6 +293,56 @@ def test_apply_patch_preserves_class_method_docstring():
     assert restored == content
 
 
+def test_apply_patch_preserves_tab_indented_module_handler_prefix():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "\treturn message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+
+    ast.parse(patched)
+    assert f"\t{patcher.PATCH_BEGIN}\n" in patched
+    assert "\ttry:\n" in patched
+    assert "\t\tpass\n" in patched
+    assert "    # HERMES_FEISHU_CARD_PATCH_BEGIN" not in patched
+    assert restored == content
+
+
+def test_apply_patch_preserves_tab_indented_class_method_prefix():
+    content = (
+        "class Gateway:\n"
+        "\tasync def _handle_message_with_agent(self, message):\n"
+        "\t\treturn message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+
+    ast.parse(patched)
+    assert f"\t\t{patcher.PATCH_BEGIN}\n" in patched
+    assert "\t\ttry:\n" in patched
+    assert "\t\t\tpass\n" in patched
+    assert restored == content
+
+
+def test_apply_patch_handles_docstring_only_handler():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    \"\"\"Only documentation.\"\"\"\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+    handler = ast.parse(patched).body[0]
+
+    assert ast.get_docstring(handler) == "Only documentation."
+    assert "\"\"\"Only documentation.\"\"\"\n    # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert patcher.apply_patch(patched) == patched
+    assert restored == content
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):
