@@ -137,7 +137,7 @@ def _find_owned_block(content: str):
 
     tree = _parse_content_with_markers(content)
     if _has_no_final_newline_sentinel(lines, begin_index):
-        _validate_no_final_newline_sentinel(lines, end_index, tree)
+        _validate_no_final_newline_sentinel(lines, begin_index, end_index, tree)
 
     handler_body = _find_handler_body_location(tree, lines)
     if handler_body is None:
@@ -156,7 +156,7 @@ def _parse_content_with_markers(content: str):
         raise ValueError("corrupt patch markers") from exc
 
 
-def _validate_no_final_newline_sentinel(lines, end_index: int, tree) -> None:
+def _validate_no_final_newline_sentinel(lines, begin_index: int, end_index: int, tree) -> None:
     if end_index != len(lines) - 1:
         raise ValueError("corrupt patch markers")
 
@@ -167,6 +167,14 @@ def _validate_no_final_newline_sentinel(lines, end_index: int, tree) -> None:
         or not _is_docstring_expr(handler.body[0])
         or not isinstance(handler.body[1], ast.Try)
     ):
+        raise ValueError("corrupt patch markers")
+
+    docstring_end_lineno = getattr(handler.body[0], "end_lineno", handler.body[0].lineno)
+    if docstring_end_lineno is None:
+        raise ValueError("corrupt patch markers")
+
+    sentinel_index = begin_index - 1
+    if sentinel_index != docstring_end_lineno or begin_index != sentinel_index + 1:
         raise ValueError("corrupt patch markers")
 
 
