@@ -17,7 +17,17 @@ def test_config_requires_app_secret_for_real_client(app_secret):
         FeishuClientConfig(app_id="cli_a", app_secret=app_secret)
 
 
-@pytest.mark.parametrize("base_url", ["", "   ", "ftp://open.feishu.cn", "https://"])
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "",
+        "   ",
+        "ftp://open.feishu.cn",
+        "https://",
+        "https://:443/open-apis",
+        "https://@/open-apis",
+    ],
+)
 def test_config_requires_http_base_url(base_url):
     with pytest.raises(ValueError, match="base_url"):
         FeishuClientConfig(app_id="cli_a", app_secret="sec", base_url=base_url)
