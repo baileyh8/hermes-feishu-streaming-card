@@ -231,13 +231,38 @@ def _rollback_install(
 def _validate_existing_install_state(
     run_py: Path, backup_path: Path, manifest_path: Path
 ) -> None:
-    if not backup_path.exists() or not manifest_path.exists():
+    backup_exists = backup_path.exists()
+    manifest_exists = manifest_path.exists()
+    current = run_py.read_text(encoding="utf-8")
+
+    if not backup_exists and not manifest_exists:
+        if remove_patch(current) != current:
+            raise ValueError(
+                "install state incomplete; run.py already contains patch; "
+                "restore or remove patch before installing"
+            )
         return
+
+    if backup_exists and not manifest_exists:
+        backup_text = backup_path.read_text(encoding="utf-8")
+        if current != apply_patch(backup_text):
+            raise ValueError("run.py changed since install; refusing to install")
+        return
+
+    if not backup_exists:
+        manifest = _read_manifest(manifest_path)
+        _validate_manifest_matches_run_py(run_py, manifest)
+        raise ValueError("install state incomplete; backup missing; refusing to install")
 
     manifest = _read_manifest(manifest_path)
+    _validate_manifest_matches_run_py(run_py, manifest)
+
+
+def _validate_manifest_matches_run_py(
+    run_py: Path, manifest: dict[str, object] | None
+) -> None:
     if manifest is None:
         return
-
     patched_sha256 = manifest.get("patched_sha256")
     if not isinstance(patched_sha256, str) or not patched_sha256:
         raise ValueError("manifest missing patched run.py sha256")

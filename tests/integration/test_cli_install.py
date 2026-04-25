@@ -169,6 +169,68 @@ def test_reinstall_refuses_to_bless_user_edited_run_py(tmp_path):
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
 
 
+def test_reinstall_without_manifest_refuses_user_edited_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    manifest_path(hermes_dir).unlink()
+    original_backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+    edited = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert reinstall.returncode != 0
+    assert "run.py changed since install" in reinstall.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_reinstall_without_backup_refuses_user_edited_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    backup_path(hermes_dir).unlink()
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+    edited = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert reinstall.returncode != 0
+    assert "run.py changed since install" in reinstall.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+    assert not backup_path(hermes_dir).exists()
+
+
+def test_reinstall_without_state_refuses_owned_patch_in_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    backup_path(hermes_dir).unlink()
+    manifest_path(hermes_dir).unlink()
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert reinstall.returncode != 0
+    assert "install state incomplete" in reinstall.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
 def test_existing_manifest_survives_manifest_rewrite_failure(tmp_path, monkeypatch):
     hermes_dir = copy_hermes(tmp_path)
 
