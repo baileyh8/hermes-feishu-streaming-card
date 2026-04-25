@@ -138,6 +138,8 @@ def _restore(hermes_root: Path) -> None:
     run_py = hermes_root / "gateway" / "run.py"
     backup_path = _backup_path(run_py)
     manifest_path = _manifest_path(hermes_root)
+    if run_py.is_symlink():
+        raise ValueError("gateway/run.py must not be a symlink")
     if backup_path.exists():
         manifest = _read_manifest(manifest_path)
         if manifest is None:

@@ -232,6 +232,29 @@ def test_restore_refuses_patched_backup_with_manifest(tmp_path):
     assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
 
 
+def test_restore_refuses_symlinked_run_py_with_manifest(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    symlink_target = hermes_dir / "gateway" / "run-target.py"
+    symlink_target.write_text(patched, encoding="utf-8")
+    run_py(hermes_dir).unlink()
+    run_py(hermes_dir).symlink_to(symlink_target)
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "symlink" in result.stderr
+    assert run_py(hermes_dir).is_symlink()
+    assert symlink_target.read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+
+
 def test_reinstall_refuses_patched_backup_with_manifest(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
 
@@ -247,6 +270,29 @@ def test_reinstall_refuses_patched_backup_with_manifest(tmp_path):
     assert "backup changed since install" in result.stderr
     assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
     assert backup_path(hermes_dir).read_text(encoding="utf-8") == patched
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+
+
+def test_restore_without_backup_refuses_symlinked_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    backup_path(hermes_dir).unlink()
+    symlink_target = hermes_dir / "gateway" / "run-target.py"
+    symlink_target.write_text(patched, encoding="utf-8")
+    run_py(hermes_dir).unlink()
+    run_py(hermes_dir).symlink_to(symlink_target)
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "symlink" in result.stderr
+    assert run_py(hermes_dir).is_symlink()
+    assert symlink_target.read_text(encoding="utf-8") == patched
+    assert not backup_path(hermes_dir).exists()
     assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
 
 
