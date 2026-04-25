@@ -62,12 +62,28 @@ def _body_location(node):
     if not node.body:
         return None
 
-    first_body_lineno = node.body[0].lineno
-    if first_body_lineno is None:
+    insert_before = _first_patchable_body_node(node)
+    if insert_before is None or insert_before.lineno is None:
         return None
-    insert_at = first_body_lineno - 1
-    body_indent = getattr(node.body[0], "col_offset", node.col_offset + 4)
+    insert_at = insert_before.lineno - 1
+    body_indent = getattr(insert_before, "col_offset", node.col_offset + 4)
     return insert_at, " " * body_indent
+
+
+def _first_patchable_body_node(node):
+    if not _is_docstring_expr(node.body[0]):
+        return node.body[0]
+    if len(node.body) < 2:
+        return None
+    return node.body[1]
+
+
+def _is_docstring_expr(node) -> bool:
+    return (
+        isinstance(node, ast.Expr)
+        and isinstance(getattr(node, "value", None), ast.Constant)
+        and isinstance(node.value.value, str)
+    )
 
 
 def _is_handler(node) -> bool:

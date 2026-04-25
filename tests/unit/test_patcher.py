@@ -256,6 +256,43 @@ def test_apply_patch_handles_class_method_multiline_signature():
     assert restored == content
 
 
+def test_apply_patch_preserves_module_level_handler_docstring():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    \"\"\"Keep this docstring.\"\"\"\n"
+        "    return message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+    handler = ast.parse(patched).body[0]
+
+    assert ast.get_docstring(handler) == "Keep this docstring."
+    assert "\"\"\"Keep this docstring.\"\"\"\n    # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert "    # HERMES_FEISHU_CARD_PATCH_END\n    return message\n" in patched
+    assert patcher.apply_patch(patched) == patched
+    assert restored == content
+
+
+def test_apply_patch_preserves_class_method_docstring():
+    content = (
+        "class Gateway:\n"
+        "    async def _handle_message_with_agent(self, message):\n"
+        "        \"\"\"Keep method docstring.\"\"\"\n"
+        "        return message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+    method = ast.parse(patched).body[0].body[0]
+
+    assert ast.get_docstring(method) == "Keep method docstring."
+    assert "\"\"\"Keep method docstring.\"\"\"\n        # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert "        # HERMES_FEISHU_CARD_PATCH_END\n        return message\n" in patched
+    assert patcher.apply_patch(patched) == patched
+    assert restored == content
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):
