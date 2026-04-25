@@ -1,15 +1,13 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from pathlib import Path
 import re
 
 
 MIN_SUPPORTED_VERSION = "v2026.4.23"
-REQUIRED_ANCHORS = (
-    "_handle_message_with_agent",
-    'hooks.emit("agent:end"',
-)
+HANDLER_NAME = "_handle_message_with_agent"
 _VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
 
@@ -25,7 +23,7 @@ class HermesDetection:
 def detect_hermes(root: str | Path) -> HermesDetection:
     hermes_root = Path(root)
     run_py = hermes_root / "gateway" / "run.py"
-    version = _read_version(hermes_root / "VERSION")
+    version, version_error = _read_version(hermes_root / "VERSION")
 
     if not run_py.exists():
         return HermesDetection(
@@ -34,6 +32,15 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             run_py=run_py,
             supported=False,
             reason="gateway/run.py missing",
+        )
+
+    if version_error is not None:
+        return HermesDetection(
+            root=hermes_root,
+            version=version,
+            run_py=run_py,
+            supported=False,
+            reason=version_error,
         )
 
     parsed_version = _parse_version(version)
@@ -55,15 +62,24 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             reason=f"Hermes version must be at least {MIN_SUPPORTED_VERSION}",
         )
 
-    contents = run_py.read_text(encoding="utf-8")
-    missing_anchors = [anchor for anchor in REQUIRED_ANCHORS if anchor not in contents]
-    if missing_anchors:
+    contents, run_py_error = _read_text(run_py, "gateway/run.py")
+    if run_py_error is not None:
         return HermesDetection(
             root=hermes_root,
             version=version,
             run_py=run_py,
             supported=False,
-            reason=f"gateway/run.py missing anchor: {missing_anchors[0]}",
+            reason=run_py_error,
+        )
+
+    has_anchor, anchor_error = _has_supported_handler_anchor(contents)
+    if not has_anchor:
+        return HermesDetection(
+            root=hermes_root,
+            version=version,
+            run_py=run_py,
+            supported=False,
+            reason=anchor_error,
         )
 
     return HermesDetection(
@@ -75,10 +91,20 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     )
 
 
-def _read_version(path: Path) -> str:
+def _read_version(path: Path) -> tuple[str, str | None]:
     if not path.exists():
-        return "unknown"
-    return path.read_text(encoding="utf-8").strip() or "unknown"
+        return "unknown", None
+    contents, error = _read_text(path, "VERSION")
+    if error is not None:
+        return "unknown", error
+    return contents.strip() or "unknown", None
+
+
+def _read_text(path: Path, label: str) -> tuple[str, str | None]:
+    try:
+        return path.read_text(encoding="utf-8"), None
+    except (OSError, UnicodeError) as exc:
+        return "", f"{label} could not be read: {exc.__class__.__name__}"
 
 
 def _parse_version(version: str) -> tuple[int, int, int] | None:
@@ -86,3 +112,53 @@ def _parse_version(version: str) -> tuple[int, int, int] | None:
     if match is None:
         return None
     return tuple(int(part) for part in match.groups())
+
+
+def _has_supported_handler_anchor(contents: str) -> tuple[bool, str]:
+    try:
+        module = ast.parse(contents)
+    except SyntaxError as exc:
+        return False, f"gateway/run.py could not be parsed: {exc.__class__.__name__}"
+
+    handler = next(
+        (
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == HANDLER_NAME
+        ),
+        None,
+    )
+    if handler is None:
+        return False, f"gateway/run.py missing async anchor function: {HANDLER_NAME}"
+
+    if not _function_emits_agent_end(handler):
+        return False, 'gateway/run.py missing handler anchor: hooks.emit("agent:end", ...)'
+
+    return True, "supported"
+
+
+def _function_emits_agent_end(handler: ast.AsyncFunctionDef) -> bool:
+    return any(
+        isinstance(node, ast.Call)
+        and _is_hooks_emit(node.func)
+        and bool(node.args)
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "agent:end"
+        for node in ast.walk(handler)
+    )
+
+
+def _is_hooks_emit(func: ast.expr) -> bool:
+    if not isinstance(func, ast.Attribute) or func.attr != "emit":
+        return False
+
+    receiver = func.value
+    if isinstance(receiver, ast.Name):
+        return receiver.id == "hooks"
+
+    return (
+        isinstance(receiver, ast.Attribute)
+        and receiver.attr == "hooks"
+        and isinstance(receiver.value, ast.Name)
+        and receiver.value.id == "self"
+    )
