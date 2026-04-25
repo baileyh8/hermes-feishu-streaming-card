@@ -220,6 +220,42 @@ def test_apply_remove_round_trip_preserves_missing_final_newline():
     assert restored == content
 
 
+def test_apply_patch_handles_module_level_multiline_signature():
+    content = (
+        "async def _handle_message_with_agent(\n"
+        "    message,\n"
+        "):\n"
+        "    return message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+
+    ast.parse(patched)
+    assert "):\n    # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert "    # HERMES_FEISHU_CARD_PATCH_END\n    return message\n" in patched
+    assert restored == content
+
+
+def test_apply_patch_handles_class_method_multiline_signature():
+    content = (
+        "class Gateway:\n"
+        "    async def _handle_message_with_agent(\n"
+        "        self,\n"
+        "        message,\n"
+        "    ):\n"
+        "        return message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+
+    ast.parse(patched)
+    assert "    ):\n        # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert "        # HERMES_FEISHU_CARD_PATCH_END\n        return message\n" in patched
+    assert restored == content
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):

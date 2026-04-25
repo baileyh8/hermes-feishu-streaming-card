@@ -14,15 +14,13 @@ def apply_patch(content: str) -> str:
         return content
 
     tree = _parse_content(content)
-    handler_lineno = _find_handler_lineno(tree)
-    if handler_lineno is None:
+    handler_body = _find_handler_body_location(tree)
+    if handler_body is None:
         raise ValueError("could not find safe handler")
 
     newline = _detect_newline(content)
     lines = content.splitlines(keepends=True)
-    def_line = lines[handler_lineno - 1]
-    body_indent = _leading_spaces(def_line) + " " * 4
-    insert_at = handler_lineno
+    insert_at, body_indent = handler_body
     hook = _render_hook_block(body_indent, newline)
 
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
@@ -46,18 +44,30 @@ def _parse_content(content: str):
         raise ValueError("could not find safe handler") from exc
 
 
-def _find_handler_lineno(tree):
+def _find_handler_body_location(tree):
     for node in tree.body:
         if _is_handler(node):
-            return node.lineno
+            return _body_location(node)
 
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             for child in node.body:
                 if _is_handler(child):
-                    return child.lineno
+                    return _body_location(child)
 
     return None
+
+
+def _body_location(node):
+    if not node.body:
+        return None
+
+    first_body_lineno = node.body[0].lineno
+    if first_body_lineno is None:
+        return None
+    insert_at = first_body_lineno - 1
+    body_indent = getattr(node.body[0], "col_offset", node.col_offset + 4)
+    return insert_at, " " * body_indent
 
 
 def _is_handler(node) -> bool:
@@ -87,8 +97,12 @@ def _find_owned_block(content: str):
         raise ValueError("corrupt patch markers")
 
     tree = _parse_content_with_markers(content)
-    handler_lineno = _find_handler_lineno(tree)
-    if handler_lineno is None or begin_index != handler_lineno:
+    handler_body = _find_handler_body_location(tree)
+    if handler_body is None:
+        raise ValueError("corrupt patch markers")
+
+    first_body_index, _body_indent = handler_body
+    if begin_index != first_body_index - 1:
         raise ValueError("corrupt patch markers")
     return begin_index, end_index
 
