@@ -116,18 +116,21 @@ def _is_handler(node) -> bool:
 def _find_owned_block(content: str):
     begin_count = content.count(PATCH_BEGIN)
     end_count = content.count(PATCH_END)
+    lines = content.splitlines(keepends=True)
+    sentinel_indexes = _sentinel_line_indexes(lines)
     if begin_count == 0 and end_count == 0:
+        if sentinel_indexes:
+            raise ValueError("corrupt patch markers")
         return None
     if begin_count != 1 or end_count != 1:
         raise ValueError("corrupt patch markers")
 
-    lines = content.splitlines(keepends=True)
     begin_index = _exact_marker_line_index(lines, PATCH_BEGIN)
     end_index = _exact_marker_line_index(lines, PATCH_END)
     if begin_index is None or end_index is None or begin_index >= end_index:
         raise ValueError("corrupt patch markers")
 
-    _validate_sentinel_marker_adjacency(lines, begin_index)
+    _validate_sentinel_marker_adjacency(sentinel_indexes, begin_index)
 
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
@@ -158,13 +161,16 @@ def _parse_content_with_markers(content: str):
         raise ValueError("corrupt patch markers") from exc
 
 
-def _validate_sentinel_marker_adjacency(lines, begin_index: int) -> None:
-    sentinel_indexes = [
+def _sentinel_line_indexes(lines):
+    return [
         index
         for index, line in enumerate(lines)
         if _strip_line_ending(line)
         == _leading_whitespace(_strip_line_ending(line)) + _NO_FINAL_NEWLINE
     ]
+
+
+def _validate_sentinel_marker_adjacency(sentinel_indexes, begin_index: int) -> None:
     if not sentinel_indexes:
         return
     if len(sentinel_indexes) != 1 or sentinel_indexes[0] != begin_index - 1:

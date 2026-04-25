@@ -453,6 +453,20 @@ async def _handle_message_with_agent(message):
         patcher.remove_patch(content)
 
 
+def test_isolated_no_final_newline_sentinel_is_rejected():
+    content = """
+async def _handle_message_with_agent(message):
+    # HERMES_FEISHU_CARD_NO_FINAL_NEWLINE
+    return message
+"""
+
+    with pytest.raises(ValueError, match="corrupt patch markers"):
+        patcher.apply_patch(content)
+
+    with pytest.raises(ValueError, match="corrupt patch markers"):
+        patcher.remove_patch(content)
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):
