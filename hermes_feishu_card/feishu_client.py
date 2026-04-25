@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict
+from numbers import Real
+from typing import Any, Dict, Union
 
 
 @dataclass(frozen=True)
@@ -10,13 +11,23 @@ class FeishuClientConfig:
     app_id: str
     app_secret: str
     base_url: str = "https://open.feishu.cn/open-apis"
-    timeout_seconds: int = 30
+    timeout_seconds: Union[int, float] = 30
 
     def __post_init__(self) -> None:
-        if not self.app_id:
+        if not isinstance(self.app_id, str) or not self.app_id.strip():
             raise ValueError("app_id is required")
-        if not self.app_secret:
+        if not isinstance(self.app_secret, str) or not self.app_secret.strip():
             raise ValueError("app_secret is required")
+        if not isinstance(self.base_url, str) or not self.base_url.strip():
+            raise ValueError("base_url is required")
+        if not self.base_url.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, Real)
+            or self.timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a positive number")
 
 
 class FeishuClient:
@@ -24,6 +35,11 @@ class FeishuClient:
         self.config = config
 
     def build_message_payload(self, chat_id: str, card: Dict[str, Any]) -> Dict[str, str]:
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("chat_id is required")
+        if not isinstance(card, dict):
+            raise TypeError("card must be a dict")
+
         return {
             "receive_id": chat_id,
             "msg_type": "interactive",
