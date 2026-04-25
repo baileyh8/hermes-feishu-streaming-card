@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Dict, Union
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -20,11 +22,13 @@ class FeishuClientConfig:
             raise ValueError("app_secret is required")
         if not isinstance(self.base_url, str) or not self.base_url.strip():
             raise ValueError("base_url is required")
-        if not self.base_url.startswith(("http://", "https://")):
-            raise ValueError("base_url must start with http:// or https://")
+        parsed_base_url = urlparse(self.base_url)
+        if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.netloc:
+            raise ValueError("base_url must be an http(s) URL with a host")
         if (
             isinstance(self.timeout_seconds, bool)
             or not isinstance(self.timeout_seconds, Real)
+            or not math.isfinite(self.timeout_seconds)
             or self.timeout_seconds <= 0
         ):
             raise ValueError("timeout_seconds must be a positive number")

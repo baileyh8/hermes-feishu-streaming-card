@@ -17,13 +17,13 @@ def test_config_requires_app_secret_for_real_client(app_secret):
         FeishuClientConfig(app_id="cli_a", app_secret=app_secret)
 
 
-@pytest.mark.parametrize("base_url", ["", "   ", "ftp://open.feishu.cn"])
+@pytest.mark.parametrize("base_url", ["", "   ", "ftp://open.feishu.cn", "https://"])
 def test_config_requires_http_base_url(base_url):
     with pytest.raises(ValueError, match="base_url"):
         FeishuClientConfig(app_id="cli_a", app_secret="sec", base_url=base_url)
 
 
-@pytest.mark.parametrize("timeout_seconds", [0, -1, True, False, "30"])
+@pytest.mark.parametrize("timeout_seconds", [0, -1, True, False, "30", float("nan"), float("inf")])
 def test_config_requires_positive_numeric_timeout(timeout_seconds):
     with pytest.raises(ValueError, match="timeout_seconds"):
         FeishuClientConfig(
@@ -57,6 +57,16 @@ def test_build_message_payload_serializes_card():
     assert payload["receive_id"] == "oc_abc"
     assert payload["msg_type"] == "interactive"
     assert '"schema": "2.0"' in payload["content"]
+    assert json.loads(payload["content"]) == card
+
+
+def test_build_message_payload_preserves_non_ascii_content():
+    cfg = FeishuClientConfig(app_id="cli_a", app_secret="sec")
+    client = FeishuClient(cfg)
+    card = {"schema": "2.0", "header": {"title": "你好"}}
+    payload = client.build_message_payload("oc_abc", card)
+    assert "你好" in payload["content"]
+    assert "\\u" not in payload["content"]
     assert json.loads(payload["content"]) == card
 
 
