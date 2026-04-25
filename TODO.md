@@ -1,27 +1,27 @@
-# Hermes Feishu Streaming Card - Todo List
+# Sidecar-only 主线任务清单
 
-## P0 (阻塞)
-- [ ] Gateway event forwarding (feishu.py patch)
-- [ ] Verify event payload format matches sidecar expectations
+当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不再作为主线运行时推进，只保留作历史参考或迁移资料。
 
-## P1 (重要)
-- [ ] End-to-end test (Hermes chat → Feishu card with streaming)
-- [ ] Graceful degradation (sidecar down → no crash, warning log)
-- [ ] Dual-mode verification (legacy + sidecar parallel)
+## P0
 
-## P2 (优化)
-- [ ] Installer enhancements
-- [ ] Environment setup scripts
-- [ ] Recovery script
-- [ ] Prometheus metrics on gateway side
-- [ ] Upgrade documentation
-- [ ] GitHub release (v2.1-stable)
+- [x] 建立 `hermes_feishu_card/` 包作为 sidecar-only 主线入口。
+- [x] 提供 `doctor`、`install`、`restore`、`uninstall` CLI。
+- [x] 安装器写入最小 Hermes hook、备份和 manifest。
+- [x] 安装失败时回滚，避免半安装状态。
+- [x] 恢复和卸载拒绝覆盖用户改动。
+- [ ] 补齐真实 Hermes 运行环境下的最小 hook 事件转发验证。
 
-## Completed ✓
-- [x] Sidecar `/events` 200 OK (fixed stale process)
-- [x] finalize_card corrected (delete thinking_content, add final_content)
-- [x] Adapter architecture (5 modules)
-- [x] Sidecar HTTP server (aiohttp)
-- [x] CardKit client (create/update/finalize)
-- [x] CardManager with per-chat locking
-- [x] Sidecar CLI
+## P1
+
+- [x] 定义 `message.started`、`thinking.delta`、`tool.updated`、`answer.delta`、`message.completed`、`message.failed` 事件语义。
+- [x] 文档明确卡片正常状态只有 `思考中` 和 `已完成`。
+- [x] 文档明确旧 adapter/sidecar/patch/installer_v2 代码不是 active runtime。
+- [ ] 将 sidecar 进程管理从占位 `status` 扩展为可启动、可停止、可探活。
+- [ ] 完成真实飞书 CardKit 联调，凭据仅使用本机配置或环境变量。
+
+## P2
+
+- [ ] 增加 sidecar 健康检查和重试指标。
+- [ ] 增加安装前 Hermes 版本展示和更友好的错误提示。
+- [ ] 增加端到端截图或录屏验证材料。
+- [ ] 编写从 legacy/dual 安装迁移到 sidecar-only 的安全迁移说明。
