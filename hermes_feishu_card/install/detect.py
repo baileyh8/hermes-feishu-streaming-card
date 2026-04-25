@@ -121,14 +121,7 @@ def _has_supported_handler_anchor(contents: str) -> tuple[bool, str]:
     except SyntaxError as exc:
         return False, f"gateway/run.py could not be parsed: {exc.__class__.__name__}"
 
-    handler = next(
-        (
-            node
-            for node in ast.walk(module)
-            if isinstance(node, ast.AsyncFunctionDef) and node.name == HANDLER_NAME
-        ),
-        None,
-    )
+    handler = _find_supported_handler(module)
     if handler is None:
         return False, f"gateway/run.py missing async anchor function: {HANDLER_NAME}"
 
@@ -136,6 +129,28 @@ def _has_supported_handler_anchor(contents: str) -> tuple[bool, str]:
         return False, 'gateway/run.py missing handler anchor: hooks.emit("agent:end", ...)'
 
     return True, "supported"
+
+
+def _find_supported_handler(module: ast.Module) -> ast.AsyncFunctionDef | None:
+    for node in module.body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == HANDLER_NAME:
+            return node
+        if isinstance(node, ast.ClassDef):
+            method = _find_direct_class_handler(node)
+            if method is not None:
+                return method
+    return None
+
+
+def _find_direct_class_handler(class_node: ast.ClassDef) -> ast.AsyncFunctionDef | None:
+    return next(
+        (
+            node
+            for node in class_node.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == HANDLER_NAME
+        ),
+        None,
+    )
 
 
 def _function_emits_agent_end(handler: ast.AsyncFunctionDef) -> bool:

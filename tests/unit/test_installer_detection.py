@@ -114,6 +114,41 @@ def test_detect_hermes_rejects_comment_or_unrelated_anchor_matches(tmp_path):
     assert "anchor" in result.reason.lower()
 
 
+def test_detect_hermes_rejects_handler_nested_inside_function(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "def outer():\n"
+            "    async def _handle_message_with_agent(message, hooks):\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return _handle_message_with_agent\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor function" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_handler_in_class_nested_inside_function(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "def outer():\n"
+            "    class Gateway:\n"
+            "        async def _handle_message_with_agent(self, message):\n"
+            "            self.hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return Gateway\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor function" in result.reason.lower()
+
+
 def test_detect_hermes_rejects_anchor_only_in_nested_async_function(tmp_path):
     _write_hermes_root(
         tmp_path,
