@@ -141,7 +141,9 @@ def _restore(hermes_root: Path) -> None:
     if backup_path.exists():
         manifest = _read_manifest(manifest_path)
         if manifest is None:
-            _restore_by_removing_owned_patch(run_py, require_change=True)
+            restored = _restore_by_removing_owned_patch(run_py, require_change=True)
+            if restored:
+                _clear_install_state(backup_path, manifest_path)
             return
 
         patched_sha256 = manifest.get("patched_sha256")
@@ -156,7 +158,9 @@ def _restore(hermes_root: Path) -> None:
     if not run_py.exists():
         return
 
-    _restore_by_removing_owned_patch(run_py, require_change=False)
+    restored = _restore_by_removing_owned_patch(run_py, require_change=False)
+    if restored:
+        _clear_install_state(backup_path, manifest_path)
 
 
 def _backup_path(run_py: Path) -> Path:
@@ -253,16 +257,19 @@ def _atomic_write_text(path: Path, contents: str) -> None:
             pass
 
 
-def _restore_by_removing_owned_patch(run_py: Path, require_change: bool) -> None:
+def _restore_by_removing_owned_patch(run_py: Path, require_change: bool) -> bool:
     if not run_py.exists():
         if require_change:
             raise ValueError("manifest missing; refusing to restore from backup")
-        return
+        return False
     current = run_py.read_text(encoding="utf-8")
     restored = remove_patch(current)
     if restored == current and require_change:
         raise ValueError("manifest missing; refusing to restore from backup")
+    if restored == current:
+        return False
     run_py.write_text(restored, encoding="utf-8")
+    return True
 
 
 if __name__ == "__main__":
