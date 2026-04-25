@@ -354,9 +354,41 @@ def test_apply_patch_handles_docstring_only_handler_without_final_newline():
     handler = ast.parse(patched).body[0]
 
     assert ast.get_docstring(handler) == "Only documentation."
-    assert "\"\"\"Only documentation.\"\"\"\n\n    # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert "\"\"\"Only documentation.\"\"\"\n    # HERMES_FEISHU_CARD_NO_FINAL_NEWLINE\n" in patched
     assert patcher.apply_patch(patched) == patched
     assert restored == content
+
+
+def test_apply_remove_preserves_docstring_blank_line_before_return():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    \"\"\"Keep this docstring.\"\"\"\n"
+        "\n"
+        "    return message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+
+    assert ast.get_docstring(ast.parse(patched).body[0]) == "Keep this docstring."
+    assert restored == content
+
+
+def test_apply_patch_rejects_module_level_one_line_handler():
+    content = "async def _handle_message_with_agent(message): pass\n"
+
+    with pytest.raises(ValueError, match="safe handler"):
+        patcher.apply_patch(content)
+
+
+def test_apply_patch_rejects_class_method_one_line_handler():
+    content = (
+        "class Gateway:\n"
+        "    async def _handle_message_with_agent(self, message): pass\n"
+    )
+
+    with pytest.raises(ValueError, match="safe handler"):
+        patcher.apply_patch(content)
 
 
 def test_remove_rejects_marker_block_with_wrong_shape():

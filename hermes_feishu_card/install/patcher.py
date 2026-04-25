@@ -5,6 +5,7 @@ PATCH_BEGIN = "# HERMES_FEISHU_CARD_PATCH_BEGIN"
 PATCH_END = "# HERMES_FEISHU_CARD_PATCH_END"
 
 _HANDLER_NAME = "_handle_message_with_agent"
+_NO_FINAL_NEWLINE = "# HERMES_FEISHU_CARD_NO_FINAL_NEWLINE"
 
 
 def apply_patch(content: str) -> str:
@@ -23,7 +24,7 @@ def apply_patch(content: str) -> str:
     insert_at, body_indent = handler_body
     hook = _render_hook_block(body_indent, newline)
     if _needs_leading_newline(lines, insert_at):
-        hook = [newline, newline] + hook
+        hook = [newline, f"{body_indent}{_NO_FINAL_NEWLINE}{newline}"] + hook
 
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
@@ -36,7 +37,7 @@ def remove_patch(content: str) -> str:
 
     lines = content.splitlines(keepends=True)
     begin_index, end_index = owned_block
-    if _hook_has_inserted_leading_newline(lines, begin_index):
+    if _has_no_final_newline_sentinel(lines, begin_index):
         return "".join(
             lines[: begin_index - 2]
             + [_strip_line_ending(lines[begin_index - 2])]
@@ -74,7 +75,7 @@ def _body_location(node, lines):
         return _body_location_after_docstring(node, lines)
 
     insert_before = node.body[0]
-    if insert_before.lineno is None:
+    if _is_unsafe_one_line_body(node, insert_before):
         return None
     insert_at = insert_before.lineno - 1
     return insert_at, _line_indent(lines, insert_at)
@@ -83,17 +84,21 @@ def _body_location(node, lines):
 def _body_location_after_docstring(node, lines):
     if len(node.body) > 1:
         insert_before = node.body[1]
-        if insert_before.lineno is None:
+        if _is_unsafe_one_line_body(node, insert_before):
             return None
         insert_at = insert_before.lineno - 1
         return insert_at, _line_indent(lines, insert_at)
 
     docstring = node.body[0]
     end_lineno = getattr(docstring, "end_lineno", docstring.lineno)
-    if end_lineno is None or docstring.lineno is None:
+    if end_lineno is None or docstring.lineno is None or docstring.lineno == node.lineno:
         return None
     insert_at = end_lineno
     return insert_at, _line_indent(lines, docstring.lineno - 1)
+
+
+def _is_unsafe_one_line_body(handler, body_node) -> bool:
+    return body_node.lineno is None or body_node.lineno == handler.lineno
 
 
 def _is_docstring_expr(node) -> bool:
@@ -184,11 +189,11 @@ def _needs_leading_newline(lines, insert_at: int) -> bool:
     return insert_at == len(lines) and bool(lines) and _line_ending(lines[-1]) == ""
 
 
-def _hook_has_inserted_leading_newline(lines, begin_index: int) -> bool:
+def _has_no_final_newline_sentinel(lines, begin_index: int) -> bool:
     if begin_index <= 1:
         return False
-    previous_line = lines[begin_index - 1]
-    return _strip_line_ending(previous_line) == "" and _line_ending(previous_line) != ""
+    sentinel_line = _strip_line_ending(lines[begin_index - 1])
+    return sentinel_line == _leading_whitespace(sentinel_line) + _NO_FINAL_NEWLINE
 
 
 def _detect_newline(content: str) -> str:
