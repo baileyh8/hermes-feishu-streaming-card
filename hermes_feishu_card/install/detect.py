@@ -187,6 +187,37 @@ class _HandlerBodyHookVisitor(ast.NodeVisitor):
             self.visit_statements(node.body)
             self.visit_statements(node.orelse)
 
+    def visit_For(self, node: ast.For) -> None:
+        self.visit_statements(node.body)
+        self.visit_statements(node.orelse)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self.visit_statements(node.body)
+        self.visit_statements(node.orelse)
+
+    def visit_While(self, node: ast.While) -> None:
+        static_value = _static_bool(node.test)
+        if static_value is True:
+            self.visit_statements(node.body)
+        elif static_value is False:
+            self.visit_statements(node.orelse)
+        else:
+            self.visit_statements(node.body)
+            self.visit_statements(node.orelse)
+
+    def visit_Try(self, node: ast.Try) -> None:
+        self.visit_statements(node.body)
+        for handler in node.handlers:
+            self.visit_statements(handler.body)
+        self.visit_statements(node.orelse)
+        self.visit_statements(node.finalbody)
+
+    def visit_With(self, node: ast.With) -> None:
+        self.visit_statements(node.body)
+
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
+        self.visit_statements(node.body)
+
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         return
 

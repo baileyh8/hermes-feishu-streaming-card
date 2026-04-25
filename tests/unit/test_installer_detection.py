@@ -224,6 +224,42 @@ def test_detect_hermes_rejects_anchor_after_return(tmp_path):
     assert "anchor" in result.reason.lower()
 
 
+def test_detect_hermes_rejects_anchor_after_return_in_for_body(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    for item in [message]:\n"
+            "        return item\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_anchor_after_return_in_try_body(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    try:\n"
+            "        return message\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    except Exception:\n"
+            "        return None\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
 def test_detect_hermes_rejects_anchor_only_in_static_false_branch(tmp_path):
     _write_hermes_root(
         tmp_path,
@@ -239,6 +275,40 @@ def test_detect_hermes_rejects_anchor_only_in_static_false_branch(tmp_path):
 
     assert result.supported is False
     assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_anchor_only_in_static_false_while(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    while False:\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return message\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_accepts_reachable_anchor_in_try_body(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    try:\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    except Exception:\n"
+            "        return None\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is True
 
 
 def test_detect_hermes_rejects_invalid_utf8_run_py(tmp_path):
