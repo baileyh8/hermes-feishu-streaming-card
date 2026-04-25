@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -211,6 +212,84 @@ def test_reinstall_refuses_changed_backup_with_manifest(tmp_path):
     assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
     assert backup_path(hermes_dir).read_text(encoding="utf-8") == changed_backup
     assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+
+
+def test_restore_refuses_patched_backup_with_manifest(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    backup_path(hermes_dir).write_text(patched, encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "backup changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == patched
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+
+
+def test_reinstall_refuses_patched_backup_with_manifest(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    backup_path(hermes_dir).write_text(patched, encoding="utf-8")
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "backup changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == patched
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+
+
+def test_restore_refuses_manifest_missing_backup_sha256(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    manifest = json.loads(manifest_path(hermes_dir).read_text(encoding="utf-8"))
+    manifest.pop("backup_sha256", None)
+    manifest_text = json.dumps(manifest, sort_keys=True) + "\n"
+    manifest_path(hermes_dir).write_text(manifest_text, encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "manifest missing backup sha256" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == backup
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == manifest_text
+
+
+def test_reinstall_refuses_manifest_missing_backup_sha256(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    manifest = json.loads(manifest_path(hermes_dir).read_text(encoding="utf-8"))
+    manifest.pop("backup_sha256", None)
+    manifest_text = json.dumps(manifest, sort_keys=True) + "\n"
+    manifest_path(hermes_dir).write_text(manifest_text, encoding="utf-8")
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "manifest missing backup sha256" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == backup
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == manifest_text
 
 
 def test_reinstall_without_manifest_refuses_user_edited_run_py(tmp_path):
@@ -434,6 +513,24 @@ def test_restore_without_manifest_refuses_user_edited_run_py(tmp_path):
     assert "run.py changed since install" in result.stderr
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
     assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_restore_without_manifest_refuses_patched_backup(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    manifest_path(hermes_dir).unlink()
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    backup_path(hermes_dir).write_text(patched, encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "backup changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == patched
     assert not manifest_path(hermes_dir).exists()
 
 

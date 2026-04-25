@@ -142,6 +142,7 @@ def _restore(hermes_root: Path) -> None:
         manifest = _read_manifest(manifest_path)
         if manifest is None:
             backup_text = backup_path.read_text(encoding="utf-8")
+            _validate_backup_contains_original(backup_text, "restore")
             patched_backup = apply_patch(backup_text)
             if not run_py.exists() or run_py.read_text(encoding="utf-8") != patched_backup:
                 raise ValueError("run.py changed since install; refusing to restore")
@@ -192,6 +193,7 @@ def _write_manifest(manifest_path: Path, run_py: Path, backup_path: Path) -> Non
         "run_py": str(run_py.relative_to(manifest_path.parent)),
         "patched_sha256": file_sha256(run_py),
         "backup": str(backup_path.relative_to(manifest_path.parent)),
+        "backup_sha256": file_sha256(backup_path),
     }
     _atomic_write_text(manifest_path, json.dumps(manifest, sort_keys=True) + "\n")
 
@@ -275,6 +277,7 @@ def _validate_complete_install_state(
 ) -> str:
     if manifest is None:
         backup_text = backup_path.read_text(encoding="utf-8")
+        _validate_backup_contains_original(backup_text, operation)
         patched_backup = apply_patch(backup_text)
         if not run_py.exists() or run_py.read_text(encoding="utf-8") != patched_backup:
             raise ValueError(f"run.py changed since install; refusing to {operation}")
@@ -286,8 +289,15 @@ def _validate_complete_install_state(
     if file_sha256(run_py) != patched_sha256:
         raise ValueError(f"run.py changed since install; refusing to {operation}")
 
+    backup_sha256 = manifest.get("backup_sha256")
+    if not isinstance(backup_sha256, str) or not backup_sha256:
+        raise ValueError("manifest missing backup sha256")
+    if file_sha256(backup_path) != backup_sha256:
+        raise ValueError(f"backup changed since install; refusing to {operation}")
+
     current = run_py.read_text(encoding="utf-8")
     backup_text = backup_path.read_text(encoding="utf-8")
+    _validate_backup_contains_original(backup_text, operation)
     try:
         patched_backup = apply_patch(backup_text)
     except ValueError as exc:
@@ -297,6 +307,11 @@ def _validate_complete_install_state(
     if patched_backup != current:
         raise ValueError(f"backup changed since install; refusing to {operation}")
     return backup_text
+
+
+def _validate_backup_contains_original(backup_text: str, operation: str) -> None:
+    if remove_patch(backup_text) != backup_text:
+        raise ValueError(f"backup changed since install; refusing to {operation}")
 
 
 def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
