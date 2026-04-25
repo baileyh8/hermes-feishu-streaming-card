@@ -127,6 +127,8 @@ def _find_owned_block(content: str):
     if begin_index is None or end_index is None or begin_index >= end_index:
         raise ValueError("corrupt patch markers")
 
+    _validate_sentinel_marker_adjacency(lines, begin_index)
+
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = _render_hook_block(indent, newline)
@@ -154,6 +156,19 @@ def _parse_content_with_markers(content: str):
         return ast.parse(content)
     except SyntaxError as exc:
         raise ValueError("corrupt patch markers") from exc
+
+
+def _validate_sentinel_marker_adjacency(lines, begin_index: int) -> None:
+    sentinel_indexes = [
+        index
+        for index, line in enumerate(lines)
+        if _strip_line_ending(line)
+        == _leading_whitespace(_strip_line_ending(line)) + _NO_FINAL_NEWLINE
+    ]
+    if not sentinel_indexes:
+        return
+    if len(sentinel_indexes) != 1 or sentinel_indexes[0] != begin_index - 1:
+        raise ValueError("corrupt patch markers")
 
 
 def _validate_no_final_newline_sentinel(lines, begin_index: int, end_index: int, tree) -> None:

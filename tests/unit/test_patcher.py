@@ -432,6 +432,27 @@ async def _handle_message_with_agent(message):
         patcher.remove_patch(content)
 
 
+def test_user_comment_between_sentinel_and_marker_is_not_owned():
+    content = f"""
+async def _handle_message_with_agent(message):
+    \"\"\"Only documentation.\"\"\"
+    # HERMES_FEISHU_CARD_NO_FINAL_NEWLINE
+    # user comment
+    {patcher.PATCH_BEGIN}
+    try:
+        pass
+    except Exception:
+        pass
+    {patcher.PATCH_END}
+"""
+
+    with pytest.raises(ValueError, match="corrupt patch markers"):
+        patcher.apply_patch(content)
+
+    with pytest.raises(ValueError, match="corrupt patch markers"):
+        patcher.remove_patch(content)
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):
