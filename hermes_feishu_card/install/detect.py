@@ -111,6 +111,7 @@ def _parse_version(version: str) -> tuple[int, int, int] | None:
     match = _VERSION_RE.match(version.strip())
     if match is None:
         return None
+    # Treat components as semantic numeric fields, not calendar month/day bounds.
     return tuple(int(part) for part in match.groups())
 
 
@@ -138,13 +139,38 @@ def _has_supported_handler_anchor(contents: str) -> tuple[bool, str]:
 
 
 def _function_emits_agent_end(handler: ast.AsyncFunctionDef) -> bool:
-    return any(
-        isinstance(node, ast.Call)
-        and _is_hooks_emit(node.func)
+    visitor = _HandlerBodyHookVisitor()
+    for statement in handler.body:
+        visitor.visit(statement)
+    return visitor.found
+
+
+class _HandlerBodyHookVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.found = False
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_agent_end_emit_call(node):
+            self.found = True
+            return
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        return
+
+
+def _is_agent_end_emit_call(node: ast.Call) -> bool:
+    return (
+        _is_hooks_emit(node.func)
         and bool(node.args)
         and isinstance(node.args[0], ast.Constant)
         and node.args[0].value == "agent:end"
-        for node in ast.walk(handler)
     )
 
 

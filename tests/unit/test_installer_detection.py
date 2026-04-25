@@ -80,6 +80,14 @@ def test_detect_hermes_uses_numeric_version_comparison(tmp_path):
     assert result.supported is True
 
 
+def test_detect_hermes_version_components_are_semantic_not_calendar_bounds(tmp_path):
+    _write_hermes_root(tmp_path, version="v2026.99.99")
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is True
+
+
 def test_detect_hermes_rejects_unknown_or_bad_version(tmp_path):
     _write_hermes_root(tmp_path, version=None)
 
@@ -97,6 +105,41 @@ def test_detect_hermes_rejects_comment_or_unrelated_anchor_matches(tmp_path):
             "#     hooks.emit(\"agent:end\", {})\n"
             "async def helper(hooks):\n"
             "    hooks.emit(\"agent:end\", {})\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_anchor_only_in_nested_async_function(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    async def nested():\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return nested\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_anchor_only_in_nested_class_method(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    class Nested:\n"
+            "        def emit_later(self):\n"
+            "            hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return Nested\n"
         ),
     )
 
