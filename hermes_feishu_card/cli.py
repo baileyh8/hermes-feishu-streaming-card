@@ -151,6 +151,7 @@ def _restore(hermes_root: Path) -> None:
             raise ValueError("run.py changed since install; refusing to restore")
 
         run_py.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
+        _clear_install_state(backup_path, manifest_path)
         return
     if not run_py.exists():
         return
@@ -164,6 +165,11 @@ def _backup_path(run_py: Path) -> Path:
 
 def _manifest_path(hermes_root: Path) -> Path:
     return hermes_root / MANIFEST_NAME
+
+
+def _clear_install_state(backup_path: Path, manifest_path: Path) -> None:
+    backup_path.unlink(missing_ok=True)
+    manifest_path.unlink(missing_ok=True)
 
 
 def _write_manifest(manifest_path: Path, run_py: Path, backup_path: Path) -> None:

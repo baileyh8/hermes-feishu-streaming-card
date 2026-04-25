@@ -70,6 +70,8 @@ def test_restore_restores_backup_to_original_run_py(tmp_path):
     restored = run_py(hermes_dir).read_text(encoding="utf-8")
     assert "HERMES_FEISHU_CARD_PATCH_BEGIN" not in restored
     assert restored == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
 
 
 def test_uninstall_restores_installed_fixture(tmp_path):
@@ -84,6 +86,8 @@ def test_uninstall_restores_installed_fixture(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "uninstall ok" in result.stdout.lower()
     assert run_py(hermes_dir).read_text(encoding="utf-8") == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
 
 
 def test_install_unsupported_hermes_dir_returns_nonzero(tmp_path):
@@ -135,6 +139,8 @@ def test_restore_refuses_to_overwrite_user_edited_run_py(tmp_path):
     assert result.returncode != 0
     assert "run.py changed since install" in result.stderr
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert backup_path(hermes_dir).exists()
+    assert manifest_path(hermes_dir).exists()
 
 
 def test_reinstall_refuses_to_bless_user_edited_run_py(tmp_path):
@@ -194,6 +200,39 @@ def test_repeated_install_is_idempotent(tmp_path):
     assert patched.count("HERMES_FEISHU_CARD_PATCH_BEGIN") == 1
     backup = backup_path(hermes_dir).read_text(encoding="utf-8")
     assert backup == original
+
+
+def test_restore_after_successful_restore_is_idempotent(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    first_restore = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+    second_restore = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert install_result.returncode == 0, install_result.stderr
+    assert first_restore.returncode == 0, first_restore.stderr
+    assert second_restore.returncode == 0, second_restore.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_install_after_successful_restore_reinstalls_cleanly(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    first_install = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    restore = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+    second_install = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert first_install.returncode == 0, first_install.stderr
+    assert restore.returncode == 0, restore.stderr
+    assert second_install.returncode == 0, second_install.stderr
+    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
+        encoding="utf-8"
+    )
+    assert backup_path(hermes_dir).exists()
+    assert manifest_path(hermes_dir).exists()
 
 
 def test_restore_uninstalled_fixture_is_idempotent(tmp_path):
