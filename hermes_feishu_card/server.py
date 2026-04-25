@@ -58,12 +58,27 @@ async def _events(request: web.Request) -> web.Response:
     if session is None:
         return web.json_response({"ok": True, "applied": False})
 
+    feishu_message_id = feishu_message_ids.get(event.message_id)
+    if _would_apply(session, event) and feishu_message_id is None:
+        return web.json_response(
+            {"ok": False, "error": "feishu_message_id missing"},
+            status=409,
+        )
+
     applied = session.apply(event)
-    if applied:
-        feishu_message_id = feishu_message_ids.get(event.message_id)
-        if feishu_message_id is not None:
-            await request.app[FEISHU_CLIENT_KEY].update_card_message(
-                feishu_message_id,
-                render_card(session),
-            )
+    if applied and feishu_message_id is not None:
+        await request.app[FEISHU_CLIENT_KEY].update_card_message(
+            feishu_message_id,
+            render_card(session),
+        )
     return web.json_response({"ok": True, "applied": applied})
+
+
+def _would_apply(session: CardSession, event: SidecarEvent) -> bool:
+    return (
+        event.conversation_id == session.conversation_id
+        and event.message_id == session.message_id
+        and event.chat_id == session.chat_id
+        and event.sequence > session.last_sequence
+        and session.status not in {"completed", "failed"}
+    )

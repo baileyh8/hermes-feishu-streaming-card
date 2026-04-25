@@ -1,7 +1,7 @@
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from hermes_feishu_card.server import create_app
+from hermes_feishu_card.server import FEISHU_MESSAGE_IDS_KEY, create_app
 
 
 class FakeFeishuClient:
@@ -98,4 +98,99 @@ async def test_invalid_event_returns_400_json(client):
     assert body["ok"] is False
     assert "error" in body
     assert feishu_client.sent == []
+    assert feishu_client.updated == []
+
+
+async def test_malformed_json_returns_400_json(client):
+    test_client, feishu_client = client
+
+    response = await test_client.post(
+        "/events",
+        data="{bad json",
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status == 400
+    body = await response.json()
+    assert body["ok"] is False
+    assert "error" in body
+    assert feishu_client.sent == []
+    assert feishu_client.updated == []
+
+
+async def test_non_object_json_payload_returns_400_json(client):
+    test_client, feishu_client = client
+
+    response = await test_client.post("/events", json=["not", "an", "object"])
+
+    assert response.status == 400
+    body = await response.json()
+    assert body["ok"] is False
+    assert "error" in body
+    assert feishu_client.sent == []
+    assert feishu_client.updated == []
+
+
+async def test_event_before_started_is_not_applied(client):
+    test_client, feishu_client = client
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload("thinking.delta", 1, {"text": "提前到达"}),
+    )
+
+    assert response.status == 200
+    assert await response.json() == {"ok": True, "applied": False}
+    assert feishu_client.sent == []
+    assert feishu_client.updated == []
+
+
+async def test_duplicate_started_does_not_send_again(client):
+    test_client, feishu_client = client
+
+    first = await test_client.post("/events", json=event_payload("message.started", 0))
+    duplicate = await test_client.post("/events", json=event_payload("message.started", 0))
+
+    assert first.status == 200
+    assert await first.json() == {"ok": True, "applied": True}
+    assert duplicate.status == 200
+    assert await duplicate.json() == {"ok": True, "applied": False}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.updated == []
+
+
+async def test_delta_after_completed_does_not_update_again(client):
+    test_client, feishu_client = client
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+    )
+    updates_after_completed = len(feishu_client.updated)
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload("thinking.delta", 2, {"text": "迟到增量"}),
+    )
+
+    assert response.status == 200
+    assert (await response.json())["applied"] is False
+    assert len(feishu_client.updated) == updates_after_completed
+
+
+async def test_missing_feishu_message_id_returns_conflict_without_update(client):
+    test_client, feishu_client = client
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    test_client.app[FEISHU_MESSAGE_IDS_KEY].pop("hermes-message-1")
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload("thinking.delta", 1, {"text": "需要更新"}),
+    )
+
+    assert response.status == 409
+    body = await response.json()
+    assert body == {"ok": False, "error": "feishu_message_id missing"}
     assert feishu_client.updated == []
