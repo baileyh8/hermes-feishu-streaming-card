@@ -391,6 +391,26 @@ def test_apply_patch_rejects_class_method_one_line_handler():
         patcher.apply_patch(content)
 
 
+def test_user_sentinel_before_valid_looking_hook_is_not_owned():
+    content = f"""
+async def _handle_message_with_agent(message):
+    # HERMES_FEISHU_CARD_NO_FINAL_NEWLINE
+    {patcher.PATCH_BEGIN}
+    try:
+        pass
+    except Exception:
+        pass
+    {patcher.PATCH_END}
+    return message
+"""
+
+    with pytest.raises(ValueError, match="corrupt patch markers"):
+        patcher.apply_patch(content)
+
+    with pytest.raises(ValueError, match="corrupt patch markers"):
+        patcher.remove_patch(content)
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):

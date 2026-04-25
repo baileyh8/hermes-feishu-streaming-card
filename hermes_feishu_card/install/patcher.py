@@ -136,6 +136,9 @@ def _find_owned_block(content: str):
         raise ValueError("corrupt patch markers")
 
     tree = _parse_content_with_markers(content)
+    if _has_no_final_newline_sentinel(lines, begin_index):
+        _validate_no_final_newline_sentinel(lines, end_index, tree)
+
     handler_body = _find_handler_body_location(tree, lines)
     if handler_body is None:
         raise ValueError("corrupt patch markers")
@@ -151,6 +154,34 @@ def _parse_content_with_markers(content: str):
         return ast.parse(content)
     except SyntaxError as exc:
         raise ValueError("corrupt patch markers") from exc
+
+
+def _validate_no_final_newline_sentinel(lines, end_index: int, tree) -> None:
+    if end_index != len(lines) - 1:
+        raise ValueError("corrupt patch markers")
+
+    handler = _find_handler_node(tree)
+    if (
+        handler is None
+        or len(handler.body) != 2
+        or not _is_docstring_expr(handler.body[0])
+        or not isinstance(handler.body[1], ast.Try)
+    ):
+        raise ValueError("corrupt patch markers")
+
+
+def _find_handler_node(tree):
+    for node in tree.body:
+        if _is_handler(node):
+            return node
+
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if _is_handler(child):
+                    return child
+
+    return None
 
 
 def _exact_marker_line_index(lines, marker: str):
