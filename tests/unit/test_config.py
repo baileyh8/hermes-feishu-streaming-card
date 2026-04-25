@@ -3,6 +3,20 @@ import pytest
 from hermes_feishu_card.config import load_config
 
 
+CONFIG_ENV_VARS = (
+    "HERMES_FEISHU_CARD_HOST",
+    "HERMES_FEISHU_CARD_PORT",
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
+)
+
+
+@pytest.fixture(autouse=True)
+def clear_config_env(monkeypatch):
+    for name in CONFIG_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_load_config_missing_file_returns_defaults(tmp_path):
     config = load_config(tmp_path / "missing.yaml")
 

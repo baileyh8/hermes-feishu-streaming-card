@@ -1,7 +1,24 @@
+import os
 import subprocess
 import sys
 
+import pytest
+
 from hermes_feishu_card.cli import main
+
+
+CONFIG_ENV_VARS = {
+    "HERMES_FEISHU_CARD_HOST",
+    "HERMES_FEISHU_CARD_PORT",
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
+}
+
+
+@pytest.fixture(autouse=True)
+def clear_config_env(monkeypatch):
+    for name in CONFIG_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_doctor_loads_config_and_prints_sidecar_address(tmp_path, capsys):
@@ -37,11 +54,13 @@ def test_doctor_bad_config_returns_nonzero(tmp_path, capsys):
 
 
 def run_cli(*args):
+    env = {key: value for key, value in os.environ.items() if key not in CONFIG_ENV_VARS}
     return subprocess.run(
         [sys.executable, "-m", "hermes_feishu_card.cli", *args],
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -54,6 +73,18 @@ def test_module_doctor_loads_config_and_prints_sidecar_address(tmp_path):
     assert result.returncode == 0
     assert "doctor" in result.stdout.lower()
     assert "0.0.0.0:9004" in result.stdout
+
+
+def test_module_doctor_ignores_parent_config_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_FEISHU_CARD_PORT", "9005")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9006\n", encoding="utf-8")
+
+    result = run_cli("doctor", "--config", str(config_path), "--skip-hermes")
+
+    assert result.returncode == 0
+    assert "127.0.0.1:9006" in result.stdout
+    assert "9005" not in result.stdout
 
 
 def test_module_status_reports_success():
