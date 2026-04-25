@@ -34,6 +34,14 @@ def run_py(hermes_dir):
     return hermes_dir / "gateway" / "run.py"
 
 
+def backup_path(hermes_dir):
+    return hermes_dir / "gateway" / BACKUP_NAME
+
+
+def manifest_path(hermes_dir):
+    return hermes_dir / MANIFEST_NAME
+
+
 def test_install_patches_run_py_and_writes_backup_and_manifest(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
 
@@ -44,8 +52,8 @@ def test_install_patches_run_py_and_writes_backup_and_manifest(tmp_path):
     assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
         encoding="utf-8"
     )
-    assert (hermes_dir / "gateway" / BACKUP_NAME).exists()
-    assert (hermes_dir / MANIFEST_NAME).exists()
+    assert backup_path(hermes_dir).exists()
+    assert manifest_path(hermes_dir).exists()
 
 
 def test_restore_restores_backup_to_original_run_py(tmp_path):
@@ -86,11 +94,13 @@ def test_install_unsupported_hermes_dir_returns_nonzero(tmp_path):
 
     assert result.returncode != 0
     assert "gateway/run.py missing" in result.stderr
-    assert not (hermes_dir / "gateway" / BACKUP_NAME).exists()
-    assert not (hermes_dir / MANIFEST_NAME).exists()
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
 
 
-def test_install_failure_restores_run_py_and_removes_manifest(tmp_path, monkeypatch):
+def test_install_failure_restores_run_py_and_removes_manifest_and_backup(
+    tmp_path, monkeypatch
+):
     hermes_dir = copy_hermes(tmp_path)
     original = run_py(hermes_dir).read_text(encoding="utf-8")
 
@@ -105,7 +115,8 @@ def test_install_failure_restores_run_py_and_removes_manifest(tmp_path, monkeypa
     current = run_py(hermes_dir).read_text(encoding="utf-8")
     assert current == original
     assert "HERMES_FEISHU_CARD_PATCH_BEGIN" not in current
-    assert not (hermes_dir / MANIFEST_NAME).exists()
+    assert not manifest_path(hermes_dir).exists()
+    assert not backup_path(hermes_dir).exists()
 
 
 def test_restore_refuses_to_overwrite_user_edited_run_py(tmp_path):
@@ -126,6 +137,50 @@ def test_restore_refuses_to_overwrite_user_edited_run_py(tmp_path):
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
 
 
+def test_reinstall_refuses_to_bless_user_edited_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    original_backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+    edited = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    restore = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert reinstall.returncode != 0
+    assert "run.py changed since install" in reinstall.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
+    assert restore.returncode != 0
+    assert "run.py changed since install" in restore.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+
+
+def test_existing_manifest_survives_manifest_rewrite_failure(tmp_path, monkeypatch):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    old_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+
+    def fail_atomic_write(*_args):
+        raise OSError("atomic manifest write failed")
+
+    monkeypatch.setattr(cli, "_atomic_write_text", fail_atomic_write, raising=False)
+
+    result = cli._run_install(Namespace(hermes_dir=str(hermes_dir), yes=True))
+
+    assert result != 0
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == old_manifest
+
+
 def test_repeated_install_is_idempotent(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     original = run_py(hermes_dir).read_text(encoding="utf-8")
@@ -137,7 +192,7 @@ def test_repeated_install_is_idempotent(tmp_path):
     assert second.returncode == 0, second.stderr
     patched = run_py(hermes_dir).read_text(encoding="utf-8")
     assert patched.count("HERMES_FEISHU_CARD_PATCH_BEGIN") == 1
-    backup = (hermes_dir / "gateway" / BACKUP_NAME).read_text(encoding="utf-8")
+    backup = backup_path(hermes_dir).read_text(encoding="utf-8")
     assert backup == original
 
 

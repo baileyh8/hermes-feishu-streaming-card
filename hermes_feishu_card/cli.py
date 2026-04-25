@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from uuid import uuid4
 from pathlib import Path
 
 from hermes_feishu_card.config import load_config
@@ -84,17 +85,26 @@ def _run_install(args: argparse.Namespace) -> int:
     manifest_path = _manifest_path(detection.root)
     original: str | None = None
     manifest_existed = manifest_path.exists()
+    backup_existed = backup_path.exists()
 
     try:
         original = run_py.read_text(encoding="utf-8")
+        _validate_existing_install_state(run_py, backup_path, manifest_path)
         patched = apply_patch(original)
-        if not backup_path.exists():
+        if not backup_existed:
             backup_path.write_text(original, encoding="utf-8")
         if patched != original:
             run_py.write_text(patched, encoding="utf-8")
         _write_manifest(manifest_path, run_py, backup_path)
     except (OSError, UnicodeError, ValueError) as exc:
-        _rollback_install(run_py, original, manifest_path, manifest_existed)
+        _rollback_install(
+            run_py,
+            original,
+            backup_path,
+            backup_existed,
+            manifest_path,
+            manifest_existed,
+        )
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -162,17 +172,27 @@ def _write_manifest(manifest_path: Path, run_py: Path, backup_path: Path) -> Non
         "patched_sha256": file_sha256(run_py),
         "backup": str(backup_path.relative_to(manifest_path.parent)),
     }
-    manifest_path.write_text(
-        json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    _atomic_write_text(manifest_path, json.dumps(manifest, sort_keys=True) + "\n")
 
 
 def _rollback_install(
-    run_py: Path, original: str | None, manifest_path: Path, manifest_existed: bool
+    run_py: Path,
+    original: str | None,
+    backup_path: Path,
+    backup_existed: bool,
+    manifest_path: Path,
+    manifest_existed: bool,
 ) -> None:
     if original is not None:
         try:
             run_py.write_text(original, encoding="utf-8")
+        except OSError:
+            pass
+    if not backup_existed:
+        try:
+            backup_path.unlink()
+        except FileNotFoundError:
+            pass
         except OSError:
             pass
     if not manifest_existed:
@@ -182,6 +202,23 @@ def _rollback_install(
             pass
         except OSError:
             pass
+
+
+def _validate_existing_install_state(
+    run_py: Path, backup_path: Path, manifest_path: Path
+) -> None:
+    if not backup_path.exists() or not manifest_path.exists():
+        return
+
+    manifest = _read_manifest(manifest_path)
+    if manifest is None:
+        return
+
+    patched_sha256 = manifest.get("patched_sha256")
+    if not isinstance(patched_sha256, str) or not patched_sha256:
+        raise ValueError("manifest missing patched run.py sha256")
+    if file_sha256(run_py) != patched_sha256:
+        raise ValueError("run.py changed since install; refusing to install")
 
 
 def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
@@ -194,6 +231,20 @@ def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
     if not isinstance(manifest, dict):
         raise ValueError("manifest could not be parsed")
     return manifest
+
+
+def _atomic_write_text(path: Path, contents: str) -> None:
+    temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    try:
+        temp_path.write_text(contents, encoding="utf-8")
+        temp_path.replace(path)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
 
 def _restore_by_removing_owned_patch(run_py: Path, require_change: bool) -> None:
