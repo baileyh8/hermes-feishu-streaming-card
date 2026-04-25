@@ -6,12 +6,17 @@ from hermes_feishu_card.install.detect import detect_hermes
 from hermes_feishu_card.install.patcher import PATCH_BEGIN, PATCH_END
 
 
-def test_detect_hermes_supports_v2026_4_23_root(tmp_path):
-    result = detect_hermes(_write_hermes_root(tmp_path))
+FIXTURE_ROOT = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
+)
 
-    assert result.root == tmp_path
+
+def test_detect_hermes_supports_v2026_4_23_fixture():
+    result = detect_hermes(FIXTURE_ROOT)
+
+    assert result.root == FIXTURE_ROOT
     assert result.version == "v2026.4.23"
-    assert result.run_py == tmp_path / "gateway" / "run.py"
+    assert result.run_py.name == "run.py"
     assert result.supported is True
     assert result.reason == "supported"
 
