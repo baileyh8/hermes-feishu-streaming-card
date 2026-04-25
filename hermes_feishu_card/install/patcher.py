@@ -1,3 +1,6 @@
+import ast
+
+
 PATCH_BEGIN = "# HERMES_FEISHU_CARD_PATCH_BEGIN"
 PATCH_END = "# HERMES_FEISHU_CARD_PATCH_END"
 
@@ -5,105 +8,140 @@ _HANDLER_NAME = "_handle_message_with_agent"
 
 
 def apply_patch(content: str) -> str:
-    """Insert the Feishu card hook block into a Hermes message handler."""
-    has_begin = PATCH_BEGIN in content
-    has_end = PATCH_END in content
-    if has_begin and has_end:
+    """Insert the Feishu card hook block into a safe Hermes message handler."""
+    owned_block = _find_owned_block(content)
+    if owned_block is not None:
         return content
-    if has_begin or has_end:
-        raise ValueError("corrupt patch markers")
 
-    lines = content.splitlines(keepends=True)
-    def_line_index = _find_handler_line(lines)
-    if def_line_index is None:
+    tree = _parse_content(content)
+    handler_lineno = _find_handler_lineno(tree)
+    if handler_lineno is None:
         raise ValueError("could not find safe handler")
 
-    def_indent = _leading_spaces(lines[def_line_index])
-    body_indent = def_indent + " " * 4
-    insert_at = def_line_index + 1
-    hook = _render_hook_block(body_indent)
+    newline = _detect_newline(content)
+    lines = content.splitlines(keepends=True)
+    def_line = lines[handler_lineno - 1]
+    body_indent = _leading_spaces(def_line) + " " * 4
+    insert_at = handler_lineno
+    hook = _render_hook_block(body_indent, newline)
 
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
 
 def remove_patch(content: str) -> str:
-    """Remove the Feishu card hook block from patched Hermes content."""
-    lines = content.splitlines(keepends=True)
-    begin_indexes = [index for index, line in enumerate(lines) if PATCH_BEGIN in line]
-    end_indexes = [index for index, line in enumerate(lines) if PATCH_END in line]
-
-    if not begin_indexes and not end_indexes:
+    """Remove the owned Feishu card hook block from patched Hermes content."""
+    owned_block = _find_owned_block(content)
+    if owned_block is None:
         return content
-    if len(begin_indexes) != 1 or len(end_indexes) != 1:
-        raise ValueError("corrupt patch markers")
 
-    begin_index = begin_indexes[0]
-    end_index = end_indexes[0]
-    if begin_index >= end_index:
-        raise ValueError("corrupt patch markers")
-
+    lines = content.splitlines(keepends=True)
+    begin_index, end_index = owned_block
     return "".join(lines[:begin_index] + lines[end_index + 1 :])
 
 
-def _find_handler_line(lines):
-    for index, line in enumerate(lines):
-        if _is_module_level_handler(line):
-            return index
+def _parse_content(content: str):
+    try:
+        return ast.parse(content)
+    except SyntaxError as exc:
+        raise ValueError("could not find safe handler") from exc
 
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        if _is_module_level_class(line):
-            class_indent_len = len(_leading_spaces(line))
-            method_indent = " " * (class_indent_len + 4)
-            index += 1
-            while index < len(lines):
-                candidate = lines[index]
-                if _ends_module_level_class(candidate, class_indent_len):
-                    break
-                if _is_handler_def(candidate, method_indent):
-                    return index
-                index += 1
-            continue
-        index += 1
+
+def _find_handler_lineno(tree):
+    for node in tree.body:
+        if _is_handler(node):
+            return node.lineno
+
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if _is_handler(child):
+                    return child.lineno
+
     return None
 
 
-def _render_hook_block(indent: str):
+def _is_handler(node) -> bool:
+    return isinstance(node, ast.AsyncFunctionDef) and node.name == _HANDLER_NAME
+
+
+def _find_owned_block(content: str):
+    begin_count = content.count(PATCH_BEGIN)
+    end_count = content.count(PATCH_END)
+    if begin_count == 0 and end_count == 0:
+        return None
+    if begin_count != 1 or end_count != 1:
+        raise ValueError("corrupt patch markers")
+
+    lines = content.splitlines(keepends=True)
+    begin_index = _exact_marker_line_index(lines, PATCH_BEGIN)
+    end_index = _exact_marker_line_index(lines, PATCH_END)
+    if begin_index is None or end_index is None or begin_index >= end_index:
+        raise ValueError("corrupt patch markers")
+
+    indent = _leading_spaces(_strip_line_ending(lines[begin_index]))
+    newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+    expected = _render_hook_block(indent, newline)
+    actual = lines[begin_index : end_index + 1]
+
+    if actual != expected:
+        raise ValueError("corrupt patch markers")
+
+    tree = _parse_content_with_markers(content)
+    handler_lineno = _find_handler_lineno(tree)
+    if handler_lineno is None or begin_index != handler_lineno:
+        raise ValueError("corrupt patch markers")
+    return begin_index, end_index
+
+
+def _parse_content_with_markers(content: str):
+    try:
+        return ast.parse(content)
+    except SyntaxError as exc:
+        raise ValueError("corrupt patch markers") from exc
+
+
+def _exact_marker_line_index(lines, marker: str):
+    for index, line in enumerate(lines):
+        body = _strip_line_ending(line)
+        if body == _leading_spaces(body) + marker:
+            return index
+    return None
+
+
+def _render_hook_block(indent: str, newline: str):
     inner_indent = indent + " " * 4
     return [
-        f"{indent}{PATCH_BEGIN}\n",
-        f"{indent}try:\n",
-        f"{inner_indent}pass\n",
-        f"{indent}except Exception:\n",
-        f"{inner_indent}pass\n",
-        f"{indent}{PATCH_END}\n",
+        f"{indent}{PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner_indent}pass{newline}",
+        f"{indent}except Exception:{newline}",
+        f"{inner_indent}pass{newline}",
+        f"{indent}{PATCH_END}{newline}",
     ]
 
 
-def _is_module_level_handler(line: str) -> bool:
-    return _is_handler_def(line, "")
+def _detect_newline(content: str) -> str:
+    crlf_index = content.find("\r\n")
+    lf_index = content.find("\n")
+    if crlf_index != -1 and crlf_index == lf_index - 1:
+        return "\r\n"
+    return "\n"
 
 
-def _is_module_level_class(line: str) -> bool:
-    stripped = line.lstrip(" ")
-    return stripped.startswith("class ") and _leading_spaces(line) == ""
+def _line_ending(line: str) -> str:
+    if line.endswith("\r\n"):
+        return "\r\n"
+    if line.endswith("\n"):
+        return "\n"
+    return ""
 
 
-def _ends_module_level_class(line: str, class_indent_len: int) -> bool:
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
-        return False
-    return len(_leading_spaces(line)) <= class_indent_len
-
-
-def _is_handler_def(line: str, indent: str) -> bool:
-    stripped = line.lstrip(" ")
-    return (
-        line.startswith(indent)
-        and not line.startswith(indent + " ")
-        and stripped.startswith(f"async def {_HANDLER_NAME}(")
-    )
+def _strip_line_ending(line: str) -> str:
+    if line.endswith("\r\n"):
+        return line[:-2]
+    if line.endswith("\n"):
+        return line[:-1]
+    return line
 
 
 def _leading_spaces(line: str) -> str:
