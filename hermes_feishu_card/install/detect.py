@@ -179,6 +179,9 @@ class _HandlerBodyHookVisitor(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         return
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
 
 def _is_agent_end_emit_call(node: ast.Call) -> bool:
     return (

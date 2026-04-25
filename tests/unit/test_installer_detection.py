@@ -184,6 +184,22 @@ def test_detect_hermes_rejects_anchor_only_in_nested_class_method(tmp_path):
     assert "anchor" in result.reason.lower()
 
 
+def test_detect_hermes_rejects_anchor_only_in_lambda(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    emit_later = lambda: hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return emit_later\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
 def test_detect_hermes_rejects_invalid_utf8_run_py(tmp_path):
     gateway = tmp_path / "gateway"
     gateway.mkdir()
