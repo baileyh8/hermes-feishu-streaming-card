@@ -16,7 +16,9 @@ def main(argv: list[str] | None = None) -> int:
         return _run_status()
 
     parser.print_help()
-    return 0
+    if argv == []:
+        return 0
+    return 2
 
 
 def _build_parser() -> argparse.ArgumentParser:

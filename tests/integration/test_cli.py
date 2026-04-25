@@ -102,6 +102,14 @@ def test_module_doctor_requires_config_argument():
     assert "usage" in result.stderr.lower() or "error" in result.stderr.lower()
 
 
+def test_module_requires_command_argument():
+    result = run_cli()
+
+    combined_output = f"{result.stdout}\n{result.stderr}".lower()
+    assert result.returncode != 0
+    assert "usage" in combined_output or "error" in combined_output
+
+
 def test_module_doctor_malformed_known_section_returns_nonzero_without_traceback(tmp_path):
     config_path = tmp_path / "bad.yaml"
     config_path.write_text("server: 1\n", encoding="utf-8")
