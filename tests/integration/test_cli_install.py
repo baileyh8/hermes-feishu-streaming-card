@@ -269,6 +269,19 @@ def test_restore_without_manifest_removes_patch_and_stale_backup(tmp_path):
     assert not manifest_path(hermes_dir).exists()
 
 
+def test_restore_clean_run_py_removes_orphan_manifest(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+    manifest_path(hermes_dir).write_text('{"orphan": true}\n', encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
 def test_restore_uninstalled_fixture_is_idempotent(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     original = run_py(hermes_dir).read_text(encoding="utf-8")

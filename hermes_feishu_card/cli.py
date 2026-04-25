@@ -159,7 +159,7 @@ def _restore(hermes_root: Path) -> None:
         return
 
     restored = _restore_by_removing_owned_patch(run_py, require_change=False)
-    if restored:
+    if restored or backup_path.exists() or manifest_path.exists():
         _clear_install_state(backup_path, manifest_path)
 
 
