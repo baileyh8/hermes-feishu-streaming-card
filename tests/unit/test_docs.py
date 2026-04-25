@@ -15,6 +15,20 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "v2026.4.23" in readme
 
 
+def test_mainline_docs_mark_legacy_dual_as_not_active_runtime():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("TODO.md"),
+            read_doc("docs/architecture.md"),
+        ]
+    ).lower()
+
+    assert "legacy" in docs
+    assert "dual" in docs
+    assert "not active runtime" in docs or "不是 active runtime" in docs
+
+
 def test_event_protocol_documents_card_status_labels():
     event_protocol = read_doc("docs/event-protocol.md")
 

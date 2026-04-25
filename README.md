@@ -1,13 +1,16 @@
 # Hermes 飞书流式卡片 sidecar-only 插件
 
-本项目为 Hermes Agent 提供飞书/Lark 流式卡片能力。当前主线是 **sidecar-only**：Hermes 只安装一个最小事件转发 hook，流式卡片渲染、会话状态和飞书 CardKit 调用都运行在独立的 `hermes_feishu_card/` sidecar 中。
+本项目目标是为 Hermes Agent 提供飞书/Lark 流式卡片能力。当前主线是 **sidecar-only**：Hermes 侧只安装最小 hook，流式卡片渲染、会话状态和飞书 CardKit 边界都放在独立的 `hermes_feishu_card/` sidecar 中。
+
+第一阶段已经完成安装/恢复闭环、事件协议、sidecar HTTP 接口、渲染和会话状态骨架。当前 patcher 写入的 hook block 仍是安全占位；真实 Hermes 运行时事件转发验证和真实飞书 CardKit 创建/更新联调还在 TODO 后续阶段。
 
 旧目录和脚本仍保留用于追溯历史实现，但它们不是 active runtime。`adapter/`、`sidecar/`、`patch/`、`installer.py`、`installer_sidecar.py`、`installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等 legacy/dual/patch 代码不属于新主线；新开发、测试和安装入口以 `hermes_feishu_card/` 为准。
 
 ## 支持范围
 
-- 默认支持 Hermes Agent `v2026.4.23` / `v0.11.0` 及以上。
-- 安装器会在写入前检查 Hermes 版本、`gateway/run.py` 结构和可插入位置。
+- 默认支持 Hermes Agent `v2026.4.23` 及以上。
+- 安装器实际以 Hermes 目录中的 `VERSION=v2026.4.23+` 和 `gateway/run.py` 代码结构检测为准。
+- `v0.11.0` 是项目规划中对应的 Hermes 名称；当前检测实现不按 `v0.11.0` 字符串判断支持范围。
 - 检查失败时安装器 fail-closed，不写入 Hermes 文件，不留下半安装状态。
 - sidecar 不可用时，Hermes 应继续走原生文本回复降级路径，避免影响 Agent 主流程。
 

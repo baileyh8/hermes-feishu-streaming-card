@@ -22,7 +22,7 @@ python3 -m pytest tests/integration -q
 python3 -m pytest tests/unit/test_docs.py -q
 ```
 
-文档测试用于防止主线说明回退到旧 adapter/dual/installer_v2 叙述，并确保事件协议持续声明卡片状态。
+文档测试只做低脆弱度守卫：确认 README 保留 sidecar-only 和 `v2026.4.23` 支持范围说明，确认主线文档仍明确 legacy/dual 代码不是 active runtime，并确保事件协议持续声明卡片状态。它不替代人工文档 review。
 
 ## Fixture 安装恢复测试
 
