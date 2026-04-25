@@ -159,6 +159,27 @@ async def test_duplicate_started_does_not_send_again(client):
     assert feishu_client.updated == []
 
 
+async def test_replayed_started_with_higher_sequence_does_not_block_later_delta(client):
+    test_client, feishu_client = client
+
+    first = await test_client.post("/events", json=event_payload("message.started", 0))
+    replayed = await test_client.post("/events", json=event_payload("message.started", 5))
+    thinking = await test_client.post(
+        "/events",
+        json=event_payload("thinking.delta", 1, {"text": "后续增量"}),
+    )
+
+    assert first.status == 200
+    assert await first.json() == {"ok": True, "applied": True}
+    assert replayed.status == 200
+    assert await replayed.json() == {"ok": True, "applied": False}
+    assert thinking.status == 200
+    assert await thinking.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert len(feishu_client.updated) == 1
+    assert "后续增量" in str(feishu_client.updated[0][1])
+
+
 async def test_delta_after_completed_does_not_update_again(client):
     test_client, feishu_client = client
 

@@ -40,13 +40,14 @@ async def _events(request: web.Request) -> web.Response:
     session = sessions.get(event.message_id)
 
     if event.event == "message.started":
-        if session is None:
-            session = CardSession(
-                conversation_id=event.conversation_id,
-                message_id=event.message_id,
-                chat_id=event.chat_id,
-            )
-            sessions[event.message_id] = session
+        if session is not None:
+            return web.json_response({"ok": True, "applied": False})
+        session = CardSession(
+            conversation_id=event.conversation_id,
+            message_id=event.message_id,
+            chat_id=event.chat_id,
+        )
+        sessions[event.message_id] = session
         applied = session.apply(event)
         if applied and event.message_id not in feishu_message_ids:
             feishu_message_ids[event.message_id] = await request.app[FEISHU_CLIENT_KEY].send_card(
