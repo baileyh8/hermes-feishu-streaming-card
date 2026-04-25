@@ -92,9 +92,9 @@ def _run_install(args: argparse.Namespace) -> int:
         _validate_existing_install_state(run_py, backup_path, manifest_path)
         patched = apply_patch(original)
         if not backup_existed:
-            backup_path.write_text(original, encoding="utf-8")
+            _atomic_write_text(backup_path, original)
         if patched != original:
-            run_py.write_text(patched, encoding="utf-8")
+            _atomic_write_text(run_py, patched)
         _write_manifest(manifest_path, run_py, backup_path)
     except (OSError, UnicodeError, ValueError) as exc:
         _rollback_install(
@@ -141,9 +141,13 @@ def _restore(hermes_root: Path) -> None:
     if backup_path.exists():
         manifest = _read_manifest(manifest_path)
         if manifest is None:
-            restored = _restore_by_removing_owned_patch(run_py, require_change=True)
-            if restored:
-                _clear_install_state(backup_path, manifest_path)
+            backup_text = backup_path.read_text(encoding="utf-8")
+            patched_backup = apply_patch(backup_text)
+            if not run_py.exists() or run_py.read_text(encoding="utf-8") != patched_backup:
+                raise ValueError("run.py changed since install; refusing to restore")
+
+            _atomic_write_text(run_py, backup_text)
+            _clear_install_state(backup_path, manifest_path)
             return
 
         patched_sha256 = manifest.get("patched_sha256")
@@ -152,13 +156,23 @@ def _restore(hermes_root: Path) -> None:
         if file_sha256(run_py) != patched_sha256:
             raise ValueError("run.py changed since install; refusing to restore")
 
-        run_py.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
+        _atomic_write_text(run_py, backup_path.read_text(encoding="utf-8"))
         _clear_install_state(backup_path, manifest_path)
         return
     if not run_py.exists():
         return
 
-    restored = _restore_by_removing_owned_patch(run_py, require_change=False)
+    current = run_py.read_text(encoding="utf-8")
+    manifest = _read_manifest(manifest_path)
+    if manifest is not None:
+        patched_sha256 = manifest.get("patched_sha256")
+        if not isinstance(patched_sha256, str) or not patched_sha256:
+            if remove_patch(current) != current:
+                raise ValueError("manifest missing patched run.py sha256")
+        elif file_sha256(run_py) != patched_sha256:
+            raise ValueError("run.py changed since install; refusing to restore")
+
+    restored = _restore_by_removing_owned_patch(run_py, current)
     if restored or backup_path.exists() or manifest_path.exists():
         _clear_install_state(backup_path, manifest_path)
 
@@ -195,7 +209,7 @@ def _rollback_install(
 ) -> None:
     if original is not None:
         try:
-            run_py.write_text(original, encoding="utf-8")
+            _atomic_write_text(run_py, original)
         except OSError:
             pass
     if not backup_existed:
@@ -257,18 +271,15 @@ def _atomic_write_text(path: Path, contents: str) -> None:
             pass
 
 
-def _restore_by_removing_owned_patch(run_py: Path, require_change: bool) -> bool:
+def _restore_by_removing_owned_patch(run_py: Path, current: str | None = None) -> bool:
     if not run_py.exists():
-        if require_change:
-            raise ValueError("manifest missing; refusing to restore from backup")
         return False
-    current = run_py.read_text(encoding="utf-8")
+    if current is None:
+        current = run_py.read_text(encoding="utf-8")
     restored = remove_patch(current)
-    if restored == current and require_change:
-        raise ValueError("manifest missing; refusing to restore from backup")
     if restored == current:
         return False
-    run_py.write_text(restored, encoding="utf-8")
+    _atomic_write_text(run_py, restored)
     return True
 
 

@@ -251,6 +251,28 @@ def test_restore_without_backup_removes_patch_and_stale_manifest(tmp_path):
     assert not manifest_path(hermes_dir).exists()
 
 
+def test_restore_without_backup_refuses_user_edited_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    backup_path(hermes_dir).unlink()
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+    edited = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "run.py changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+    assert not backup_path(hermes_dir).exists()
+
+
 def test_restore_without_manifest_removes_patch_and_stale_backup(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     original = run_py(hermes_dir).read_text(encoding="utf-8")
@@ -266,6 +288,28 @@ def test_restore_without_manifest_removes_patch_and_stale_backup(tmp_path):
     assert second_result.returncode == 0, second_result.stderr
     assert run_py(hermes_dir).read_text(encoding="utf-8") == original
     assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_restore_without_manifest_refuses_user_edited_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    manifest_path(hermes_dir).unlink()
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+    edited = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "run.py changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
     assert not manifest_path(hermes_dir).exists()
 
 
