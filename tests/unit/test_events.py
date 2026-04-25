@@ -40,3 +40,45 @@ def test_rejects_non_feishu_platform():
     payload["platform"] = "slack"
     with pytest.raises(EventValidationError, match="platform"):
         SidecarEvent.from_dict(payload)
+
+
+@pytest.mark.parametrize("sequence", [True, -1, "2"])
+def test_rejects_invalid_sequence(sequence):
+    payload = valid_payload(sequence=sequence)
+    with pytest.raises(EventValidationError, match="sequence"):
+        SidecarEvent.from_dict(payload)
+
+
+def test_rejects_invalid_created_at():
+    payload = valid_payload()
+    payload["created_at"] = "abc"
+    with pytest.raises(EventValidationError, match="created_at"):
+        SidecarEvent.from_dict(payload)
+
+
+def test_rejects_non_object_data():
+    payload = valid_payload()
+    payload["data"] = "not-an-object"
+    with pytest.raises(EventValidationError, match="data"):
+        SidecarEvent.from_dict(payload)
+
+
+def test_rejects_non_object_payload():
+    with pytest.raises(EventValidationError, match="payload must be an object"):
+        SidecarEvent.from_dict("not-an-object")
+
+
+@pytest.mark.parametrize("field", ["conversation_id", "message_id", "chat_id"])
+@pytest.mark.parametrize("value", [None, "", "   ", 123])
+def test_rejects_invalid_id_fields(field, value):
+    payload = valid_payload()
+    payload[field] = value
+    with pytest.raises(EventValidationError, match=field):
+        SidecarEvent.from_dict(payload)
+
+
+def test_allows_extra_fields():
+    payload = valid_payload()
+    payload["extra"] = "ignored"
+    event = SidecarEvent.from_dict(payload)
+    assert event.event == "thinking.delta"
