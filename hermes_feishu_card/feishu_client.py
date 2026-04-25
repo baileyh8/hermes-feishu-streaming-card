@@ -22,9 +22,17 @@ class FeishuClientConfig:
             raise ValueError("app_secret is required")
         if not isinstance(self.base_url, str) or not self.base_url.strip():
             raise ValueError("base_url is required")
+        if any(char.isspace() for char in self.base_url):
+            raise ValueError("base_url must not contain whitespace")
         parsed_base_url = urlparse(self.base_url)
         if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.hostname:
             raise ValueError("base_url must be an http(s) URL with a host")
+        if parsed_base_url.username or parsed_base_url.password:
+            raise ValueError("base_url must not include userinfo")
+        try:
+            parsed_base_url.port
+        except ValueError as exc:
+            raise ValueError("base_url must include a valid port") from exc
         if (
             isinstance(self.timeout_seconds, bool)
             or not isinstance(self.timeout_seconds, Real)

@@ -26,11 +26,24 @@ def test_config_requires_app_secret_for_real_client(app_secret):
         "https://",
         "https://:443/open-apis",
         "https://@/open-apis",
+        "https://open.feishu.cn/open-apis ",
+        "https:// open.feishu.cn/open-apis",
+        "https://open.feishu.cn:bad/open-apis",
+        "https://user:pass@open.feishu.cn/open-apis",
     ],
 )
 def test_config_requires_http_base_url(base_url):
     with pytest.raises(ValueError, match="base_url"):
         FeishuClientConfig(app_id="cli_a", app_secret="sec", base_url=base_url)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://open.feishu.cn/open-apis", "https://open.feishu.cn/open-apis"],
+)
+def test_config_accepts_http_base_url(base_url):
+    cfg = FeishuClientConfig(app_id="cli_a", app_secret="sec", base_url=base_url)
+    assert cfg.base_url == base_url
 
 
 @pytest.mark.parametrize("timeout_seconds", [0, -1, True, False, "30", float("nan"), float("inf")])
