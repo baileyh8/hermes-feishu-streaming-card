@@ -22,6 +22,8 @@ def apply_patch(content: str) -> str:
     newline = _detect_newline(content)
     insert_at, body_indent = handler_body
     hook = _render_hook_block(body_indent, newline)
+    if _needs_leading_newline(lines, insert_at):
+        hook = [newline, newline] + hook
 
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
@@ -34,6 +36,12 @@ def remove_patch(content: str) -> str:
 
     lines = content.splitlines(keepends=True)
     begin_index, end_index = owned_block
+    if _hook_has_inserted_leading_newline(lines, begin_index):
+        return "".join(
+            lines[: begin_index - 2]
+            + [_strip_line_ending(lines[begin_index - 2])]
+            + lines[end_index + 1 :]
+        )
     return "".join(lines[:begin_index] + lines[end_index + 1 :])
 
 
@@ -170,6 +178,17 @@ def _line_indent(lines, index: int) -> str:
     if index < 0 or index >= len(lines):
         return ""
     return _leading_whitespace(_strip_line_ending(lines[index]))
+
+
+def _needs_leading_newline(lines, insert_at: int) -> bool:
+    return insert_at == len(lines) and bool(lines) and _line_ending(lines[-1]) == ""
+
+
+def _hook_has_inserted_leading_newline(lines, begin_index: int) -> bool:
+    if begin_index <= 1:
+        return False
+    previous_line = lines[begin_index - 1]
+    return _strip_line_ending(previous_line) == "" and _line_ending(previous_line) != ""
 
 
 def _detect_newline(content: str) -> str:

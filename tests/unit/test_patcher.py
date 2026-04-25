@@ -343,6 +343,22 @@ def test_apply_patch_handles_docstring_only_handler():
     assert restored == content
 
 
+def test_apply_patch_handles_docstring_only_handler_without_final_newline():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    \"\"\"Only documentation.\"\"\""
+    )
+
+    patched = patcher.apply_patch(content)
+    restored = patcher.remove_patch(patched)
+    handler = ast.parse(patched).body[0]
+
+    assert ast.get_docstring(handler) == "Only documentation."
+    assert "\"\"\"Only documentation.\"\"\"\n\n    # HERMES_FEISHU_CARD_PATCH_BEGIN\n" in patched
+    assert patcher.apply_patch(patched) == patched
+    assert restored == content
+
+
 def test_remove_rejects_marker_block_with_wrong_shape():
     content = f"""
 async def _handle_message_with_agent(message):
