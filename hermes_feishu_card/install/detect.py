@@ -155,8 +155,7 @@ def _find_direct_class_handler(class_node: ast.ClassDef) -> ast.AsyncFunctionDef
 
 def _function_emits_agent_end(handler: ast.AsyncFunctionDef) -> bool:
     visitor = _HandlerBodyHookVisitor()
-    for statement in handler.body:
-        visitor.visit(statement)
+    visitor.visit_statements(handler.body)
     return visitor.found
 
 
@@ -164,11 +163,29 @@ class _HandlerBodyHookVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.found = False
 
+    def visit_statements(self, statements: list[ast.stmt]) -> None:
+        for statement in statements:
+            if self.found:
+                return
+            self.visit(statement)
+            if isinstance(statement, (ast.Return, ast.Raise)):
+                return
+
     def visit_Call(self, node: ast.Call) -> None:
         if _is_agent_end_emit_call(node):
             self.found = True
             return
         self.generic_visit(node)
+
+    def visit_If(self, node: ast.If) -> None:
+        static_value = _static_bool(node.test)
+        if static_value is True:
+            self.visit_statements(node.body)
+        elif static_value is False:
+            self.visit_statements(node.orelse)
+        else:
+            self.visit_statements(node.body)
+            self.visit_statements(node.orelse)
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         return
@@ -181,6 +198,14 @@ class _HandlerBodyHookVisitor(ast.NodeVisitor):
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
         return
+
+
+def _static_bool(node: ast.expr) -> bool | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.Constant) and node.value in (0, 1):
+        return bool(node.value)
+    return None
 
 
 def _is_agent_end_emit_call(node: ast.Call) -> bool:

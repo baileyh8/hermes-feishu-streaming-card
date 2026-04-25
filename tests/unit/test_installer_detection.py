@@ -36,6 +36,14 @@ def test_detect_hermes_accepts_self_hooks_emit_inside_handler(tmp_path):
     assert result.supported is True
 
 
+def test_detect_hermes_accepts_direct_hooks_emit_inside_handler(tmp_path):
+    _write_hermes_root(tmp_path)
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is True
+
+
 def test_detect_hermes_rejects_missing_gateway_run_py(tmp_path):
     (tmp_path / "VERSION").write_text("v2026.4.23\n", encoding="utf-8")
 
@@ -191,6 +199,39 @@ def test_detect_hermes_rejects_anchor_only_in_lambda(tmp_path):
             "async def _handle_message_with_agent(message, hooks):\n"
             "    emit_later = lambda: hooks.emit(\"agent:end\", {\"message\": message})\n"
             "    return emit_later\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_anchor_after_return(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    return message\n"
+            "    hooks.emit(\"agent:end\", {\"message\": message})\n"
+        ),
+    )
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "anchor" in result.reason.lower()
+
+
+def test_detect_hermes_rejects_anchor_only_in_static_false_branch(tmp_path):
+    _write_hermes_root(
+        tmp_path,
+        run_py=(
+            "async def _handle_message_with_agent(message, hooks):\n"
+            "    if False:\n"
+            "        hooks.emit(\"agent:end\", {\"message\": message})\n"
+            "    return message\n"
         ),
     )
 
