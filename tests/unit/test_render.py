@@ -61,3 +61,14 @@ def test_render_completed_card_handles_empty_tokens_and_non_numeric_duration():
     assert "耗时 0.0s" in content
     assert "输入 0" in content
     assert "输出 0" in content
+
+
+def test_render_completed_card_handles_missing_token_stats():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "最终答案"
+    session.status = "completed"
+    session.tokens = None
+    card = render_card(session)
+    content = str(card)
+    assert "输入 0" in content
+    assert "输出 0" in content

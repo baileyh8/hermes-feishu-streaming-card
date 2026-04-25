@@ -55,8 +55,9 @@ def _render_footer(session: CardSession) -> str:
         return "已停止"
     if session.status != "completed":
         return "生成中"
-    input_tokens = session.tokens.get("input_tokens", 0)
-    output_tokens = session.tokens.get("output_tokens", 0)
+    tokens = session.tokens if isinstance(session.tokens, dict) else {}
+    input_tokens = tokens.get("input_tokens", 0)
+    output_tokens = tokens.get("output_tokens", 0)
     try:
         duration = float(session.duration)
     except (TypeError, ValueError):
