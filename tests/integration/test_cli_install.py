@@ -454,6 +454,27 @@ def test_restore_without_backup_removes_patch_and_stale_manifest(tmp_path):
     assert not manifest_path(hermes_dir).exists()
 
 
+def test_restore_cleans_stale_manifest_after_run_py_was_restored(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    run_py(hermes_dir).write_text(original, encoding="utf-8")
+    backup_path(hermes_dir).unlink()
+
+    restore_result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+    install_again = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert restore_result.returncode == 0, restore_result.stderr
+    assert install_again.returncode == 0, install_again.stderr
+    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
+        encoding="utf-8"
+    )
+    assert backup_path(hermes_dir).exists()
+    assert manifest_path(hermes_dir).exists()
+
+
 def test_restore_without_backup_refuses_user_edited_run_py(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
 
@@ -489,6 +510,43 @@ def test_restore_without_manifest_removes_patch_and_stale_backup(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert second_result.returncode == 0, second_result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_restore_cleans_stale_backup_after_run_py_was_restored(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    run_py(hermes_dir).write_text(original, encoding="utf-8")
+    manifest_path(hermes_dir).unlink()
+
+    restore_result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+    install_again = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert restore_result.returncode == 0, restore_result.stderr
+    assert install_again.returncode == 0, install_again.stderr
+    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
+        encoding="utf-8"
+    )
+    assert backup_path(hermes_dir).exists()
+    assert manifest_path(hermes_dir).exists()
+
+
+def test_restore_cleans_stale_backup_and_manifest_after_run_py_was_restored(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    run_py(hermes_dir).write_text(original, encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
     assert run_py(hermes_dir).read_text(encoding="utf-8") == original
     assert not backup_path(hermes_dir).exists()
     assert not manifest_path(hermes_dir).exists()

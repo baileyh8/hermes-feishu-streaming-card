@@ -143,6 +143,10 @@ def _restore(hermes_root: Path) -> None:
         if manifest is None:
             backup_text = backup_path.read_text(encoding="utf-8")
             _validate_backup_contains_original(backup_text, "restore")
+            if run_py.exists() and run_py.read_text(encoding="utf-8") == backup_text:
+                _clear_install_state(backup_path, manifest_path)
+                return
+
             patched_backup = apply_patch(backup_text)
             if not run_py.exists() or run_py.read_text(encoding="utf-8") != patched_backup:
                 raise ValueError("run.py changed since install; refusing to restore")
@@ -151,7 +155,7 @@ def _restore(hermes_root: Path) -> None:
             _clear_install_state(backup_path, manifest_path)
             return
 
-        backup_text = _validate_complete_install_state(
+        backup_text = _validate_restorable_install_state(
             run_py, backup_path, manifest, "restore"
         )
         _atomic_write_text(run_py, backup_text)
@@ -161,6 +165,10 @@ def _restore(hermes_root: Path) -> None:
         return
 
     current = run_py.read_text(encoding="utf-8")
+    if manifest_path.exists() and remove_patch(current) == current:
+        _clear_install_state(backup_path, manifest_path)
+        return
+
     manifest = _read_manifest(manifest_path)
     if manifest is not None:
         patched_sha256 = manifest.get("patched_sha256")
@@ -298,6 +306,44 @@ def _validate_complete_install_state(
     current = run_py.read_text(encoding="utf-8")
     backup_text = backup_path.read_text(encoding="utf-8")
     _validate_backup_contains_original(backup_text, operation)
+    try:
+        patched_backup = apply_patch(backup_text)
+    except ValueError as exc:
+        raise ValueError(
+            f"backup changed since install; refusing to {operation}"
+        ) from exc
+    if patched_backup != current:
+        raise ValueError(f"backup changed since install; refusing to {operation}")
+    return backup_text
+
+
+def _validate_restorable_install_state(
+    run_py: Path,
+    backup_path: Path,
+    manifest: dict[str, object],
+    operation: str,
+) -> str:
+    backup_sha256 = manifest.get("backup_sha256")
+    if not isinstance(backup_sha256, str) or not backup_sha256:
+        raise ValueError("manifest missing backup sha256")
+    if file_sha256(backup_path) != backup_sha256:
+        raise ValueError(f"backup changed since install; refusing to {operation}")
+
+    backup_text = backup_path.read_text(encoding="utf-8")
+    _validate_backup_contains_original(backup_text, operation)
+    if not run_py.exists():
+        raise ValueError(f"run.py changed since install; refusing to {operation}")
+
+    current = run_py.read_text(encoding="utf-8")
+    if current == backup_text:
+        return backup_text
+
+    patched_sha256 = manifest.get("patched_sha256")
+    if not isinstance(patched_sha256, str) or not patched_sha256:
+        raise ValueError("manifest missing patched run.py sha256")
+    if file_sha256(run_py) != patched_sha256:
+        raise ValueError(f"run.py changed since install; refusing to {operation}")
+
     try:
         patched_backup = apply_patch(backup_text)
     except ValueError as exc:
