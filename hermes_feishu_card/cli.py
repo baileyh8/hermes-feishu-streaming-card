@@ -82,6 +82,8 @@ def _run_install(args: argparse.Namespace) -> int:
     run_py = detection.run_py
     backup_path = _backup_path(run_py)
     manifest_path = _manifest_path(detection.root)
+    original: str | None = None
+    manifest_existed = manifest_path.exists()
 
     try:
         original = run_py.read_text(encoding="utf-8")
@@ -92,6 +94,7 @@ def _run_install(args: argparse.Namespace) -> int:
             run_py.write_text(patched, encoding="utf-8")
         _write_manifest(manifest_path, run_py, backup_path)
     except (OSError, UnicodeError, ValueError) as exc:
+        _rollback_install(run_py, original, manifest_path, manifest_existed)
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -124,14 +127,25 @@ def _run_uninstall(args: argparse.Namespace) -> int:
 def _restore(hermes_root: Path) -> None:
     run_py = hermes_root / "gateway" / "run.py"
     backup_path = _backup_path(run_py)
+    manifest_path = _manifest_path(hermes_root)
     if backup_path.exists():
+        manifest = _read_manifest(manifest_path)
+        if manifest is None:
+            _restore_by_removing_owned_patch(run_py, require_change=True)
+            return
+
+        patched_sha256 = manifest.get("patched_sha256")
+        if not isinstance(patched_sha256, str) or not patched_sha256:
+            raise ValueError("manifest missing patched run.py sha256")
+        if file_sha256(run_py) != patched_sha256:
+            raise ValueError("run.py changed since install; refusing to restore")
+
         run_py.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
         return
     if not run_py.exists():
         return
 
-    restored = remove_patch(run_py.read_text(encoding="utf-8"))
-    run_py.write_text(restored, encoding="utf-8")
+    _restore_by_removing_owned_patch(run_py, require_change=False)
 
 
 def _backup_path(run_py: Path) -> Path:
@@ -151,6 +165,47 @@ def _write_manifest(manifest_path: Path, run_py: Path, backup_path: Path) -> Non
     manifest_path.write_text(
         json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def _rollback_install(
+    run_py: Path, original: str | None, manifest_path: Path, manifest_existed: bool
+) -> None:
+    if original is not None:
+        try:
+            run_py.write_text(original, encoding="utf-8")
+        except OSError:
+            pass
+    if not manifest_existed:
+        try:
+            manifest_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("manifest could not be parsed") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest could not be parsed")
+    return manifest
+
+
+def _restore_by_removing_owned_patch(run_py: Path, require_change: bool) -> None:
+    if not run_py.exists():
+        if require_change:
+            raise ValueError("manifest missing; refusing to restore from backup")
+        return
+    current = run_py.read_text(encoding="utf-8")
+    restored = remove_patch(current)
+    if restored == current and require_change:
+        raise ValueError("manifest missing; refusing to restore from backup")
+    run_py.write_text(restored, encoding="utf-8")
 
 
 if __name__ == "__main__":

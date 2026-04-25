@@ -2,7 +2,10 @@ import os
 import shutil
 import subprocess
 import sys
+from argparse import Namespace
 from pathlib import Path
+
+from hermes_feishu_card import cli
 
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
@@ -83,6 +86,44 @@ def test_install_unsupported_hermes_dir_returns_nonzero(tmp_path):
 
     assert result.returncode != 0
     assert "gateway/run.py missing" in result.stderr
+    assert not (hermes_dir / "gateway" / BACKUP_NAME).exists()
+    assert not (hermes_dir / MANIFEST_NAME).exists()
+
+
+def test_install_failure_restores_run_py_and_removes_manifest(tmp_path, monkeypatch):
+    hermes_dir = copy_hermes(tmp_path)
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    def fail_manifest(*_args):
+        raise OSError("manifest unavailable")
+
+    monkeypatch.setattr(cli, "_write_manifest", fail_manifest)
+
+    result = cli._run_install(Namespace(hermes_dir=str(hermes_dir), yes=True))
+
+    assert result != 0
+    current = run_py(hermes_dir).read_text(encoding="utf-8")
+    assert current == original
+    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" not in current
+    assert not (hermes_dir / MANIFEST_NAME).exists()
+
+
+def test_restore_refuses_to_overwrite_user_edited_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+    edited = run_py(hermes_dir).read_text(encoding="utf-8")
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "run.py changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
 
 
 def test_repeated_install_is_idempotent(tmp_path):
