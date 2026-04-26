@@ -9,6 +9,8 @@ from pathlib import Path
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from hermes_feishu_card import hook_runtime
+
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
 
@@ -52,18 +54,28 @@ def load_run_py(path):
     return module
 
 
-def test_installed_hook_preserves_handler_return_when_sidecar_down(tmp_path, monkeypatch):
+async def test_installed_hook_preserves_handler_return_when_sender_fails(
+    tmp_path, monkeypatch
+):
     hermes_dir = copy_hermes(tmp_path)
-    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://127.0.0.1:9/events")
+    sender_called = asyncio.Event()
+
+    async def failing_post_json(url, payload, timeout):
+        sender_called.set()
+        raise RuntimeError("sidecar down")
+
+    monkeypatch.setattr(hook_runtime, "_post_json", failing_post_json)
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
 
     install = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
     assert install.returncode == 0, install.stderr
     module = load_run_py(hermes_dir / "gateway" / "run.py")
     hooks = Hooks()
 
-    result = asyncio.run(module._handle_message_with_agent(Message(), hooks))
+    result = await module._handle_message_with_agent(Message(), hooks)
 
     assert result == "fixture answer"
+    await asyncio.wait_for(sender_called.wait(), timeout=1)
     assert len(hooks.events) == 1
     assert hooks.events[0][0] == "agent:end"
     assert hooks.events[0][1]["message"].chat_id == "oc_fixture"
@@ -71,9 +83,11 @@ def test_installed_hook_preserves_handler_return_when_sidecar_down(tmp_path, mon
 
 async def test_installed_hook_posts_started_event_to_mock_sidecar(tmp_path, monkeypatch):
     received = []
+    received_event = asyncio.Event()
 
     async def events(request):
         received.append(await request.json())
+        received_event.set()
         return web.json_response({"ok": True})
 
     app = web.Application()
@@ -92,9 +106,9 @@ async def test_installed_hook_posts_started_event_to_mock_sidecar(tmp_path, monk
         module = load_run_py(hermes_dir / "gateway" / "run.py")
 
         result = await module._handle_message_with_agent(Message(), Hooks())
-        await asyncio.sleep(0.1)
 
         assert result == "fixture answer"
+        await asyncio.wait_for(received_event.wait(), timeout=1)
         assert received
         assert received[0]["event"] == "message.started"
         assert received[0]["chat_id"] == "oc_fixture"
