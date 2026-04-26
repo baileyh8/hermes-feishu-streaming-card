@@ -5,12 +5,64 @@ import pytest
 from hermes_feishu_card.install import patcher
 
 
+def test_apply_patch_inserts_real_runtime_hook_call():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    return message\n"
+    )
+
+    patched = patcher.apply_patch(content)
+
+    assert "from hermes_feishu_card.hook_runtime import emit_from_hermes_locals" in patched
+    assert "_hfc_emit(locals())" in patched
+    assert "        pass\n    except Exception:" not in patched
+
+
+def test_apply_patch_upgrades_phase_one_placeholder_block():
+    placeholder = (
+        "async def _handle_message_with_agent(message):\n"
+        "    # HERMES_FEISHU_CARD_PATCH_BEGIN\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    # HERMES_FEISHU_CARD_PATCH_END\n"
+        "    return message\n"
+    )
+
+    upgraded = patcher.apply_patch(placeholder)
+
+    assert "emit_from_hermes_locals" in upgraded
+    assert "        pass\n    except Exception:" not in upgraded
+    assert upgraded.count(patcher.PATCH_BEGIN) == 1
+
+
+def test_remove_patch_removes_phase_one_placeholder_block():
+    placeholder = (
+        "async def _handle_message_with_agent(message):\n"
+        "    # HERMES_FEISHU_CARD_PATCH_BEGIN\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    # HERMES_FEISHU_CARD_PATCH_END\n"
+        "    return message\n"
+    )
+
+    restored = patcher.remove_patch(placeholder)
+
+    assert patcher.PATCH_BEGIN not in restored
+    assert patcher.PATCH_END not in restored
+    assert "    return message\n" in restored
+
+
 def test_apply_patch_is_idempotent_for_existing_block():
     content = """
 async def _handle_message_with_agent(message):
     # HERMES_FEISHU_CARD_PATCH_BEGIN
     try:
-        pass
+        from hermes_feishu_card.hook_runtime import emit_from_hermes_locals as _hfc_emit
+        _hfc_emit(locals())
     except Exception:
         pass
     # HERMES_FEISHU_CARD_PATCH_END
@@ -45,7 +97,11 @@ class Gateway:
     result = patcher.apply_patch(content)
 
     assert f"        {patcher.PATCH_BEGIN}\n" in result
-    assert "            pass\n" in result
+    assert (
+        "            from hermes_feishu_card.hook_runtime "
+        "import emit_from_hermes_locals as _hfc_emit\n"
+    ) in result
+    assert "            _hfc_emit(locals())\n" in result
     assert f"        {patcher.PATCH_END}\n" in result
 
 
@@ -305,7 +361,11 @@ def test_apply_patch_preserves_tab_indented_module_handler_prefix():
     ast.parse(patched)
     assert f"\t{patcher.PATCH_BEGIN}\n" in patched
     assert "\ttry:\n" in patched
-    assert "\t\tpass\n" in patched
+    assert (
+        "\t\tfrom hermes_feishu_card.hook_runtime "
+        "import emit_from_hermes_locals as _hfc_emit\n"
+    ) in patched
+    assert "\t\t_hfc_emit(locals())\n" in patched
     assert "    # HERMES_FEISHU_CARD_PATCH_BEGIN" not in patched
     assert restored == content
 
@@ -323,7 +383,11 @@ def test_apply_patch_preserves_tab_indented_class_method_prefix():
     ast.parse(patched)
     assert f"\t\t{patcher.PATCH_BEGIN}\n" in patched
     assert "\t\ttry:\n" in patched
-    assert "\t\t\tpass\n" in patched
+    assert (
+        "\t\t\tfrom hermes_feishu_card.hook_runtime "
+        "import emit_from_hermes_locals as _hfc_emit\n"
+    ) in patched
+    assert "\t\t\t_hfc_emit(locals())\n" in patched
     assert restored == content
 
 

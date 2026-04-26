@@ -12,7 +12,14 @@ def apply_patch(content: str) -> str:
     """Insert the Feishu card hook block into a safe Hermes message handler."""
     owned_block = _find_owned_block(content)
     if owned_block is not None:
-        return content
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
 
     tree = _parse_content(content)
     lines = content.splitlines(keepends=True)
@@ -135,9 +142,10 @@ def _find_owned_block(content: str):
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = _render_hook_block(indent, newline)
+    placeholder = _render_placeholder_hook_block(indent, newline)
     actual = lines[begin_index : end_index + 1]
 
-    if actual != expected:
+    if actual not in (expected, placeholder):
         raise ValueError("corrupt patch markers")
 
     tree = _parse_content_with_markers(content)
@@ -222,6 +230,22 @@ def _exact_marker_line_index(lines, marker: str):
 
 
 def _render_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}{PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals as _hfc_emit{newline}"
+        ),
+        f"{inner_indent}_hfc_emit(locals()){newline}",
+        f"{indent}except Exception:{newline}",
+        f"{inner_indent}pass{newline}",
+        f"{indent}{PATCH_END}{newline}",
+    ]
+
+
+def _render_placeholder_hook_block(indent: str, newline: str):
     inner_indent = _child_indent(indent)
     return [
         f"{indent}{PATCH_BEGIN}{newline}",
