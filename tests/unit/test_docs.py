@@ -37,14 +37,20 @@ def test_event_protocol_documents_card_status_labels():
 
 
 def test_docs_describe_event_forwarding_but_not_cardkit_completion():
+    readme = read_doc("README.md")
+    architecture = read_doc("docs/architecture.md")
+    todo = read_doc("TODO.md")
     docs = "\n".join(
         [
-            read_doc("README.md"),
-            read_doc("docs/architecture.md"),
-            read_doc("TODO.md"),
+            readme,
+            architecture,
+            todo,
         ]
     )
 
-    assert "Hermes hook" in docs or "Hermes 到 sidecar" in docs
+    assert "第二阶段最小事件转发" in readme
+    assert "Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地" in architecture
     assert "Feishu CardKit" in docs
     assert "仍未完成" in docs or "后续阶段" in docs
+    assert "- [x] 补齐基于 Hermes fixture 和 mock sidecar 的最小 hook 事件转发验证。" in todo
+    assert "- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo

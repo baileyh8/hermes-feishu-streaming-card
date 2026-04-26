@@ -45,6 +45,9 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 - `FEISHU_APP_SECRET`
 - `HERMES_FEISHU_CARD_HOST`
 - `HERMES_FEISHU_CARD_PORT`
+- `HERMES_FEISHU_CARD_ENABLED`
+- `HERMES_FEISHU_CARD_EVENT_URL`
+- `HERMES_FEISHU_CARD_TIMEOUT_MS`
 
 ## 文档
 
