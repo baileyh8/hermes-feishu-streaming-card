@@ -7,6 +7,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from hermes_feishu_card import cli
+from hermes_feishu_card.install import patcher
 
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
@@ -43,6 +44,38 @@ def manifest_path(hermes_dir):
     return hermes_dir / MANIFEST_NAME
 
 
+def phase_one_placeholder(content):
+    current = patcher.apply_patch(content)
+    return current.replace(
+        (
+            "        from hermes_feishu_card.hook_runtime "
+            "import emit_from_hermes_locals as _hfc_emit\n"
+            "        _hfc_emit(locals())\n"
+        ),
+        "        pass\n",
+    )
+
+
+def write_manifest(hermes_dir):
+    manifest = {
+        "run_py": "gateway/run.py",
+        "patched_sha256": cli.file_sha256(run_py(hermes_dir)),
+        "backup": f"gateway/{BACKUP_NAME}",
+        "backup_sha256": cli.file_sha256(backup_path(hermes_dir)),
+    }
+    manifest_path(hermes_dir).write_text(
+        json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def write_phase_one_install_state(hermes_dir):
+    original = run_py(hermes_dir).read_text(encoding="utf-8")
+    backup_path(hermes_dir).write_text(original, encoding="utf-8")
+    run_py(hermes_dir).write_text(phase_one_placeholder(original), encoding="utf-8")
+    write_manifest(hermes_dir)
+    return original
+
+
 def test_install_patches_run_py_and_writes_backup_and_manifest(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
 
@@ -55,6 +88,32 @@ def test_install_patches_run_py_and_writes_backup_and_manifest(tmp_path):
     )
     assert backup_path(hermes_dir).exists()
     assert manifest_path(hermes_dir).exists()
+
+
+def test_install_upgrades_phase_one_placeholder_install(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    write_phase_one_install_state(hermes_dir)
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    assert "emit_from_hermes_locals" in patched
+    assert "        pass\n    except Exception:" not in patched
+    assert backup_path(hermes_dir).exists()
+    assert manifest_path(hermes_dir).exists()
+
+
+def test_restore_accepts_phase_one_placeholder_install(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = write_phase_one_install_state(hermes_dir)
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
 
 
 def test_restore_restores_backup_to_original_run_py(tmp_path):

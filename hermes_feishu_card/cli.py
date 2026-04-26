@@ -288,9 +288,9 @@ def _validate_complete_install_state(
     if manifest is None:
         backup_text = backup_path.read_text(encoding="utf-8")
         _validate_backup_contains_original(backup_text, operation)
-        patched_backup = apply_patch(backup_text)
-        if not run_py.exists() or run_py.read_text(encoding="utf-8") != patched_backup:
+        if not run_py.exists():
             raise ValueError(f"run.py changed since install; refusing to {operation}")
+        _validate_current_matches_backup(run_py.read_text(encoding="utf-8"), backup_text, operation)
         return backup_text
 
     patched_sha256 = manifest.get("patched_sha256")
@@ -308,14 +308,7 @@ def _validate_complete_install_state(
     current = run_py.read_text(encoding="utf-8")
     backup_text = backup_path.read_text(encoding="utf-8")
     _validate_backup_contains_original(backup_text, operation)
-    try:
-        patched_backup = apply_patch(backup_text)
-    except ValueError as exc:
-        raise ValueError(
-            f"backup changed since install; refusing to {operation}"
-        ) from exc
-    if patched_backup != current:
-        raise ValueError(f"backup changed since install; refusing to {operation}")
+    _validate_current_matches_backup(current, backup_text, operation)
     return backup_text
 
 
@@ -346,20 +339,26 @@ def _validate_restorable_install_state(
     if file_sha256(run_py) != patched_sha256:
         raise ValueError(f"run.py changed since install; refusing to {operation}")
 
-    try:
-        patched_backup = apply_patch(backup_text)
-    except ValueError as exc:
-        raise ValueError(
-            f"backup changed since install; refusing to {operation}"
-        ) from exc
-    if patched_backup != current:
-        raise ValueError(f"backup changed since install; refusing to {operation}")
+    _validate_current_matches_backup(current, backup_text, operation)
     return backup_text
 
 
 def _validate_backup_contains_original(backup_text: str, operation: str) -> None:
     if remove_patch(backup_text) != backup_text:
         raise ValueError(f"backup changed since install; refusing to {operation}")
+
+
+def _validate_current_matches_backup(
+    current: str, backup_text: str, operation: str
+) -> None:
+    try:
+        restored_current = remove_patch(current)
+    except ValueError as exc:
+        raise ValueError(
+            f"run.py changed since install; refusing to {operation}"
+        ) from exc
+    if restored_current != backup_text:
+        raise ValueError(f"run.py changed since install; refusing to {operation}")
 
 
 def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
