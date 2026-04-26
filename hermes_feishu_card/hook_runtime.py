@@ -188,10 +188,9 @@ def _fallback_message_id(
     created_at_lifecycle_token: str | None,
 ) -> str:
     key = (conversation_id, chat_id)
-    if event_name != "message.started":
-        cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(key)
-        if cached is not None:
-            return cached
+    cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(key)
+    if cached is not None:
+        return cached
     return _create_active_fallback_message_id(
         key, conversation_id, chat_id, created_at_lifecycle_token
     )

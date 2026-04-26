@@ -102,6 +102,23 @@ def test_build_event_uses_stable_message_id_fallback_with_created_at():
     assert started["message_id"].startswith("hfc_")
 
 
+def test_build_event_reuses_active_fallback_for_duplicate_started_before_terminal():
+    local_vars = {
+        "chat_id": "oc_abc",
+        "conversation_id": "conv_abc",
+    }
+
+    first_started = hook_runtime.build_event(
+        "message.started", {**local_vars, "created_at": 1777017600.0}
+    )
+    second_started = hook_runtime.build_event(
+        "message.started", {**local_vars, "created_at": 1777017601.0}
+    )
+
+    assert first_started["message_id"] == second_started["message_id"]
+    assert [first_started["sequence"], second_started["sequence"]] == [0, 1]
+
+
 def test_build_event_rotates_fallback_after_terminal_with_same_created_at():
     local_vars = {
         "chat_id": "oc_abc",
