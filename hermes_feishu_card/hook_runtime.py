@@ -27,12 +27,14 @@ class RuntimeConfig:
 
 
 _SEQUENCES: dict[str, int] = {}
-_FALLBACK_MESSAGE_IDS: dict[tuple[str, str], str] = {}
+_ACTIVE_FALLBACK_MESSAGE_IDS: dict[tuple[str, str], str] = {}
+_FALLBACK_LIFECYCLE_COUNTS: dict[tuple[str, str], int] = {}
 
 
 def reset_runtime_state() -> None:
     _SEQUENCES.clear()
-    _FALLBACK_MESSAGE_IDS.clear()
+    _ACTIVE_FALLBACK_MESSAGE_IDS.clear()
+    _FALLBACK_LIFECYCLE_COUNTS.clear()
 
 
 def load_runtime_config() -> RuntimeConfig:
@@ -78,13 +80,21 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     )
     created_at_value = local_vars.get("created_at")
     created_at = _created_at(created_at_value)
-    message_id = (
-        _first_string(local_vars, ("message_id", "msg_id"))
-        or _first_attr_string(message_obj, ("message_id", "msg_id"))
-        or _fallback_message_id(conversation_id, chat_id, created_at_value, created_at)
+    fallback_key = (conversation_id, chat_id)
+    message_id = _first_string(local_vars, ("message_id", "msg_id")) or _first_attr_string(
+        message_obj, ("message_id", "msg_id")
     )
+    used_fallback = message_id is None
+    if used_fallback:
+        message_id = _fallback_message_id(
+            event_name,
+            conversation_id,
+            chat_id,
+            created_at_value,
+            created_at,
+        )
     sequence = _next_sequence(message_id)
-    return {
+    payload = {
         "schema_version": "1",
         "event": event_name,
         "conversation_id": conversation_id,
@@ -95,6 +105,9 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "created_at": created_at,
         "data": _event_data(event_name, local_vars, message_obj),
     }
+    if used_fallback and event_name in {"message.completed", "message.failed"}:
+        _ACTIVE_FALLBACK_MESSAGE_IDS.pop(fallback_key, None)
+    return payload
 
 
 def _event_data(
@@ -148,26 +161,39 @@ def _created_at(value: Any) -> float:
 
 
 def _fallback_message_id(
-    conversation_id: str, chat_id: str, created_at_value: Any, created_at: float
+    event_name: str,
+    conversation_id: str,
+    chat_id: str,
+    created_at_value: Any,
+    created_at: float,
 ) -> str:
-    if created_at_value is None:
-        key = (conversation_id, chat_id)
-        cached = _FALLBACK_MESSAGE_IDS.get(key)
+    if created_at_value is not None:
+        return _hash_fallback_message_id(conversation_id, chat_id, f"{created_at:.3f}")
+
+    key = (conversation_id, chat_id)
+    if event_name != "message.started":
+        cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(key)
         if cached is not None:
             return cached
-        message_id = _hash_fallback_message_id(conversation_id, chat_id)
-        _FALLBACK_MESSAGE_IDS[key] = message_id
-        return message_id
-    return _hash_fallback_message_id(conversation_id, chat_id, created_at)
+    return _create_active_fallback_message_id(key, conversation_id, chat_id)
+
+
+def _create_active_fallback_message_id(
+    key: tuple[str, str], conversation_id: str, chat_id: str
+) -> str:
+    lifecycle_count = _FALLBACK_LIFECYCLE_COUNTS.get(key, 0)
+    _FALLBACK_LIFECYCLE_COUNTS[key] = lifecycle_count + 1
+    message_id = _hash_fallback_message_id(
+        conversation_id, chat_id, f"active:{lifecycle_count}"
+    )
+    _ACTIVE_FALLBACK_MESSAGE_IDS[key] = message_id
+    return message_id
 
 
 def _hash_fallback_message_id(
-    conversation_id: str, chat_id: str, created_at: float | None = None
+    conversation_id: str, chat_id: str, lifecycle_token: str
 ) -> str:
-    if created_at is None:
-        raw = f"{conversation_id}:{chat_id}".encode("utf-8")
-    else:
-        raw = f"{conversation_id}:{chat_id}:{created_at:.3f}".encode("utf-8")
+    raw = f"{conversation_id}:{chat_id}:{lifecycle_token}".encode("utf-8")
     return "hfc_" + sha256(raw).hexdigest()[:16]
 
 

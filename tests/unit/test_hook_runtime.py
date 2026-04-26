@@ -109,6 +109,35 @@ def test_build_event_uses_stable_fallback_without_created_at(monkeypatch):
     assert [started["sequence"], delta["sequence"], completed["sequence"]] == [0, 1, 2]
 
 
+def test_build_event_rotates_fallback_after_terminal_without_created_at(monkeypatch):
+    timestamps = iter([1777017600.0, 1777017601.0, 1777017602.0])
+    monkeypatch.setattr(hook_runtime.time, "time", lambda: next(timestamps))
+    local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
+
+    first_started = hook_runtime.build_event("message.started", local_vars)
+    first_completed = hook_runtime.build_event("message.completed", local_vars)
+    second_started = hook_runtime.build_event("message.started", local_vars)
+
+    assert first_started["message_id"] == first_completed["message_id"]
+    assert first_started["message_id"] != second_started["message_id"]
+    assert first_started["message_id"].startswith("hfc_")
+    assert second_started["message_id"].startswith("hfc_")
+    assert second_started["sequence"] == 0
+
+
+def test_build_event_creates_active_fallback_when_delta_arrives_first(monkeypatch):
+    timestamps = iter([1777017600.0, 1777017601.0])
+    monkeypatch.setattr(hook_runtime.time, "time", lambda: next(timestamps))
+    local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
+
+    delta = hook_runtime.build_event("answer.delta", local_vars)
+    completed = hook_runtime.build_event("message.completed", local_vars)
+
+    assert delta["message_id"] == completed["message_id"]
+    assert delta["message_id"].startswith("hfc_")
+    assert [delta["sequence"], completed["sequence"]] == [0, 1]
+
+
 def test_reset_runtime_state_clears_fallback_cache(monkeypatch):
     monkeypatch.setattr(
         hook_runtime, "_hash_fallback_message_id", lambda *_args: "hfc_first"
