@@ -86,8 +86,13 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     message_id = _first_string(local_vars, ("message_id", "msg_id")) or _first_attr_string(
         message_obj, ("message_id", "msg_id")
     )
-    used_fallback = message_id is None
-    if used_fallback:
+    is_terminal_event = event_name in {"message.completed", "message.failed"}
+    active_fallback_message_id = (
+        _ACTIVE_FALLBACK_MESSAGE_IDS.get(fallback_key) if is_terminal_event else None
+    )
+    if active_fallback_message_id is not None:
+        message_id = active_fallback_message_id
+    elif message_id is None:
         message_id = _fallback_message_id(
             event_name,
             conversation_id,
@@ -106,7 +111,7 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "created_at": created_at,
         "data": _event_data(event_name, local_vars, message_obj),
     }
-    if event_name in {"message.completed", "message.failed"}:
+    if is_terminal_event:
         _ACTIVE_FALLBACK_MESSAGE_IDS.pop(fallback_key, None)
     return payload
 
