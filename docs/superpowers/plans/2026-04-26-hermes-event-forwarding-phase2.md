@@ -936,25 +936,25 @@ git commit -m "docs: document Hermes event forwarding phase"
 **Files:**
 - Modify: none unless verification exposes defects.
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `python3 -m pytest -q`
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Run targeted hook tests**
+- [x] **Step 2: Run targeted hook tests**
 
 Run: `python3 -m pytest tests/unit/test_hook_runtime.py tests/unit/test_patcher.py tests/integration/test_hook_runtime_integration.py tests/integration/test_cli_install.py -q`
 
 Expected: all targeted tests pass.
 
-- [ ] **Step 3: Run doctor**
+- [x] **Step 3: Run doctor**
 
 Run: `python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --skip-hermes`
 
 Expected: stdout contains `doctor: ok`; exit code 0.
 
-- [ ] **Step 4: Run fixture install/restore smoke test**
+- [x] **Step 4: Run fixture install/restore smoke test**
 
 Run:
 
@@ -968,13 +968,13 @@ rg "HERMES_FEISHU_CARD_PATCH_BEGIN|emit_from_hermes_locals" "$tmpdir/hermes/gate
 
 Expected: install and restore both succeed; restored `run.py` contains no patch marker or runtime import.
 
-- [ ] **Step 5: Check git status**
+- [x] **Step 5: Check git status**
 
 Run: `git status --short`
 
 Expected: only known unrelated `.DS_Store` may remain modified.
 
-- [ ] **Step 6: Fix and commit only if verification exposes defects**
+- [x] **Step 6: Fix and commit only if verification exposes defects**
 
 If defects appear, fix them with focused tests and commit:
 
