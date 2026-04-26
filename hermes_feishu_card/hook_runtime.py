@@ -133,6 +133,8 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "data": _event_data(event_name, local_vars, message_obj),
     }
     if is_terminal_event:
+        if explicit_message_id is not None:
+            _retire_current_fallback_key(fallback_key)
         if active_fallback_cache_key is not None:
             _ACTIVE_FALLBACK_MESSAGE_IDS.pop(active_fallback_cache_key, None)
             if _CURRENT_FALLBACK_KEYS.get(fallback_key) == active_fallback_cache_key:
@@ -281,11 +283,6 @@ def _terminal_fallback_cache_key(
         token_key = (key[0], key[1], created_at_lifecycle_token)
         if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
             return token_key
-        active_keys = _active_fallback_cache_keys(key)
-        if len(active_keys) == 1:
-            return active_keys[0]
-        if len(active_keys) > 1:
-            return _AMBIGUOUS_TERMINAL
         return None
 
     active_keys = _active_fallback_cache_keys(key)
@@ -320,6 +317,12 @@ def _active_fallback_cache_keys(
         for active_key in _ACTIVE_FALLBACK_MESSAGE_IDS
         if active_key[0] == key[0] and active_key[1] == key[1]
     ]
+
+
+def _retire_current_fallback_key(key: tuple[str, str]) -> None:
+    current_key = _CURRENT_FALLBACK_KEYS.pop(key, None)
+    if current_key is not None:
+        _ACTIVE_FALLBACK_MESSAGE_IDS.pop(current_key, None)
 
 
 def _hash_fallback_message_id(
