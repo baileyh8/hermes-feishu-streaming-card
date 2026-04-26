@@ -93,13 +93,16 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     )
     message_id = explicit_message_id
     is_terminal_event = event_name in {"message.completed", "message.failed"}
-    active_fallback_cache_key = (
-        _terminal_fallback_cache_key(
-            fallback_key, created_at_lifecycle_token, explicit_message_id
-        )
-        if is_terminal_event
-        else None
-    )
+    active_fallback_cache_key = None
+    if event_name != "message.started":
+        if is_terminal_event:
+            active_fallback_cache_key = _terminal_fallback_cache_key(
+                fallback_key, created_at_lifecycle_token
+            )
+        else:
+            active_fallback_cache_key = _active_fallback_cache_key(
+                fallback_key, created_at_lifecycle_token
+            )
     if active_fallback_cache_key is _AMBIGUOUS_TERMINAL:
         return None
     active_fallback_message_id = (
@@ -133,7 +136,11 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "data": _event_data(event_name, local_vars, message_obj),
     }
     if is_terminal_event:
-        if explicit_message_id is not None:
+        if (
+            explicit_message_id is not None
+            and created_at_lifecycle_token is None
+            and active_fallback_cache_key is None
+        ):
             _retire_current_fallback_key(fallback_key)
         if active_fallback_cache_key is not None:
             _ACTIVE_FALLBACK_MESSAGE_IDS.pop(active_fallback_cache_key, None)
@@ -275,10 +282,7 @@ def _new_fallback_cache_key(
 def _terminal_fallback_cache_key(
     key: tuple[str, str],
     created_at_lifecycle_token: str | None,
-    explicit_message_id: str | None,
 ) -> tuple[str, str, str | None] | object | None:
-    if explicit_message_id is not None:
-        return None
     if created_at_lifecycle_token is not None:
         token_key = (key[0], key[1], created_at_lifecycle_token)
         if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:

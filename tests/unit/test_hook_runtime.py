@@ -274,7 +274,7 @@ def test_build_event_treats_invalid_created_at_as_missing_for_fallback(monkeypat
 
 
 @pytest.mark.parametrize("terminal_event", ["message.completed", "message.failed"])
-def test_build_event_explicit_terminal_preserves_message_id(terminal_event):
+def test_build_event_explicit_terminal_closes_active_fallback(terminal_event):
     local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
 
     first_started = hook_runtime.build_event("message.started", local_vars)
@@ -285,28 +285,33 @@ def test_build_event_explicit_terminal_preserves_message_id(terminal_event):
     next_started = hook_runtime.build_event("message.started", local_vars)
 
     assert first_started["message_id"] == delta["message_id"]
-    assert explicit_terminal["message_id"] == "msg_explicit"
-    assert [first_started["sequence"], delta["sequence"]] == [0, 1]
-    assert explicit_terminal["sequence"] == 0
+    assert explicit_terminal["message_id"] == first_started["message_id"]
+    assert [first_started["sequence"], delta["sequence"], explicit_terminal["sequence"]] == [
+        0,
+        1,
+        2,
+    ]
     assert next_started["message_id"].startswith("hfc_")
     assert first_started["message_id"] != next_started["message_id"]
     assert next_started["sequence"] == 0
 
 
-def test_build_event_explicit_terminal_retires_current_fallback_state():
+def test_build_event_explicit_delta_uses_active_fallback_state():
     local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
 
     first_started = hook_runtime.build_event("message.started", local_vars)
-    delta = hook_runtime.build_event("answer.delta", {**local_vars, "text": "hi"})
-    explicit_terminal = hook_runtime.build_event(
-        "message.completed", {**local_vars, "message_id": "msg_explicit"}
+    explicit_delta = hook_runtime.build_event(
+        "answer.delta", {**local_vars, "message_id": "msg_explicit", "text": "hi"}
     )
-    next_delta = hook_runtime.build_event("answer.delta", {**local_vars, "text": "next"})
+    completed = hook_runtime.build_event("message.completed", local_vars)
 
-    assert first_started["message_id"] == delta["message_id"]
-    assert explicit_terminal["message_id"] == "msg_explicit"
-    assert next_delta["message_id"] != first_started["message_id"]
-    assert next_delta["sequence"] == 0
+    assert first_started["message_id"] == explicit_delta["message_id"]
+    assert completed["message_id"] == first_started["message_id"]
+    assert [first_started["sequence"], explicit_delta["sequence"], completed["sequence"]] == [
+        0,
+        1,
+        2,
+    ]
 
 
 class ExplodingMessageObject:
