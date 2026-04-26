@@ -54,3 +54,17 @@ def test_docs_describe_event_forwarding_but_not_cardkit_completion():
     assert "仍未完成" in docs or "后续阶段" in docs
     assert "- [x] 补齐基于 Hermes fixture 和 mock sidecar 的最小 hook 事件转发验证。" in todo
     assert "- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
+
+
+def test_legacy_handoff_docs_do_not_claim_active_cardkit_completion():
+    legacy_docs = "\n".join(
+        [
+            read_doc("README_en.md"),
+            read_doc("QUICKSTART.md"),
+            read_doc("PROGRESS.md"),
+        ]
+    )
+
+    assert "not the active runtime" in legacy_docs
+    assert "Real Feishu CardKit create/update integration is still future work" in legacy_docs
+    assert "Current mainline verification uses fixture Hermes + mock sidecar tests" in legacy_docs

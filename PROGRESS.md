@@ -1,8 +1,10 @@
 # Hermes Feishu Streaming Card v2 — Progress Report
 
 **Date**: 2026-04-17
-**Status**: ✅ Core Implementation Complete (P0 tasks 1-9)
-**Architecture**: Sidecar Mode (isolated, safe, non-invasive)
+**Status**: Historical prototype report, not the current active runtime status
+**Architecture**: Legacy sidecar/adapter prototype
+
+> **Current mainline note:** active development now lives in `hermes_feishu_card/` as a sidecar-only plugin. The current verified scope is Hermes hook to local sidecar event forwarding with fake client/mock sidecar tests. Real Feishu CardKit create/update integration remains future work.
 
 ---
 
@@ -17,7 +19,7 @@
 | 5 | Factory 工厂 | `adapter/factory.py` | ✅ |
 | 6 | Sidecar 服务端 | `sidecar/server.py` | ✅ |
 | 7 | CardManager 卡片生命周期 | `sidecar/card_manager.py` | ✅ |
-| 8 | CardKit API 客户端 | `sidecar/cardkit_client.py` | ✅ |
+| 8 | CardKit API 客户端 | `sidecar/cardkit_client.py` | Historical prototype only; not verified in current active runtime |
 | 9 | Sidecar 配置加载 | `sidecar/config.py` | ✅ |
 | 10 | Sidecar 依赖 | `sidecar/requirements.txt` | ✅ (pip installed) |
 | 11 | Gateway 事件转发补丁 | `gateway_run_patch.py` | ✅ (applied at line 3378) |
@@ -40,7 +42,7 @@
 2026-04-17 16:46:11 [INFO] [CardManager] Started
 ```
 ✅ 服务启动成功
-✅ CardKit token 获取成功（使用真实凭证）
+Historical note only: an old prototype attempted CardKit token acquisition. This does not mean the current sidecar-only mainline has completed real CardKit integration.
 ⚠️  端口冲突（已有 sidecar 在运行 — 证明架构可行）
 
 ### Gateway Patch
