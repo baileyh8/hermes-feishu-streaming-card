@@ -257,7 +257,7 @@ def test_build_event_treats_invalid_created_at_as_missing_for_fallback(monkeypat
 
 
 @pytest.mark.parametrize("terminal_event", ["message.completed", "message.failed"])
-def test_build_event_explicit_terminal_uses_and_closes_active_fallback(terminal_event):
+def test_build_event_explicit_terminal_preserves_message_id(terminal_event):
     local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
 
     first_started = hook_runtime.build_event("message.started", local_vars)
@@ -267,17 +267,10 @@ def test_build_event_explicit_terminal_uses_and_closes_active_fallback(terminal_
     )
     next_started = hook_runtime.build_event("message.started", local_vars)
 
-    assert (
-        first_started["message_id"]
-        == delta["message_id"]
-        == explicit_terminal["message_id"]
-    )
-    assert explicit_terminal["message_id"].startswith("hfc_")
-    assert [first_started["sequence"], delta["sequence"], explicit_terminal["sequence"]] == [
-        0,
-        1,
-        2,
-    ]
+    assert first_started["message_id"] == delta["message_id"]
+    assert explicit_terminal["message_id"] == "msg_explicit"
+    assert [first_started["sequence"], delta["sequence"]] == [0, 1]
+    assert explicit_terminal["sequence"] == 0
     assert next_started["message_id"].startswith("hfc_")
     assert first_started["message_id"] != next_started["message_id"]
     assert next_started["sequence"] == 0

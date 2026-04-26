@@ -118,6 +118,8 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
             chat_id,
             created_at_lifecycle_token,
         )
+        if message_id is None:
+            return None
     sequence = _next_sequence(message_id)
     payload = {
         "schema_version": "1",
@@ -213,7 +215,7 @@ def _fallback_message_id(
     conversation_id: str,
     chat_id: str,
     created_at_lifecycle_token: str | None,
-) -> str:
+) -> str | None:
     key = (conversation_id, chat_id)
     if event_name == "message.started":
         cache_key = _new_fallback_cache_key(key, created_at_lifecycle_token)
@@ -226,6 +228,8 @@ def _fallback_message_id(
         )
 
     active_cache_key = _active_fallback_cache_key(key, created_at_lifecycle_token)
+    if active_cache_key is _AMBIGUOUS_TERMINAL:
+        return None
     if active_cache_key is not None:
         cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(active_cache_key)
         if cached is not None:
@@ -271,12 +275,12 @@ def _terminal_fallback_cache_key(
     created_at_lifecycle_token: str | None,
     explicit_message_id: str | None,
 ) -> tuple[str, str, str | None] | object | None:
+    if explicit_message_id is not None:
+        return None
     if created_at_lifecycle_token is not None:
         token_key = (key[0], key[1], created_at_lifecycle_token)
         if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
             return token_key
-        if explicit_message_id is not None:
-            return None
         active_keys = _active_fallback_cache_keys(key)
         if len(active_keys) == 1:
             return active_keys[0]
@@ -294,11 +298,14 @@ def _terminal_fallback_cache_key(
 
 def _active_fallback_cache_key(
     key: tuple[str, str], created_at_lifecycle_token: str | None
-) -> tuple[str, str, str | None] | None:
+) -> tuple[str, str, str | None] | object | None:
     if created_at_lifecycle_token is not None:
         token_key = (key[0], key[1], created_at_lifecycle_token)
         if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
             return token_key
+    active_keys = _active_fallback_cache_keys(key)
+    if len(active_keys) > 1:
+        return _AMBIGUOUS_TERMINAL
     current_key = _CURRENT_FALLBACK_KEYS.get(key)
     if current_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
         return current_key
