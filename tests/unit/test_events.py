@@ -62,6 +62,14 @@ def test_rejects_invalid_created_at():
         SidecarEvent.from_dict(payload)
 
 
+@pytest.mark.parametrize("created_at", [float("nan"), float("inf"), float("-inf")])
+def test_rejects_non_finite_created_at(created_at):
+    payload = valid_payload()
+    payload["created_at"] = created_at
+    with pytest.raises(EventValidationError, match="created_at"):
+        SidecarEvent.from_dict(payload)
+
+
 def test_rejects_non_object_data():
     payload = valid_payload()
     payload["data"] = "not-an-object"

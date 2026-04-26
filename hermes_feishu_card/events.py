@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any, Dict
 
 SUPPORTED_EVENTS = {
@@ -71,6 +72,8 @@ class SidecarEvent:
             created_at = float(payload["created_at"])
         except (TypeError, ValueError) as exc:
             raise EventValidationError("created_at must be a number") from exc
+        if not math.isfinite(created_at):
+            raise EventValidationError("created_at must be finite")
         data = payload["data"]
         if not isinstance(data, dict):
             raise EventValidationError("data must be an object")
