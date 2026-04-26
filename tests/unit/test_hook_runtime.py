@@ -106,6 +106,20 @@ def test_build_event_reuses_active_fallback_for_duplicate_started_before_termina
     local_vars = {
         "chat_id": "oc_abc",
         "conversation_id": "conv_abc",
+        "created_at": 1777017600.0,
+    }
+
+    first_started = hook_runtime.build_event("message.started", local_vars)
+    second_started = hook_runtime.build_event("message.started", local_vars)
+
+    assert first_started["message_id"] == second_started["message_id"]
+    assert [first_started["sequence"], second_started["sequence"]] == [0, 1]
+
+
+def test_build_event_separates_fallback_started_with_different_created_at():
+    local_vars = {
+        "chat_id": "oc_abc",
+        "conversation_id": "conv_abc",
     }
 
     first_started = hook_runtime.build_event(
@@ -114,9 +128,18 @@ def test_build_event_reuses_active_fallback_for_duplicate_started_before_termina
     second_started = hook_runtime.build_event(
         "message.started", {**local_vars, "created_at": 1777017601.0}
     )
+    first_completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": 1777017600.0}
+    )
+    second_completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": 1777017601.0}
+    )
 
-    assert first_started["message_id"] == second_started["message_id"]
-    assert [first_started["sequence"], second_started["sequence"]] == [0, 1]
+    assert first_started["message_id"] != second_started["message_id"]
+    assert first_completed["message_id"] == first_started["message_id"]
+    assert second_completed["message_id"] == second_started["message_id"]
+    assert [first_started["sequence"], first_completed["sequence"]] == [0, 1]
+    assert [second_started["sequence"], second_completed["sequence"]] == [0, 1]
 
 
 def test_build_event_rotates_fallback_after_terminal_with_same_created_at():

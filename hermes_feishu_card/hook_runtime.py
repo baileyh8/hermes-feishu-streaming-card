@@ -28,13 +28,15 @@ class RuntimeConfig:
 
 
 _SEQUENCES: dict[str, int] = {}
-_ACTIVE_FALLBACK_MESSAGE_IDS: dict[tuple[str, str], str] = {}
+_ACTIVE_FALLBACK_MESSAGE_IDS: dict[tuple[str, str, str | None], str] = {}
+_CURRENT_FALLBACK_KEYS: dict[tuple[str, str], tuple[str, str, str | None]] = {}
 _FALLBACK_LIFECYCLE_COUNTS: dict[tuple[str, str], int] = {}
 
 
 def reset_runtime_state() -> None:
     _SEQUENCES.clear()
     _ACTIVE_FALLBACK_MESSAGE_IDS.clear()
+    _CURRENT_FALLBACK_KEYS.clear()
     _FALLBACK_LIFECYCLE_COUNTS.clear()
 
 
@@ -87,8 +89,15 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         message_obj, ("message_id", "msg_id")
     )
     is_terminal_event = event_name in {"message.completed", "message.failed"}
+    active_fallback_cache_key = (
+        _active_fallback_cache_key(fallback_key, created_at_lifecycle_token)
+        if is_terminal_event
+        else None
+    )
     active_fallback_message_id = (
-        _ACTIVE_FALLBACK_MESSAGE_IDS.get(fallback_key) if is_terminal_event else None
+        _ACTIVE_FALLBACK_MESSAGE_IDS.get(active_fallback_cache_key)
+        if active_fallback_cache_key is not None
+        else None
     )
     if active_fallback_message_id is not None:
         message_id = active_fallback_message_id
@@ -112,7 +121,10 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "data": _event_data(event_name, local_vars, message_obj),
     }
     if is_terminal_event:
-        _ACTIVE_FALLBACK_MESSAGE_IDS.pop(fallback_key, None)
+        if active_fallback_cache_key is not None:
+            _ACTIVE_FALLBACK_MESSAGE_IDS.pop(active_fallback_cache_key, None)
+            if _CURRENT_FALLBACK_KEYS.get(fallback_key) == active_fallback_cache_key:
+                _CURRENT_FALLBACK_KEYS.pop(fallback_key, None)
     return payload
 
 
@@ -193,16 +205,31 @@ def _fallback_message_id(
     created_at_lifecycle_token: str | None,
 ) -> str:
     key = (conversation_id, chat_id)
-    cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(key)
-    if cached is not None:
-        return cached
+    if event_name == "message.started" and created_at_lifecycle_token is not None:
+        cache_key = (conversation_id, chat_id, created_at_lifecycle_token)
+        cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(cache_key)
+        if cached is not None:
+            _CURRENT_FALLBACK_KEYS[key] = cache_key
+            return cached
+        return _create_active_fallback_message_id(
+            key, cache_key, conversation_id, chat_id, created_at_lifecycle_token
+        )
+
+    active_cache_key = _active_fallback_cache_key(key, created_at_lifecycle_token)
+    if active_cache_key is not None:
+        cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(active_cache_key)
+        if cached is not None:
+            return cached
+
+    cache_key = (conversation_id, chat_id, created_at_lifecycle_token)
     return _create_active_fallback_message_id(
-        key, conversation_id, chat_id, created_at_lifecycle_token
+        key, cache_key, conversation_id, chat_id, created_at_lifecycle_token
     )
 
 
 def _create_active_fallback_message_id(
     key: tuple[str, str],
+    cache_key: tuple[str, str, str | None],
     conversation_id: str,
     chat_id: str,
     created_at_lifecycle_token: str | None,
@@ -215,8 +242,22 @@ def _create_active_fallback_message_id(
     message_id = _hash_fallback_message_id(
         conversation_id, chat_id, lifecycle_token
     )
-    _ACTIVE_FALLBACK_MESSAGE_IDS[key] = message_id
+    _ACTIVE_FALLBACK_MESSAGE_IDS[cache_key] = message_id
+    _CURRENT_FALLBACK_KEYS[key] = cache_key
     return message_id
+
+
+def _active_fallback_cache_key(
+    key: tuple[str, str], created_at_lifecycle_token: str | None
+) -> tuple[str, str, str | None] | None:
+    if created_at_lifecycle_token is not None:
+        token_key = (key[0], key[1], created_at_lifecycle_token)
+        if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
+            return token_key
+    current_key = _CURRENT_FALLBACK_KEYS.get(key)
+    if current_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
+        return current_key
+    return None
 
 
 def _hash_fallback_message_id(
