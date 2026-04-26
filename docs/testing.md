@@ -16,6 +16,14 @@ python3 -m pytest tests/integration -q
 
 集成测试覆盖 CLI、doctor、sidecar server，以及基于 fixture Hermes 目录的安装、恢复和卸载流程。
 
+## Hermes hook runtime tests
+
+```bash
+python3 -m pytest tests/unit/test_hook_runtime.py tests/integration/test_hook_runtime_integration.py -q
+```
+
+这些测试会验证安装后的 Hermes hook 能把 `SidecarEvent` 发送到 mock sidecar，并在发送失败时保持 fail-open。它们只使用 fixture 和 mock sidecar，不访问真实飞书。
+
 ## 文档测试
 
 ```bash

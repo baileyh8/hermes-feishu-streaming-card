@@ -34,3 +34,17 @@ def test_event_protocol_documents_card_status_labels():
 
     assert "思考中" in event_protocol
     assert "已完成" in event_protocol
+
+
+def test_docs_describe_event_forwarding_but_not_cardkit_completion():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/architecture.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "Hermes hook" in docs or "Hermes 到 sidecar" in docs
+    assert "Feishu CardKit" in docs
+    assert "仍未完成" in docs or "后续阶段" in docs

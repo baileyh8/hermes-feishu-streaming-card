@@ -2,7 +2,9 @@
 
 本项目目标是为 Hermes Agent 提供飞书/Lark 流式卡片能力。当前主线是 **sidecar-only**：Hermes 侧只安装最小 hook，流式卡片渲染、会话状态和飞书 CardKit 边界都放在独立的 `hermes_feishu_card/` sidecar 中。
 
-第一阶段已经完成安装/恢复闭环、事件协议、sidecar HTTP 接口、渲染和会话状态骨架。当前 patcher 写入的 hook block 仍是安全占位；真实 Hermes 运行时事件转发验证和真实飞书 CardKit 创建/更新联调还在 TODO 后续阶段。
+当前已完成第二阶段最小事件转发：安装后的 Hermes hook 会调用 `hermes_feishu_card.hook_runtime`，把可识别的 Hermes 消息上下文以 `SidecarEvent` JSON 发送到本机 sidecar `/events`。该链路 fail-open，sidecar 不可用时 Hermes 原生文本回复继续运行。
+
+真实 Feishu CardKit 创建/更新仍未完成，当前卡片侧联调使用 fake client 或 mock server。
 
 旧目录和脚本仍保留用于追溯历史实现，但它们不是 active runtime。`adapter/`、`sidecar/`、`patch/`、`installer.py`、`installer_sidecar.py`、`installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等 legacy/dual/patch 代码不属于新主线；新开发、测试和安装入口以 `hermes_feishu_card/` 为准。
 

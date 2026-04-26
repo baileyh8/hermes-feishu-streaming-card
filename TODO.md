@@ -9,7 +9,8 @@
 - [x] 安装器写入最小 Hermes hook、备份和 manifest。
 - [x] 安装失败时回滚，避免半安装状态。
 - [x] 恢复和卸载拒绝覆盖用户改动。
-- [ ] 补齐真实 Hermes 运行环境下的最小 hook 事件转发验证。
+- [x] 补齐基于 Hermes fixture 和 mock sidecar 的最小 hook 事件转发验证。
+- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。
 
 ## P1
 
