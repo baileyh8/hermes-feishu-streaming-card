@@ -31,6 +31,7 @@ _SEQUENCES: dict[str, int] = {}
 _ACTIVE_FALLBACK_MESSAGE_IDS: dict[tuple[str, str, str | None], str] = {}
 _CURRENT_FALLBACK_KEYS: dict[tuple[str, str], tuple[str, str, str | None]] = {}
 _FALLBACK_LIFECYCLE_COUNTS: dict[tuple[str, str], int] = {}
+_AMBIGUOUS_TERMINAL = object()
 
 
 def reset_runtime_state() -> None:
@@ -85,15 +86,22 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     created_at = _created_at(created_at_value)
     created_at_lifecycle_token = _created_at_lifecycle_token(created_at_value)
     fallback_key = (conversation_id, chat_id)
-    message_id = _first_string(local_vars, ("message_id", "msg_id")) or _first_attr_string(
+    explicit_message_id = _first_string(
+        local_vars, ("message_id", "msg_id")
+    ) or _first_attr_string(
         message_obj, ("message_id", "msg_id")
     )
+    message_id = explicit_message_id
     is_terminal_event = event_name in {"message.completed", "message.failed"}
     active_fallback_cache_key = (
-        _active_fallback_cache_key(fallback_key, created_at_lifecycle_token)
+        _terminal_fallback_cache_key(
+            fallback_key, created_at_lifecycle_token, explicit_message_id
+        )
         if is_terminal_event
         else None
     )
+    if active_fallback_cache_key is _AMBIGUOUS_TERMINAL:
+        return None
     active_fallback_message_id = (
         _ACTIVE_FALLBACK_MESSAGE_IDS.get(active_fallback_cache_key)
         if active_fallback_cache_key is not None
@@ -101,6 +109,8 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     )
     if active_fallback_message_id is not None:
         message_id = active_fallback_message_id
+    elif is_terminal_event and message_id is None:
+        return None
     elif message_id is None:
         message_id = _fallback_message_id(
             event_name,
@@ -205,8 +215,8 @@ def _fallback_message_id(
     created_at_lifecycle_token: str | None,
 ) -> str:
     key = (conversation_id, chat_id)
-    if event_name == "message.started" and created_at_lifecycle_token is not None:
-        cache_key = (conversation_id, chat_id, created_at_lifecycle_token)
+    if event_name == "message.started":
+        cache_key = _new_fallback_cache_key(key, created_at_lifecycle_token)
         cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(cache_key)
         if cached is not None:
             _CURRENT_FALLBACK_KEYS[key] = cache_key
@@ -221,7 +231,7 @@ def _fallback_message_id(
         if cached is not None:
             return cached
 
-    cache_key = (conversation_id, chat_id, created_at_lifecycle_token)
+    cache_key = _new_fallback_cache_key(key, created_at_lifecycle_token)
     return _create_active_fallback_message_id(
         key, cache_key, conversation_id, chat_id, created_at_lifecycle_token
     )
@@ -247,6 +257,41 @@ def _create_active_fallback_message_id(
     return message_id
 
 
+def _new_fallback_cache_key(
+    key: tuple[str, str], created_at_lifecycle_token: str | None
+) -> tuple[str, str, str | None]:
+    if created_at_lifecycle_token is not None:
+        return (key[0], key[1], created_at_lifecycle_token)
+    lifecycle_count = _FALLBACK_LIFECYCLE_COUNTS.get(key, 0)
+    return (key[0], key[1], f"untokened:{lifecycle_count}")
+
+
+def _terminal_fallback_cache_key(
+    key: tuple[str, str],
+    created_at_lifecycle_token: str | None,
+    explicit_message_id: str | None,
+) -> tuple[str, str, str | None] | object | None:
+    if created_at_lifecycle_token is not None:
+        token_key = (key[0], key[1], created_at_lifecycle_token)
+        if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
+            return token_key
+        if explicit_message_id is not None:
+            return None
+        active_keys = _active_fallback_cache_keys(key)
+        if len(active_keys) == 1:
+            return active_keys[0]
+        if len(active_keys) > 1:
+            return _AMBIGUOUS_TERMINAL
+        return None
+
+    active_keys = _active_fallback_cache_keys(key)
+    if len(active_keys) == 1:
+        return active_keys[0]
+    if len(active_keys) > 1 and explicit_message_id is None:
+        return _AMBIGUOUS_TERMINAL
+    return None
+
+
 def _active_fallback_cache_key(
     key: tuple[str, str], created_at_lifecycle_token: str | None
 ) -> tuple[str, str, str | None] | None:
@@ -258,6 +303,16 @@ def _active_fallback_cache_key(
     if current_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
         return current_key
     return None
+
+
+def _active_fallback_cache_keys(
+    key: tuple[str, str]
+) -> list[tuple[str, str, str | None]]:
+    return [
+        active_key
+        for active_key in _ACTIVE_FALLBACK_MESSAGE_IDS
+        if active_key[0] == key[0] and active_key[1] == key[1]
+    ]
 
 
 def _hash_fallback_message_id(
