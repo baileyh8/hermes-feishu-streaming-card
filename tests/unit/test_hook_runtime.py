@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from hermes_feishu_card import hook_runtime
@@ -85,14 +87,35 @@ def test_build_event_returns_none_when_chat_id_missing():
     assert hook_runtime.build_event("message.started", {"message_id": "msg"}) is None
 
 
-def test_build_event_uses_stable_message_id_fallback():
+def test_build_event_uses_stable_message_id_fallback_with_created_at():
     local_vars = {"chat_id": "oc_abc", "created_at": 1777017600.0}
 
-    first = hook_runtime.build_event("message.started", local_vars)
-    second = hook_runtime.build_event("message.started", local_vars)
+    started = hook_runtime.build_event("message.started", local_vars)
+    delta = hook_runtime.build_event(
+        "answer.delta", {**local_vars, "created_at": 1777017601.0}
+    )
+    completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": 1777017602.0}
+    )
 
-    assert first["message_id"] == second["message_id"]
-    assert first["message_id"].startswith("hfc_")
+    assert started["message_id"] == delta["message_id"] == completed["message_id"]
+    assert started["message_id"].startswith("hfc_")
+
+
+def test_build_event_rotates_fallback_after_terminal_with_same_created_at():
+    local_vars = {
+        "chat_id": "oc_abc",
+        "conversation_id": "conv_abc",
+        "created_at": 1777017600.0,
+    }
+
+    first_started = hook_runtime.build_event("message.started", local_vars)
+    first_completed = hook_runtime.build_event("message.completed", local_vars)
+    second_started = hook_runtime.build_event("message.started", local_vars)
+
+    assert first_started["message_id"] == first_completed["message_id"]
+    assert first_started["message_id"] != second_started["message_id"]
+    assert second_started["sequence"] == 0
 
 
 def test_build_event_uses_stable_fallback_without_created_at(monkeypatch):
@@ -136,6 +159,70 @@ def test_build_event_creates_active_fallback_when_delta_arrives_first(monkeypatc
     assert delta["message_id"] == completed["message_id"]
     assert delta["message_id"].startswith("hfc_")
     assert [delta["sequence"], completed["sequence"]] == [0, 1]
+
+
+def test_build_event_treats_invalid_created_at_as_missing_for_fallback(monkeypatch):
+    timestamps = iter([1777017600.0, 1777017601.0, 1777017602.0])
+    monkeypatch.setattr(hook_runtime.time, "time", lambda: next(timestamps))
+    local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
+
+    started = hook_runtime.build_event(
+        "message.started", {**local_vars, "created_at": "abc"}
+    )
+    delta = hook_runtime.build_event(
+        "answer.delta", {**local_vars, "created_at": float("nan")}
+    )
+    completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": float("inf")}
+    )
+
+    assert started["message_id"] == delta["message_id"] == completed["message_id"]
+    assert all(
+        math.isfinite(payload["created_at"]) for payload in (started, delta, completed)
+    )
+
+
+def test_build_event_explicit_terminal_closes_active_fallback():
+    local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
+
+    first_started = hook_runtime.build_event("message.started", local_vars)
+    explicit_completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "message_id": "msg_explicit"}
+    )
+    next_delta = hook_runtime.build_event("answer.delta", local_vars)
+
+    assert explicit_completed["message_id"] == "msg_explicit"
+    assert first_started["message_id"] != next_delta["message_id"]
+
+
+class ExplodingMessageObject:
+    @property
+    def open_chat_id(self):
+        raise RuntimeError("proxy unavailable")
+
+    @property
+    def message_id(self):
+        raise RuntimeError("proxy unavailable")
+
+    @property
+    def text(self):
+        raise RuntimeError("proxy unavailable")
+
+
+def test_build_event_skips_message_attributes_that_raise():
+    payload = hook_runtime.build_event(
+        "answer.delta",
+        {
+            "chat_id": "oc_direct",
+            "conversation_id": "conv_direct",
+            "message": ExplodingMessageObject(),
+        },
+    )
+
+    assert payload["chat_id"] == "oc_direct"
+    assert payload["conversation_id"] == "conv_direct"
+    assert payload["message_id"].startswith("hfc_")
+    assert payload["data"] == {"text": ""}
 
 
 def test_reset_runtime_state_clears_fallback_cache(monkeypatch):

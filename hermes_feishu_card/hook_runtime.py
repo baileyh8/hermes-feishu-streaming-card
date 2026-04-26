@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import math
 import os
 import time
 from typing import Any
@@ -80,6 +81,7 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     )
     created_at_value = local_vars.get("created_at")
     created_at = _created_at(created_at_value)
+    created_at_lifecycle_token = _created_at_lifecycle_token(created_at_value)
     fallback_key = (conversation_id, chat_id)
     message_id = _first_string(local_vars, ("message_id", "msg_id")) or _first_attr_string(
         message_obj, ("message_id", "msg_id")
@@ -90,8 +92,7 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
             event_name,
             conversation_id,
             chat_id,
-            created_at_value,
-            created_at,
+            created_at_lifecycle_token,
         )
     sequence = _next_sequence(message_id)
     payload = {
@@ -105,7 +106,7 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "created_at": created_at,
         "data": _event_data(event_name, local_vars, message_obj),
     }
-    if used_fallback and event_name in {"message.completed", "message.failed"}:
+    if event_name in {"message.completed", "message.failed"}:
         _ACTIVE_FALLBACK_MESSAGE_IDS.pop(fallback_key, None)
     return payload
 
@@ -144,47 +145,71 @@ def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
 def _first_attr_string(obj: Any, names: tuple[str, ...]) -> str | None:
     if obj is None:
         return None
-    for name in names:
-        value = getattr(obj, name, None)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
     if isinstance(obj, dict):
         return _first_string(obj, names)
+    for name in names:
+        try:
+            value = getattr(obj, name, None)
+        except Exception:
+            continue
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 
 def _created_at(value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
+    created_at = _finite_float(value)
+    if created_at is None:
         return time.time()
+    return created_at
+
+
+def _created_at_lifecycle_token(value: Any) -> str | None:
+    created_at = _finite_float(value)
+    if created_at is None:
+        return None
+    return f"{created_at:.3f}"
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
 
 
 def _fallback_message_id(
     event_name: str,
     conversation_id: str,
     chat_id: str,
-    created_at_value: Any,
-    created_at: float,
+    created_at_lifecycle_token: str | None,
 ) -> str:
-    if created_at_value is not None:
-        return _hash_fallback_message_id(conversation_id, chat_id, f"{created_at:.3f}")
-
     key = (conversation_id, chat_id)
     if event_name != "message.started":
         cached = _ACTIVE_FALLBACK_MESSAGE_IDS.get(key)
         if cached is not None:
             return cached
-    return _create_active_fallback_message_id(key, conversation_id, chat_id)
+    return _create_active_fallback_message_id(
+        key, conversation_id, chat_id, created_at_lifecycle_token
+    )
 
 
 def _create_active_fallback_message_id(
-    key: tuple[str, str], conversation_id: str, chat_id: str
+    key: tuple[str, str],
+    conversation_id: str,
+    chat_id: str,
+    created_at_lifecycle_token: str | None,
 ) -> str:
     lifecycle_count = _FALLBACK_LIFECYCLE_COUNTS.get(key, 0)
     _FALLBACK_LIFECYCLE_COUNTS[key] = lifecycle_count + 1
+    lifecycle_token = f"active:{lifecycle_count}"
+    if created_at_lifecycle_token is not None:
+        lifecycle_token = f"{lifecycle_token}:created_at:{created_at_lifecycle_token}"
     message_id = _hash_fallback_message_id(
-        conversation_id, chat_id, f"active:{lifecycle_count}"
+        conversation_id, chat_id, lifecycle_token
     )
     _ACTIVE_FALLBACK_MESSAGE_IDS[key] = message_id
     return message_id
