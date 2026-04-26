@@ -88,7 +88,7 @@ def _run_install(args: argparse.Namespace) -> int:
     backup_existed = backup_path.exists()
 
     try:
-        original = run_py.read_text(encoding="utf-8")
+        original = _read_text_preserve_newlines(run_py)
         _validate_existing_install_state(run_py, backup_path, manifest_path)
         patched = apply_patch(original)
         if not backup_existed:
@@ -143,14 +143,14 @@ def _restore(hermes_root: Path) -> None:
     if backup_path.exists():
         manifest = _read_manifest(manifest_path)
         if manifest is None:
-            backup_text = backup_path.read_text(encoding="utf-8")
+            backup_text = _read_text_preserve_newlines(backup_path)
             _validate_backup_contains_original(backup_text, "restore")
-            if run_py.exists() and run_py.read_text(encoding="utf-8") == backup_text:
+            if run_py.exists() and _read_text_preserve_newlines(run_py) == backup_text:
                 _clear_install_state(backup_path, manifest_path)
                 return
 
             patched_backup = apply_patch(backup_text)
-            if not run_py.exists() or run_py.read_text(encoding="utf-8") != patched_backup:
+            if not run_py.exists() or _read_text_preserve_newlines(run_py) != patched_backup:
                 raise ValueError("run.py changed since install; refusing to restore")
 
             _atomic_write_text(run_py, backup_text)
@@ -166,7 +166,7 @@ def _restore(hermes_root: Path) -> None:
     if not run_py.exists():
         return
 
-    current = run_py.read_text(encoding="utf-8")
+    current = _read_text_preserve_newlines(run_py)
     if manifest_path.exists() and remove_patch(current) == current:
         _clear_install_state(backup_path, manifest_path)
         return
@@ -242,7 +242,7 @@ def _validate_existing_install_state(
 ) -> None:
     backup_exists = backup_path.exists()
     manifest_exists = manifest_path.exists()
-    current = run_py.read_text(encoding="utf-8")
+    current = _read_text_preserve_newlines(run_py)
 
     if not backup_exists and not manifest_exists:
         if remove_patch(current) != current:
@@ -286,11 +286,11 @@ def _validate_complete_install_state(
     operation: str,
 ) -> str:
     if manifest is None:
-        backup_text = backup_path.read_text(encoding="utf-8")
+        backup_text = _read_text_preserve_newlines(backup_path)
         _validate_backup_contains_original(backup_text, operation)
         if not run_py.exists():
             raise ValueError(f"run.py changed since install; refusing to {operation}")
-        _validate_current_matches_backup(run_py.read_text(encoding="utf-8"), backup_text, operation)
+        _validate_current_matches_backup(_read_text_preserve_newlines(run_py), backup_text, operation)
         return backup_text
 
     patched_sha256 = manifest.get("patched_sha256")
@@ -305,8 +305,8 @@ def _validate_complete_install_state(
     if file_sha256(backup_path) != backup_sha256:
         raise ValueError(f"backup changed since install; refusing to {operation}")
 
-    current = run_py.read_text(encoding="utf-8")
-    backup_text = backup_path.read_text(encoding="utf-8")
+    current = _read_text_preserve_newlines(run_py)
+    backup_text = _read_text_preserve_newlines(backup_path)
     _validate_backup_contains_original(backup_text, operation)
     _validate_current_matches_backup(current, backup_text, operation)
     return backup_text
@@ -324,12 +324,12 @@ def _validate_restorable_install_state(
     if file_sha256(backup_path) != backup_sha256:
         raise ValueError(f"backup changed since install; refusing to {operation}")
 
-    backup_text = backup_path.read_text(encoding="utf-8")
+    backup_text = _read_text_preserve_newlines(backup_path)
     _validate_backup_contains_original(backup_text, operation)
     if not run_py.exists():
         raise ValueError(f"run.py changed since install; refusing to {operation}")
 
-    current = run_py.read_text(encoding="utf-8")
+    current = _read_text_preserve_newlines(run_py)
     if current == backup_text:
         return backup_text
 
@@ -365,7 +365,7 @@ def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
     if not manifest_path.exists():
         return None
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(_read_text_preserve_newlines(manifest_path))
     except json.JSONDecodeError as exc:
         raise ValueError("manifest could not be parsed") from exc
     if not isinstance(manifest, dict):
@@ -373,10 +373,16 @@ def _read_manifest(manifest_path: Path) -> dict[str, object] | None:
     return manifest
 
 
+def _read_text_preserve_newlines(path: Path) -> str:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
 def _atomic_write_text(path: Path, contents: str) -> None:
     temp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
-        temp_path.write_text(contents, encoding="utf-8")
+        with temp_path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(contents)
         temp_path.replace(path)
     finally:
         try:
@@ -391,7 +397,7 @@ def _restore_by_removing_owned_patch(run_py: Path, current: str | None = None) -
     if not run_py.exists():
         return False
     if current is None:
-        current = run_py.read_text(encoding="utf-8")
+        current = _read_text_preserve_newlines(run_py)
     restored = remove_patch(current)
     if restored == current:
         return False

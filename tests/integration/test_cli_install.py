@@ -116,6 +116,23 @@ def test_restore_accepts_phase_one_placeholder_install(tmp_path):
     assert not manifest_path(hermes_dir).exists()
 
 
+def test_install_restore_preserves_crlf_run_py_bytes(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original_lf = run_py(hermes_dir).read_text(encoding="utf-8")
+    original_crlf_bytes = original_lf.replace("\n", "\r\n").encode("utf-8")
+    run_py(hermes_dir).write_bytes(original_crlf_bytes)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    assert b"\r\n" in run_py(hermes_dir).read_bytes()
+    assert backup_path(hermes_dir).read_bytes() == original_crlf_bytes
+
+    restore_result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert restore_result.returncode == 0, restore_result.stderr
+    assert run_py(hermes_dir).read_bytes() == original_crlf_bytes
+
+
 def test_restore_restores_backup_to_original_run_py(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     original = run_py(hermes_dir).read_text(encoding="utf-8")
