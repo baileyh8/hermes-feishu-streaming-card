@@ -176,6 +176,28 @@ def test_build_event_ignores_ambiguous_unmatched_terminal_token():
     assert first_completed["message_id"] == first_started["message_id"]
 
 
+def test_build_event_ignores_ambiguous_untokened_terminal():
+    local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
+
+    first_started = hook_runtime.build_event(
+        "message.started", {**local_vars, "created_at": 1777017600.0}
+    )
+    second_started = hook_runtime.build_event(
+        "message.started", {**local_vars, "created_at": 1777017601.0}
+    )
+    ambiguous_completed = hook_runtime.build_event("message.completed", local_vars)
+    first_completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": 1777017600.0}
+    )
+    second_completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": 1777017601.0}
+    )
+
+    assert ambiguous_completed is None
+    assert first_completed["message_id"] == first_started["message_id"]
+    assert second_completed["message_id"] == second_started["message_id"]
+
+
 def test_build_event_ignores_unmatched_terminal_token_with_single_active_fallback():
     local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
 
@@ -191,6 +213,28 @@ def test_build_event_ignores_unmatched_terminal_token_with_single_active_fallbac
 
     assert mismatched_completed is None
     assert matched_completed["message_id"] == started["message_id"]
+
+
+def test_build_event_ignores_explicit_terminal_with_unmatched_token():
+    local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
+
+    started = hook_runtime.build_event(
+        "message.started", {**local_vars, "created_at": 1777017600.0}
+    )
+    explicit_terminal = hook_runtime.build_event(
+        "message.completed",
+        {**local_vars, "message_id": "msg_explicit", "created_at": 1777017601.0},
+    )
+    delta = hook_runtime.build_event(
+        "answer.delta", {**local_vars, "created_at": 1777017600.0, "text": "still active"}
+    )
+    completed = hook_runtime.build_event(
+        "message.completed", {**local_vars, "created_at": 1777017600.0}
+    )
+
+    assert explicit_terminal is None
+    assert delta["message_id"] == started["message_id"]
+    assert completed["message_id"] == started["message_id"]
 
 
 def test_build_event_rotates_fallback_after_terminal_with_same_created_at():

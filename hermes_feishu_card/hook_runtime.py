@@ -287,12 +287,14 @@ def _terminal_fallback_cache_key(
         token_key = (key[0], key[1], created_at_lifecycle_token)
         if token_key in _ACTIVE_FALLBACK_MESSAGE_IDS:
             return token_key
+        if _active_fallback_cache_keys(key):
+            return _AMBIGUOUS_TERMINAL
         return None
 
     active_keys = _active_fallback_cache_keys(key)
     if len(active_keys) == 1:
         return active_keys[0]
-    if len(active_keys) > 1 and explicit_message_id is None:
+    if len(active_keys) > 1:
         return _AMBIGUOUS_TERMINAL
     return None
 
