@@ -1,4 +1,7 @@
+import asyncio
+import json
 import math
+from urllib import error
 
 import pytest
 
@@ -444,3 +447,144 @@ def test_build_event_increments_sequence_per_message():
 
     assert first["sequence"] == 0
     assert second["sequence"] == 1
+
+
+class SenderProbe:
+    def __init__(self):
+        self.payloads = []
+        self.raise_error = False
+
+    async def __call__(self, url, payload, timeout):
+        self.payloads.append((url, payload, timeout))
+        if self.raise_error:
+            raise RuntimeError("network failed")
+
+
+async def drain_tasks():
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_schedules_sender(monkeypatch):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+
+    result = hook_runtime.emit_from_hermes_locals(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.started",
+    )
+    await drain_tasks()
+
+    assert result is True
+    assert len(sender.payloads) == 1
+    url, payload, timeout = sender.payloads[0]
+    assert url == "http://sidecar.test/events"
+    assert payload["event"] == "message.started"
+    assert payload["message_id"] == "msg_1"
+    assert timeout == 0.8
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_disabled_does_not_send(monkeypatch):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    monkeypatch.setenv("HERMES_FEISHU_CARD_ENABLED", "0")
+
+    result = hook_runtime.emit_from_hermes_locals(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.started",
+    )
+    await drain_tasks()
+
+    assert result is False
+    assert sender.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_build_event_none_does_not_send(monkeypatch):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+
+    result = hook_runtime.emit_from_hermes_locals(
+        {"message_id": "msg_1"},
+        event_name="message.started",
+    )
+    await drain_tasks()
+
+    assert result is False
+    assert sender.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_sender_error_is_swallowed(monkeypatch):
+    sender = SenderProbe()
+    sender.raise_error = True
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+
+    result = hook_runtime.emit_from_hermes_locals(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.started",
+    )
+    await drain_tasks()
+
+    assert result is True
+    assert len(sender.payloads) == 1
+
+
+def test_emit_from_hermes_locals_without_running_loop_fails_open(monkeypatch):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+
+    result = hook_runtime.emit_from_hermes_locals(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.started",
+    )
+
+    assert result is False
+    assert sender.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_post_json_constructs_json_post_and_timeout(monkeypatch):
+    opened = {}
+
+    def fake_open_request(req, timeout):
+        opened["url"] = req.full_url
+        opened["method"] = req.get_method()
+        opened["headers"] = dict(req.header_items())
+        opened["body"] = req.data
+        opened["timeout"] = timeout
+
+    monkeypatch.setattr(hook_runtime, "_open_request", fake_open_request)
+
+    await hook_runtime._post_json(
+        "http://sidecar.test/events",
+        {"event": "message.started", "data": {"text": "对象文本"}},
+        0.25,
+    )
+
+    assert opened["url"] == "http://sidecar.test/events"
+    assert opened["method"] == "POST"
+    assert opened["headers"]["Content-type"] == "application/json"
+    assert json.loads(opened["body"].decode("utf-8")) == {
+        "event": "message.started",
+        "data": {"text": "对象文本"},
+    }
+    assert opened["timeout"] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_post_json_propagates_http_errors_from_open_request(monkeypatch):
+    def fake_open_request(_req, _timeout):
+        raise error.HTTPError("http://sidecar.test/events", 500, "boom", {}, None)
+
+    monkeypatch.setattr(hook_runtime, "_open_request", fake_open_request)
+
+    with pytest.raises(error.HTTPError):
+        await hook_runtime._post_json(
+            "http://sidecar.test/events",
+            {"event": "message.started"},
+            0.8,
+        )

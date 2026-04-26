@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from hashlib import sha256
+import json
 import math
 import os
 import time
 from typing import Any
+from urllib import request
 
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 DEFAULT_TIMEOUT_SECONDS = 0.8
@@ -65,6 +68,52 @@ def _timeout_from_env(value: str | None) -> float:
     if not 50 <= timeout_ms <= 5000:
         return DEFAULT_TIMEOUT_SECONDS
     return timeout_ms / 1000.0
+
+
+def emit_from_hermes_locals(
+    local_vars: dict[str, Any],
+    event_name: str = "message.started",
+) -> bool:
+    try:
+        config = load_runtime_config()
+        if not config.enabled:
+            return False
+        payload = build_event(event_name, local_vars)
+        if payload is None:
+            return False
+        asyncio.get_running_loop()
+        asyncio.create_task(
+            _send_fail_open(config.event_url, payload, config.timeout_seconds)
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def _send_fail_open(
+    url: str, payload: dict[str, Any], timeout: float
+) -> None:
+    try:
+        await _post_json(url, payload, timeout)
+    except Exception:
+        return
+
+
+async def _post_json(url: str, payload: dict[str, Any], timeout: float) -> None:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _open_request, req, timeout)
+
+
+def _open_request(req: request.Request, timeout: float) -> None:
+    with request.urlopen(req, timeout=timeout) as response:
+        response.read()
 
 
 def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] | None:
