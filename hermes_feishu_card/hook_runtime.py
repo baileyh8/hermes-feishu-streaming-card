@@ -92,11 +92,13 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         message_obj, ("message_id", "msg_id")
     )
     message_id = explicit_message_id
-    if event_name == "message.started" and explicit_message_id is not None:
-        _retire_all_fallback_keys(fallback_key)
     is_terminal_event = event_name in {"message.completed", "message.failed"}
     active_fallback_cache_key = None
-    if event_name != "message.started":
+    if event_name == "message.started" and explicit_message_id is not None:
+        active_fallback_cache_key = _active_fallback_cache_key(
+            fallback_key, created_at_lifecycle_token
+        )
+    elif event_name != "message.started":
         if is_terminal_event:
             active_fallback_cache_key = _terminal_fallback_cache_key(
                 fallback_key, created_at_lifecycle_token

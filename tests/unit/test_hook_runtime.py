@@ -74,7 +74,7 @@ def test_build_event_extracts_direct_fields():
     assert payload["data"] == {}
 
 
-def test_build_event_explicit_started_retires_stale_fallback_state():
+def test_build_event_explicit_started_keeps_active_fallback_identity():
     local_vars = {"chat_id": "oc_abc", "conversation_id": "conv_abc"}
 
     fallback_started = hook_runtime.build_event("message.started", local_vars)
@@ -89,13 +89,19 @@ def test_build_event_explicit_started_retires_stale_fallback_state():
     )
 
     assert fallback_started["message_id"].startswith("hfc_")
-    assert explicit_started["message_id"] == "msg_real"
-    assert explicit_delta["message_id"] == "msg_real"
-    assert explicit_completed["message_id"] == "msg_real"
-    assert [explicit_started["sequence"], explicit_delta["sequence"], explicit_completed["sequence"]] == [
+    assert explicit_started["message_id"] == fallback_started["message_id"]
+    assert explicit_delta["message_id"] == fallback_started["message_id"]
+    assert explicit_completed["message_id"] == fallback_started["message_id"]
+    assert [
+        fallback_started["sequence"],
+        explicit_started["sequence"],
+        explicit_delta["sequence"],
+        explicit_completed["sequence"],
+    ] == [
         0,
         1,
         2,
+        3,
     ]
 
 
