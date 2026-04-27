@@ -11,7 +11,7 @@
 ## 支持范围
 
 - 默认支持 Hermes Agent `v2026.4.23` 及以上。
-- 安装器实际以 Hermes 目录中的 `VERSION=v2026.4.23+` 和 `gateway/run.py` 代码结构检测为准。
+- 安装器实际以 Hermes 目录中的 `VERSION=v2026.4.23+` 或 Git tag `v2026.4.23+`，以及 `gateway/run.py` 代码结构检测为准。
 - `v0.11.0` 是项目规划中对应的 Hermes 名称；当前检测实现不按 `v0.11.0` 字符串判断支持范围。
 - 检查失败时安装器 fail-closed，不写入 Hermes 文件，不留下半安装状态。
 - sidecar 不可用时，Hermes 应继续走原生文本回复降级路径，避免影响 Agent 主流程。

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 from hermes_feishu_card.install.detect import detect_hermes
 from hermes_feishu_card.install.patcher import PATCH_BEGIN, PATCH_END
@@ -19,6 +23,56 @@ def test_detect_hermes_supports_v2026_4_23_fixture():
     assert result.run_py.name == "run.py"
     assert result.supported is True
     assert result.reason == "supported"
+
+
+def test_detect_hermes_supports_git_tag_when_version_file_missing(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is required for git tag fallback detection")
+    _write_hermes_root(tmp_path, version=None)
+    _git(tmp_path, "init")
+    _git(tmp_path, "add", ".")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=Hermes Test",
+        "-c",
+        "user.email=hermes-test@example.com",
+        "commit",
+        "-m",
+        "fixture",
+    )
+    _git(tmp_path, "tag", "v2026.4.23")
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is True
+    assert result.version == "v2026.4.23"
+
+
+def test_detect_hermes_rejects_parent_git_tag_when_version_file_missing(tmp_path):
+    if shutil.which("git") is None:
+        pytest.skip("git is required for git tag fallback detection")
+    hermes_root = tmp_path / "nested-hermes"
+    _write_hermes_root(hermes_root, version=None)
+    _git(tmp_path, "init")
+    _git(tmp_path, "add", ".")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=Hermes Test",
+        "-c",
+        "user.email=hermes-test@example.com",
+        "commit",
+        "-m",
+        "parent fixture",
+    )
+    _git(tmp_path, "tag", "v2026.4.23")
+
+    result = detect_hermes(hermes_root)
+
+    assert result.supported is False
+    assert result.version == "unknown"
+    assert "version" in result.reason.lower()
 
 
 def test_detect_hermes_accepts_self_hooks_emit_inside_handler(tmp_path):
@@ -386,4 +440,14 @@ def _supported_run_py() -> str:
     return (
         "async def _handle_message_with_agent(message, hooks):\n"
         "    hooks.emit(\"agent:end\", {\"message\": message})\n"
+    )
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )

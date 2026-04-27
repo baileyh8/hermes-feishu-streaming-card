@@ -16,6 +16,8 @@ python3 -m pytest tests/integration -q
 
 集成测试覆盖 CLI、doctor、sidecar server，以及基于 fixture Hermes 目录的安装、恢复和卸载流程。
 
+官方 Hermes `v2026.4.23` Git tag 源码已用于人工安装/恢复 smoke；该上游标签没有顶层 `VERSION` 文件，因此安装器会在 `VERSION` 缺失时回退读取 Git tag。真实 Hermes Gateway 进程运行 smoke 仍需在有可用 Hermes 本机安装时执行。
+
 ## Hermes hook runtime tests
 
 ```bash

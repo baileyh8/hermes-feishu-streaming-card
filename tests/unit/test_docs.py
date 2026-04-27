@@ -13,6 +13,7 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
 
     assert "sidecar-only" in readme.lower()
     assert "v2026.4.23" in readme
+    assert "Git tag `v2026.4.23+`" in readme
 
 
 def test_mainline_docs_mark_legacy_dual_as_not_active_runtime():
@@ -53,6 +54,7 @@ def test_docs_describe_event_forwarding_but_not_cardkit_completion():
     assert "Feishu CardKit" in docs
     assert "仍未完成" in docs or "后续阶段" in docs
     assert "- [x] 补齐基于 Hermes fixture 和 mock sidecar 的最小 hook 事件转发验证。" in todo
+    assert "- [x] 补齐官方 Hermes `v2026.4.23` Git tag 源码的安装/恢复 smoke test。" in todo
     assert "- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
 
 

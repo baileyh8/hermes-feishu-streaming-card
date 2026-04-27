@@ -7,7 +7,7 @@
 安装前必须确认：
 
 - Hermes 目录存在，且包含预期的 `gateway/run.py`。
-- Hermes 版本和代码结构符合默认支持范围：`VERSION=v2026.4.23+`，且 `gateway/run.py` 存在当前 hook 可识别的结构。
+- Hermes 版本和代码结构符合默认支持范围：`VERSION=v2026.4.23+` 或 Git tag `v2026.4.23+`，且 `gateway/run.py` 存在当前 hook 可识别的结构。
 - `gateway/run.py` 中存在当前 hook 可识别的插入位置。
 - 既有安装状态、备份和 manifest 没有互相矛盾。
 

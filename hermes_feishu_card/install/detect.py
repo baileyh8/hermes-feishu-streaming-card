@@ -4,6 +4,7 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import subprocess
 
 
 MIN_SUPPORTED_VERSION = "v2026.4.23"
@@ -24,6 +25,8 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     hermes_root = Path(root)
     run_py = hermes_root / "gateway" / "run.py"
     version, version_error = _read_version(hermes_root / "VERSION")
+    if version == "unknown" and version_error is None:
+        version = _read_git_version(hermes_root)
 
     if not run_py.exists():
         return HermesDetection(
@@ -107,6 +110,43 @@ def _read_version(path: Path) -> tuple[str, str | None]:
     if error is not None:
         return "unknown", error
     return contents.strip() or "unknown", None
+
+
+def _read_git_version(root: Path) -> str:
+    if _git_toplevel(root) != root.resolve():
+        return "unknown"
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def _git_toplevel(root: Path) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = result.stdout.strip()
+    if not output:
+        return None
+    return Path(output).resolve()
 
 
 def _read_text(path: Path, label: str) -> tuple[str, str | None]:
