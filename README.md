@@ -71,4 +71,5 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 - [架构说明](docs/architecture.md)
 - [事件协议](docs/event-protocol.md)
 - [安装安全](docs/installer-safety.md)
+- [迁移说明](docs/migration.md)
 - [测试说明](docs/testing.md)

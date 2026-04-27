@@ -149,3 +149,27 @@ def test_legacy_handoff_docs_do_not_claim_active_cardkit_completion():
     assert "not the active runtime" in legacy_docs
     assert "Real Feishu CardKit create/update integration is still future work" in legacy_docs
     assert "Current mainline verification uses fixture Hermes + mock sidecar tests" in legacy_docs
+
+
+def test_docs_describe_safe_legacy_to_sidecar_migration():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/installer-safety.md"),
+            read_doc("docs/migration.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "docs/migration.md" in docs
+    assert "legacy/dual" in docs
+    assert "sidecar-only" in docs
+    assert "installer_v2.py" in docs
+    assert "gateway_run_patch.py" in docs
+    assert "patch_feishu.py" in docs
+    assert "restore --hermes-dir" in docs
+    assert "doctor --config" in docs
+    assert "install --hermes-dir" in docs
+    assert "fail-closed" in docs
+    assert "不要把 App Secret" in docs
+    assert "- [x] 编写从 legacy/dual 安装迁移到 sidecar-only 的安全迁移说明。" in docs

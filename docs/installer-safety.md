@@ -45,6 +45,8 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 
 `restore` 用于恢复安装前的 Hermes 文件；`uninstall` 当前同样移除本插件拥有的 hook 和安装状态。两者都不应覆盖无法校验的用户改动。
 
+从 legacy/dual 历史安装迁移时，先阅读 `docs/migration.md`。历史 `installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等入口写入的补丁不属于当前安装器 manifest 管理范围，不能假定当前 `restore` 能自动识别并清理。
+
 ## 降级行为
 
 sidecar 不可用、超时或返回错误时，Hermes hook 应让 Hermes 继续原生文本回复。卡片不可用是插件故障，不应升级为 Agent 主流程故障。
