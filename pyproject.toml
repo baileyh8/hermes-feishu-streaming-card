@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-feishu-streaming-card"
+version = "0.1.0"
+description = "Hermes Gateway Feishu streaming card sidecar plugin"
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["Hermes", "Feishu", "Lark", "streaming-card", "sidecar"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Communications :: Chat",
+]
+dependencies = [
+  "aiohttp>=3.9",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+hermes-feishu-card = "hermes_feishu_card.cli:main"
+
+[project.urls]
+Repository = "https://github.com/baileyh8/hermes-feishu-streaming-card"
+Issues = "https://github.com/baileyh8/hermes-feishu-streaming-card/issues"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["hermes_feishu_card*"]

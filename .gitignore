@@ -1,4 +1,5 @@
 __pycache__/
+.DS_Store
 *.pyc
 *.pyo
 *.bak
@@ -9,3 +10,4 @@ env/
 *.egg-info/
 dist/
 build/
+.superpowers/

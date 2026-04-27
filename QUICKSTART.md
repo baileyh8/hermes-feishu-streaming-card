@@ -1,5 +1,7 @@
 # Quick Start — Next Agent Handoff
 
+> **Legacy handoff, not the active runtime.** This file records an earlier sidecar/adapter session. The current mainline is `hermes_feishu_card/` sidecar-only: Hermes forwards `SidecarEvent` JSON to a local sidecar, and real Feishu CardKit create/update integration is still future work.
+
 **Project**: hermes-feishu-streaming-card  
 **Mode**: Sidecar v2.1 (in progress)  
 **Updated**: 20260417_171943
@@ -69,10 +71,10 @@ hermes chat
 # 4. Send message that triggers streaming (with tool calls if possible)
 # 5. Watch sidecar log:
 tail -f ~/.hermes/logs/feishu-sidecar.log
-# Expected lines:
-#   [CardKit] Card created: <card_id> for chat <chat_id>
-#   [CardKit] Text updated: thinking_content on card <card_id>
-#   [CardKit] Card finalized: <card_id>
+# Historical expected lines from the old prototype.
+# Current mainline verification uses fixture Hermes + mock sidecar tests instead of real CardKit logs.
+#   [Mock sidecar] received SidecarEvent JSON
+#   [Mock sidecar] event=message.started chat_id=<chat_id>
 ```
 
 ## Important Notes

@@ -1,6 +1,8 @@
 # Feishu Streaming Card for Hermes v2.3
 
-Adds Feishu/Lark streaming card support to [Hermes Gateway](https://github.com/joeynyc/hermes-agent). When a user sends a message to the bot, a card appears with a real-time typewriter effect showing AI thinking, tool calls, and the final result.
+> **Legacy reference, not the active runtime.** This English README documents the older v2.x/dual implementation. The current mainline is the sidecar-only package in `hermes_feishu_card/`: Hermes installs a minimal fail-open hook that forwards `SidecarEvent` JSON to the local sidecar. Real Feishu CardKit create/update integration is still future work in the current mainline.
+
+The current implementation aims to add Feishu/Lark streaming card support to [Hermes Gateway](https://github.com/joeynyc/hermes-agent). At this phase, installed Hermes hooks forward events to the local sidecar; user-visible CardKit behavior is validated with fake clients and mock sidecar tests, not released as a verified real CardKit integration.
 
 > **⚠️ Usage Risk**: This tool modifies Hermes Gateway files (event forwarding logic, ~50 lines). Although sidecar mode provides process isolation, any third-party modification carries risk. Test in non-production environments first.
 
@@ -42,8 +44,8 @@ User sends message
 Hermes Gateway (receives message, forwards events)
     ↓ WebSocket/HTTP
 Feishu Streaming Sidecar (separate process)
-    ↓ CardKit API
-Feishu Card
+    ↓ Future CardKit API integration
+Feishu Card (not yet verified in current mainline)
 ```
 
 **Gateway Modification**: Only adds event forwarding to `gateway/platforms/feishu_forward.py` (~50 lines), no core code changes.
@@ -406,7 +408,7 @@ Send a message to the Bot — should reply as plain text (not card)
 - ✅ **Concurrency protection**: per-chat asyncio.Lock
 
 ### v1.0 (2026-04-15)
-- 🎉 **Initial release**: Streaming typewriter card, tool tracking, token stats
+- 🎉 **Historical prototype**: Streaming typewriter card design, tool tracking, token stats. This changelog entry does not describe the current sidecar-only mainline release status.
 
 ---
 

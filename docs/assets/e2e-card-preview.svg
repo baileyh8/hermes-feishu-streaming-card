@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="720" viewBox="0 0 1120 720">
+<rect width="1120" height="720" fill="#f5f7fb"/>
+<text x="56" y="54" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#1f2937">Hermes Feishu Streaming Card E2E Preview</text>
+<text x="56" y="74" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#374151">思考流更新</text>
+<rect x="56" y="96" width="484" height="560" rx="12" fill="#ffffff" stroke="#d6dbe6"/>
+<rect x="56" y="96" width="484" height="72" rx="12" fill="#4f46e5"/>
+<text x="84" y="129" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">Hermes Agent</text>
+<text x="84" y="152" font-family="Arial, sans-serif" font-size="14" fill="#eef2ff">思考中</text>
+<text x="84" y="212" font-family="Arial, sans-serif" font-size="14" fill="#111827">先检查输入参数，确认 Hermes hook 已经发出事件。</text>
+<text x="84" y="234" font-family="Arial, sans-serif" font-size="14" fill="#111827">再读取资料并整理回答结构。</text>
+<line x1="84" y1="396" x2="512" y2="396" stroke="#e5e7eb"/>
+<text x="84" y="434" font-family="Arial, sans-serif" font-size="14" fill="#374151">工具调用 2 次</text>
+<text x="84" y="456" font-family="Arial, sans-serif" font-size="14" fill="#374151">- `读取资料`: 已完成</text>
+<text x="84" y="478" font-family="Arial, sans-serif" font-size="14" fill="#374151">- `生成答案`: 运行中</text>
+<text x="84" y="616" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">生成中</text>
+<text x="580" y="74" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#374151">完成态更新</text>
+<rect x="580" y="96" width="484" height="560" rx="12" fill="#ffffff" stroke="#d6dbe6"/>
+<rect x="580" y="96" width="484" height="72" rx="12" fill="#16a34a"/>
+<text x="608" y="129" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">Hermes Agent</text>
+<text x="608" y="152" font-family="Arial, sans-serif" font-size="14" fill="#eef2ff">已完成</text>
+<text x="608" y="212" font-family="Arial, sans-serif" font-size="14" fill="#111827">这是流式卡片的最终回答。思考内容已经被结果覆盖，工具调用次数</text>
+<text x="608" y="234" font-family="Arial, sans-serif" font-size="14" fill="#111827">保留。</text>
+<line x1="608" y1="396" x2="1036" y2="396" stroke="#e5e7eb"/>
+<text x="608" y="434" font-family="Arial, sans-serif" font-size="14" fill="#374151">工具调用 2 次</text>
+<text x="608" y="456" font-family="Arial, sans-serif" font-size="14" fill="#374151">- `读取资料`: 已完成</text>
+<text x="608" y="478" font-family="Arial, sans-serif" font-size="14" fill="#374151">- `生成答案`: 已完成</text>
+<text x="608" y="616" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">耗时 8.4s · 输入 128 · 输出 256</text>
+</svg>
