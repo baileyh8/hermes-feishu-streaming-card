@@ -173,3 +173,28 @@ def test_docs_describe_safe_legacy_to_sidecar_migration():
     assert "fail-closed" in docs
     assert "不要把 App Secret" in docs
     assert "- [x] 编写从 legacy/dual 安装迁移到 sidecar-only 的安全迁移说明。" in docs
+
+
+def test_docs_describe_e2e_visual_preview_materials():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/e2e-verification.md"),
+            read_doc("docs/testing.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+    svg = read_doc("docs/assets/e2e-card-preview.svg")
+    preview_json = read_doc("docs/assets/e2e-card-preview.json")
+
+    assert "docs/e2e-verification.md" in docs
+    assert "e2e-card-preview.svg" in docs
+    assert "e2e-card-preview.json" in docs
+    assert "tools/generate_e2e_preview.py" in docs
+    assert "思考中" in svg
+    assert "已完成" in svg
+    assert "工具调用 2 次" in svg
+    assert "</think>" not in svg
+    assert '"thinking"' in preview_json
+    assert '"completed"' in preview_json
+    assert "- [x] 增加端到端截图或录屏验证材料。" in docs

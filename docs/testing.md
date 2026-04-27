@@ -61,6 +61,15 @@ python3 -m pytest tests/unit/test_docs.py -q
 
 文档测试只做低脆弱度守卫：确认 README 保留 sidecar-only 和 `v2026.4.23` 支持范围说明，确认主线文档仍明确 legacy/dual 代码不是 active runtime，并确保事件协议持续声明卡片状态。它不替代人工文档 review。
 
+## E2E visual preview
+
+```bash
+python3 tools/generate_e2e_preview.py --output-dir docs/assets
+python3 -m pytest tests/unit/test_e2e_preview.py -q
+```
+
+生成器会写入 `docs/assets/e2e-card-preview.svg` 和 `docs/assets/e2e-card-preview.json`，用于本地核对 `思考中`、`已完成`、工具调用计数、`</think>` 标签过滤和最终答案覆盖行为。该预览不访问真实飞书，不读取 App Secret。
+
 ## Fixture 安装恢复测试
 
 `tests/fixtures/hermes_v2026_4_23/` 是安装器安全测试使用的 Hermes fixture。相关测试会复制 fixture 到临时目录，验证：
