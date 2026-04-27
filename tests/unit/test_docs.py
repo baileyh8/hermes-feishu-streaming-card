@@ -198,3 +198,21 @@ def test_docs_describe_e2e_visual_preview_materials():
     assert '"thinking"' in preview_json
     assert '"completed"' in preview_json
     assert "- [x] 增加端到端截图或录屏验证材料。" in docs
+
+
+def test_docs_describe_release_readiness_boundaries():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/release-readiness.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "docs/release-readiness.md" in docs
+    assert "0.1.0" in docs
+    assert "python3 -m pytest -q" in docs
+    assert "真实 Hermes Gateway" in docs
+    assert "真实飞书应用" in docs
+    assert "App Secret" in docs
+    assert "GitHub Actions" in docs
