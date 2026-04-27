@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import re
 import sys
+import time
 from uuid import uuid4
 from pathlib import Path
 
 from hermes_feishu_card.config import load_config
+from hermes_feishu_card.events import SidecarEvent
+from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient, FeishuClientConfig
 from hermes_feishu_card.install.detect import detect_hermes
 from hermes_feishu_card.install.manifest import file_sha256
 from hermes_feishu_card.install.patcher import apply_patch, remove_patch
 from hermes_feishu_card.process import start_sidecar, status_sidecar, stop_sidecar
+from hermes_feishu_card.render import render_card
+from hermes_feishu_card.session import CardSession
 
 
 BACKUP_SUFFIX = ".hermes_feishu_card.bak"
@@ -29,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_stop(args)
     if args.command == "status":
         return _run_status(args)
+    if args.command == "smoke-feishu-card":
+        return _run_smoke_feishu_card(args)
     if args.command == "install":
         return _run_install(args)
     if args.command == "restore":
@@ -53,6 +62,10 @@ def _build_parser() -> argparse.ArgumentParser:
     for command in ("start", "stop", "status"):
         process_parser = subparsers.add_parser(command)
         process_parser.add_argument("--config", default="config.yaml.example")
+
+    smoke = subparsers.add_parser("smoke-feishu-card")
+    smoke.add_argument("--config", default="config.yaml.example")
+    smoke.add_argument("--chat-id", required=True)
 
     for command in ("install", "restore", "uninstall"):
         command_parser = subparsers.add_parser(command)
@@ -138,6 +151,80 @@ def _run_status(args: argparse.Namespace) -> int:
         if status["pid"] is not None:
             print(f"pid: {status['pid']} stale")
     return 0
+
+
+def _run_smoke_feishu_card(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+        message_id = asyncio.run(_smoke_feishu_card(config, args.chat_id))
+    except Exception as exc:
+        print(f"error: {_sanitize_error(exc, config if 'config' in locals() else None)}", file=sys.stderr)
+        return 1
+
+    print("smoke ok")
+    print(f"message_id: {message_id}")
+    return 0
+
+
+async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
+    feishu = config.get("feishu", {})
+    app_id = feishu.get("app_id", "")
+    app_secret = feishu.get("app_secret", "")
+    if not isinstance(chat_id, str) or not chat_id.strip():
+        raise ValueError("chat_id is required")
+    if not app_id or not app_secret:
+        raise ValueError("FEISHU_APP_ID and FEISHU_APP_SECRET are required")
+
+    client = FeishuClient(
+        FeishuClientConfig(
+            app_id=app_id,
+            app_secret=app_secret,
+            base_url=feishu.get("base_url", FeishuClientConfig.base_url),
+            timeout_seconds=feishu.get(
+                "timeout_seconds",
+                FeishuClientConfig.timeout_seconds,
+            ),
+        )
+    )
+    session = CardSession(
+        conversation_id="smoke",
+        message_id=f"smoke-{uuid4().hex}",
+        chat_id=chat_id,
+        thinking_text="飞书卡片 smoke test 正在运行。",
+    )
+    message_id = await client.send_card(chat_id, render_card(session))
+
+    completed = SidecarEvent(
+        schema_version="1",
+        event="message.completed",
+        conversation_id=session.conversation_id,
+        message_id=session.message_id,
+        chat_id=session.chat_id,
+        platform="feishu",
+        sequence=0,
+        created_at=time.time(),
+        data={
+            "answer": "飞书卡片 smoke test 已完成。",
+            "duration": 0.1,
+            "tokens": {"input_tokens": 0, "output_tokens": 0},
+        },
+    )
+    session.apply(completed)
+    await client.update_card_message(message_id, render_card(session))
+    return message_id
+
+
+def _sanitize_error(exc: Exception, config: dict | None) -> str:
+    message = str(exc)
+    if config is not None:
+        secret = config.get("feishu", {}).get("app_secret", "")
+        if isinstance(secret, str) and secret:
+            message = message.replace(secret, "[redacted]")
+    message = re.sub(r"Bearer\s+[A-Za-z0-9._~+/=-]+", "[redacted-auth]", message)
+    message = re.sub(r"tenant-token-[A-Za-z0-9._~+/=-]+", "tenant-token-[redacted]", message)
+    if isinstance(exc, FeishuAPIError):
+        return message
+    return message or exc.__class__.__name__
 
 
 def _run_install(args: argparse.Namespace) -> int:

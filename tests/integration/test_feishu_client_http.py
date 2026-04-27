@@ -1,4 +1,7 @@
+import asyncio
 import pytest
+import subprocess
+import sys
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -7,6 +10,15 @@ from hermes_feishu_card.feishu_client import (
     FeishuClient,
     FeishuClientConfig,
 )
+
+
+def run_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-m", "hermes_feishu_card.cli", *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 @pytest.fixture
@@ -170,3 +182,191 @@ async def test_http_error_status_raises():
             await client.send_card("oc_abc", {"schema": "2.0"})
     finally:
         await test_client.close()
+
+
+async def test_smoke_command_sends_and_updates_card(feishu_api, tmp_path):
+    test_client, requests, _ = feishu_api
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "feishu:\n"
+        "  app_id: cli_test\n"
+        "  app_secret: secret\n"
+        f"  base_url: {test_client.make_url('/')}\n",
+        encoding="utf-8",
+    )
+
+    result = await asyncio.to_thread(
+        run_cli,
+        "smoke-feishu-card",
+        "--config",
+        str(config_path),
+        "--chat-id",
+        "oc_abc",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "smoke ok" in result.stdout
+    assert "om_message_1" in result.stdout
+    assert [request[0] for request in requests] == ["token", "send", "update"]
+
+
+async def test_smoke_command_requires_credentials(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("feishu:\n  app_id: ''\n  app_secret: ''\n", encoding="utf-8")
+
+    result = await asyncio.to_thread(
+        run_cli,
+        "smoke-feishu-card",
+        "--config",
+        str(config_path),
+        "--chat-id",
+        "oc_abc",
+    )
+
+    assert result.returncode != 0
+    assert "FEISHU_APP_ID" in result.stderr
+
+
+async def test_smoke_command_send_failure_does_not_leak_secret(tmp_path):
+    async def tenant_token(request):
+        return web.json_response(
+            {
+                "code": 0,
+                "msg": "ok",
+                "tenant_access_token": "tenant-token-1",
+                "expire": 7200,
+            }
+        )
+
+    async def failing_send(request):
+        return web.json_response({"code": 999, "msg": "send failed super-secret-value"})
+
+    app = web.Application()
+    app.router.add_post("/auth/v3/tenant_access_token/internal", tenant_token)
+    app.router.add_post("/im/v1/messages", failing_send)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "feishu:\n"
+            "  app_id: cli_test\n"
+            "  app_secret: super-secret-value\n"
+            f"  base_url: {test_client.make_url('/')}\n",
+            encoding="utf-8",
+        )
+
+        result = await asyncio.to_thread(
+            run_cli,
+            "smoke-feishu-card",
+            "--config",
+            str(config_path),
+            "--chat-id",
+            "oc_abc",
+        )
+    finally:
+        await test_client.close()
+
+    assert result.returncode != 0
+    assert "send failed" in result.stderr
+    assert "super-secret-value" not in result.stderr
+    assert "tenant-token-1" not in result.stderr
+
+
+async def test_smoke_command_failure_does_not_leak_tenant_token(tmp_path):
+    async def tenant_token(request):
+        return web.json_response(
+            {
+                "code": 0,
+                "msg": "ok",
+                "tenant_access_token": "opaque-sensitive-token-abc123",
+                "expire": 7200,
+            }
+        )
+
+    async def failing_send(request):
+        return web.json_response(
+            {"code": 999, "msg": "Authorization opaque-sensitive-token-abc123"}
+        )
+
+    app = web.Application()
+    app.router.add_post("/auth/v3/tenant_access_token/internal", tenant_token)
+    app.router.add_post("/im/v1/messages", failing_send)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "feishu:\n"
+            "  app_id: cli_test\n"
+            "  app_secret: secret\n"
+            f"  base_url: {test_client.make_url('/')}\n",
+            encoding="utf-8",
+        )
+
+        result = await asyncio.to_thread(
+            run_cli,
+            "smoke-feishu-card",
+            "--config",
+            str(config_path),
+            "--chat-id",
+            "oc_abc",
+        )
+    finally:
+        await test_client.close()
+
+    assert result.returncode != 0
+    assert "opaque-sensitive-token-abc123" not in result.stderr
+
+
+async def test_smoke_command_update_failure_returns_nonzero(feishu_api, tmp_path):
+    async def tenant_token(request):
+        return web.json_response(
+            {
+                "code": 0,
+                "msg": "ok",
+                "tenant_access_token": "tenant-token-1",
+                "expire": 7200,
+            }
+        )
+
+    async def send_message(request):
+        return web.json_response(
+            {"code": 0, "msg": "ok", "data": {"message_id": "om_message_1"}}
+        )
+
+    async def failing_update(request):
+        return web.json_response({"code": 999, "msg": "update failed"})
+
+    app = web.Application()
+    app.router.add_post("/auth/v3/tenant_access_token/internal", tenant_token)
+    app.router.add_post("/im/v1/messages", send_message)
+    app.router.add_patch("/im/v1/messages/{message_id}", failing_update)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "feishu:\n"
+            "  app_id: cli_test\n"
+            "  app_secret: secret\n"
+            f"  base_url: {test_client.make_url('/')}\n",
+            encoding="utf-8",
+        )
+
+        result = await asyncio.to_thread(
+            run_cli,
+            "smoke-feishu-card",
+            "--config",
+            str(config_path),
+            "--chat-id",
+            "oc_abc",
+        )
+    finally:
+        await test_client.close()
+
+    assert result.returncode != 0
+    assert "update failed" in result.stderr

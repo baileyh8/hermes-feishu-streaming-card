@@ -40,6 +40,15 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 
 `start` 会启动本机 sidecar HTTP 进程并写入用户态 pidfile；`status` 通过 `/health` 探活；`stop` 会校验 pidfile 中的 PID/token 与 `/health` 返回的 process_pid/process_token 匹配后才停止本插件管理的 sidecar，避免误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。未配置飞书凭据时，进程内使用 no-op client 接收事件，不会发送真实飞书卡片；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后，runner 会使用真实 Feishu HTTP client。
 
+真实飞书卡片 smoke：
+
+```bash
+FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx \
+python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example --chat-id oc_xxx
+```
+
+该命令会向指定会话发送一张测试卡片并更新一次；只在本机环境读取凭据，不会输出 App Secret 或 tenant token。
+
 ## 飞书凭据
 
 飞书/Lark App ID 和 App Secret 只能通过本机配置或环境变量提供，不要写入仓库、README、测试 fixture 或提交历史。

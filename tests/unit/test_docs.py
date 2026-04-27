@@ -91,8 +91,11 @@ def test_docs_describe_feishu_http_client_without_claiming_live_smoke():
 
     assert "tenant token" in docs or "tenant access token" in docs
     assert "mock Feishu server" in docs
+    assert "smoke-feishu-card" in docs
+    assert "--chat-id" in docs
     assert "真实飞书应用做人工 CardKit smoke test" in docs
     assert "- [x] 实现 Feishu CardKit HTTP client，并用 mock server 验证 tenant token、发送和更新。" in docs
+    assert "- [x] 提供 `smoke-feishu-card` 手动命令用于真实飞书卡片发送/更新验证。" in docs
     assert "- [ ] 使用真实飞书应用做人工 CardKit smoke test，凭据仅使用本机配置或环境变量。" in docs
 
 

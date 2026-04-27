@@ -42,6 +42,15 @@ python3 -m pytest tests/unit/test_feishu_client.py tests/integration/test_feishu
 
 这些测试使用 mock Feishu server 验证 tenant token、发送 interactive card、更新卡片消息和错误处理，不访问真实飞书，也不需要真实 App Secret。
 
+手动真实飞书 smoke：
+
+```bash
+FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx \
+python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example --chat-id oc_xxx
+```
+
+该命令会真实发送并更新一张测试卡片。只有在本机环境提供凭据和目标 `chat_id` 时才运行；不要把 App Secret、tenant token 或真实 chat_id 写入仓库。
+
 ## 文档测试
 
 ```bash

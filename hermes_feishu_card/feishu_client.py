@@ -161,5 +161,7 @@ class FeishuClient:
             msg = payload.get("msg", "")
             if not isinstance(msg, str):
                 msg = ""
+            if self._tenant_access_token:
+                msg = msg.replace(self._tenant_access_token, "[redacted-token]")
             raise FeishuAPIError(f"Feishu API error {code}: {msg}")
         return payload
