@@ -36,7 +36,12 @@ def test_example_config_uses_current_sidecar_schema():
 
     assert "feishu" in raw
     assert "cardkit" not in raw
-    assert config["feishu"] == {"app_id": "", "app_secret": ""}
+    assert config["feishu"] == {
+        "app_id": "",
+        "app_secret": "",
+        "base_url": "https://open.feishu.cn/open-apis",
+        "timeout_seconds": 30,
+    }
 
 
 def test_load_config_shallow_merges_yaml_sections(tmp_path):

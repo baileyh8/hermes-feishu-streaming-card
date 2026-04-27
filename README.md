@@ -4,7 +4,7 @@
 
 当前已完成第二阶段最小事件转发：安装后的 Hermes hook 会调用 `hermes_feishu_card.hook_runtime`，把可识别的 Hermes 消息上下文以 `SidecarEvent` JSON 发送到本机 sidecar `/events`。该链路 fail-open，sidecar 不可用时 Hermes 原生文本回复继续运行。
 
-真实 Feishu CardKit 创建/更新仍未完成，当前卡片侧联调使用 fake client 或 mock server。
+Feishu CardKit HTTP client 已实现并通过 mock server 验证；真实飞书应用联调仍未完成，凭据只允许通过本机配置或环境变量提供。
 
 旧目录和脚本仍保留用于追溯历史实现，但它们不是 active runtime。`adapter/`、`sidecar/`、`patch/`、`installer.py`、`installer_sidecar.py`、`installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等 legacy/dual/patch 代码不属于新主线；新开发、测试和安装入口以 `hermes_feishu_card/` 为准。
 
@@ -38,7 +38,7 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 
 `restore` 和 `uninstall` 都会优先使用安装时的备份与 manifest 校验；检测到 Hermes 文件或备份被用户改动时会拒绝覆盖。
 
-`start` 会启动本机 sidecar HTTP 进程并写入用户态 pidfile；`status` 通过 `/health` 探活；`stop` 会校验 pidfile 中的 PID/token 与 `/health` 返回的 process_pid/process_token 匹配后才停止本插件管理的 sidecar，避免误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。真实 Feishu CardKit 创建/更新完成前，进程内使用 no-op client 接收事件，不会发送真实飞书卡片。
+`start` 会启动本机 sidecar HTTP 进程并写入用户态 pidfile；`status` 通过 `/health` 探活；`stop` 会校验 pidfile 中的 PID/token 与 `/health` 返回的 process_pid/process_token 匹配后才停止本插件管理的 sidecar，避免误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。未配置飞书凭据时，进程内使用 no-op client 接收事件，不会发送真实飞书卡片；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后，runner 会使用真实 Feishu HTTP client。
 
 ## 飞书凭据
 

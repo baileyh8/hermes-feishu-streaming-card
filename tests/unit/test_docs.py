@@ -51,8 +51,8 @@ def test_docs_describe_event_forwarding_but_not_cardkit_completion():
 
     assert "第二阶段最小事件转发" in readme
     assert "Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地" in architecture
-    assert "Feishu CardKit" in docs
-    assert "仍未完成" in docs or "后续阶段" in docs
+    assert "Feishu CardKit HTTP client 已实现" in docs
+    assert "真实飞书应用联调仍未完成" in docs
     assert "- [x] 补齐基于 Hermes fixture 和 mock sidecar 的最小 hook 事件转发验证。" in todo
     assert "- [x] 补齐官方 Hermes `v2026.4.23` Git tag 源码的安装/恢复 smoke test。" in todo
     assert "- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
@@ -77,6 +77,23 @@ def test_docs_describe_sidecar_process_management_scope():
     assert "POSIX" in docs
     assert "no-op client" in docs
     assert "- [x] 将 sidecar 进程管理从占位 `status` 扩展为可启动、可停止、可探活。" in docs
+
+
+def test_docs_describe_feishu_http_client_without_claiming_live_smoke():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/architecture.md"),
+            read_doc("docs/testing.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "tenant token" in docs or "tenant access token" in docs
+    assert "mock Feishu server" in docs
+    assert "真实飞书应用做人工 CardKit smoke test" in docs
+    assert "- [x] 实现 Feishu CardKit HTTP client，并用 mock server 验证 tenant token、发送和更新。" in docs
+    assert "- [ ] 使用真实飞书应用做人工 CardKit smoke test，凭据仅使用本机配置或环境变量。" in docs
 
 
 def test_legacy_handoff_docs_do_not_claim_active_cardkit_completion():

@@ -19,7 +19,8 @@
 - [x] 文档明确卡片正常状态只有 `思考中` 和 `已完成`。
 - [x] 文档明确旧 adapter/sidecar/patch/installer_v2 代码不是 active runtime。
 - [x] 将 sidecar 进程管理从占位 `status` 扩展为可启动、可停止、可探活。
-- [ ] 完成真实飞书 CardKit 联调，凭据仅使用本机配置或环境变量。
+- [x] 实现 Feishu CardKit HTTP client，并用 mock server 验证 tenant token、发送和更新。
+- [ ] 使用真实飞书应用做人工 CardKit smoke test，凭据仅使用本机配置或环境变量。
 
 ## P2
 

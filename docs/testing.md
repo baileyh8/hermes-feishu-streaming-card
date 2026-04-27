@@ -34,6 +34,14 @@ python3 -m pytest tests/integration/test_cli_process.py -q
 
 该测试会启动真实本机 sidecar 进程，检查 `/health`、`status`、事件接收和 `stop` 清理。测试使用临时 pidfile 目录和 no-op Feishu client，不访问真实飞书。
 
+## Feishu HTTP client tests
+
+```bash
+python3 -m pytest tests/unit/test_feishu_client.py tests/integration/test_feishu_client_http.py -q
+```
+
+这些测试使用 mock Feishu server 验证 tenant token、发送 interactive card、更新卡片消息和错误处理，不访问真实飞书，也不需要真实 App Secret。
+
 ## 文档测试
 
 ```bash

@@ -6,6 +6,7 @@ from typing import Any
 from aiohttp import web
 
 from .config import load_config
+from .feishu_client import FeishuClient, FeishuClientConfig
 from .server import create_app
 
 
@@ -21,6 +22,25 @@ class NoopFeishuClient:
         return None
 
 
+def build_feishu_client(config: dict[str, Any]) -> NoopFeishuClient | FeishuClient:
+    feishu = config.get("feishu", {})
+    app_id = feishu.get("app_id", "")
+    app_secret = feishu.get("app_secret", "")
+    if not app_id or not app_secret:
+        return NoopFeishuClient()
+
+    client_config = FeishuClientConfig(
+        app_id=app_id,
+        app_secret=app_secret,
+        base_url=feishu.get("base_url", FeishuClientConfig.base_url),
+        timeout_seconds=feishu.get(
+            "timeout_seconds",
+            FeishuClientConfig.timeout_seconds,
+        ),
+    )
+    return FeishuClient(client_config)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-feishu-card-sidecar")
     parser.add_argument("--config", default="config.yaml.example")
@@ -30,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     server = config["server"]
     web.run_app(
-        create_app(NoopFeishuClient(), process_token=args.token),
+        create_app(build_feishu_client(config), process_token=args.token),
         host=server["host"],
         port=server["port"],
         print=None,

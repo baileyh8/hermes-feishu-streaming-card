@@ -9,6 +9,8 @@ feishu:
   # Prefer FEISHU_APP_ID and FEISHU_APP_SECRET in real deployments.
   app_id: ""
   app_secret: ""
+  base_url: https://open.feishu.cn/open-apis
+  timeout_seconds: 30
 
 card:
   # Flush partial streaming text after this many milliseconds.
