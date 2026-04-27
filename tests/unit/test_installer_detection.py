@@ -20,6 +20,9 @@ def test_detect_hermes_supports_v2026_4_23_fixture():
 
     assert result.root == FIXTURE_ROOT
     assert result.version == "v2026.4.23"
+    assert result.version_source == "VERSION"
+    assert result.minimum_version == "v2026.4.23"
+    assert result.run_py_exists is True
     assert result.run_py.name == "run.py"
     assert result.supported is True
     assert result.reason == "supported"
@@ -47,6 +50,8 @@ def test_detect_hermes_supports_git_tag_when_version_file_missing(tmp_path):
 
     assert result.supported is True
     assert result.version == "v2026.4.23"
+    assert result.version_source == "git tag"
+    assert result.run_py_exists is True
 
 
 def test_detect_hermes_rejects_parent_git_tag_when_version_file_missing(tmp_path):
@@ -72,6 +77,7 @@ def test_detect_hermes_rejects_parent_git_tag_when_version_file_missing(tmp_path
 
     assert result.supported is False
     assert result.version == "unknown"
+    assert result.version_source == "unknown"
     assert "version" in result.reason.lower()
 
 
@@ -104,6 +110,8 @@ def test_detect_hermes_rejects_missing_gateway_run_py(tmp_path):
     result = detect_hermes(tmp_path)
 
     assert result.supported is False
+    assert result.run_py_exists is False
+    assert result.version_source == "VERSION"
     assert "gateway/run.py" in result.reason
     assert "missing" in result.reason.lower()
 

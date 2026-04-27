@@ -174,6 +174,13 @@ def test_install_unsupported_hermes_dir_returns_nonzero(tmp_path):
     result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
 
     assert result.returncode != 0
+    assert "hermes: unsupported" in result.stderr
+    assert f"hermes_root: {hermes_dir}" in result.stderr
+    assert "run_py_exists: no" in result.stderr
+    assert "version_source: unknown" in result.stderr
+    assert "version: unknown" in result.stderr
+    assert "minimum_supported_version: v2026.4.23" in result.stderr
+    assert "reason: gateway/run.py missing" in result.stderr
     assert "gateway/run.py missing" in result.stderr
     assert not backup_path(hermes_dir).exists()
     assert not manifest_path(hermes_dir).exists()

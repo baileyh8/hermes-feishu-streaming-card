@@ -13,6 +13,14 @@
 
 检查失败时不写入 Hermes 文件。
 
+安装前可先运行只读诊断：
+
+```bash
+python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent
+```
+
+诊断输出会展示 Hermes 是否支持、Hermes root、`gateway/run.py` 路径、`run_py_exists`、`version_source`、`version`、`minimum_supported_version` 和 `reason`。`install` 在拒绝不支持的目录时也会输出同一组信息，便于用户判断是版本过低、版本来源未知、`gateway/run.py` 缺失，还是 hook 锚点结构不兼容。
+
 ## 备份与 manifest
 
 安装会先保存 `gateway/run.py` 备份，再写入 manifest。manifest 至少记录：

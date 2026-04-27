@@ -16,7 +16,10 @@ _VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 class HermesDetection:
     root: Path
     version: str
+    version_source: str
+    minimum_version: str
     run_py: Path
+    run_py_exists: bool
     supported: bool
     reason: str
 
@@ -24,92 +27,59 @@ class HermesDetection:
 def detect_hermes(root: str | Path) -> HermesDetection:
     hermes_root = Path(root)
     run_py = hermes_root / "gateway" / "run.py"
-    version, version_error = _read_version(hermes_root / "VERSION")
+    version, version_error, version_source = _read_version(hermes_root / "VERSION")
     if version == "unknown" and version_error is None:
-        version = _read_git_version(hermes_root)
+        git_version = _read_git_version(hermes_root)
+        if git_version != "unknown":
+            version = git_version
+            version_source = "git tag"
+
+    def result(supported: bool, reason: str) -> HermesDetection:
+        return HermesDetection(
+            root=hermes_root,
+            version=version,
+            version_source=version_source,
+            minimum_version=MIN_SUPPORTED_VERSION,
+            run_py=run_py,
+            run_py_exists=run_py.exists(),
+            supported=supported,
+            reason=reason,
+        )
 
     if not run_py.exists():
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason="gateway/run.py missing",
-        )
+        return result(False, "gateway/run.py missing")
 
     if run_py.is_symlink():
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason="gateway/run.py must not be a symlink",
-        )
+        return result(False, "gateway/run.py must not be a symlink")
 
     if version_error is not None:
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason=version_error,
-        )
+        return result(False, version_error)
 
     parsed_version = _parse_version(version)
     minimum_version = _parse_version(MIN_SUPPORTED_VERSION)
     if parsed_version is None:
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason="Hermes VERSION missing, unknown, or invalid",
-        )
+        return result(False, "Hermes VERSION missing, unknown, or invalid")
     if minimum_version is not None and parsed_version < minimum_version:
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason=f"Hermes version must be at least {MIN_SUPPORTED_VERSION}",
-        )
+        return result(False, f"Hermes version must be at least {MIN_SUPPORTED_VERSION}")
 
     contents, run_py_error = _read_text(run_py, "gateway/run.py")
     if run_py_error is not None:
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason=run_py_error,
-        )
+        return result(False, run_py_error)
 
     has_anchor, anchor_error = _has_supported_handler_anchor(contents)
     if not has_anchor:
-        return HermesDetection(
-            root=hermes_root,
-            version=version,
-            run_py=run_py,
-            supported=False,
-            reason=anchor_error,
-        )
+        return result(False, anchor_error)
 
-    return HermesDetection(
-        root=hermes_root,
-        version=version,
-        run_py=run_py,
-        supported=True,
-        reason="supported",
-    )
+    return result(True, "supported")
 
 
-def _read_version(path: Path) -> tuple[str, str | None]:
+def _read_version(path: Path) -> tuple[str, str | None, str]:
     if not path.exists():
-        return "unknown", None
+        return "unknown", None, "unknown"
     contents, error = _read_text(path, "VERSION")
     if error is not None:
-        return "unknown", error
-    return contents.strip() or "unknown", None
+        return "unknown", error, "VERSION"
+    return contents.strip() or "unknown", None, "VERSION"
 
 
 def _read_git_version(root: Path) -> str:

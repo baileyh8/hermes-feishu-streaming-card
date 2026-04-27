@@ -99,6 +99,24 @@ def test_docs_describe_feishu_http_client_without_claiming_live_smoke():
     assert "- [ ] 使用真实飞书应用做人工 CardKit smoke test，凭据仅使用本机配置或环境变量。" in docs
 
 
+def test_docs_describe_hermes_detection_diagnostics():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/installer-safety.md"),
+            read_doc("docs/testing.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "doctor --config config.yaml.example --hermes-dir" in docs
+    assert "version_source" in docs
+    assert "minimum_supported_version" in docs
+    assert "run_py_exists" in docs
+    assert "reason" in docs
+    assert "- [x] 增加安装前 Hermes 版本展示和更友好的错误提示。" in docs
+
+
 def test_legacy_handoff_docs_do_not_claim_active_cardkit_completion():
     legacy_docs = "\n".join(
         [

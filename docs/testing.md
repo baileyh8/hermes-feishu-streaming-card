@@ -74,9 +74,10 @@ python3 -m pytest tests/unit/test_docs.py -q
 
 ```bash
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --skip-hermes
+python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent
 ```
 
-当前 CLI 的 `doctor` 需要显式传入 `--config`。`--skip-hermes` 适合仓库内 dry-run；真实安装前应去掉该模式或补充 Hermes 目录检查能力。
+当前 CLI 的 `doctor` 需要显式传入 `--config`。`--skip-hermes` 适合仓库内 dry-run；真实安装前应使用 `--hermes-dir` 做只读 Hermes 检测。输出包含 `version_source`、`version`、`minimum_supported_version`、`run_py_exists` 和 `reason`，不写入 Hermes 文件、备份或 manifest。
 
 ## 真实飞书联调
 

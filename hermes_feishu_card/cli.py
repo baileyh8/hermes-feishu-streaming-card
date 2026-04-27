@@ -12,7 +12,7 @@ from pathlib import Path
 from hermes_feishu_card.config import load_config
 from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient, FeishuClientConfig
-from hermes_feishu_card.install.detect import detect_hermes
+from hermes_feishu_card.install.detect import HermesDetection, detect_hermes
 from hermes_feishu_card.install.manifest import file_sha256
 from hermes_feishu_card.install.patcher import apply_patch, remove_patch
 from hermes_feishu_card.process import start_sidecar, status_sidecar, stop_sidecar
@@ -57,6 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--config", required=True)
+    doctor.add_argument("--hermes-dir")
     doctor.add_argument("--skip-hermes", action="store_true")
 
     for command in ("start", "stop", "status"):
@@ -87,7 +88,30 @@ def _run_doctor(args: argparse.Namespace) -> int:
     print(f"sidecar: {host}:{port}")
     if args.skip_hermes:
         print("hermes: skipped")
+        return 0
+    if args.hermes_dir:
+        detection = detect_hermes(args.hermes_dir)
+        print(_format_hermes_detection(detection))
+        return 0 if detection.supported else 1
+    print("hermes: not checked")
     return 0
+
+
+def _format_hermes_detection(detection: HermesDetection) -> str:
+    status = "supported" if detection.supported else "unsupported"
+    run_py_exists = "yes" if detection.run_py_exists else "no"
+    return "\n".join(
+        [
+            f"hermes: {status}",
+            f"hermes_root: {detection.root}",
+            f"run_py: {detection.run_py}",
+            f"run_py_exists: {run_py_exists}",
+            f"version_source: {detection.version_source}",
+            f"version: {detection.version}",
+            f"minimum_supported_version: {detection.minimum_version}",
+            f"reason: {detection.reason}",
+        ]
+    )
 
 
 def _run_start(args: argparse.Namespace) -> int:
@@ -230,7 +254,7 @@ def _sanitize_error(exc: Exception, config: dict | None) -> str:
 def _run_install(args: argparse.Namespace) -> int:
     detection = detect_hermes(args.hermes_dir)
     if not detection.supported:
-        print(detection.reason, file=sys.stderr)
+        print(_format_hermes_detection(detection), file=sys.stderr)
         return 1
 
     run_py = detection.run_py

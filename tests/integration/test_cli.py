@@ -1,12 +1,14 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from hermes_feishu_card.cli import main
 
 
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
 CONFIG_ENV_VARS = {
     "HERMES_FEISHU_CARD_HOST",
     "HERMES_FEISHU_CARD_PORT",
@@ -86,6 +88,41 @@ def test_module_doctor_ignores_parent_config_environment(tmp_path, monkeypatch):
     assert result.returncode == 0
     assert "127.0.0.1:9006" in result.stdout
     assert "9005" not in result.stdout
+
+
+def test_module_doctor_reports_supported_hermes_detection(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9007\n", encoding="utf-8")
+
+    result = run_cli("doctor", "--config", str(config_path), "--hermes-dir", str(FIXTURE))
+
+    assert result.returncode == 0, result.stderr
+    assert "hermes: supported" in result.stdout
+    assert f"hermes_root: {FIXTURE}" in result.stdout
+    assert f"run_py: {FIXTURE / 'gateway' / 'run.py'}" in result.stdout
+    assert "run_py_exists: yes" in result.stdout
+    assert "version_source: VERSION" in result.stdout
+    assert "version: v2026.4.23" in result.stdout
+    assert "minimum_supported_version: v2026.4.23" in result.stdout
+    assert "reason: supported" in result.stdout
+
+
+def test_module_doctor_reports_unsupported_hermes_detection(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9008\n", encoding="utf-8")
+    hermes_dir = tmp_path / "not-hermes"
+    hermes_dir.mkdir()
+
+    result = run_cli("doctor", "--config", str(config_path), "--hermes-dir", str(hermes_dir))
+
+    assert result.returncode != 0
+    assert "hermes: unsupported" in result.stdout
+    assert f"hermes_root: {hermes_dir}" in result.stdout
+    assert "run_py_exists: no" in result.stdout
+    assert "version_source: unknown" in result.stdout
+    assert "version: unknown" in result.stdout
+    assert "minimum_supported_version: v2026.4.23" in result.stdout
+    assert "reason: gateway/run.py missing" in result.stdout
 
 
 def test_module_status_reports_success():
