@@ -41,6 +41,8 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 
 `start` 会启动本机 sidecar HTTP 进程并写入用户态 pidfile；`status` 通过 `/health` 探活；`stop` 会校验 pidfile 中的 PID/token 与 `/health` 返回的 process_pid/process_token 匹配后才停止本插件管理的 sidecar，避免误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。未配置飞书凭据时，进程内使用 no-op client 接收事件，不会发送真实飞书卡片；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后，runner 会使用真实 Feishu HTTP client。
 
+`/health` 和 `status` 会展示当前 sidecar 进程生命周期内的内存指标，包括事件接收/应用/忽略/拒绝次数、飞书发送/更新成功失败次数，以及飞书卡片更新重试次数。初始创建卡片不自动重试，避免响应丢失时重复发卡；已存在 message_id 的卡片更新会有限重试一次。
+
 真实飞书卡片 smoke：
 
 ```bash

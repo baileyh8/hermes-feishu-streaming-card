@@ -159,6 +159,9 @@ def test_start_status_and_stop_manage_sidecar_process(tmp_path):
         assert status.returncode == 0
         assert "status: running" in status.stdout
         assert "active_sessions: 1" in status.stdout
+        assert "events_received: 1" in status.stdout
+        assert "events_applied: 1" in status.stdout
+        assert "feishu_send_successes: 1" in status.stdout
 
         stop = run_cli("stop", "--config", str(config), env=env)
 

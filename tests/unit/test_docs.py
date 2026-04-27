@@ -79,6 +79,26 @@ def test_docs_describe_sidecar_process_management_scope():
     assert "- [x] 将 sidecar 进程管理从占位 `status` 扩展为可启动、可停止、可探活。" in docs
 
 
+def test_docs_describe_sidecar_health_and_retry_metrics():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/architecture.md"),
+            read_doc("docs/testing.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "metrics" in docs
+    assert "events_received" in docs
+    assert "events_applied" in docs
+    assert "events_rejected" in docs
+    assert "feishu_update_retries" in docs
+    assert "status" in docs
+    assert "重复卡片" in docs
+    assert "- [x] 增加 sidecar 健康检查和重试指标。" in docs
+
+
 def test_docs_describe_feishu_http_client_without_claiming_live_smoke():
     docs = "\n".join(
         [

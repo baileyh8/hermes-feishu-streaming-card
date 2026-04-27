@@ -16,6 +16,8 @@
 
 `hermes_feishu_card.cli start/status/stop` 管理本机 sidecar 进程。进程状态保存在用户态 pidfile 中，`status` 以 `/health` 作为真实探活来源，`stop` 只有在 pidfile 的 PID/token 与 `/health` 返回的 process_pid/process_token 同时匹配时才停止进程，避免陈旧 pidfile 或 PID 复用误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。未配置飞书凭据时，CLI runner 使用 no-op client 接收事件并维护会话状态；配置凭据后，runner 使用真实 Feishu HTTP client。
 
+`/health` 还暴露 process-local `metrics`，用于观察当前进程生命周期内的事件流和飞书交付结果。指标包括 `events_received`、`events_applied`、`events_ignored`、`events_rejected`、`feishu_send_successes`、`feishu_update_successes`、`feishu_update_failures` 和 `feishu_update_retries` 等；CLI `status` 会同步打印这些指标。为避免重复创建飞书卡片，`send_card` 不自动重试；`update_card_message` 针对已有 message_id 做一次有限重试。
+
 ### 会话状态
 
 `hermes_feishu_card.session` 维护每个会话的流式状态，包括思考文本、答案文本、工具调用次数、消息是否完成以及错误状态。事件按会话聚合后再交给渲染层生成卡片内容。

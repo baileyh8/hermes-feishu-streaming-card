@@ -170,6 +170,24 @@ def _run_status(args: argparse.Namespace) -> int:
         print("status: running")
         print(f"pid: {status['pid'] or 'unknown'}")
         print(f"active_sessions: {status['health'].get('active_sessions', 0)}")
+        metrics = status["health"].get("metrics", {})
+        if isinstance(metrics, dict):
+            for name in (
+                "events_received",
+                "events_applied",
+                "events_ignored",
+                "events_rejected",
+                "feishu_send_attempts",
+                "feishu_send_successes",
+                "feishu_send_failures",
+                "feishu_update_attempts",
+                "feishu_update_successes",
+                "feishu_update_failures",
+                "feishu_update_retries",
+            ):
+                value = metrics.get(name)
+                if isinstance(value, int):
+                    print(f"{name}: {value}")
     else:
         print("status: stopped")
         if status["pid"] is not None:

@@ -8,12 +8,19 @@ class FakeFeishuClient:
     def __init__(self):
         self.sent = []
         self.updated = []
+        self.fail_send = False
+        self.update_failures_remaining = 0
 
     async def send_card(self, chat_id, card):
+        if self.fail_send:
+            raise RuntimeError("send unavailable")
         self.sent.append((chat_id, card))
         return f"feishu-message-{len(self.sent)}"
 
     async def update_card_message(self, message_id, card):
+        if self.update_failures_remaining > 0:
+            self.update_failures_remaining -= 1
+            raise RuntimeError("update unavailable")
         self.updated.append((message_id, card))
 
 
@@ -53,6 +60,19 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     body = await response.json()
     assert body["status"] == "healthy"
     assert body["active_sessions"] == 0
+    assert body["metrics"] == {
+        "events_received": 0,
+        "events_applied": 0,
+        "events_ignored": 0,
+        "events_rejected": 0,
+        "feishu_send_attempts": 0,
+        "feishu_send_successes": 0,
+        "feishu_send_failures": 0,
+        "feishu_update_attempts": 0,
+        "feishu_update_successes": 0,
+        "feishu_update_failures": 0,
+        "feishu_update_retries": 0,
+    }
 
 
 async def test_event_lifecycle_sends_then_updates_final_card(client):
@@ -83,6 +103,19 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert len(feishu_client.updated) >= 1
     assert all(message_id == "feishu-message-1" for message_id, _ in feishu_client.updated)
     assert "最终答案" in str(feishu_client.updated[-1][1])
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["events_received"] == 3
+    assert metrics["events_applied"] == 3
+    assert metrics["events_ignored"] == 0
+    assert metrics["events_rejected"] == 0
+    assert metrics["feishu_send_attempts"] == 1
+    assert metrics["feishu_send_successes"] == 1
+    assert metrics["feishu_send_failures"] == 0
+    assert metrics["feishu_update_attempts"] == 2
+    assert metrics["feishu_update_successes"] == 2
+    assert metrics["feishu_update_failures"] == 0
+    assert metrics["feishu_update_retries"] == 0
 
 
 async def test_invalid_event_returns_400_json(client):
@@ -99,6 +132,8 @@ async def test_invalid_event_returns_400_json(client):
     assert "error" in body
     assert feishu_client.sent == []
     assert feishu_client.updated == []
+    health = await test_client.get("/health")
+    assert (await health.json())["metrics"]["events_rejected"] == 1
 
 
 async def test_malformed_json_returns_400_json(client):
@@ -143,6 +178,11 @@ async def test_event_before_started_is_not_applied(client):
     assert await response.json() == {"ok": True, "applied": False}
     assert feishu_client.sent == []
     assert feishu_client.updated == []
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["events_received"] == 1
+    assert metrics["events_applied"] == 0
+    assert metrics["events_ignored"] == 1
 
 
 async def test_duplicate_started_does_not_send_again(client):
@@ -215,3 +255,51 @@ async def test_missing_feishu_message_id_returns_conflict_without_update(client)
     body = await response.json()
     assert body == {"ok": False, "error": "feishu_message_id missing"}
     assert feishu_client.updated == []
+    health = await test_client.get("/health")
+    assert (await health.json())["metrics"]["events_rejected"] == 1
+
+
+async def test_update_retries_once_and_reports_retry_metrics(client):
+    test_client, feishu_client = client
+    feishu_client.update_failures_remaining = 1
+
+    started = await test_client.post("/events", json=event_payload("message.started", 0))
+    thinking = await test_client.post(
+        "/events",
+        json=event_payload("thinking.delta", 1, {"text": "需要重试"}),
+    )
+
+    assert started.status == 200
+    assert thinking.status == 200
+    assert (await thinking.json()) == {"ok": True, "applied": True}
+    assert len(feishu_client.updated) == 1
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["feishu_update_attempts"] == 2
+    assert metrics["feishu_update_successes"] == 1
+    assert metrics["feishu_update_failures"] == 1
+    assert metrics["feishu_update_retries"] == 1
+
+
+async def test_send_failure_returns_json_error_and_allows_started_retry(client):
+    test_client, feishu_client = client
+    feishu_client.fail_send = True
+
+    failed = await test_client.post("/events", json=event_payload("message.started", 0))
+
+    assert failed.status == 502
+    failed_body = await failed.json()
+    assert failed_body == {"ok": False, "error": "feishu send failed"}
+    assert feishu_client.sent == []
+    health_after_failure = await test_client.get("/health")
+    failure_body = await health_after_failure.json()
+    assert failure_body["active_sessions"] == 0
+    assert failure_body["metrics"]["feishu_send_attempts"] == 1
+    assert failure_body["metrics"]["feishu_send_failures"] == 1
+
+    feishu_client.fail_send = False
+    retried = await test_client.post("/events", json=event_payload("message.started", 0))
+
+    assert retried.status == 200
+    assert await retried.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
