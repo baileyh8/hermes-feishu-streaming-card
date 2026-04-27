@@ -33,13 +33,14 @@ def test_doctor_loads_config_and_prints_sidecar_address(tmp_path, capsys):
     assert "127.0.0.1:9002" in captured.out
 
 
-def test_status_reports_process_management_not_implemented(capsys):
+def test_status_reports_process_state(capsys):
     exit_code = main(["status"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "status" in captured.out.lower()
-    assert "not implemented" in captured.out.lower()
+    assert "not implemented" not in captured.out.lower()
+    assert "running" in captured.out.lower() or "stopped" in captured.out.lower()
 
 
 def test_doctor_bad_config_returns_nonzero(tmp_path, capsys):
@@ -92,7 +93,8 @@ def test_module_status_reports_success():
 
     assert result.returncode == 0
     assert "status" in result.stdout.lower()
-    assert "not implemented" in result.stdout.lower()
+    assert "not implemented" not in result.stdout.lower()
+    assert "running" in result.stdout.lower() or "stopped" in result.stdout.lower()
 
 
 def test_module_doctor_requires_config_argument():

@@ -58,6 +58,27 @@ def test_docs_describe_event_forwarding_but_not_cardkit_completion():
     assert "- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
 
 
+def test_docs_describe_sidecar_process_management_scope():
+    docs = "\n".join(
+        [
+            read_doc("README.md"),
+            read_doc("docs/architecture.md"),
+            read_doc("docs/testing.md"),
+            read_doc("TODO.md"),
+        ]
+    )
+
+    assert "start --config" in docs
+    assert "status --config" in docs
+    assert "stop --config" in docs
+    assert "/health" in docs
+    assert "PID/token" in docs
+    assert "process_pid/process_token" in docs
+    assert "POSIX" in docs
+    assert "no-op client" in docs
+    assert "- [x] 将 sidecar 进程管理从占位 `status` 扩展为可启动、可停止、可探活。" in docs
+
+
 def test_legacy_handoff_docs_do_not_claim_active_cardkit_completion():
     legacy_docs = "\n".join(
         [

@@ -14,6 +14,8 @@
 
 `hermes_feishu_card.server` 提供本机 HTTP 接口，接收 Hermes hook 发送的事件。sidecar 独立于 Hermes 进程运行；卡片故障不应拖垮 Agent 主流程。
 
+`hermes_feishu_card.cli start/status/stop` 管理本机 sidecar 进程。进程状态保存在用户态 pidfile 中，`status` 以 `/health` 作为真实探活来源，`stop` 只有在 pidfile 的 PID/token 与 `/health` 返回的 process_pid/process_token 同时匹配时才停止进程，避免陈旧 pidfile 或 PID 复用误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。真实 Feishu CardKit 创建/更新完成前，CLI runner 使用 no-op client 接收事件并维护会话状态，不发送真实飞书卡片。
+
 ### 会话状态
 
 `hermes_feishu_card.session` 维护每个会话的流式状态，包括思考文本、答案文本、工具调用次数、消息是否完成以及错误状态。事件按会话聚合后再交给渲染层生成卡片内容。

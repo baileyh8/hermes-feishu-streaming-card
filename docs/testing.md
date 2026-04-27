@@ -26,6 +26,14 @@ python3 -m pytest tests/unit/test_hook_runtime.py tests/integration/test_hook_ru
 
 这些测试会验证安装后的 Hermes hook 能把 `SidecarEvent` 发送到 mock sidecar，并在发送失败时保持 fail-open。它们只使用 fixture 和 mock sidecar，不访问真实飞书。
 
+## Sidecar process tests
+
+```bash
+python3 -m pytest tests/integration/test_cli_process.py -q
+```
+
+该测试会启动真实本机 sidecar 进程，检查 `/health`、`status`、事件接收和 `stop` 清理。测试使用临时 pidfile 目录和 no-op Feishu client，不访问真实飞书。
+
 ## 文档测试
 
 ```bash

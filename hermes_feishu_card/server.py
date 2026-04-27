@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict
 
 from aiohttp import web
@@ -11,13 +12,15 @@ from .session import CardSession
 FEISHU_CLIENT_KEY = web.AppKey("feishu_client", Any)
 SESSIONS_KEY = web.AppKey("sessions", dict)
 FEISHU_MESSAGE_IDS_KEY = web.AppKey("feishu_message_ids", dict)
+PROCESS_TOKEN_KEY = web.AppKey("process_token", str)
 
 
-def create_app(feishu_client: Any) -> web.Application:
+def create_app(feishu_client: Any, process_token: str = "") -> web.Application:
     app = web.Application()
     app[FEISHU_CLIENT_KEY] = feishu_client
     app[SESSIONS_KEY] = {}
     app[FEISHU_MESSAGE_IDS_KEY] = {}
+    app[PROCESS_TOKEN_KEY] = process_token
     app.router.add_get("/health", _health)
     app.router.add_post("/events", _events)
     return app
@@ -25,7 +28,15 @@ def create_app(feishu_client: Any) -> web.Application:
 
 async def _health(request: web.Request) -> web.Response:
     sessions: Dict[str, CardSession] = request.app[SESSIONS_KEY]
-    return web.json_response({"status": "healthy", "active_sessions": len(sessions)})
+    response = {
+        "status": "healthy",
+        "active_sessions": len(sessions),
+        "process_pid": os.getpid(),
+    }
+    process_token = request.app[PROCESS_TOKEN_KEY]
+    if process_token:
+        response["process_token"] = process_token
+    return web.json_response(response)
 
 
 async def _events(request: web.Request) -> web.Response:

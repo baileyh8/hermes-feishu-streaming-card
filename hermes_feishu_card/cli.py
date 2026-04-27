@@ -10,6 +10,7 @@ from hermes_feishu_card.config import load_config
 from hermes_feishu_card.install.detect import detect_hermes
 from hermes_feishu_card.install.manifest import file_sha256
 from hermes_feishu_card.install.patcher import apply_patch, remove_patch
+from hermes_feishu_card.process import start_sidecar, status_sidecar, stop_sidecar
 
 
 BACKUP_SUFFIX = ".hermes_feishu_card.bak"
@@ -22,8 +23,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "start":
+        return _run_start(args)
+    if args.command == "stop":
+        return _run_stop(args)
     if args.command == "status":
-        return _run_status()
+        return _run_status(args)
     if args.command == "install":
         return _run_install(args)
     if args.command == "restore":
@@ -45,7 +50,10 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--config", required=True)
     doctor.add_argument("--skip-hermes", action="store_true")
 
-    subparsers.add_parser("status")
+    for command in ("start", "stop", "status"):
+        process_parser = subparsers.add_parser(command)
+        process_parser.add_argument("--config", default="config.yaml.example")
+
     for command in ("install", "restore", "uninstall"):
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument("--hermes-dir", required=True)
@@ -69,8 +77,66 @@ def _run_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_status() -> int:
-    print("status: process management not implemented")
+def _run_start(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        result = start_sidecar(args.config, config)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if result.startswith("failed:"):
+        print(f"error: {result}", file=sys.stderr)
+        return 1
+    if result == "already running":
+        print("start: already running")
+        return 0
+    print("start ok")
+    return 0
+
+
+def _run_stop(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        result = stop_sidecar(config)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if result.startswith("failed:"):
+        print(f"error: {result}", file=sys.stderr)
+        return 1
+    if result == "not running":
+        print("stop: not running")
+        return 0
+    print("stop ok")
+    return 0
+
+
+def _run_status(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(args.config)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    status = status_sidecar(config)
+    if status["running"]:
+        print("status: running")
+        print(f"pid: {status['pid'] or 'unknown'}")
+        print(f"active_sessions: {status['health'].get('active_sessions', 0)}")
+    else:
+        print("status: stopped")
+        if status["pid"] is not None:
+            print(f"pid: {status['pid']} stale")
     return 0
 
 

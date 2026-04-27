@@ -21,6 +21,8 @@
 ```bash
 python3 -m pip install -e ".[test]"
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --skip-hermes
+python3 -m hermes_feishu_card.cli start --config config.yaml.example
+python3 -m hermes_feishu_card.cli status --config config.yaml.example
 python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --yes
 ```
 
@@ -29,11 +31,14 @@ python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --
 恢复或移除安装：
 
 ```bash
+python3 -m hermes_feishu_card.cli stop --config config.yaml.example
 python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --yes
 python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent --yes
 ```
 
 `restore` 和 `uninstall` 都会优先使用安装时的备份与 manifest 校验；检测到 Hermes 文件或备份被用户改动时会拒绝覆盖。
+
+`start` 会启动本机 sidecar HTTP 进程并写入用户态 pidfile；`status` 通过 `/health` 探活；`stop` 会校验 pidfile 中的 PID/token 与 `/health` 返回的 process_pid/process_token 匹配后才停止本插件管理的 sidecar，避免误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。真实 Feishu CardKit 创建/更新完成前，进程内使用 no-op client 接收事件，不会发送真实飞书卡片。
 
 ## 飞书凭据
 
