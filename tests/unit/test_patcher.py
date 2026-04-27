@@ -18,6 +18,93 @@ def test_apply_patch_inserts_real_runtime_hook_call():
     assert "        pass\n    except Exception:" not in patched
 
 
+def test_apply_patch_inserts_completion_hook_before_response_return():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1.5\n"
+        "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
+        "    return response\n"
+    )
+
+    patched = patcher.apply_patch(content)
+
+    assert patcher.COMPLETE_PATCH_BEGIN in patched
+    assert 'event_name="message.completed"' in patched
+    assert "if _hfc_card_delivered:" in patched
+    assert "        return None\n" in patched
+    assert patched.index(patcher.COMPLETE_PATCH_BEGIN) < patched.index("    return response\n")
+
+
+def test_apply_patch_upgrades_legacy_completion_hook_block():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1.5\n"
+        "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
+        "    # HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN\n"
+        "    try:\n"
+        "        from hermes_feishu_card.hook_runtime import emit_from_hermes_locals as _hfc_emit\n"
+        "        _hfc_emit({\n"
+        "            **locals(),\n"
+        "            \"answer\": response,\n"
+        "            \"duration\": _response_time,\n"
+        "            \"tokens\": {\n"
+        "                \"input_tokens\": agent_result.get(\"input_tokens\", 0),\n"
+        "                \"output_tokens\": agent_result.get(\"output_tokens\", 0),\n"
+        "            },\n"
+        "        }, event_name=\"message.completed\")\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    # HERMES_FEISHU_CARD_COMPLETE_PATCH_END\n"
+        "    return response\n"
+    )
+
+    upgraded = patcher.apply_patch(content)
+
+    assert "emit_from_hermes_locals_async" in upgraded
+    assert "if _hfc_card_delivered:" in upgraded
+    assert upgraded.count("emit_from_hermes_locals as _hfc_emit") == 1
+
+
+def test_remove_patch_removes_legacy_completion_hook_block():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    # HERMES_FEISHU_CARD_PATCH_BEGIN\n"
+        "    try:\n"
+        "        from hermes_feishu_card.hook_runtime import emit_from_hermes_locals as _hfc_emit\n"
+        "        _hfc_emit(locals())\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    # HERMES_FEISHU_CARD_PATCH_END\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1.5\n"
+        "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
+        "    # HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN\n"
+        "    try:\n"
+        "        from hermes_feishu_card.hook_runtime import emit_from_hermes_locals as _hfc_emit\n"
+        "        _hfc_emit({\n"
+        "            **locals(),\n"
+        "            \"answer\": response,\n"
+        "            \"duration\": _response_time,\n"
+        "            \"tokens\": {\n"
+        "                \"input_tokens\": agent_result.get(\"input_tokens\", 0),\n"
+        "                \"output_tokens\": agent_result.get(\"output_tokens\", 0),\n"
+        "            },\n"
+        "        }, event_name=\"message.completed\")\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    # HERMES_FEISHU_CARD_COMPLETE_PATCH_END\n"
+        "    return response\n"
+    )
+
+    restored = patcher.remove_patch(content)
+
+    assert patcher.PATCH_BEGIN not in restored
+    assert patcher.COMPLETE_PATCH_BEGIN not in restored
+    assert "    return response\n" in restored
+
+
 def test_apply_patch_upgrades_phase_one_placeholder_block():
     placeholder = (
         "async def _handle_message_with_agent(message):\n"

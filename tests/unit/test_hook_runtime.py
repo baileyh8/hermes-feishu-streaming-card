@@ -58,6 +58,17 @@ class MessageObject:
         self.text = "对象文本"
 
 
+class SourceObject:
+    platform = "feishu"
+    chat_id = "oc_source"
+    thread_id = "thread_source"
+
+
+class GatewayEventObject:
+    def __init__(self, message_id: str):
+        self.message_id = message_id
+
+
 def test_build_event_extracts_direct_fields():
     payload = hook_runtime.build_event(
         "message.started",
@@ -75,6 +86,48 @@ def test_build_event_extracts_direct_fields():
     assert payload["sequence"] == 0
     assert payload["platform"] == "feishu"
     assert payload["data"] == {}
+
+
+def test_build_event_extracts_gateway_source_object():
+    payload = hook_runtime.build_event(
+        "message.started",
+        {
+            "source": SourceObject(),
+            "session_id": "session_source",
+        },
+    )
+
+    assert payload["event"] == "message.started"
+    assert payload["chat_id"] == "oc_source"
+    assert payload["conversation_id"] == "session_source"
+    assert payload["message_id"].startswith("hfc_")
+
+
+def test_build_event_uses_gateway_event_message_id_for_card_lifecycle():
+    first = {
+        "source": SourceObject(),
+        "event": GatewayEventObject("om_first"),
+        "session_id": "session_source",
+    }
+    second = {
+        "source": SourceObject(),
+        "event": GatewayEventObject("om_second"),
+        "session_id": "session_source",
+    }
+
+    first_started = hook_runtime.build_event("message.started", first)
+    first_completed = hook_runtime.build_event(
+        "message.completed", {**first, "answer": "first answer"}
+    )
+    second_started = hook_runtime.build_event("message.started", second)
+    second_completed = hook_runtime.build_event(
+        "message.completed", {**second, "answer": "second answer"}
+    )
+
+    assert first_started["message_id"] == "om_first"
+    assert first_completed["message_id"] == "om_first"
+    assert second_started["message_id"] == "om_second"
+    assert second_completed["message_id"] == "om_second"
 
 
 def test_build_event_explicit_started_keeps_active_fallback_identity():
@@ -530,6 +583,41 @@ async def test_emit_from_hermes_locals_sender_error_is_swallowed(monkeypatch):
     await drain_tasks()
 
     assert result is True
+    assert len(sender.payloads) == 1
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_async_reports_sender_success(monkeypatch):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+
+    result = await hook_runtime.emit_from_hermes_locals_async(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.completed",
+    )
+
+    assert result is True
+    assert len(sender.payloads) == 1
+    url, payload, timeout = sender.payloads[0]
+    assert url == "http://sidecar.test/events"
+    assert payload["event"] == "message.completed"
+    assert payload["message_id"] == "msg_1"
+    assert timeout == 0.8
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_async_reports_sender_failure(monkeypatch):
+    sender = SenderProbe()
+    sender.raise_error = True
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+
+    result = await hook_runtime.emit_from_hermes_locals_async(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.completed",
+    )
+
+    assert result is False
     assert len(sender.payloads) == 1
 
 

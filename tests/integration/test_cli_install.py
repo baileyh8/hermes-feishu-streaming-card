@@ -644,6 +644,35 @@ def test_restore_without_manifest_removes_patch_and_stale_backup(tmp_path):
     assert not manifest_path(hermes_dir).exists()
 
 
+def test_restore_without_manifest_accepts_legacy_completion_patch(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    original = (
+        "async def _handle_message_with_agent(message):\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1.5\n"
+        "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
+        "    return response\n"
+    )
+    run_py(hermes_dir).write_text(original, encoding="utf-8")
+    backup_path(hermes_dir).write_text(original, encoding="utf-8")
+    patched = patcher.apply_patch(original)
+    current_complete = "".join(patcher._render_complete_hook_block("    ", "\n"))
+    legacy_complete = "".join(
+        patcher._render_legacy_complete_hook_block("    ", "\n")
+    )
+    run_py(hermes_dir).write_text(
+        patched.replace(current_complete, legacy_complete),
+        encoding="utf-8",
+    )
+
+    result = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == original
+    assert not backup_path(hermes_dir).exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
 def test_restore_cleans_stale_backup_after_run_py_was_restored(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     original = run_py(hermes_dir).read_text(encoding="utf-8")

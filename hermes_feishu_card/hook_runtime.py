@@ -90,6 +90,23 @@ def emit_from_hermes_locals(
         return False
 
 
+async def emit_from_hermes_locals_async(
+    local_vars: dict[str, Any],
+    event_name: str = "message.started",
+) -> bool:
+    try:
+        config = load_runtime_config()
+        if not config.enabled:
+            return False
+        payload = build_event(event_name, local_vars)
+        if payload is None:
+            return False
+        await _post_json(config.event_url, payload, config.timeout_seconds)
+        return True
+    except Exception:
+        return False
+
+
 async def _send_fail_open(
     url: str, payload: dict[str, Any], timeout: float
 ) -> None:
@@ -119,16 +136,21 @@ def _open_request(req: request.Request, timeout: float) -> None:
 def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] | None:
     if event_name not in SUPPORTED_RUNTIME_EVENTS:
         return None
+    source_obj = local_vars.get("source")
+    gateway_event_obj = local_vars.get("event")
     chat_id = _first_string(local_vars, ("chat_id", "open_chat_id", "receive_id"))
     message_obj = local_vars.get("message")
     if chat_id is None:
         chat_id = _first_attr_string(message_obj, ("chat_id", "open_chat_id", "receive_id"))
+    if chat_id is None:
+        chat_id = _first_attr_string(source_obj, ("chat_id", "open_chat_id", "receive_id"))
     if chat_id is None:
         return None
 
     conversation_id = (
         _first_string(local_vars, ("conversation_id", "thread_id", "session_id"))
         or _first_attr_string(message_obj, ("conversation_id", "thread_id", "session_id"))
+        or _first_attr_string(source_obj, ("conversation_id", "thread_id", "session_id"))
         or chat_id
     )
     created_at_value = local_vars.get("created_at")
@@ -139,6 +161,8 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         local_vars, ("message_id", "msg_id")
     ) or _first_attr_string(
         message_obj, ("message_id", "msg_id")
+    ) or _first_attr_string(
+        gateway_event_obj, ("message_id", "msg_id")
     )
     message_id = explicit_message_id
     is_terminal_event = event_name in {"message.completed", "message.failed"}
@@ -183,7 +207,7 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
         "conversation_id": conversation_id,
         "message_id": message_id,
         "chat_id": chat_id,
-        "platform": "feishu",
+        "platform": _platform_name(local_vars, source_obj),
         "sequence": sequence,
         "created_at": created_at,
         "data": _event_data(event_name, local_vars, message_obj),
@@ -246,6 +270,17 @@ def _first_attr_string(obj: Any, names: tuple[str, ...]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _platform_name(local_vars: dict[str, Any], source_obj: Any) -> str:
+    platform = _first_string(local_vars, ("platform",)) or _first_attr_string(
+        source_obj, ("platform",)
+    )
+    if platform is None:
+        return "feishu"
+    if "." in platform:
+        platform = platform.rsplit(".", 1)[-1]
+    return platform.lower()
 
 
 def _created_at(value: Any) -> float:

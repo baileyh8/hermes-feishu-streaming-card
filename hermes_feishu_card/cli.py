@@ -344,8 +344,17 @@ def _restore(hermes_root: Path) -> None:
                 _clear_install_state(backup_path, manifest_path)
                 return
 
+            current = _read_text_preserve_newlines(run_py) if run_py.exists() else ""
+            try:
+                if run_py.exists() and remove_patch(current) == backup_text:
+                    _atomic_write_text(run_py, backup_text)
+                    _clear_install_state(backup_path, manifest_path)
+                    return
+            except ValueError:
+                pass
+
             patched_backup = apply_patch(backup_text)
-            if not run_py.exists() or _read_text_preserve_newlines(run_py) != patched_backup:
+            if not run_py.exists() or current != patched_backup:
                 raise ValueError("run.py changed since install; refusing to restore")
 
             _atomic_write_text(run_py, backup_text)

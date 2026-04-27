@@ -3,6 +3,8 @@ import ast
 
 PATCH_BEGIN = "# HERMES_FEISHU_CARD_PATCH_BEGIN"
 PATCH_END = "# HERMES_FEISHU_CARD_PATCH_END"
+COMPLETE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN"
+COMPLETE_PATCH_END = "# HERMES_FEISHU_CARD_COMPLETE_PATCH_END"
 
 _HANDLER_NAME = "_handle_message_with_agent"
 _NO_FINAL_NEWLINE = "# HERMES_FEISHU_CARD_NO_FINAL_NEWLINE"
@@ -10,6 +12,11 @@ _NO_FINAL_NEWLINE = "# HERMES_FEISHU_CARD_NO_FINAL_NEWLINE"
 
 def apply_patch(content: str) -> str:
     """Insert the Feishu card hook block into a safe Hermes message handler."""
+    content = _apply_start_patch(content)
+    return _apply_complete_patch(content)
+
+
+def _apply_start_patch(content: str) -> str:
     owned_block = _find_owned_block(content)
     if owned_block is not None:
         lines = content.splitlines(keepends=True)
@@ -36,8 +43,33 @@ def apply_patch(content: str) -> str:
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
 
+def _apply_complete_patch(content: str) -> str:
+    owned_block = _find_owned_complete_block(content)
+    if owned_block is not None:
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_complete_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
+
+    tree = _parse_content(content)
+    lines = content.splitlines(keepends=True)
+    completion_location = _find_completion_return_location(tree, lines)
+    if completion_location is None:
+        return content
+
+    newline = _detect_newline(content)
+    insert_at, body_indent = completion_location
+    hook = _render_complete_hook_block(body_indent, newline)
+    return "".join(lines[:insert_at] + hook + lines[insert_at:])
+
+
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
+    content = _remove_complete_patch(content)
     owned_block = _find_owned_block(content)
     if owned_block is None:
         return content
@@ -50,6 +82,15 @@ def remove_patch(content: str) -> str:
             + [_strip_line_ending(lines[begin_index - 2])]
             + lines[end_index + 1 :]
         )
+    return "".join(lines[:begin_index] + lines[end_index + 1 :])
+
+
+def _remove_complete_patch(content: str) -> str:
+    owned_block = _find_owned_complete_block(content)
+    if owned_block is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    begin_index, end_index = owned_block
     return "".join(lines[:begin_index] + lines[end_index + 1 :])
 
 
@@ -72,6 +113,27 @@ def _find_handler_body_location(tree, lines):
                     return _body_location(child, lines)
 
     return None
+
+
+def _find_completion_return_location(tree, lines):
+    handler = _find_handler_node(tree)
+    if handler is None:
+        return None
+
+    returns = [
+        node
+        for node in ast.walk(handler)
+        if isinstance(node, ast.Return)
+        and isinstance(getattr(node, "value", None), ast.Name)
+        and node.value.id == "response"
+        and node.lineno is not None
+    ]
+    if not returns:
+        return None
+
+    target = max(returns, key=lambda node: node.lineno)
+    insert_at = target.lineno - 1
+    return insert_at, _line_indent(lines, insert_at)
 
 
 def _body_location(node, lines):
@@ -162,6 +224,30 @@ def _find_owned_block(content: str):
     return begin_index, end_index
 
 
+def _find_owned_complete_block(content: str):
+    begin_count = content.count(COMPLETE_PATCH_BEGIN)
+    end_count = content.count(COMPLETE_PATCH_END)
+    if begin_count == 0 and end_count == 0:
+        return None
+    if begin_count != 1 or end_count != 1:
+        raise ValueError("corrupt completion patch markers")
+
+    lines = content.splitlines(keepends=True)
+    begin_index = _exact_marker_line_index(lines, COMPLETE_PATCH_BEGIN)
+    end_index = _exact_marker_line_index(lines, COMPLETE_PATCH_END)
+    if begin_index is None or end_index is None or begin_index >= end_index:
+        raise ValueError("corrupt completion patch markers")
+
+    indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+    newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+    expected = _render_complete_hook_block(indent, newline)
+    legacy = _render_legacy_complete_hook_block(indent, newline)
+    actual = lines[begin_index : end_index + 1]
+    if actual not in (expected, legacy):
+        raise ValueError("corrupt completion patch markers")
+    return begin_index, end_index
+
+
 def _parse_content_with_markers(content: str):
     try:
         return ast.parse(content)
@@ -242,6 +328,58 @@ def _render_hook_block(indent: str, newline: str):
         f"{indent}except Exception:{newline}",
         f"{inner_indent}pass{newline}",
         f"{indent}{PATCH_END}{newline}",
+    ]
+
+
+def _render_complete_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    return [
+        f"{indent}{COMPLETE_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals_async as _hfc_emit_async{newline}"
+        ),
+        f"{inner_indent}_hfc_card_delivered = await _hfc_emit_async({{{newline}",
+        f"{deeper_indent}**locals(),{newline}",
+        f"{deeper_indent}\"answer\": response,{newline}",
+        f"{deeper_indent}\"duration\": _response_time,{newline}",
+        f"{deeper_indent}\"tokens\": {{{newline}",
+        f"{deeper_indent}    \"input_tokens\": agent_result.get(\"input_tokens\", 0),{newline}",
+        f"{deeper_indent}    \"output_tokens\": agent_result.get(\"output_tokens\", 0),{newline}",
+        f"{deeper_indent}}},{newline}",
+        f"{inner_indent}}}, event_name=\"message.completed\"){newline}",
+        f"{inner_indent}if _hfc_card_delivered:{newline}",
+        f"{deeper_indent}return None{newline}",
+        f"{indent}except Exception:{newline}",
+        f"{inner_indent}pass{newline}",
+        f"{indent}{COMPLETE_PATCH_END}{newline}",
+    ]
+
+
+def _render_legacy_complete_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    return [
+        f"{indent}{COMPLETE_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals as _hfc_emit{newline}"
+        ),
+        f"{inner_indent}_hfc_emit({{{newline}",
+        f"{deeper_indent}**locals(),{newline}",
+        f"{deeper_indent}\"answer\": response,{newline}",
+        f"{deeper_indent}\"duration\": _response_time,{newline}",
+        f"{deeper_indent}\"tokens\": {{{newline}",
+        f"{deeper_indent}    \"input_tokens\": agent_result.get(\"input_tokens\", 0),{newline}",
+        f"{deeper_indent}    \"output_tokens\": agent_result.get(\"output_tokens\", 0),{newline}",
+        f"{deeper_indent}}},{newline}",
+        f"{inner_indent}}}, event_name=\"message.completed\"){newline}",
+        f"{indent}except Exception:{newline}",
+        f"{inner_indent}pass{newline}",
+        f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
 
 
