@@ -180,6 +180,33 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 
 该命令会向指定会话发送一张测试卡片并更新一次。输出会隐藏 App Secret、tenant token 和 Authorization header。
 
+## Hermes streaming 与思考流配置
+
+本插件只负责把 Hermes 已经产生的事件渲染成飞书卡片，不会凭空生成模型思考内容。要看到卡片内的思考过程和渐进式答案，Hermes 本身和当前模型/provider 必须输出流式事件。
+
+需要确认三件事：
+
+1. Hermes 的模型调用已开启 streaming。不同 Hermes 版本的配置字段可能不同，常见形式是 `streaming: true` 或 `stream: true`，通常位于 Hermes 的模型/provider 配置中。
+2. 当前模型/provider 支持并公开 reasoning/thinking 增量。若模型只返回最终答案，卡片会直接显示最终答案，不会出现 `thinking.delta`。
+3. Hermes Gateway 能把 thinking、answer、tool 事件传给 hook。插件接收的事件名是 `thinking.delta`、`answer.delta`、`tool.updated` 和 `message.completed`。
+
+示例配置片段仅供参考，实际以你的 Hermes 版本为准：
+
+```yaml
+model:
+  streaming: true
+  # reasoning/thinking 相关开关如有提供，也需要在 Hermes 或 provider 中启用。
+```
+
+现象判断：
+
+- 卡片能创建，但一直显示“正在思考...”然后直接完成：通常是模型或 Hermes 没有输出 thinking 增量。
+- 卡片内答案能流式更新，但没有思考过程：说明 streaming 已工作，但当前模型没有公开 thinking。
+- 卡片不流式，只在最后更新一次：优先检查 Hermes/model streaming 是否关闭。
+- 飞书没有卡片：优先检查飞书凭据、sidecar 状态和 Hermes hook 是否安装成功。
+
+`setup` 和 `doctor --hermes-dir` 会做保守的 Hermes 配置提示：如果在常见配置文件中发现 `streaming: false` 或 `stream: false`，会输出 warning；如果没有检测到 streaming 配置，会输出 note。该提示不阻止安装，因为不同 Hermes 版本的配置结构可能不同。
+
 ## 技术架构
 
 ```text
@@ -236,6 +263,10 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 检查 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 是否存在。未配置凭据时，runner 会使用 no-op client 接收事件，不会发送真实飞书卡片。
 
+### 卡片没有思考内容或不流式更新
+
+先检查 Hermes/model streaming 是否开启，以及当前模型是否公开 reasoning/thinking 增量。插件配置文件 `~/.hermes_feishu_card/config.yaml` 只控制飞书卡片的标题、footer、节流和渲染参数，不控制 Hermes 是否以 streaming 模式调用模型。
+
 ### 出现重复卡片
 
 检查 `/health` 中的 `feishu_send_successes`、`events_received` 和 `events_rejected`。V3.1.0 对同一个 Hermes message 使用 per-message lock 和 message_id 映射，正常情况下同一轮对话只创建一张卡片。
@@ -271,7 +302,7 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 当前 V3.1.0 验收状态：
 
-- 自动化全量测试：`356 passed`
+- 自动化全量测试：`357 passed`
 - GitHub Actions：Python 3.9 / 3.12 测试矩阵通过
 - 安装/恢复专项测试：覆盖备份、manifest、重复安装、用户改动拒绝恢复、卸载和恢复幂等
 - 真实 Hermes Gateway E2E：已验证新卡片创建、流式更新、工具调用计数、完成状态和 footer 元数据

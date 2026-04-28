@@ -130,6 +130,7 @@ def _run_setup(args: argparse.Namespace) -> int:
         return 1
     print("doctor: ok")
     print(_format_hermes_detection(detection))
+    _print_hermes_streaming_guidance(Path(args.hermes_dir))
 
     install_code = _run_install(
         argparse.Namespace(hermes_dir=args.hermes_dir, yes=True)
@@ -224,6 +225,8 @@ def _run_doctor(args: argparse.Namespace) -> int:
     if args.hermes_dir:
         detection = detect_hermes(args.hermes_dir)
         print(_format_hermes_detection(detection))
+        if detection.supported:
+            _print_hermes_streaming_guidance(Path(args.hermes_dir))
         return 0 if detection.supported else 1
     print("hermes: not checked")
     return 0
@@ -244,6 +247,61 @@ def _format_hermes_detection(detection: HermesDetection) -> str:
             f"reason: {detection.reason}",
         ]
     )
+
+
+def _print_hermes_streaming_guidance(hermes_root: Path) -> None:
+    status = _detect_hermes_streaming_status(hermes_root)
+    if status == "disabled":
+        print(
+            (
+                "warning: Hermes streaming appears disabled. Streaming cards "
+                "need Hermes/model streaming output for thinking.delta and "
+                "answer.delta updates."
+            )
+        )
+        return
+    if status == "not_detected":
+        print(
+            (
+                "note: Hermes streaming config was not detected. If cards do "
+                "not show thinking.delta or answer.delta updates, enable "
+                "streaming/reasoning in the Hermes model/provider config."
+            )
+        )
+
+
+def _detect_hermes_streaming_status(hermes_root: Path) -> str:
+    found_enabled = False
+    for config_path in _candidate_hermes_config_paths(hermes_root):
+        if not config_path.exists() or not config_path.is_file():
+            continue
+        try:
+            contents = config_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        text = _strip_yaml_comments(contents).lower()
+        if re.search(r"(?m)^\s*(streaming|stream)\s*:\s*false\s*$", text):
+            return "disabled"
+        if re.search(r"(?m)^\s*(streaming|stream)\s*:\s*true\s*$", text):
+            found_enabled = True
+    return "enabled" if found_enabled else "not_detected"
+
+
+def _candidate_hermes_config_paths(hermes_root: Path) -> tuple[Path, ...]:
+    return (
+        hermes_root / "config.yaml",
+        hermes_root / "config.yml",
+        hermes_root / "configs" / "config.yaml",
+        hermes_root / "configs" / "config.yml",
+    )
+
+
+def _strip_yaml_comments(contents: str) -> str:
+    lines = []
+    for line in contents.splitlines():
+        head = line.split("#", 1)[0]
+        lines.append(head.rstrip())
+    return "\n".join(lines)
 
 
 def _run_start(args: argparse.Namespace) -> int:

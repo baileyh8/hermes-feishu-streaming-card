@@ -141,6 +141,47 @@ def test_setup_creates_config_installs_hook_and_starts_sidecar(tmp_path, monkeyp
     )
 
 
+def test_setup_warns_when_hermes_streaming_appears_disabled(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    (hermes_dir / "config.yaml").write_text(
+        "model:\n  streaming: false\n", encoding="utf-8"
+    )
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+    monkeypatch.setattr(cli, "start_sidecar", lambda *_args: "started")
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda _config: {
+            "running": True,
+            "pid": 12345,
+            "health": {"active_sessions": 0, "metrics": {}},
+            "pid_running": True,
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "warning: Hermes streaming appears disabled" in captured.out
+    assert "thinking.delta" in captured.out
+    assert "answer.delta" in captured.out
+    assert "setup ok" in captured.out
+
+
 def test_setup_requires_feishu_credentials_before_installing_hook(
     tmp_path, monkeypatch, capsys
 ):
