@@ -180,32 +180,46 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 
 该命令会向指定会话发送一张测试卡片并更新一次。输出会隐藏 App Secret、tenant token 和 Authorization header。
 
-## Hermes streaming 与思考流配置
+## Hermes Gateway streaming 与思考流配置
 
-本插件只负责把 Hermes 已经产生的事件渲染成飞书卡片，不会凭空生成模型思考内容。要看到卡片内的思考过程和渐进式答案，Hermes 本身和当前模型/provider 必须输出流式事件。
+本插件只负责把 Hermes 已经产生的事件渲染成飞书卡片，不会凭空生成模型思考内容。要看到卡片内的思考过程和渐进式答案，Hermes Gateway 和当前模型/provider 必须输出流式事件。
 
 需要确认三件事：
 
-1. Hermes 的模型调用已开启 streaming。不同 Hermes 版本的配置字段可能不同，常见形式是 `streaming: true` 或 `stream: true`，通常位于 Hermes 的模型/provider 配置中。
-2. 当前模型/provider 支持并公开 reasoning/thinking 增量。若模型只返回最终答案，卡片会直接显示最终答案，不会出现 `thinking.delta`。
-3. Hermes Gateway 能把 thinking、answer、tool 事件传给 hook。插件接收的事件名是 `thinking.delta`、`answer.delta`、`tool.updated` 和 `message.completed`。
+1. Hermes Gateway 的平台消息流式开关已开启：`streaming.enabled: true`，并保持 `streaming.transport: edit`。
+2. Feishu 平台没有被单独关闭流式更新：不要设置 `display.platforms.feishu.streaming: false`；如需强制打开，可设置为 `true`。
+3. 当前模型/provider 支持并公开 reasoning/thinking 增量；若模型只返回最终答案，卡片会直接显示最终答案，不会出现 `thinking.delta`。
 
-示例配置片段仅供参考，实际以你的 Hermes 版本为准：
+在 Hermes 自身的 `config.yaml` 中，推荐确认以下配置：
 
 ```yaml
-model:
-  streaming: true
-  # reasoning/thinking 相关开关如有提供，也需要在 Hermes 或 provider 中启用。
+streaming:
+  enabled: true
+  transport: edit
+  edit_interval: 1.0
+  buffer_threshold: 40
+
+display:
+  platforms:
+    feishu:
+      streaming: true
+      show_reasoning: true
+
+agent:
+  # 可选：需要模型/provider 支持。可用值由 Hermes 版本决定，常见为 none/minimal/low/medium/high/xhigh。
+  reasoning_effort: medium
 ```
+
+也可以在飞书会话里使用 Hermes 原生命令 `/reasoning show` 打开当前平台的 reasoning 显示；需要持久化全局推理强度时可用 `/reasoning <level> --global`。
 
 现象判断：
 
 - 卡片能创建，但一直显示“正在思考...”然后直接完成：通常是模型或 Hermes 没有输出 thinking 增量。
 - 卡片内答案能流式更新，但没有思考过程：说明 streaming 已工作，但当前模型没有公开 thinking。
-- 卡片不流式，只在最后更新一次：优先检查 Hermes/model streaming 是否关闭。
+- 卡片不流式，只在最后更新一次：优先检查 `streaming.enabled`、`streaming.transport` 和 `display.platforms.feishu.streaming`。
 - 飞书没有卡片：优先检查飞书凭据、sidecar 状态和 Hermes hook 是否安装成功。
 
-`setup` 和 `doctor --hermes-dir` 会做保守的 Hermes 配置提示：如果在常见配置文件中发现 `streaming: false` 或 `stream: false`，会输出 warning；如果没有检测到 streaming 配置，会输出 note。该提示不阻止安装，因为不同 Hermes 版本的配置结构可能不同。
+`setup` 和 `doctor --hermes-dir` 会做保守的 Hermes 配置提示：如果在常见配置文件中发现 `streaming.enabled: false`、`streaming.transport: off` 或 `display.platforms.feishu.streaming: false`，会输出 warning；如果没有检测到 Gateway streaming 配置，会输出 note。该提示不阻止安装，因为不同 Hermes 版本的配置结构可能不同。
 
 ## 技术架构
 
@@ -265,7 +279,7 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 ### 卡片没有思考内容或不流式更新
 
-先检查 Hermes/model streaming 是否开启，以及当前模型是否公开 reasoning/thinking 增量。插件配置文件 `~/.hermes_feishu_card/config.yaml` 只控制飞书卡片的标题、footer、节流和渲染参数，不控制 Hermes 是否以 streaming 模式调用模型。
+先检查 Hermes `config.yaml` 中的 `streaming.enabled`、`streaming.transport`、`display.platforms.feishu.streaming` 和 `display.platforms.feishu.show_reasoning`，并确认当前模型/provider 公开 reasoning/thinking 增量。插件配置文件 `~/.hermes_feishu_card/config.yaml` 只控制飞书卡片的标题、footer、节流和渲染参数，不控制 Hermes Gateway 是否发出 `thinking.delta` 或 `answer.delta`。
 
 ### 出现重复卡片
 

@@ -176,32 +176,47 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 
 This command sends a test card and updates it once. It redacts App Secret, tenant token, and Authorization headers in output.
 
-## Hermes Streaming And Thinking Configuration
+## Hermes Gateway Streaming And Thinking Configuration
 
-This plugin renders events that Hermes already produces. It does not invent model thinking content. To see streaming thinking and progressive answers in the card, Hermes itself and the current model/provider must emit streaming events.
+This plugin renders events that Hermes already produces. It does not invent model thinking content. To see streaming thinking and progressive answers in the card, Hermes Gateway and the current model/provider must emit streaming events.
 
 Check three things:
 
-1. Hermes model calls are running in streaming mode. The exact field depends on the Hermes version, but common forms are `streaming: true` or `stream: true` in the Hermes model/provider config.
-2. The current model/provider supports and exposes reasoning/thinking deltas. If the model only returns a final answer, the card can only show the final answer.
-3. Hermes Gateway forwards thinking, answer, and tool events to the hook. The plugin consumes `thinking.delta`, `answer.delta`, `tool.updated`, and `message.completed`.
+1. Hermes Gateway platform streaming is enabled: `streaming.enabled: true`, with `streaming.transport: edit`.
+2. Feishu is not disabled by a platform override: avoid `display.platforms.feishu.streaming: false`; set it to `true` when you want to force Feishu streaming on.
+3. The current model/provider supports and exposes reasoning/thinking deltas. If the model only returns a final answer, the card can only show the final answer.
 
-Example snippet for orientation only; use the exact schema supported by your Hermes version:
+In Hermes `config.yaml`, confirm:
 
 ```yaml
-model:
-  streaming: true
-  # Enable reasoning/thinking in Hermes or the provider when that option exists.
+streaming:
+  enabled: true
+  transport: edit
+  edit_interval: 1.0
+  buffer_threshold: 40
+
+display:
+  platforms:
+    feishu:
+      streaming: true
+      show_reasoning: true
+
+agent:
+  # Optional and model/provider-dependent. Supported values depend on the Hermes version.
+  # Common levels include none/minimal/low/medium/high/xhigh.
+  reasoning_effort: medium
 ```
+
+You can also send Hermes' native `/reasoning show` command in Feishu to enable reasoning display for that platform. Use `/reasoning <level> --global` when you want to persist a global reasoning effort level.
 
 How to read symptoms:
 
 - The card is created, stays at “thinking”, then completes: the model or Hermes probably did not emit thinking deltas.
 - Answer text streams, but no thinking appears: streaming works, but the model is not exposing thinking.
-- The card updates only once at the end: check whether Hermes/model streaming is disabled.
+- The card updates only once at the end: check `streaming.enabled`, `streaming.transport`, and `display.platforms.feishu.streaming`.
 - No Feishu card appears: check Feishu credentials, sidecar status, and Hermes hook installation first.
 
-`setup` and `doctor --hermes-dir` provide conservative Hermes config guidance. If common config files contain `streaming: false` or `stream: false`, they print a warning. If streaming config cannot be detected, they print a note. This does not block installation because Hermes config schemas vary across versions.
+`setup` and `doctor --hermes-dir` provide conservative Hermes config guidance. If common config files contain `streaming.enabled: false`, `streaming.transport: off`, or `display.platforms.feishu.streaming: false`, they print a warning. If Gateway streaming config cannot be detected, they print a note. This does not block installation because Hermes config schemas vary across versions.
 
 ## Architecture
 
@@ -261,7 +276,7 @@ Check `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Without credentials, advanced sid
 
 ### The card has no thinking content or does not stream
 
-Check whether Hermes/model streaming is enabled and whether the current model exposes reasoning/thinking deltas. The plugin config file `~/.hermes_feishu_card/config.yaml` only controls card title, footer, throttling, and rendering options. It does not control whether Hermes calls the model in streaming mode.
+Check Hermes `config.yaml` for `streaming.enabled`, `streaming.transport`, `display.platforms.feishu.streaming`, and `display.platforms.feishu.show_reasoning`, and confirm that the current model/provider exposes reasoning/thinking deltas. The plugin config file `~/.hermes_feishu_card/config.yaml` only controls card title, footer, throttling, and rendering options. It does not control whether Hermes Gateway emits `thinking.delta` or `answer.delta`.
 
 ### Duplicate cards appear
 

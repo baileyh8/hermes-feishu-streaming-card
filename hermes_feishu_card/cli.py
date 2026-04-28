@@ -9,6 +9,8 @@ import time
 from uuid import uuid4
 from pathlib import Path
 
+import yaml
+
 from hermes_feishu_card.config import load_config
 from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient, FeishuClientConfig
@@ -250,41 +252,81 @@ def _format_hermes_detection(detection: HermesDetection) -> str:
 
 
 def _print_hermes_streaming_guidance(hermes_root: Path) -> None:
-    status = _detect_hermes_streaming_status(hermes_root)
+    config = _load_hermes_user_config(hermes_root)
+    status = _detect_hermes_streaming_status(config)
     if status == "disabled":
         print(
             (
-                "warning: Hermes streaming appears disabled. Streaming cards "
-                "need Hermes/model streaming output for thinking.delta and "
-                "answer.delta updates."
+                "warning: Hermes Gateway streaming appears disabled for Feishu. "
+                "Set streaming.enabled: true with streaming.transport: edit, "
+                "or set display.platforms.feishu.streaming: true, so "
+                "thinking.delta and answer.delta updates can reach the card."
             )
         )
-        return
-    if status == "not_detected":
+    elif status == "not_detected":
         print(
             (
-                "note: Hermes streaming config was not detected. If cards do "
-                "not show thinking.delta or answer.delta updates, enable "
-                "streaming/reasoning in the Hermes model/provider config."
+                "note: Hermes Gateway streaming config was not detected. If "
+                "cards do not show answer.delta updates, set "
+                "streaming.enabled: true and streaming.transport: edit in the "
+                "Hermes config.yaml."
+            )
+        )
+
+    reasoning_status = _detect_hermes_reasoning_display_status(config)
+    if reasoning_status == "disabled":
+        print(
+            (
+                "note: Hermes reasoning display appears disabled for Feishu. "
+                "If the model supports reasoning and you want thinking content "
+                "in cards, set display.platforms.feishu.show_reasoning: true "
+                "or use /reasoning show in Feishu."
             )
         )
 
 
-def _detect_hermes_streaming_status(hermes_root: Path) -> str:
-    found_enabled = False
+def _load_hermes_user_config(hermes_root: Path) -> dict[str, object]:
     for config_path in _candidate_hermes_config_paths(hermes_root):
         if not config_path.exists() or not config_path.is_file():
             continue
         try:
-            contents = config_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+            with config_path.open("r", encoding="utf-8") as file:
+                loaded = yaml.safe_load(file) or {}
+        except (OSError, UnicodeError, yaml.YAMLError):
             continue
-        text = _strip_yaml_comments(contents).lower()
-        if re.search(r"(?m)^\s*(streaming|stream)\s*:\s*false\s*$", text):
-            return "disabled"
-        if re.search(r"(?m)^\s*(streaming|stream)\s*:\s*true\s*$", text):
-            found_enabled = True
-    return "enabled" if found_enabled else "not_detected"
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
+
+
+def _detect_hermes_streaming_status(config: dict[str, object]) -> str:
+    feishu_streaming = _nested_get(
+        config, ("display", "platforms", "feishu", "streaming")
+    )
+    if feishu_streaming is not None:
+        return "enabled" if _truthy(feishu_streaming) else "disabled"
+
+    streaming = config.get("streaming")
+    if not isinstance(streaming, dict):
+        return "not_detected"
+    if _truthy(streaming.get("enabled")) and str(
+        streaming.get("transport", "edit")
+    ).strip().lower() != "off":
+        return "enabled"
+    return "disabled"
+
+
+def _detect_hermes_reasoning_display_status(config: dict[str, object]) -> str:
+    feishu_show_reasoning = _nested_get(
+        config, ("display", "platforms", "feishu", "show_reasoning")
+    )
+    if feishu_show_reasoning is not None:
+        return "enabled" if _truthy(feishu_show_reasoning) else "disabled"
+
+    global_show_reasoning = _nested_get(config, ("display", "show_reasoning"))
+    if global_show_reasoning is None:
+        return "disabled"
+    return "enabled" if _truthy(global_show_reasoning) else "disabled"
 
 
 def _candidate_hermes_config_paths(hermes_root: Path) -> tuple[Path, ...]:
@@ -296,12 +338,19 @@ def _candidate_hermes_config_paths(hermes_root: Path) -> tuple[Path, ...]:
     )
 
 
-def _strip_yaml_comments(contents: str) -> str:
-    lines = []
-    for line in contents.splitlines():
-        head = line.split("#", 1)[0]
-        lines.append(head.rstrip())
-    return "\n".join(lines)
+def _nested_get(config: dict[str, object], path: tuple[str, ...]) -> object:
+    current: object = config
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def _run_start(args: argparse.Namespace) -> int:
