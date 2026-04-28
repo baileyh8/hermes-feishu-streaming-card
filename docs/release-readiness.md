@@ -1,6 +1,6 @@
 # 发布准备说明
 
-当前包版本为 `0.1.0`。这一版定位为 sidecar-only 主线的首个可审阅版本，已完成真实 Hermes Gateway + 真实 Feishu 测试应用验收，适合通过 PR 继续做代码审阅和小范围试用。
+当前包版本为 `3.0.0`。这一版定位为 sidecar-only 主线的正式发布版本，已完成真实 Hermes Gateway + 真实 Feishu 测试应用验收，适合正式安装和小范围生产使用。
 
 ## 已具备
 
@@ -23,7 +23,7 @@ python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --
 python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --yes
 ```
 
-真实飞书联调只能使用本机配置或环境变量提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret、tenant token、真实 chat_id 或真实聊天截图提交到仓库。
+真实飞书联调只能使用本机配置或环境变量提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret、tenant token 或真实 chat_id 提交到仓库。公开演示截图入库前需要确认不包含敏感凭据和不可公开的会话内容。
 
 ## 当前边界
 

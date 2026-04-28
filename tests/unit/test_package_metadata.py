@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_package_has_version():
-    assert __version__ == "0.1.0"
+    assert __version__ == "3.0.0"
 
 
 def test_console_entrypoint_target_exists():
