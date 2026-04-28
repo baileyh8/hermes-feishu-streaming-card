@@ -2,9 +2,9 @@
 
 本项目目标是为 Hermes Agent 提供飞书/Lark 流式卡片能力。当前主线是 **sidecar-only**：Hermes 侧只安装最小 hook，流式卡片渲染、会话状态和飞书 CardKit 边界都放在独立的 `hermes_feishu_card/` sidecar 中。
 
-当前已完成第二阶段最小事件转发：安装后的 Hermes hook 会调用 `hermes_feishu_card.hook_runtime`，把可识别的 Hermes 消息上下文以 `SidecarEvent` JSON 发送到本机 sidecar `/events`。该链路 fail-open，sidecar 不可用时 Hermes 原生文本回复继续运行。
+当前已完成真实 Feishu E2E 主链路：安装后的 Hermes hook 会调用 `hermes_feishu_card.hook_runtime`，把可识别的 Hermes 消息上下文以 `SidecarEvent` JSON 发送到本机 sidecar `/events`。sidecar 负责创建/更新飞书卡片、节流、重试、状态聚合和 footer 渲染；该链路 fail-open，sidecar 不可用时 Hermes 原生文本回复继续运行。
 
-Feishu CardKit HTTP client 已实现并通过 mock server 验证；真实飞书应用联调仍未完成，凭据只允许通过本机配置或环境变量提供。
+Feishu CardKit HTTP client 已实现并通过 mock server、真实飞书 smoke、真实 Hermes Gateway E2E 和长卡片压力测试验证。飞书凭据只允许通过本机配置或环境变量提供，不应写入仓库。
 
 旧目录和脚本仍保留用于追溯历史实现，但它们不是 active runtime。`adapter/`、`sidecar/`、`patch/`、`installer.py`、`installer_sidecar.py`、`installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等 legacy/dual/patch 代码不属于新主线；新开发、测试和安装入口以 `hermes_feishu_card/` 为准。
 
@@ -43,6 +43,32 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 
 `/health` 和 `status` 会展示当前 sidecar 进程生命周期内的内存指标，包括事件接收/应用/忽略/拒绝次数、飞书发送/更新成功失败次数，以及飞书卡片更新重试次数。初始创建卡片不自动重试，避免响应丢失时重复发卡；已存在 message_id 的卡片更新会有限重试一次。
 
+卡片 footer 默认显示：
+
+```text
+耗时 · 当前模型 · ↑输入 token · ↓输出 token · ctx 当前上下文/最大上下文 百分比
+```
+
+示例：
+
+```text
+1m32s · MiniMax M2.7 · ↑1.1m · ↓2.2k · ctx 182k/204k 89%
+```
+
+可通过配置选择显示字段：
+
+```yaml
+card:
+  footer_fields:
+    - duration
+    - model
+    - input_tokens
+    - output_tokens
+    - context
+```
+
+可用字段为 `duration`、`model`、`input_tokens`、`output_tokens`、`context`。
+
 真实飞书卡片 smoke：
 
 ```bash
@@ -75,3 +101,10 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 - [端到端验证材料](docs/e2e-verification.md)
 - [发布准备说明](docs/release-readiness.md)
 - [测试说明](docs/testing.md)
+
+## 当前验证状态
+
+- 自动化全量测试：`348 passed`
+- 安装/恢复专项测试：覆盖备份、manifest、重复安装、用户改动拒绝恢复、卸载和恢复幂等
+- 真实 Feishu E2E：已验证新卡片创建、流式更新、工具调用计数、完成状态、footer 元数据、无重复灰色原生消息
+- 长卡片压力测试：同一张真实飞书卡片更新到 16k 中文字符成功，渲染分段稳定

@@ -26,6 +26,8 @@ class CardSession:
     answer_text: str = ""
     tools: Dict[str, ToolState] = field(default_factory=dict)
     tokens: Dict[str, Any] = field(default_factory=dict)
+    model: str = "Unknown"
+    context: Dict[str, Any] = field(default_factory=dict)
     duration: float = 0.0
     thinking_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
     answer_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
@@ -38,6 +40,8 @@ class CardSession:
     def visible_main_text(self) -> str:
         if self.status in {"completed", "failed"}:
             return self.answer_text
+        if self.answer_text:
+            return self.answer_text
         return self.thinking_text
 
     def apply(self, event: SidecarEvent) -> bool:
@@ -47,11 +51,12 @@ class CardSession:
             or event.chat_id != self.chat_id
         ):
             return False
-        if event.sequence <= self.last_sequence:
+        is_terminal_event = event.event in {"message.completed", "message.failed"}
+        if event.sequence <= self.last_sequence and not is_terminal_event:
             return False
         if self.status in {"completed", "failed"}:
             return False
-        self.last_sequence = event.sequence
+        self.last_sequence = max(self.last_sequence, event.sequence)
 
         if event.event == "thinking.delta":
             self.thinking_text += self.thinking_normalizer.feed(str(event.data.get("text", "")))
@@ -75,6 +80,10 @@ class CardSession:
             self.answer_text = normalize_stream_text(str(event.data.get("answer") or self.answer_text))
             tokens = event.data.get("tokens", {})
             self.tokens = dict(tokens) if isinstance(tokens, dict) else {}
+            model = event.data.get("model")
+            self.model = model if isinstance(model, str) and model.strip() else "Unknown"
+            context = event.data.get("context", {})
+            self.context = dict(context) if isinstance(context, dict) else {}
             try:
                 self.duration = float(event.data.get("duration", 0.0))
             except (TypeError, ValueError):

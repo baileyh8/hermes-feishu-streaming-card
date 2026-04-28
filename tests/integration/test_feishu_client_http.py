@@ -184,6 +184,50 @@ async def test_http_error_status_raises():
         await test_client.close()
 
 
+async def test_http_error_status_includes_response_code_and_message():
+    async def tenant_token(request):
+        return web.json_response(
+            {
+                "code": 0,
+                "msg": "ok",
+                "tenant_access_token": "tenant-token-1",
+                "expire": 7200,
+            }
+        )
+
+    async def failing_send(request):
+        return web.json_response(
+            {"code": 9499, "msg": "invalid card payload tenant-token-1"},
+            status=400,
+        )
+
+    app = web.Application()
+    app.router.add_post("/auth/v3/tenant_access_token/internal", tenant_token)
+    app.router.add_post("/im/v1/messages", failing_send)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        client = FeishuClient(
+            FeishuClientConfig(
+                app_id="cli_test",
+                app_secret="secret",
+                base_url=str(test_client.make_url("/")),
+            )
+        )
+
+        with pytest.raises(FeishuAPIError) as exc_info:
+            await client.send_card("oc_abc", {"schema": "2.0"})
+    finally:
+        await test_client.close()
+
+    message = str(exc_info.value)
+    assert "HTTP 400" in message
+    assert "9499" in message
+    assert "invalid card payload" in message
+    assert "tenant-token-1" not in message
+
+
 async def test_smoke_command_sends_and_updates_card(feishu_api, tmp_path):
     test_client, requests, _ = feishu_api
     config_path = tmp_path / "config.yaml"

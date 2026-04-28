@@ -12,6 +12,7 @@ from urllib import request
 
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 DEFAULT_TIMEOUT_SECONDS = 0.8
+TERMINAL_TIMEOUT_SECONDS = 10.0
 
 SUPPORTED_RUNTIME_EVENTS = {
     "message.started",
@@ -90,6 +91,34 @@ def emit_from_hermes_locals(
         return False
 
 
+def emit_from_hermes_locals_threadsafe(
+    local_vars: dict[str, Any],
+    event_name: str = "message.started",
+) -> bool:
+    try:
+        config = load_runtime_config()
+        if not config.enabled:
+            return False
+        payload = build_event(event_name, local_vars)
+        if payload is None:
+            return False
+        if "_hfc_loop" in local_vars:
+            coroutine = _send_fail_open(config.event_url, payload, config.timeout_seconds)
+            try:
+                asyncio.run_coroutine_threadsafe(coroutine, local_vars["_hfc_loop"])
+            except Exception:
+                coroutine.close()
+                raise
+        else:
+            asyncio.get_running_loop()
+            asyncio.create_task(
+                _send_fail_open(config.event_url, payload, config.timeout_seconds)
+            )
+        return True
+    except Exception:
+        return False
+
+
 async def emit_from_hermes_locals_async(
     local_vars: dict[str, Any],
     event_name: str = "message.started",
@@ -101,10 +130,16 @@ async def emit_from_hermes_locals_async(
         payload = build_event(event_name, local_vars)
         if payload is None:
             return False
-        await _post_json(config.event_url, payload, config.timeout_seconds)
+        await _post_json(config.event_url, payload, _timeout_for_event(config, event_name))
         return True
     except Exception:
         return False
+
+
+def _timeout_for_event(config: RuntimeConfig, event_name: str) -> float:
+    if event_name in {"message.completed", "message.failed"}:
+        return max(config.timeout_seconds, TERMINAL_TIMEOUT_SECONDS)
+    return config.timeout_seconds
 
 
 async def _send_fail_open(
@@ -242,7 +277,13 @@ def _event_data(
         return {"tool_id": tool_id, "name": name, "status": status, "detail": detail}
     if event_name == "message.completed":
         answer = _first_string(local_vars, ("answer", "final_answer", "text", "content")) or ""
-        return {"answer": answer}
+        return {
+            "answer": answer,
+            "duration": _completion_duration(local_vars),
+            "model": _completion_model(local_vars),
+            "tokens": _completion_tokens(local_vars, answer),
+            "context": _completion_context(local_vars),
+        }
     if event_name == "message.failed":
         error = _first_string(local_vars, ("error", "exception")) or "消息处理失败"
         return {"error": error}
@@ -255,6 +296,133 @@ def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _completion_duration(local_vars: dict[str, Any]) -> float:
+    for name in ("duration", "duration_seconds", "response_time", "_response_time"):
+        value = _finite_float(local_vars.get(name))
+        if value is not None and value >= 0:
+            return value
+    return 0.0
+
+
+def _completion_model(local_vars: dict[str, Any]) -> str:
+    model = _first_string(local_vars, ("model", "current_model", "resolved_model"))
+    if model is not None:
+        return model
+    agent_result = local_vars.get("agent_result")
+    if isinstance(agent_result, dict):
+        result_model = _first_string(agent_result, ("model", "current_model", "resolved_model"))
+        if result_model is not None:
+            return result_model
+    return "Unknown"
+
+
+def _completion_tokens(local_vars: dict[str, Any], answer: str) -> dict[str, int]:
+    explicit_tokens = local_vars.get("tokens")
+    agent_result = local_vars.get("agent_result")
+    if not isinstance(agent_result, dict):
+        agent_result = {}
+
+    input_tokens = _token_value(explicit_tokens, "input_tokens")
+    output_tokens = _token_value(explicit_tokens, "output_tokens")
+    last_prompt_tokens = _positive_int(agent_result.get("last_prompt_tokens"))
+    estimated_output_tokens = _estimate_output_tokens(answer) if answer else 0
+
+    if last_prompt_tokens > 0 and input_tokens > last_prompt_tokens * 2:
+        input_tokens = last_prompt_tokens
+    if estimated_output_tokens > 0 and output_tokens > max(estimated_output_tokens * 4, 256):
+        output_tokens = estimated_output_tokens
+
+    if input_tokens <= 0:
+        input_tokens = _positive_int(agent_result.get("input_tokens"))
+    if last_prompt_tokens > 0 and input_tokens > last_prompt_tokens * 2:
+        input_tokens = last_prompt_tokens
+    if input_tokens <= 0:
+        input_tokens = last_prompt_tokens
+    if input_tokens <= 0:
+        input_tokens = _positive_int(local_vars.get("input_tokens"))
+
+    if output_tokens <= 0:
+        output_tokens = _positive_int(agent_result.get("output_tokens"))
+    if estimated_output_tokens > 0 and output_tokens > max(estimated_output_tokens * 4, 256):
+        output_tokens = estimated_output_tokens
+    if output_tokens <= 0:
+        output_tokens = _positive_int(local_vars.get("output_tokens"))
+    if estimated_output_tokens > 0 and output_tokens > max(estimated_output_tokens * 4, 256):
+        output_tokens = estimated_output_tokens
+    if output_tokens <= 0 and answer:
+        output_tokens = estimated_output_tokens
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
+
+
+def _completion_context(local_vars: dict[str, Any]) -> dict[str, int]:
+    explicit_context = local_vars.get("context")
+    agent_result = local_vars.get("agent_result")
+    if not isinstance(agent_result, dict):
+        agent_result = {}
+
+    used_tokens = _context_value(explicit_context, "used_tokens")
+    max_tokens = _context_value(explicit_context, "max_tokens")
+    if used_tokens <= 0:
+        used_tokens = _positive_int(agent_result.get("last_prompt_tokens"))
+    if used_tokens <= 0:
+        used_tokens = _positive_int(agent_result.get("context_used_tokens"))
+    if max_tokens <= 0:
+        max_tokens = _positive_int(agent_result.get("context_window"))
+    if max_tokens <= 0:
+        max_tokens = _positive_int(agent_result.get("context_length"))
+    if max_tokens <= 0:
+        max_tokens = _model_context_length(_completion_model(local_vars))
+    return {"used_tokens": used_tokens, "max_tokens": max_tokens}
+
+
+def _context_value(context: Any, name: str) -> int:
+    if not isinstance(context, dict):
+        return 0
+    return _positive_int(context.get(name))
+
+
+def _model_context_length(model: str) -> int:
+    if not model or model == "Unknown":
+        return 0
+    try:
+        from agent.model_metadata import get_model_context_length
+    except Exception:
+        return 0
+    try:
+        return _positive_int(get_model_context_length(model))
+    except Exception:
+        return 0
+
+
+def _token_value(tokens: Any, name: str) -> int:
+    if not isinstance(tokens, dict):
+        return 0
+    return _positive_int(tokens.get(name))
+
+
+def _positive_int(value: Any) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def _estimate_output_tokens(text: str) -> int:
+    stripped = text.strip()
+    if not stripped:
+        return 0
+    ascii_chars = sum(1 for char in stripped if ord(char) < 128)
+    non_ascii_chars = len(stripped) - ascii_chars
+    ascii_tokens = (ascii_chars + 3) // 4 if ascii_chars else 0
+    estimated = non_ascii_chars + ascii_tokens
+    return max(1, estimated)
 
 
 def _first_attr_string(obj: Any, names: tuple[str, ...]) -> str | None:

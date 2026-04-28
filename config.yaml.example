@@ -17,3 +17,11 @@ card:
   max_wait_ms: 800
   # Flush partial streaming text after this many buffered characters.
   max_chars: 240
+  # Footer fields and order. Supported values:
+  # duration, model, input_tokens, output_tokens, context
+  footer_fields:
+    - duration
+    - model
+    - input_tokens
+    - output_tokens
+    - context

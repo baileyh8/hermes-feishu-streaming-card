@@ -26,6 +26,23 @@ def test_render_completed_card_replaces_thinking():
     assert "不会展示" not in content
 
 
+def test_render_long_main_content_splits_markdown_elements_without_truncating():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "甲" * 2600 + "乙" * 2600
+    session.status = "completed"
+
+    card = render_card(session)
+
+    main_elements = [
+        item
+        for item in card["body"]["elements"]
+        if str(item.get("element_id", "")).startswith("main_content")
+    ]
+    assert len(main_elements) == 3
+    assert all(len(item["content"]) <= 2400 for item in main_elements)
+    assert "".join(item["content"] for item in main_elements) == session.answer_text
+
+
 def test_render_failed_card_shows_error_without_thinking():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     session.thinking_text = "不会展示"
@@ -58,9 +75,11 @@ def test_render_completed_card_handles_empty_tokens_and_non_numeric_duration():
     session.duration = "bad"
     card = render_card(session)
     content = str(card)
-    assert "耗时 0.0s" in content
-    assert "输入 0" in content
-    assert "输出 0" in content
+    assert "0s" in content
+    assert "Unknown" in content
+    assert "↑0" in content
+    assert "↓0" in content
+    assert "ctx 0/0 0%" in content
 
 
 def test_render_completed_card_handles_missing_token_stats():
@@ -70,5 +89,36 @@ def test_render_completed_card_handles_missing_token_stats():
     session.tokens = None
     card = render_card(session)
     content = str(card)
-    assert "输入 0" in content
-    assert "输出 0" in content
+    assert "↑0" in content
+    assert "↓0" in content
+
+
+def test_render_completed_card_footer_uses_compact_metrics_format():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "最终答案"
+    session.status = "completed"
+    session.duration = 92
+    session.model = "MiniMax M2.7"
+    session.tokens = {"input_tokens": 1_100_000, "output_tokens": 2_200}
+    session.context = {"used_tokens": 182_000, "max_tokens": 204_000}
+
+    card = render_card(session)
+
+    assert "1m32s · MiniMax M2.7 · ↑1.1m · ↓2.2k · ctx 182k/204k 89%" in str(card)
+
+
+def test_render_completed_card_footer_respects_configured_fields_and_order():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "最终答案"
+    session.status = "completed"
+    session.duration = 92
+    session.model = "MiniMax M2.7"
+    session.tokens = {"input_tokens": 1_100_000, "output_tokens": 2_200}
+    session.context = {"used_tokens": 182_000, "max_tokens": 204_000}
+
+    card = render_card(session, footer_fields=["model", "duration", "context"])
+
+    content = str(card)
+    assert "MiniMax M2.7 · 1m32s · ctx 182k/204k 89%" in content
+    assert "↑1.1m" not in content
+    assert "↓2.2k" not in content

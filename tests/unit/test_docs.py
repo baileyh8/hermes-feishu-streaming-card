@@ -37,7 +37,7 @@ def test_event_protocol_documents_card_status_labels():
     assert "已完成" in event_protocol
 
 
-def test_docs_describe_event_forwarding_but_not_cardkit_completion():
+def test_docs_describe_event_forwarding_and_real_e2e_completion():
     readme = read_doc("README.md")
     architecture = read_doc("docs/architecture.md")
     todo = read_doc("TODO.md")
@@ -49,13 +49,13 @@ def test_docs_describe_event_forwarding_but_not_cardkit_completion():
         ]
     )
 
-    assert "第二阶段最小事件转发" in readme
+    assert "真实 Feishu E2E 主链路" in readme
     assert "Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地" in architecture
     assert "Feishu CardKit HTTP client 已实现" in docs
-    assert "真实飞书应用联调仍未完成" in docs
+    assert "真实 Hermes Gateway E2E" in docs
     assert "- [x] 补齐基于 Hermes fixture 和 mock sidecar 的最小 hook 事件转发验证。" in todo
     assert "- [x] 补齐官方 Hermes `v2026.4.23` Git tag 源码的安装/恢复 smoke test。" in todo
-    assert "- [ ] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
+    assert "- [x] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
 
 
 def test_docs_describe_sidecar_process_management_scope():
@@ -99,7 +99,7 @@ def test_docs_describe_sidecar_health_and_retry_metrics():
     assert "- [x] 增加 sidecar 健康检查和重试指标。" in docs
 
 
-def test_docs_describe_feishu_http_client_without_claiming_live_smoke():
+def test_docs_describe_feishu_http_client_and_live_smoke():
     docs = "\n".join(
         [
             read_doc("README.md"),
@@ -116,7 +116,8 @@ def test_docs_describe_feishu_http_client_without_claiming_live_smoke():
     assert "真实飞书应用做人工 CardKit smoke test" in docs
     assert "- [x] 实现 Feishu CardKit HTTP client，并用 mock server 验证 tenant token、发送和更新。" in docs
     assert "- [x] 提供 `smoke-feishu-card` 手动命令用于真实飞书卡片发送/更新验证。" in docs
-    assert "- [ ] 使用真实飞书应用做人工 CardKit smoke test，凭据仅使用本机配置或环境变量。" in docs
+    assert "- [x] 使用真实飞书应用做人工 CardKit smoke test，凭据仅使用本机配置或环境变量。" in docs
+    assert "- [x] 完成真实飞书长卡片压力测试，同一张卡片更新到 16k 中文字符。" in docs
 
 
 def test_docs_describe_hermes_detection_diagnostics():

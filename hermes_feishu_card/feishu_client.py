@@ -155,13 +155,29 @@ class FeishuClient:
         if not isinstance(payload, dict):
             raise FeishuAPIError("Feishu API returned non-object response")
         if response.status >= 400:
-            raise FeishuAPIError(f"Feishu API HTTP {response.status}")
+            detail = self._format_error_payload(payload)
+            suffix = f": {detail}" if detail else ""
+            raise FeishuAPIError(f"Feishu API HTTP {response.status}{suffix}")
         code = payload.get("code")
         if code != 0:
             msg = payload.get("msg", "")
             if not isinstance(msg, str):
                 msg = ""
-            if self._tenant_access_token:
-                msg = msg.replace(self._tenant_access_token, "[redacted-token]")
+            msg = self._redact_sensitive_text(msg)
             raise FeishuAPIError(f"Feishu API error {code}: {msg}")
         return payload
+
+    def _format_error_payload(self, payload: dict[str, Any]) -> str:
+        parts = []
+        code = payload.get("code")
+        if isinstance(code, (int, str)) and not isinstance(code, bool):
+            parts.append(f"code={code}")
+        msg = payload.get("msg")
+        if isinstance(msg, str) and msg:
+            parts.append(f"msg={self._redact_sensitive_text(msg)}")
+        return " ".join(parts)
+
+    def _redact_sensitive_text(self, text: str) -> str:
+        if self._tenant_access_token:
+            text = text.replace(self._tenant_access_token, "[redacted-token]")
+        return text

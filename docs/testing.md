@@ -16,7 +16,7 @@ python3 -m pytest tests/integration -q
 
 集成测试覆盖 CLI、doctor、sidecar server，以及基于 fixture Hermes 目录的安装、恢复和卸载流程。
 
-官方 Hermes `v2026.4.23` Git tag 源码已用于人工安装/恢复 smoke；该上游标签没有顶层 `VERSION` 文件，因此安装器会在 `VERSION` 缺失时回退读取 Git tag。真实 Hermes Gateway 进程运行 smoke 仍需在有可用 Hermes 本机安装时执行。
+官方 Hermes `v2026.4.23` Git tag 源码已用于人工安装/恢复 smoke；该上游标签没有顶层 `VERSION` 文件，因此安装器会在 `VERSION` 缺失时回退读取 Git tag。真实 Hermes Gateway 进程已配合真实 Feishu 测试应用完成 E2E 验证。
 
 ## Hermes hook runtime tests
 
@@ -95,3 +95,20 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 真实飞书/Lark 联调只能通过环境变量或本机配置提供凭据，例如 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret 写入仓库、测试 fixture、日志样例或文档。
 
 联调完成后建议轮换测试应用凭据，并检查本地日志中没有持久化 secret。
+
+本轮真实联调覆盖：
+
+- 短/中等回答的卡片创建、流式更新和完成状态。
+- 工具调用计数显示。
+- sidecar 接受完成事件后抑制 Hermes 原生灰色文本。
+- footer 元数据展示和异常 token 过滤。
+- 同一张飞书卡片连续更新到 16k 中文字符。
+- 真实 Hermes 目录 `restore -> install` 循环，最终保持已安装状态。
+
+最近一次全量自动化回归命令：
+
+```bash
+python3 -m pytest -q -p no:cacheprovider
+```
+
+结果：`348 passed`。

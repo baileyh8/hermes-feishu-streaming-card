@@ -33,6 +33,17 @@ def test_rejects_duplicate_and_stale_sequence():
     assert session.thinking_text == "新"
 
 
+def test_terminal_completion_applies_even_when_streaming_delta_sequence_arrived_ahead():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("answer.delta", 100, {"text": "部分答案"}))
+
+    assert session.apply(event("message.completed", 90, {"answer": "最终答案"}))
+
+    assert session.status == "completed"
+    assert session.visible_main_text == "最终答案"
+    assert session.last_sequence == 100
+
+
 def test_tool_updates_count_unique_events():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     session.apply(event("tool.updated", 1, {"tool_id": "t1", "name": "search", "status": "running"}))
@@ -54,6 +65,36 @@ def test_completion_replaces_thinking_with_answer():
     )
     assert session.status == "completed"
     assert session.visible_main_text == "最终答案"
+
+
+def test_completion_stores_model_and_context_footer_metadata():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "message.completed",
+            1,
+            {
+                "answer": "最终答案",
+                "model": "MiniMax M2.7",
+                "context": {"used_tokens": 182_000, "max_tokens": 204_000},
+            },
+        )
+    )
+
+    assert session.model == "MiniMax M2.7"
+    assert session.context == {"used_tokens": 182_000, "max_tokens": 204_000}
+
+
+def test_answer_delta_takes_over_visible_text_before_completion():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("thinking.delta", 1, {"text": "思考内容。"}))
+    assert session.visible_main_text == "思考内容。"
+
+    assert session.apply(event("answer.delta", 2, {"text": "答案开始"}))
+
+    assert session.status == "thinking"
+    assert session.visible_main_text == "答案开始"
 
 
 def test_split_think_tags_do_not_leak_across_chunks():

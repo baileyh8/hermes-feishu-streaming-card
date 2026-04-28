@@ -1,6 +1,7 @@
 import asyncio
 import json
 import math
+import threading
 from urllib import error
 
 import pytest
@@ -168,6 +169,65 @@ def test_build_event_extracts_nested_message_object():
     assert payload["message_id"] == "msg_object"
     assert payload["conversation_id"] == "oc_object"
     assert payload["data"] == {"text": "对象文本"}
+
+
+def test_build_completed_event_preserves_duration_and_tokens():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_abc",
+            "message_id": "msg_1",
+            "answer": "最终答案",
+            "duration": 2.75,
+            "model": "MiniMax M2.7",
+            "tokens": {"input_tokens": 12, "output_tokens": 34},
+            "context": {"used_tokens": 182_000, "max_tokens": 204_000},
+        },
+    )
+
+    assert payload["data"] == {
+        "answer": "最终答案",
+        "duration": 2.75,
+        "model": "MiniMax M2.7",
+        "tokens": {"input_tokens": 12, "output_tokens": 34},
+        "context": {"used_tokens": 182_000, "max_tokens": 204_000},
+    }
+
+
+def test_build_completed_event_uses_agent_result_token_fallbacks():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_abc",
+            "message_id": "msg_1",
+            "answer": "中文答案",
+            "response_time": 1.25,
+            "tokens": {"input_tokens": 0, "output_tokens": 0},
+            "agent_result": {"last_prompt_tokens": 99},
+        },
+    )
+
+    assert payload["data"]["duration"] == 1.25
+    assert payload["data"]["tokens"]["input_tokens"] == 99
+    assert payload["data"]["tokens"]["output_tokens"] > 0
+
+
+def test_build_completed_event_sanitizes_cumulative_token_counts():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_abc",
+            "message_id": "msg_1",
+            "answer": "我来为您撰写",
+            "tokens": {"input_tokens": 279_000, "output_tokens": 17_300},
+            "agent_result": {"last_prompt_tokens": 35_400},
+        },
+    )
+
+    assert payload["data"]["tokens"] == {
+        "input_tokens": 35_400,
+        "output_tokens": 6,
+    }
 
 
 def test_build_event_returns_none_when_chat_id_missing():
@@ -540,6 +600,110 @@ async def test_emit_from_hermes_locals_schedules_sender(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_emit_from_hermes_locals_threadsafe_schedules_on_running_loop(monkeypatch):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+
+    result = hook_runtime.emit_from_hermes_locals_threadsafe(
+        {"chat_id": "oc_abc", "message_id": "msg_1", "text": "hello"},
+        event_name="answer.delta",
+    )
+    await drain_tasks()
+
+    assert result is True
+    assert len(sender.payloads) == 1
+    url, payload, timeout = sender.payloads[0]
+    assert url == "http://sidecar.test/events"
+    assert payload["event"] == "answer.delta"
+    assert payload["message_id"] == "msg_1"
+    assert payload["data"] == {"text": "hello"}
+    assert timeout == 0.8
+
+
+def test_emit_from_hermes_locals_threadsafe_uses_explicit_loop_from_sync_call(
+    monkeypatch,
+):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+
+    def run_loop():
+        asyncio.set_event_loop(loop)
+        ready.set()
+        loop.run_forever()
+
+    thread = threading.Thread(target=run_loop)
+    thread.start()
+    ready.wait(timeout=1)
+    try:
+        result = hook_runtime.emit_from_hermes_locals_threadsafe(
+            {
+                "_hfc_loop": loop,
+                "chat_id": "oc_abc",
+                "message_id": "msg_1",
+                "tool_id": "tool_1",
+                "name": "search",
+                "status": "completed",
+                "detail": "done",
+            },
+            event_name="tool.updated",
+        )
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=1)
+    finally:
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=1)
+        loop.close()
+
+    assert result is True
+    assert len(sender.payloads) == 1
+    _url, payload, _timeout = sender.payloads[0]
+    assert payload["event"] == "tool.updated"
+    assert payload["data"] == {
+        "tool_id": "tool_1",
+        "name": "search",
+        "status": "completed",
+        "detail": "done",
+    }
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_threadsafe_missing_chat_id_does_not_send(
+    monkeypatch,
+):
+    sender = SenderProbe()
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+
+    result = hook_runtime.emit_from_hermes_locals_threadsafe(
+        {"message_id": "msg_1"},
+        event_name="message.started",
+    )
+    await drain_tasks()
+
+    assert result is False
+    assert sender.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_emit_from_hermes_locals_threadsafe_sender_error_is_swallowed(
+    monkeypatch,
+):
+    sender = SenderProbe()
+    sender.raise_error = True
+    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+
+    result = hook_runtime.emit_from_hermes_locals_threadsafe(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        event_name="message.started",
+    )
+    await drain_tasks()
+
+    assert result is True
+    assert len(sender.payloads) == 1
+
+
+@pytest.mark.asyncio
 async def test_emit_from_hermes_locals_disabled_does_not_send(monkeypatch):
     sender = SenderProbe()
     monkeypatch.setattr(hook_runtime, "_post_json", sender)
@@ -603,7 +767,7 @@ async def test_emit_from_hermes_locals_async_reports_sender_success(monkeypatch)
     assert url == "http://sidecar.test/events"
     assert payload["event"] == "message.completed"
     assert payload["message_id"] == "msg_1"
-    assert timeout == 0.8
+    assert timeout == hook_runtime.TERMINAL_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

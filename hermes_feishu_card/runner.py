@@ -50,7 +50,11 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     server = config["server"]
     web.run_app(
-        create_app(build_feishu_client(config), process_token=args.token),
+        create_app(
+            build_feishu_client(config),
+            process_token=args.token,
+            card_config=config.get("card", {}),
+        ),
         host=server["host"],
         port=server["port"],
         print=None,

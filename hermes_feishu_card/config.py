@@ -11,7 +11,17 @@ import yaml
 DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     "server": {"host": "127.0.0.1", "port": 8765},
     "feishu": {"app_id": "", "app_secret": ""},
-    "card": {"max_wait_ms": 800, "max_chars": 240},
+    "card": {
+        "max_wait_ms": 800,
+        "max_chars": 240,
+        "footer_fields": [
+            "duration",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "context",
+        ],
+    },
 }
 KNOWN_SECTIONS = frozenset(DEFAULT_CONFIG)
 

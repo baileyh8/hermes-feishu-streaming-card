@@ -1,6 +1,9 @@
+import asyncio
+
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.server import FEISHU_MESSAGE_IDS_KEY, create_app
 
 
@@ -10,6 +13,7 @@ class FakeFeishuClient:
         self.updated = []
         self.fail_send = False
         self.update_failures_remaining = 0
+        self.update_delay = 0.0
 
     async def send_card(self, chat_id, card):
         if self.fail_send:
@@ -18,19 +22,29 @@ class FakeFeishuClient:
         return f"feishu-message-{len(self.sent)}"
 
     async def update_card_message(self, message_id, card):
+        if self.update_delay:
+            await asyncio.sleep(self.update_delay)
         if self.update_failures_remaining > 0:
             self.update_failures_remaining -= 1
             raise RuntimeError("update unavailable")
         self.updated.append((message_id, card))
 
 
-def event_payload(event, sequence, data=None):
+def event_payload(
+    event,
+    sequence,
+    data=None,
+    *,
+    conversation_id="conversation-1",
+    message_id="hermes-message-1",
+    chat_id="oc_abc",
+):
     return {
         "schema_version": "1",
         "event": event,
-        "conversation_id": "conversation-1",
-        "message_id": "hermes-message-1",
-        "chat_id": "oc_abc",
+        "conversation_id": conversation_id,
+        "message_id": message_id,
+        "chat_id": chat_id,
         "platform": "feishu",
         "sequence": sequence,
         "created_at": 1777017600.0 + sequence,
@@ -240,6 +254,180 @@ async def test_delta_after_completed_does_not_update_again(client):
     assert len(feishu_client.updated) == updates_after_completed
 
 
+async def test_parallel_message_sessions_update_their_own_feishu_cards(client):
+    test_client, feishu_client = client
+
+    msg1 = {"conversation_id": "conversation-1", "message_id": "hermes-message-1"}
+    msg2 = {"conversation_id": "conversation-2", "message_id": "hermes-message-2"}
+
+    started1 = await test_client.post(
+        "/events",
+        json=event_payload("message.started", 0, **msg1),
+    )
+    delta1 = await test_client.post(
+        "/events",
+        json=event_payload("answer.delta", 1, {"text": "第一条"}, **msg1),
+    )
+    started2 = await test_client.post(
+        "/events",
+        json=event_payload("message.started", 0, **msg2),
+    )
+    tool2 = await test_client.post(
+        "/events",
+        json=event_payload(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "tool-2",
+                "name": "search",
+                "status": "running",
+                "detail": "第二条工具",
+            },
+            **msg2,
+        ),
+    )
+    completed1 = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 2, {"answer": "第一条完成"}, **msg1),
+    )
+    updates_before_late = len(feishu_client.updated)
+    late1 = await test_client.post(
+        "/events",
+        json=event_payload("tool.updated", 3, {"tool_id": "late"}, **msg1),
+    )
+
+    assert started1.status == 200
+    assert delta1.status == 200
+    assert started2.status == 200
+    assert tool2.status == 200
+    assert completed1.status == 200
+    assert late1.status == 200
+    assert await late1.json() == {"ok": True, "applied": False}
+    assert len(feishu_client.updated) == updates_before_late
+
+    assert [item[0] for item in feishu_client.sent] == ["oc_abc", "oc_abc"]
+    updates_by_message = {}
+    for feishu_message_id, card in feishu_client.updated:
+        updates_by_message.setdefault(feishu_message_id, []).append(str(card))
+    assert set(updates_by_message) == {"feishu-message-1", "feishu-message-2"}
+    assert any("第一条完成" in card for card in updates_by_message["feishu-message-1"])
+    assert any("`search`: running" in card for card in updates_by_message["feishu-message-2"])
+
+
+async def test_streaming_deltas_are_throttled_but_terminal_event_updates(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post("/events", json=event_payload("message.started", 0))
+    first_delta = await test_client.post(
+        "/events",
+        json=event_payload("answer.delta", 1, {"text": "第一段"}),
+    )
+    second_delta = await test_client.post(
+        "/events",
+        json=event_payload("answer.delta", 2, {"text": "第二段"}),
+    )
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 3, {"answer": "最终答案"}),
+    )
+
+    assert started.status == 200
+    assert first_delta.status == 200
+    assert second_delta.status == 200
+    assert await second_delta.json() == {"ok": True, "applied": True}
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+
+    assert len(feishu_client.sent) == 1
+    assert len(feishu_client.updated) == 2
+    assert "第一段" in str(feishu_client.updated[0][1])
+    assert "第二段" not in str(feishu_client.updated[0][1])
+    assert "最终答案" in str(feishu_client.updated[-1][1])
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["events_received"] == 4
+    assert metrics["events_applied"] == 4
+    assert metrics["events_rejected"] == 0
+    assert metrics["feishu_update_attempts"] == 2
+    assert metrics["feishu_update_successes"] == 2
+
+
+async def test_terminal_event_with_stale_sequence_still_finalizes_card(client):
+    test_client, feishu_client = client
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    await test_client.post(
+        "/events",
+        json=event_payload("answer.delta", 100, {"text": "部分答案"}),
+    )
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 90, {"answer": "最终答案"}),
+    )
+
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    assert "最终答案" in str(feishu_client.updated[-1][1])
+    assert "已完成" in str(feishu_client.updated[-1][1])
+
+
+async def test_concurrent_streaming_deltas_share_message_update_window(client):
+    test_client, feishu_client = client
+    feishu_client.update_delay = 0.05
+
+    started = await test_client.post("/events", json=event_payload("message.started", 0))
+    first_delta, second_delta = await asyncio.gather(
+        test_client.post(
+            "/events",
+            json=event_payload("answer.delta", 1, {"text": "第一段"}),
+        ),
+        test_client.post(
+            "/events",
+            json=event_payload("answer.delta", 2, {"text": "第二段"}),
+        ),
+    )
+
+    assert started.status == 200
+    assert first_delta.status == 200
+    assert second_delta.status == 200
+    assert await first_delta.json() == {"ok": True, "applied": True}
+    assert await second_delta.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.updated) == 1
+    assert "第一段" in str(feishu_client.updated[0][1])
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["events_received"] == 3
+    assert metrics["events_applied"] == 3
+    assert metrics["feishu_update_attempts"] == 1
+    assert metrics["feishu_update_successes"] == 1
+
+
+async def test_terminal_event_waits_for_update_window(client, monkeypatch):
+    test_client, feishu_client = client
+    now = [100.0]
+    sleeps = []
+    monkeypatch.setattr(sidecar_server.time, "monotonic", lambda: now[0])
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+        now[0] += delay
+
+    monkeypatch.setattr(sidecar_server.asyncio, "sleep", fake_sleep)
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    await test_client.post("/events", json=event_payload("answer.delta", 1, {"text": "片段"}))
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 2, {"answer": "最终答案"}),
+    )
+
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    assert sleeps == [sidecar_server.UPDATE_MIN_INTERVAL_SECONDS]
+    assert len(feishu_client.updated) == 2
+    assert "最终答案" in str(feishu_client.updated[-1][1])
+
+
 async def test_missing_feishu_message_id_returns_conflict_without_update(client):
     test_client, feishu_client = client
 
@@ -279,6 +467,51 @@ async def test_update_retries_once_and_reports_retry_metrics(client):
     assert metrics["feishu_update_successes"] == 1
     assert metrics["feishu_update_failures"] == 1
     assert metrics["feishu_update_retries"] == 1
+
+
+async def test_terminal_update_failure_still_accepts_event_to_prevent_native_fallback(client):
+    test_client, feishu_client = client
+    feishu_client.update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+    )
+
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["events_applied"] == 2
+    assert metrics["events_rejected"] == 0
+    assert metrics["feishu_update_attempts"] == sidecar_server.UPDATE_MAX_ATTEMPTS
+    assert metrics["feishu_update_failures"] == sidecar_server.UPDATE_MAX_ATTEMPTS
+
+
+async def test_terminal_update_failure_is_retried_in_background(client, monkeypatch):
+    test_client, feishu_client = client
+    feishu_client.update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
+
+    async def fake_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(sidecar_server.asyncio, "sleep", fake_sleep)
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+    )
+
+    assert completed.status == 200
+    for _ in range(10):
+        if feishu_client.updated:
+            break
+        await asyncio.sleep(0)
+
+    assert len(feishu_client.updated) == 1
+    assert "最终答案" in str(feishu_client.updated[-1][1])
 
 
 async def test_send_failure_returns_json_error_and_allows_started_retry(client):

@@ -14,7 +14,11 @@ from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient, FeishuClientConfig
 from hermes_feishu_card.install.detect import HermesDetection, detect_hermes
 from hermes_feishu_card.install.manifest import file_sha256
-from hermes_feishu_card.install.patcher import apply_patch, remove_patch
+from hermes_feishu_card.install.patcher import (
+    apply_patch,
+    remove_patch,
+    remove_patch_lenient,
+)
 from hermes_feishu_card.process import start_sidecar, status_sidecar, stop_sidecar
 from hermes_feishu_card.render import render_card
 from hermes_feishu_card.session import CardSession
@@ -468,7 +472,13 @@ def _validate_existing_install_state(
         raise ValueError("install state incomplete; backup missing; refusing to install")
 
     manifest = _read_manifest(manifest_path)
-    _validate_complete_install_state(run_py, backup_path, manifest, "install")
+    try:
+        _validate_complete_install_state(run_py, backup_path, manifest, "install")
+    except ValueError as exc:
+        if "run.py changed since install" not in str(
+            exc
+        ) or not _current_matches_backup_lenient(run_py, backup_path):
+            raise
 
 
 def _validate_manifest_matches_run_py(
@@ -563,6 +573,16 @@ def _validate_current_matches_backup(
         ) from exc
     if restored_current != backup_text:
         raise ValueError(f"run.py changed since install; refusing to {operation}")
+
+
+def _current_matches_backup_lenient(run_py: Path, backup_path: Path) -> bool:
+    try:
+        current = _read_text_preserve_newlines(run_py)
+        backup_text = _read_text_preserve_newlines(backup_path)
+        _validate_backup_contains_original(backup_text, "install")
+        return remove_patch_lenient(current) == backup_text
+    except (OSError, UnicodeError, ValueError):
+        return False
 
 
 def _read_manifest(manifest_path: Path) -> dict[str, object] | None:

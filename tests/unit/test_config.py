@@ -26,7 +26,17 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
     assert config == {
         "server": {"host": "127.0.0.1", "port": 8765},
         "feishu": {"app_id": "", "app_secret": ""},
-        "card": {"max_wait_ms": 800, "max_chars": 240},
+        "card": {
+            "max_wait_ms": 800,
+            "max_chars": 240,
+            "footer_fields": [
+                "duration",
+                "model",
+                "input_tokens",
+                "output_tokens",
+                "context",
+            ],
+        },
     }
 
 
@@ -62,7 +72,33 @@ card:
 
     assert config["server"] == {"host": "127.0.0.1", "port": 9000}
     assert config["feishu"] == {"app_id": "cli_test", "app_secret": ""}
-    assert config["card"] == {"max_wait_ms": 800, "max_chars": 120}
+    assert config["card"] == {
+        "max_wait_ms": 800,
+        "max_chars": 120,
+        "footer_fields": [
+            "duration",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "context",
+        ],
+    }
+
+
+def test_load_config_accepts_custom_footer_fields(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "card:\n"
+        "  footer_fields:\n"
+        "    - model\n"
+        "    - duration\n"
+        "    - context\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config["card"]["footer_fields"] == ["model", "duration", "context"]
 
 
 def test_load_config_accepts_yaml_string_port_and_normalizes_to_int(tmp_path):

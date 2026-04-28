@@ -104,6 +104,42 @@ def test_install_upgrades_phase_one_placeholder_install(tmp_path):
     assert manifest_path(hermes_dir).exists()
 
 
+def test_install_upgrades_owned_callback_blocks_from_previous_version(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+
+    old_patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    old_patched = old_patched.replace(
+        "if _hfc_emit_threadsafe({",
+        "_hfc_emit_threadsafe({",
+    )
+    old_patched = old_patched.replace(
+        '}, event_name="answer.delta"):\n                    return\n',
+        '}, event_name="answer.delta")\n',
+    )
+    old_patched = old_patched.replace(
+        '}, event_name="tool.updated"):\n                    return\n',
+        '}, event_name="tool.updated")\n',
+    )
+    old_patched = old_patched.replace(
+        '}, event_name="thinking.delta"):\n                    return\n',
+        '}, event_name="thinking.delta")\n',
+    )
+    run_py(hermes_dir).write_text(old_patched, encoding="utf-8")
+    write_manifest(hermes_dir)
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    upgraded = run_py(hermes_dir).read_text(encoding="utf-8")
+    assert '}, event_name="answer.delta"):\n                    return\n' in upgraded
+    assert '}, event_name="thinking.delta"):\n                    return\n' in upgraded
+    assert patcher.remove_patch(upgraded) == backup_path(hermes_dir).read_text(
+        encoding="utf-8"
+    )
+
+
 def test_restore_accepts_phase_one_placeholder_install(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     original = write_phase_one_install_state(hermes_dir)

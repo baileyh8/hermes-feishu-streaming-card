@@ -33,6 +33,10 @@ def test_apply_patch_inserts_completion_hook_before_response_return():
     assert 'event_name="message.completed"' in patched
     assert "if _hfc_card_delivered:" in patched
     assert "        return None\n" in patched
+    assert '"model": agent_result.get("model", ""),' in patched
+    assert '"context": {' in patched
+    assert '"used_tokens": agent_result.get("last_prompt_tokens", 0),' in patched
+    assert '"max_tokens": agent_result.get("context_length", 0),' in patched
     assert patched.index(patcher.COMPLETE_PATCH_BEGIN) < patched.index("    return response\n")
 
 
@@ -65,6 +69,38 @@ def test_apply_patch_upgrades_legacy_completion_hook_block():
     assert "emit_from_hermes_locals_async" in upgraded
     assert "if _hfc_card_delivered:" in upgraded
     assert upgraded.count("emit_from_hermes_locals as _hfc_emit") == 1
+
+
+def test_remove_patch_lenient_removes_previous_async_completion_hook_block():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1.5\n"
+        "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
+        "    # HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN\n"
+        "    try:\n"
+        "        from hermes_feishu_card.hook_runtime import emit_from_hermes_locals_async as _hfc_emit_async\n"
+        "        _hfc_card_delivered = await _hfc_emit_async({\n"
+        "            **locals(),\n"
+        "            \"answer\": response,\n"
+        "            \"duration\": _response_time,\n"
+        "            \"tokens\": {\n"
+        "                \"input_tokens\": agent_result.get(\"input_tokens\", 0),\n"
+        "                \"output_tokens\": agent_result.get(\"output_tokens\", 0),\n"
+        "            },\n"
+        "        }, event_name=\"message.completed\")\n"
+        "        if _hfc_card_delivered:\n"
+        "            return None\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    # HERMES_FEISHU_CARD_COMPLETE_PATCH_END\n"
+        "    return response\n"
+    )
+
+    restored = patcher.remove_patch_lenient(content)
+
+    assert patcher.COMPLETE_PATCH_BEGIN not in restored
+    assert "    return response\n" in restored
 
 
 def test_remove_patch_removes_legacy_completion_hook_block():
@@ -103,6 +139,73 @@ def test_remove_patch_removes_legacy_completion_hook_block():
     assert patcher.PATCH_BEGIN not in restored
     assert patcher.COMPLETE_PATCH_BEGIN not in restored
     assert "    return response\n" in restored
+
+
+def test_apply_patch_inserts_streaming_callback_hooks():
+    content = (
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "    return await self._run_agent(event_message_id=event.message_id)\n"
+        "\n"
+        "async def _run_agent(self, source, event_message_id=None):\n"
+        "    _loop_for_step = asyncio.get_running_loop()\n"
+        "    def _run_still_current():\n"
+        "        return True\n"
+        "\n"
+        "    def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):\n"
+        "        progress_queue.put(tool_name)\n"
+        "\n"
+        "    def _stream_delta_cb(text: str) -> None:\n"
+        "        if _run_still_current():\n"
+        "            _stream_consumer.on_delta(text)\n"
+        "\n"
+        "    def _interim_assistant_cb(text: str, *, already_streamed: bool = False) -> None:\n"
+        "        if already_streamed:\n"
+        "            return\n"
+        "        status_queue.put(text)\n"
+    )
+
+    patched = patcher.apply_patch(content)
+
+    assert patcher.TOOL_PATCH_BEGIN in patched
+    assert patcher.ANSWER_DELTA_PATCH_BEGIN in patched
+    assert patcher.THINKING_DELTA_PATCH_BEGIN in patched
+    assert 'event_name="tool.updated"' in patched
+    assert 'event_name="answer.delta"' in patched
+    assert 'event_name="thinking.delta"' in patched
+    assert (
+        'if event_type in ("tool.started", "tool.completed") and _run_still_current():'
+        in patched
+    )
+    assert '}, event_name="tool.updated"):\n                    return\n' in patched
+    assert "if text and _run_still_current():" in patched
+    assert "if text and not already_streamed and _run_still_current():" in patched
+    assert '}, event_name="answer.delta"):\n                    return\n' in patched
+    assert '}, event_name="thinking.delta"):\n                    return\n' in patched
+    assert '"_hfc_loop": _loop_for_step' in patched
+    assert patcher.remove_patch(patched) == content
+
+
+def test_apply_patch_skips_streaming_hooks_when_required_scope_is_missing():
+    content = (
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "    return await self._run_agent(event_message_id=event.message_id)\n"
+        "\n"
+        "async def _run_agent(self, event_message_id=None):\n"
+        "    def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):\n"
+        "        progress_queue.put(tool_name)\n"
+        "\n"
+        "    def _stream_delta_cb(text: str) -> None:\n"
+        "        _stream_consumer.on_delta(text)\n"
+        "\n"
+        "    def _interim_assistant_cb(text: str, *, already_streamed: bool = False) -> None:\n"
+        "        status_queue.put(text)\n"
+    )
+
+    patched = patcher.apply_patch(content)
+
+    assert patcher.TOOL_PATCH_BEGIN not in patched
+    assert patcher.ANSWER_DELTA_PATCH_BEGIN not in patched
+    assert patcher.THINKING_DELTA_PATCH_BEGIN not in patched
 
 
 def test_apply_patch_upgrades_phase_one_placeholder_block():
