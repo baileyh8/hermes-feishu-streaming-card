@@ -675,6 +675,7 @@ async def test_health_reports_safe_routing_diagnostics_without_secrets():
     assert routing["chat_binding_count"] == 1
     assert routing["last_route"] == {
         "message_id": "hermes-message-1",
+        "chat_id": "oc_sales",
         "bot_id": "sales",
         "reason": "bindings.chats",
     }
@@ -714,3 +715,42 @@ async def test_route_failure_returns_502_and_reports_safe_error():
     assert health_body["diagnostics"]["last_route_error"] == "RuntimeError"
     assert health_body["routing"]["last_route_error"] == "RuntimeError"
     assert "super-secret" not in str(health_body)
+
+
+async def test_routed_update_failure_reports_safe_bot_id():
+    factory = FakeFeishuClientFactory()
+    factory.clients["sales"].update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
+
+    def bot_router(event):
+        return ("sales", "bindings.chats")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        started = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        updated = await test_client.post(
+            "/events",
+            json=event_payload(
+                "thinking.delta",
+                1,
+                {"text": "需要更新"},
+                chat_id="oc_sales",
+            ),
+        )
+        health = await test_client.get("/health")
+        health_body = await health.json()
+    finally:
+        await test_client.close()
+
+    assert started.status == 200
+    assert updated.status == 502
+    assert health_body["diagnostics"]["last_update_error"].startswith(
+        "bot_id=sales RuntimeError:"
+    )
+    assert "secret" not in health_body["diagnostics"]["last_update_error"].lower()
+    assert "token" not in health_body["diagnostics"]["last_update_error"].lower()

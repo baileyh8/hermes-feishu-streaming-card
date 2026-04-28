@@ -257,7 +257,7 @@ async def _update_card_for_app(
         try:
             await _client_for_bot(app, bot_id).update_card_message(message_id, card)
         except Exception as exc:
-            message = f"{exc.__class__.__name__}: {exc}"
+            message = _safe_update_error_message(bot_id, exc)
             app[DIAGNOSTICS_KEY]["last_update_error"] = message[:500]
             logger.warning("Feishu card update failed: %s", message)
             metrics.feishu_update_failures += 1
@@ -283,6 +283,7 @@ def _resolve_route(request: web.Request, event: SidecarEvent) -> RouteResult | N
     if not _is_client_factory(feishu_client):
         diagnostics["last_route"] = {
             "message_id": event.message_id,
+            "chat_id": event.chat_id,
             "bot_id": "",
             "reason": "legacy",
         }
@@ -303,6 +304,7 @@ def _resolve_route(request: web.Request, event: SidecarEvent) -> RouteResult | N
 
     diagnostics["last_route"] = {
         "message_id": event.message_id,
+        "chat_id": event.chat_id,
         "bot_id": route.bot_id,
         "reason": route.reason,
     }
@@ -331,6 +333,13 @@ def _client_for_bot(app: web.Application, bot_id: str | None) -> Any:
 
 def _is_client_factory(feishu_client: Any) -> bool:
     return callable(getattr(feishu_client, "get_client", None))
+
+
+def _safe_update_error_message(bot_id: str | None, exc: Exception) -> str:
+    message = f"{exc.__class__.__name__}: {exc}"
+    if bot_id:
+        return f"bot_id={bot_id} {message}"
+    return message
 
 
 def _initial_routing_diagnostics(feishu_client: Any) -> dict[str, Any]:
