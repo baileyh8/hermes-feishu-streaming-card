@@ -12,13 +12,45 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
     assert "V3.1.0" in readme
+    assert "[English](README.en.md)" in readme
+    assert "docs/assets/readme-cover.png" in readme
     assert "sidecar-only" in readme.lower()
     assert "setup --hermes-dir" in readme
     assert "整合安装器" in readme
     assert "v2026.4.23" in readme
     assert "Git tag `v2026.4.23+`" in readme
     assert "docs/assets/feishu-weather-card.png" in readme
+    assert (ROOT / "docs/assets/readme-cover.png").exists()
     assert (ROOT / "docs/assets/feishu-weather-card.png").exists()
+
+
+def test_english_readme_and_docs_are_linked():
+    readme = read_doc("README.md")
+    english_readme = read_doc("README.en.md")
+    expected_docs = [
+        "architecture",
+        "event-protocol",
+        "installer-safety",
+        "migration",
+        "e2e-verification",
+        "release-readiness",
+        "testing",
+    ]
+
+    assert "[中文](README.md)" in english_readme
+    assert "Hermes Feishu Streaming Card Plugin V3.1.0" in english_readme
+    assert "docs/assets/readme-cover.png" in english_readme
+    assert "setup --hermes-dir" in english_readme
+    assert "356 passed" in english_readme
+
+    for name in expected_docs:
+        zh_path = f"docs/{name}.md"
+        en_path = f"docs/{name}.en.md"
+        assert en_path in readme
+        assert en_path in english_readme
+        assert (ROOT / en_path).exists()
+        assert f"[English]({name}.en.md)" in read_doc(zh_path)
+        assert f"[中文]({name}.md)" in read_doc(en_path)
 
 
 def test_mainline_docs_mark_legacy_dual_as_not_active_runtime():

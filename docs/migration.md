@@ -1,5 +1,7 @@
 # 从 legacy/dual 迁移到 sidecar-only
 
+[中文](migration.md) | [English](migration.en.md)
+
 本文只覆盖从本仓库历史 legacy/dual/patch 实现迁移到当前 `hermes_feishu_card/` sidecar-only 主线的安全流程。历史入口已归档到 `legacy/`，包括 `legacy/adapter/`、旧 `legacy/sidecar/`、旧 `legacy/patch/`、`legacy/installer.py`、`legacy/installer_sidecar.py`、`legacy/installer_v2.py`、`legacy/gateway_run_patch.py`、`legacy/patch_feishu.py` 等；它们不是 active runtime。
 
 ## 迁移原则

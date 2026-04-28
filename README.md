@@ -1,10 +1,16 @@
 # Hermes 飞书流式卡片插件 V3.1.0
 
+[中文](README.md) | [English](README.en.md)
+
+![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)
+
 为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.1.0 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
 
 当前版本已完成真实 Feishu E2E 主链路验收：新消息创建新卡片，思考过程和最终答案在同一张卡片内渐进更新，工具调用状态实时统计，完成后卡片显示耗时、模型、token 和上下文占用，且不会再额外刷出灰色原生文本消息。
 
 Feishu CardKit HTTP client 已实现，并通过 mock Feishu server、真实 Feishu smoke、真实 Hermes Gateway E2E 和长卡片压力测试验证。
+
+真实效果截图：
 
 ![飞书流式卡片真实效果截图](docs/assets/feishu-weather-card.png)
 
@@ -265,7 +271,7 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 当前 V3.1.0 验收状态：
 
-- 自动化全量测试：`352 passed`
+- 自动化全量测试：`356 passed`
 - GitHub Actions：Python 3.9 / 3.12 测试矩阵通过
 - 安装/恢复专项测试：覆盖备份、manifest、重复安装、用户改动拒绝恢复、卸载和恢复幂等
 - 真实 Hermes Gateway E2E：已验证新卡片创建、流式更新、工具调用计数、完成状态和 footer 元数据
@@ -276,13 +282,13 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 ## 文档
 
-- [架构说明](docs/architecture.md)
-- [事件协议](docs/event-protocol.md)
-- [安装安全](docs/installer-safety.md)
-- [迁移说明](docs/migration.md)
-- [端到端验证材料](docs/e2e-verification.md)
-- [发布准备说明](docs/release-readiness.md)
-- [测试说明](docs/testing.md)
+- 架构说明：[中文](docs/architecture.md) / [English](docs/architecture.en.md)
+- 事件协议：[中文](docs/event-protocol.md) / [English](docs/event-protocol.en.md)
+- 安装安全：[中文](docs/installer-safety.md) / [English](docs/installer-safety.en.md)
+- 迁移说明：[中文](docs/migration.md) / [English](docs/migration.en.md)
+- 端到端验证材料：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)
+- 发布准备说明：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
+- 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)
 
 ## 安全说明
 

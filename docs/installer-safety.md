@@ -1,5 +1,7 @@
 # 安装安全
 
+[中文](installer-safety.md) | [English](installer-safety.en.md)
+
 安装器的目标是只做可验证、可恢复的最小写入。任何版本、结构或校验不确定的情况都应 fail-closed。
 
 ## 安装前检查
