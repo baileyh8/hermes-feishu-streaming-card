@@ -1,6 +1,6 @@
 # 从 legacy/dual 迁移到 sidecar-only
 
-本文只覆盖从本仓库历史 legacy/dual/patch 实现迁移到当前 `hermes_feishu_card/` sidecar-only 主线的安全流程。历史入口包括 `adapter/`、旧 `sidecar/`、旧 `patch/`、`installer.py`、`installer_sidecar.py`、`installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等；它们不是 active runtime。
+本文只覆盖从本仓库历史 legacy/dual/patch 实现迁移到当前 `hermes_feishu_card/` sidecar-only 主线的安全流程。历史入口已归档到 `legacy/`，包括 `legacy/adapter/`、旧 `legacy/sidecar/`、旧 `legacy/patch/`、`legacy/installer.py`、`legacy/installer_sidecar.py`、`legacy/installer_v2.py`、`legacy/gateway_run_patch.py`、`legacy/patch_feishu.py` 等；它们不是 active runtime。
 
 ## 迁移原则
 
@@ -28,7 +28,7 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 
 `restore` 只会恢复本插件 manifest 能校验的安装状态。若提示 `run.py changed since install`、`backup changed since install` 或 `install state incomplete`，说明文件状态无法自动确认，应停止并人工检查 Hermes `gateway/run.py`。
 
-4. 如果当前 Hermes 曾运行历史 legacy/dual 安装脚本，例如 `installer_v2.py`、`gateway_run_patch.py` 或 `patch_feishu.py`，先用当时保留的原始备份恢复 Hermes 文件。若没有可信备份，建议重新安装或重新 checkout 对应版本的 Hermes，再迁移。
+4. 如果当前 Hermes 曾运行历史 legacy/dual 安装脚本，例如 `legacy/installer_v2.py`、`legacy/gateway_run_patch.py` 或 `legacy/patch_feishu.py`，先用当时保留的原始备份恢复 Hermes 文件。若没有可信备份，建议重新安装或重新 checkout 对应版本的 Hermes，再迁移。
 
 5. 运行只读诊断：
 

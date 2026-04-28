@@ -28,4 +28,4 @@
 
 ## 旧代码边界
 
-`adapter/`、`sidecar/`、`patch/`、`installer.py`、`installer_sidecar.py`、`installer_v2.py`、`gateway_run_patch.py`、`patch_feishu.py` 等目录或脚本是历史 legacy/dual/patch 实现，不是 active runtime。新主线只以 `hermes_feishu_card/`、当前 CLI 和当前安装器安全模型为准。
+`legacy/adapter/`、`legacy/sidecar/`、`legacy/patch/`、`legacy/installer.py`、`legacy/installer_sidecar.py`、`legacy/installer_v2.py`、`legacy/gateway_run_patch.py`、`legacy/patch_feishu.py` 等目录或脚本是历史 legacy/dual/patch 实现，不是 active runtime。新主线只以 `hermes_feishu_card/`、当前 CLI 和当前安装器安全模型为准。
