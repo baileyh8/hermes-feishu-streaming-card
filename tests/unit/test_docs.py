@@ -11,8 +11,10 @@ def read_doc(path: str) -> str:
 def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
-    assert "V3.0.0" in readme
+    assert "V3.1.0" in readme
     assert "sidecar-only" in readme.lower()
+    assert "setup --hermes-dir" in readme
+    assert "整合安装器" in readme
     assert "v2026.4.23" in readme
     assert "Git tag `v2026.4.23+`" in readme
     assert "docs/assets/feishu-weather-card.png" in readme
@@ -214,7 +216,7 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.0.0" in docs
+    assert "3.1.0" in docs
     assert "python3 -m pytest -q" in docs
     assert "真实 Hermes Gateway" in docs
     assert "真实飞书应用" in docs

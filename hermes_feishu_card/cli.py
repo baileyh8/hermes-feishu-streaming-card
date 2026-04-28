@@ -34,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "setup":
+        return _run_setup(args)
     if args.command == "start":
         return _run_start(args)
     if args.command == "stop":
@@ -64,6 +66,28 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--hermes-dir")
     doctor.add_argument("--skip-hermes", action="store_true")
 
+    setup = subparsers.add_parser(
+        "setup",
+        help="run the guided all-in-one installer for ordinary users",
+    )
+    setup.add_argument("--hermes-dir", required=True, help="Hermes Agent root directory")
+    setup.add_argument(
+        "--config",
+        default=str(Path.home() / ".hermes_feishu_card" / "config.yaml"),
+        help="sidecar config path to create or reuse",
+    )
+    setup.add_argument(
+        "--skip-start",
+        action="store_true",
+        help="install the Hermes hook but do not start the sidecar",
+    )
+    setup.add_argument(
+        "--yes",
+        action="store_true",
+        required=True,
+        help="confirm local Hermes hook installation",
+    )
+
     for command in ("start", "stop", "status"):
         process_parser = subparsers.add_parser(command)
         process_parser.add_argument("--config", default="config.yaml.example")
@@ -77,6 +101,110 @@ def _build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument("--hermes-dir", required=True)
         command_parser.add_argument("--yes", action="store_true", required=True)
     return parser
+
+
+def _run_setup(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser()
+    try:
+        created = _ensure_setup_config(config_path)
+        config = load_config(config_path)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"config: {'created' if created else 'existing'} {config_path}")
+    if not _has_feishu_credentials(config):
+        print(
+            (
+                "error: Feishu credentials are required before setup installs "
+                "the Hermes hook. Set FEISHU_APP_ID and FEISHU_APP_SECRET, or "
+                f"fill feishu.app_id and feishu.app_secret in {config_path}."
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    detection = detect_hermes(args.hermes_dir)
+    if not detection.supported:
+        print(_format_hermes_detection(detection), file=sys.stderr)
+        return 1
+    print("doctor: ok")
+    print(_format_hermes_detection(detection))
+
+    install_code = _run_install(
+        argparse.Namespace(hermes_dir=args.hermes_dir, yes=True)
+    )
+    if install_code != 0:
+        return install_code
+
+    if args.skip_start:
+        print("start: skipped")
+        print("setup ok")
+        return 0
+
+    try:
+        start_result = start_sidecar(config_path, config)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if start_result.startswith("failed:"):
+        print(f"error: {start_result}", file=sys.stderr)
+        return 1
+    if start_result == "already running":
+        print("start: already running")
+    else:
+        print("start ok")
+
+    status = status_sidecar(config)
+    if not status["running"]:
+        print("error: sidecar did not report healthy status", file=sys.stderr)
+        return 1
+    print("status: running")
+    print(f"pid: {status['pid'] or 'unknown'}")
+    print("setup ok")
+    return 0
+
+
+def _has_feishu_credentials(config: dict[str, dict[str, object]]) -> bool:
+    feishu = config.get("feishu", {})
+    app_id = feishu.get("app_id", "")
+    app_secret = feishu.get("app_secret", "")
+    return bool(str(app_id).strip() and str(app_secret).strip())
+
+
+def _ensure_setup_config(config_path: Path) -> bool:
+    if config_path.exists():
+        return False
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(config_path, _default_setup_config_text())
+    return True
+
+
+def _default_setup_config_text() -> str:
+    return """# Hermes Feishu Streaming Card V3 setup configuration
+# Prefer FEISHU_APP_ID and FEISHU_APP_SECRET environment variables in real deployments.
+
+server:
+  host: 127.0.0.1
+  port: 8765
+
+feishu:
+  app_id: ""
+  app_secret: ""
+  base_url: https://open.feishu.cn/open-apis
+  timeout_seconds: 30
+
+card:
+  title: Hermes Agent
+  max_wait_ms: 800
+  max_chars: 240
+  footer_fields:
+    - duration
+    - model
+    - input_tokens
+    - output_tokens
+    - context
+"""
 
 
 def _run_doctor(args: argparse.Namespace) -> int:

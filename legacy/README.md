@@ -1,8 +1,8 @@
 # Legacy Archive
 
-This directory contains historical implementations, early scripts, old screenshots, and migration references that are not part of the V3.0.0 active runtime.
+This directory contains historical implementations, early scripts, old screenshots, and migration references that are not part of the current active runtime.
 
-Active V3.0.0 code lives in:
+Active code lives in:
 
 - `hermes_feishu_card/`
 - `tests/`
