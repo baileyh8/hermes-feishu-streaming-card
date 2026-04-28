@@ -141,6 +141,138 @@ def test_setup_creates_config_installs_hook_and_starts_sidecar(tmp_path, monkeyp
     )
 
 
+def test_setup_warns_when_hermes_streaming_appears_disabled(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    (hermes_dir / "config.yaml").write_text(
+        "streaming:\n  enabled: false\n  transport: edit\n", encoding="utf-8"
+    )
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+    monkeypatch.setattr(cli, "start_sidecar", lambda *_args: "started")
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda _config: {
+            "running": True,
+            "pid": 12345,
+            "health": {"active_sessions": 0, "metrics": {}},
+            "pid_running": True,
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "warning: Hermes Gateway streaming appears disabled for Feishu" in captured.out
+    assert "streaming.enabled: true" in captured.out
+    assert "streaming.transport: edit" in captured.out
+    assert "thinking.delta" in captured.out
+    assert "answer.delta" in captured.out
+    assert "setup ok" in captured.out
+
+
+def test_setup_warns_when_feishu_streaming_override_is_disabled(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    (hermes_dir / "config.yaml").write_text(
+        (
+            "streaming:\n"
+            "  enabled: true\n"
+            "  transport: edit\n"
+            "display:\n"
+            "  platforms:\n"
+            "    feishu:\n"
+            "      streaming: false\n"
+        ),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+    monkeypatch.setattr(cli, "start_sidecar", lambda *_args: "started")
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda _config: {
+            "running": True,
+            "pid": 12345,
+            "health": {"active_sessions": 0, "metrics": {}},
+            "pid_running": True,
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "display.platforms.feishu.streaming: true" in captured.out
+    assert "setup ok" in captured.out
+
+
+def test_setup_notes_when_reasoning_display_is_disabled(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    (hermes_dir / "config.yaml").write_text(
+        "streaming:\n  enabled: true\n  transport: edit\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+    monkeypatch.setattr(cli, "start_sidecar", lambda *_args: "started")
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda _config: {
+            "running": True,
+            "pid": 12345,
+            "health": {"active_sessions": 0, "metrics": {}},
+            "pid_running": True,
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "Hermes reasoning display appears disabled for Feishu" in captured.out
+    assert "display.platforms.feishu.show_reasoning: true" in captured.out
+    assert "/reasoning show" in captured.out
+
+
 def test_setup_requires_feishu_credentials_before_installing_hook(
     tmp_path, monkeypatch, capsys
 ):

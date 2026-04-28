@@ -17,6 +17,10 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "sidecar-only" in readme.lower()
     assert "setup --hermes-dir" in readme
     assert "整合安装器" in readme
+    assert "streaming.enabled" in readme
+    assert "display.platforms.feishu.streaming" in readme
+    assert "display.platforms.feishu.show_reasoning" in readme
+    assert "thinking.delta" in readme
     assert "v2026.4.23" in readme
     assert "Git tag `v2026.4.23+`" in readme
     assert "docs/assets/feishu-weather-card.png" in readme
@@ -41,7 +45,12 @@ def test_english_readme_and_docs_are_linked():
     assert "Hermes Feishu Streaming Card Plugin V3.1.0" in english_readme
     assert "docs/assets/readme-cover.png" in english_readme
     assert "setup --hermes-dir" in english_readme
-    assert "356 passed" in english_readme
+    assert "Hermes Gateway Streaming And Thinking" in english_readme
+    assert "streaming.enabled" in english_readme
+    assert "display.platforms.feishu.streaming" in english_readme
+    assert "display.platforms.feishu.show_reasoning" in english_readme
+    assert "thinking.delta" in english_readme
+    assert "357 passed" in english_readme
 
     for name in expected_docs:
         zh_path = f"docs/{name}.md"
