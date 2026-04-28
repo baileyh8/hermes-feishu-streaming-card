@@ -1,6 +1,6 @@
-# Hermes 飞书流式卡片插件 V3.0.0
+# Hermes 飞书流式卡片插件 V3.1.0
 
-为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.0.0 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
+为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.1.0 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
 
 当前版本已完成真实 Feishu E2E 主链路验收：新消息创建新卡片，思考过程和最终答案在同一张卡片内渐进更新，工具调用状态实时统计，完成后卡片显示耗时、模型、token 和上下文占用，且不会再额外刷出灰色原生文本消息。
 
@@ -44,37 +44,64 @@ Feishu CardKit HTTP client 已实现，并通过 mock Feishu server、真实 Fei
 
 ## 安装
 
-建议先克隆仓库并安装为可编辑包：
+面向普通用户，推荐使用整合安装器 `setup`。它会自动生成配置文件、检查 Hermes 版本、安装 hook、启动 sidecar，并做健康检查。
 
 ```bash
 git clone https://github.com/baileyh8/hermes-feishu-streaming-card.git
 cd hermes-feishu-streaming-card
 python3 -m pip install -e ".[test]"
+export FEISHU_APP_ID=cli_xxx
+export FEISHU_APP_SECRET=xxx
+python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --yes
 ```
 
-先做配置和 Hermes 目录检查：
+默认配置文件会写入：
+
+```text
+~/.hermes_feishu_card/config.yaml
+```
+
+如果你希望指定配置路径：
+
+```bash
+python3 -m hermes_feishu_card.cli setup \
+  --hermes-dir ~/.hermes/hermes-agent \
+  --config ~/.hermes_feishu_card/config.yaml \
+  --yes
+```
+
+`setup` 内部会按顺序执行：
+
+1. 如果配置文件不存在，自动生成默认配置。
+2. 检查飞书凭据是否已通过环境变量或配置文件提供。
+3. 检查 Hermes 目录、版本和 `gateway/run.py` 结构。
+4. 备份 Hermes 原文件并安装最小 hook。
+5. 启动 sidecar。
+6. 调用 `/health` 确认 sidecar 已运行。
+
+缺少 `FEISHU_APP_ID` 或 `FEISHU_APP_SECRET` 时，`setup` 会在安装 hook 前停止，只保留自动生成的配置文件，避免出现“安装成功但真实飞书没有卡片”的误判。
+
+如果只想安装 hook，不自动启动 sidecar：
+
+```bash
+python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --skip-start --yes
+```
+
+### 高级/排障命令
+
+分步命令仍然保留，适合排查安装问题：
 
 ```bash
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --skip-hermes
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent
-```
-
-`doctor` 会展示 `version_source`、`version`、`minimum_supported_version`、`run_py_exists` 和拒绝原因。正式安装前必须先确认 `doctor: ok`。
-
-安装 hook：
-
-```bash
 python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --yes
-```
-
-启动 sidecar：
-
-```bash
 python3 -m hermes_feishu_card.cli start --config config.yaml.example
 python3 -m hermes_feishu_card.cli status --config config.yaml.example
 ```
 
-停止、恢复或卸载：
+`doctor` 会展示 `version_source`、`version`、`minimum_supported_version`、`run_py_exists` 和拒绝原因。正式安装前必须先确认 `doctor: ok`。
+
+停止、恢复或卸载仍使用独立命令：
 
 ```bash
 python3 -m hermes_feishu_card.cli stop --config config.yaml.example
@@ -205,7 +232,7 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 ### 出现重复卡片
 
-检查 `/health` 中的 `feishu_send_successes`、`events_received` 和 `events_rejected`。V3.0.0 对同一个 Hermes message 使用 per-message lock 和 message_id 映射，正常情况下同一轮对话只创建一张卡片。
+检查 `/health` 中的 `feishu_send_successes`、`events_received` 和 `events_rejected`。V3.1.0 对同一个 Hermes message 使用 per-message lock 和 message_id 映射，正常情况下同一轮对话只创建一张卡片。
 
 ### 出现灰色原生文本消息
 
@@ -213,7 +240,7 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 ### footer token 数异常
 
-V3.0.0 会过滤明显异常的 token 累计值。仍异常时，优先检查 Hermes Gateway 传入的 `tokens` 和 `context` 元数据。
+V3.1.0 会过滤明显异常的 token 累计值。仍异常时，优先检查 Hermes Gateway 传入的 `tokens` 和 `context` 元数据。
 
 ### 恢复失败
 
@@ -236,7 +263,7 @@ python3 -m pytest tests/unit/test_docs.py -q
 python3 -m pytest tests/integration/test_feishu_client_http.py -q
 ```
 
-当前 V3.0.0 验收状态：
+当前 V3.1.0 验收状态：
 
 - 自动化全量测试：`352 passed`
 - GitHub Actions：Python 3.9 / 3.12 测试矩阵通过
@@ -245,6 +272,7 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 - 真实飞书应用验证：已验证卡片内更新成功，无重复灰色原生消息
 - 真实长卡压力测试：同一张飞书卡片更新到 16k 中文字符成功
 - fresh Hermes `v2026.4.23`：已完成 `doctor -> install -> doctor -> restore -> doctor` 闭环
+- 普通用户整合安装器：`setup --hermes-dir ... --yes` 已覆盖自动生成配置、安装 hook、启动 sidecar 和健康检查
 
 ## 文档
 
@@ -258,4 +286,4 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 ## 安全说明
 
-不要把 App Secret、tenant token、真实 chat_id 或个人隐私内容提交到仓库。README 中的效果图仅用于展示 V3.0.0 的真实卡片效果；生产环境凭据应始终保存在本机配置、环境变量或专用密钥管理系统中。
+不要把 App Secret、tenant token、真实 chat_id 或个人隐私内容提交到仓库。README 中的效果图仅用于展示 V3.1.0 的真实卡片效果；生产环境凭据应始终保存在本机配置、环境变量或专用密钥管理系统中。

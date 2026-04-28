@@ -90,6 +90,131 @@ def test_install_patches_run_py_and_writes_backup_and_manifest(tmp_path):
     assert manifest_path(hermes_dir).exists()
 
 
+def test_setup_creates_config_installs_hook_and_starts_sidecar(tmp_path, monkeypatch, capsys):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    started = {}
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+
+    def fake_start_sidecar(path, config):
+        started["path"] = Path(path)
+        started["config"] = config
+        return "started"
+
+    def fake_status_sidecar(config):
+        return {
+            "running": True,
+            "pid": 12345,
+            "health": {"active_sessions": 0, "metrics": {}},
+            "pid_running": True,
+        }
+
+    monkeypatch.setattr(cli, "start_sidecar", fake_start_sidecar)
+    monkeypatch.setattr(cli, "status_sidecar", fake_status_sidecar)
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert config_path.exists()
+    assert "setup ok" in captured.out
+    assert "config: created" in captured.out
+    assert "install ok" in captured.out
+    assert "start ok" in captured.out
+    assert "status: running" in captured.out
+    assert started["path"] == config_path
+    assert started["config"]["feishu"]["app_id"] == "cli_setup_test"
+    assert started["config"]["feishu"]["app_secret"] == "setup-secret"
+    assert started["config"]["server"]["port"] == 8765
+    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_setup_requires_feishu_credentials_before_installing_hook(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    started = False
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+    monkeypatch.delenv("FEISHU_APP_SECRET", raising=False)
+
+    def fake_start_sidecar(*_args):
+        nonlocal started
+        started = True
+        return "started"
+
+    monkeypatch.setattr(cli, "start_sidecar", fake_start_sidecar)
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "feishu credentials are required" in captured.err.lower()
+    assert "FEISHU_APP_ID" in captured.err
+    assert config_path.exists()
+    assert not started
+    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" not in run_py(hermes_dir).read_text(
+        encoding="utf-8"
+    )
+    assert not manifest_path(hermes_dir).exists()
+
+
+def test_setup_fail_closed_for_unsupported_hermes(tmp_path, monkeypatch, capsys):
+    hermes_dir = tmp_path / "not-hermes"
+    hermes_dir.mkdir()
+    config_path = tmp_path / "feishu-card.yaml"
+    started = False
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+
+    def fake_start_sidecar(*_args):
+        nonlocal started
+        started = True
+        return "started"
+
+    monkeypatch.setattr(cli, "start_sidecar", fake_start_sidecar)
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "hermes: unsupported" in captured.err
+    assert "gateway/run.py missing" in captured.err
+    assert not started
+    assert config_path.exists()
+    assert not manifest_path(hermes_dir).exists()
+
+
 def test_install_upgrades_phase_one_placeholder_install(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
     write_phase_one_install_state(hermes_dir)
