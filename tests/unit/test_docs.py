@@ -19,7 +19,7 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "整合安装器" in readme
     assert "streaming.enabled" in readme
     assert "display.platforms.feishu.streaming" in readme
-    assert "display.platforms.feishu.show_reasoning" in readme
+    assert "不要把 `display.show_reasoning`" in readme
     assert "thinking.delta" in readme
     assert "v2026.4.23" in readme
     assert "Git tag `v2026.4.23+`" in readme
@@ -48,9 +48,9 @@ def test_english_readme_and_docs_are_linked():
     assert "Hermes Gateway Streaming And Thinking" in english_readme
     assert "streaming.enabled" in english_readme
     assert "display.platforms.feishu.streaming" in english_readme
-    assert "display.platforms.feishu.show_reasoning" in english_readme
+    assert "Do not treat `display.show_reasoning`" in english_readme
     assert "thinking.delta" in english_readme
-    assert "357 passed" in english_readme
+    assert "360 passed" in english_readme
 
     for name in expected_docs:
         zh_path = f"docs/{name}.md"

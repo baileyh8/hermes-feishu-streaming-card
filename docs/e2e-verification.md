@@ -47,4 +47,4 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 - 真实长卡压力测试中，同一张飞书卡片更新到 16k 中文字符成功。
 - 安装器在真实 Hermes `v2026.4.23` 目录完成 `restore -> install` 循环验证，最终保持已安装状态。
 
-最近一次全量自动化回归：`357 passed`。
+最近一次全量自动化回归：`360 passed`。

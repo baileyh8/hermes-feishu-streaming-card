@@ -47,4 +47,4 @@ The current mainline has completed these checks with a real Hermes Gateway and r
 - A real long-card stress test updated one Feishu card to 16k Chinese characters.
 - Installer validation completed a `restore -> install` loop against a real Hermes `v2026.4.23` directory and left it installed.
 
-Latest full automated regression: `357 passed`.
+Latest full automated regression: `360 passed`.

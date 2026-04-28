@@ -186,28 +186,31 @@ Check three things:
 2. Feishu is not disabled by a platform override: avoid `display.platforms.feishu.streaming: false`; set it to `true` when you want to force Feishu streaming on.
 3. The current model/provider supports and exposes reasoning/thinking deltas. If the model only returns a final answer, the card can only show the final answer.
 
-In Hermes `config.yaml`, confirm:
+In Hermes `config.yaml`, confirm the following. The common path is `~/.hermes/config.yaml`; if your config lives inside the Hermes installation directory, the installer also checks `<hermes-dir>/config.yaml`, `<hermes-dir>/config.yml`, `<hermes-dir>/configs/config.yaml`, and `<hermes-dir>/configs/config.yml`.
 
 ```yaml
 streaming:
   enabled: true
   transport: edit
-  edit_interval: 1.0
-  buffer_threshold: 40
+  # Optional. Hermes defaults are fine; these are the values used by the
+  # locally verified real acceptance instance.
+  edit_interval: 0.8
+  buffer_threshold: 20
+  cursor: ""
+```
 
+If your Hermes config previously disabled Feishu streaming with a platform override, explicitly enable it:
+
+```yaml
 display:
   platforms:
     feishu:
       streaming: true
-      show_reasoning: true
-
-agent:
-  # Optional and model/provider-dependent. Supported values depend on the Hermes version.
-  # Common levels include none/minimal/low/medium/high/xhigh.
-  reasoning_effort: medium
 ```
 
-You can also send Hermes' native `/reasoning show` command in Feishu to enable reasoning display for that platform. Use `/reasoning <level> --global` when you want to persist a global reasoning effort level.
+Do not treat `display.show_reasoning` or `display.platforms.feishu.show_reasoning` as required for this plugin. In current Hermes source, those settings control Hermes' native final reasoning display and may prepend a `💭 Reasoning` code block to the final text, which can interfere with the card-only streaming experience. Enable them only when you intentionally want Hermes' native reasoning block in the final response.
+
+`agent.reasoning_effort` is also optional and model/provider-dependent. It can affect whether some models produce reasoning, but it is not the Gateway card streaming switch.
 
 How to read symptoms:
 
@@ -276,7 +279,7 @@ Check `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Without credentials, advanced sid
 
 ### The card has no thinking content or does not stream
 
-Check Hermes `config.yaml` for `streaming.enabled`, `streaming.transport`, `display.platforms.feishu.streaming`, and `display.platforms.feishu.show_reasoning`, and confirm that the current model/provider exposes reasoning/thinking deltas. The plugin config file `~/.hermes_feishu_card/config.yaml` only controls card title, footer, throttling, and rendering options. It does not control whether Hermes Gateway emits `thinking.delta` or `answer.delta`.
+Check Hermes `config.yaml` for `streaming.enabled: true` and `streaming.transport: edit`. If `display.platforms.feishu.streaming: false` is present, remove that override or set it to `true`. Then confirm that the current model/provider actually exposes reasoning/thinking deltas. Do not blindly enable `show_reasoning` for card thinking; it may only append a final reasoning code block to Hermes' native response. The plugin config file `~/.hermes_feishu_card/config.yaml` only controls card title, footer, throttling, and rendering options. It does not control whether Hermes Gateway emits `thinking.delta` or `answer.delta`.
 
 ### Duplicate cards appear
 
@@ -313,7 +316,7 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 Current V3.1.0 acceptance status:
 
-- Full automated test suite: `357 passed`
+- Full automated test suite: `360 passed`
 - GitHub Actions: Python 3.9 / 3.12 matrix passed
 - Installer/restore tests cover backups, manifest, duplicate install, modified-file refusal, uninstall, and restore idempotency
 - Real Hermes Gateway E2E verified card creation, streaming updates, tool counts, completion state, and footer metadata

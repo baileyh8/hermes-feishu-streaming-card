@@ -190,27 +190,30 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 2. Feishu 平台没有被单独关闭流式更新：不要设置 `display.platforms.feishu.streaming: false`；如需强制打开，可设置为 `true`。
 3. 当前模型/provider 支持并公开 reasoning/thinking 增量；若模型只返回最终答案，卡片会直接显示最终答案，不会出现 `thinking.delta`。
 
-在 Hermes 自身的 `config.yaml` 中，推荐确认以下配置：
+在 Hermes 自身的 `config.yaml` 中，推荐确认以下配置。常见路径是 `~/.hermes/config.yaml`；如果你把配置放在 Hermes 安装目录内，安装器也会尝试读取 `<hermes-dir>/config.yaml`、`<hermes-dir>/config.yml`、`<hermes-dir>/configs/config.yaml` 和 `<hermes-dir>/configs/config.yml`。
 
 ```yaml
 streaming:
   enabled: true
   transport: edit
-  edit_interval: 1.0
-  buffer_threshold: 40
+  # 可选：沿用 Hermes 默认值即可；下面是本机真实验收实例使用的配置。
+  edit_interval: 0.8
+  buffer_threshold: 20
+  cursor: ""
+```
 
+如果你的 Hermes 配置里曾经单独关闭过 Feishu 平台流式更新，可以显式覆盖：
+
+```yaml
 display:
   platforms:
     feishu:
       streaming: true
-      show_reasoning: true
-
-agent:
-  # 可选：需要模型/provider 支持。可用值由 Hermes 版本决定，常见为 none/minimal/low/medium/high/xhigh。
-  reasoning_effort: medium
 ```
 
-也可以在飞书会话里使用 Hermes 原生命令 `/reasoning show` 打开当前平台的 reasoning 显示；需要持久化全局推理强度时可用 `/reasoning <level> --global`。
+不要把 `display.show_reasoning` 或 `display.platforms.feishu.show_reasoning` 当成本插件的必需开关。基于当前 Hermes 源码，这两个配置用于 Hermes 原生最终回复里的 reasoning 展示，可能把思考内容作为 `💭 Reasoning` 代码块附加到最终文本中，反而干扰卡片内的流式体验。只有当你明确想保留 Hermes 原生 reasoning 文本块时才打开它。
+
+`agent.reasoning_effort` 也是可选项，并且依赖模型/provider 支持。它可以影响某些模型是否产生推理内容，但不是 Gateway 卡片流式传输的开关。
 
 现象判断：
 
@@ -279,7 +282,7 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 ### 卡片没有思考内容或不流式更新
 
-先检查 Hermes `config.yaml` 中的 `streaming.enabled`、`streaming.transport`、`display.platforms.feishu.streaming` 和 `display.platforms.feishu.show_reasoning`，并确认当前模型/provider 公开 reasoning/thinking 增量。插件配置文件 `~/.hermes_feishu_card/config.yaml` 只控制飞书卡片的标题、footer、节流和渲染参数，不控制 Hermes Gateway 是否发出 `thinking.delta` 或 `answer.delta`。
+先检查 Hermes `config.yaml` 中的 `streaming.enabled: true` 和 `streaming.transport: edit`；如果配置过 `display.platforms.feishu.streaming: false`，改为删除该覆盖或设为 `true`。再确认当前模型/provider 是否真的公开 reasoning/thinking 增量。不要为了卡片思考流盲目打开 `show_reasoning`，它可能只是在最终普通回复里追加 reasoning 代码块。插件配置文件 `~/.hermes_feishu_card/config.yaml` 只控制飞书卡片的标题、footer、节流和渲染参数，不控制 Hermes Gateway 是否发出 `thinking.delta` 或 `answer.delta`。
 
 ### 出现重复卡片
 
@@ -316,7 +319,7 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 当前 V3.1.0 验收状态：
 
-- 自动化全量测试：`357 passed`
+- 自动化全量测试：`360 passed`
 - GitHub Actions：Python 3.9 / 3.12 测试矩阵通过
 - 安装/恢复专项测试：覆盖备份、manifest、重复安装、用户改动拒绝恢复、卸载和恢复幂等
 - 真实 Hermes Gateway E2E：已验证新卡片创建、流式更新、工具调用计数、完成状态和 footer 元数据

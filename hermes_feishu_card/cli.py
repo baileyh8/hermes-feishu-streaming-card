@@ -273,17 +273,6 @@ def _print_hermes_streaming_guidance(hermes_root: Path) -> None:
             )
         )
 
-    reasoning_status = _detect_hermes_reasoning_display_status(config)
-    if reasoning_status == "disabled":
-        print(
-            (
-                "note: Hermes reasoning display appears disabled for Feishu. "
-                "If the model supports reasoning and you want thinking content "
-                "in cards, set display.platforms.feishu.show_reasoning: true "
-                "or use /reasoning show in Feishu."
-            )
-        )
-
 
 def _load_hermes_user_config(hermes_root: Path) -> dict[str, object]:
     for config_path in _candidate_hermes_config_paths(hermes_root):
@@ -316,25 +305,14 @@ def _detect_hermes_streaming_status(config: dict[str, object]) -> str:
     return "disabled"
 
 
-def _detect_hermes_reasoning_display_status(config: dict[str, object]) -> str:
-    feishu_show_reasoning = _nested_get(
-        config, ("display", "platforms", "feishu", "show_reasoning")
-    )
-    if feishu_show_reasoning is not None:
-        return "enabled" if _truthy(feishu_show_reasoning) else "disabled"
-
-    global_show_reasoning = _nested_get(config, ("display", "show_reasoning"))
-    if global_show_reasoning is None:
-        return "disabled"
-    return "enabled" if _truthy(global_show_reasoning) else "disabled"
-
-
 def _candidate_hermes_config_paths(hermes_root: Path) -> tuple[Path, ...]:
     return (
         hermes_root / "config.yaml",
         hermes_root / "config.yml",
         hermes_root / "configs" / "config.yaml",
         hermes_root / "configs" / "config.yml",
+        Path.home() / ".hermes" / "config.yaml",
+        Path.home() / ".hermes" / "config.yml",
     )
 
 

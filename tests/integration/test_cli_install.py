@@ -232,7 +232,7 @@ def test_setup_warns_when_feishu_streaming_override_is_disabled(
     assert "setup ok" in captured.out
 
 
-def test_setup_notes_when_reasoning_display_is_disabled(
+def test_setup_accepts_minimal_streaming_config_without_reasoning_display_warning(
     tmp_path, monkeypatch, capsys
 ):
     hermes_dir = copy_hermes(tmp_path)
@@ -268,9 +268,35 @@ def test_setup_notes_when_reasoning_display_is_disabled(
 
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
-    assert "Hermes reasoning display appears disabled for Feishu" in captured.out
-    assert "display.platforms.feishu.show_reasoning: true" in captured.out
-    assert "/reasoning show" in captured.out
+    assert "Hermes Gateway streaming appears disabled for Feishu" not in captured.out
+    assert "Hermes reasoning display appears disabled for Feishu" not in captured.out
+    assert "show_reasoning" not in captured.out
+
+
+def test_doctor_reads_user_level_hermes_config(tmp_path, monkeypatch, capsys):
+    hermes_dir = copy_hermes(tmp_path)
+    home = tmp_path / "home"
+    (home / ".hermes").mkdir(parents=True)
+    (home / ".hermes" / "config.yaml").write_text(
+        "streaming:\n  enabled: true\n  transport: edit\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    exit_code = cli.main(
+        [
+            "doctor",
+            "--config",
+            "config.yaml.example",
+            "--hermes-dir",
+            str(hermes_dir),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "hermes: supported" in captured.out
+    assert "Hermes Gateway streaming config was not detected" not in captured.out
+    assert "show_reasoning" not in captured.out
 
 
 def test_setup_requires_feishu_credentials_before_installing_hook(
