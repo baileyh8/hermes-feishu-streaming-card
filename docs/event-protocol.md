@@ -1,5 +1,7 @@
 # 事件协议
 
+[中文](event-protocol.md) | [English](event-protocol.en.md)
+
 Hermes 最小 hook 向 sidecar 发送消息生命周期事件。第二阶段 hook runtime 会把可识别的 Hermes 消息上下文组装为 `SidecarEvent` JSON，并 fail-open 发送到本机 sidecar `/events`。sidecar 只依赖事件语义，不把飞书卡片逻辑放回 Hermes 进程。
 
 ## 事件列表

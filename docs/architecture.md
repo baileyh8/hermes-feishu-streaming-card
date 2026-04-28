@@ -1,5 +1,7 @@
 # 架构说明
 
+[中文](architecture.md) | [English](architecture.en.md)
+
 目标架构是 sidecar-only：Hermes Agent 内只保留最小 hook，把消息生命周期事件转发到本机 HTTP sidecar；飞书卡片创建、更新、最终态渲染和状态累积都在 `hermes_feishu_card/` 内完成。
 
 第二阶段已实现最小事件转发：安装器、备份/恢复/卸载闭环、事件协议、sidecar HTTP 接口、渲染、会话状态骨架，以及 Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地。Feishu CardKit HTTP client 已通过 mock server 验证，真实飞书应用联调仍未完成。

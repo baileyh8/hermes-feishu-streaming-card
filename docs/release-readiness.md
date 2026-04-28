@@ -1,5 +1,7 @@
 # 发布准备说明
 
+[中文](release-readiness.md) | [English](release-readiness.en.md)
+
 当前包版本为 `3.1.0`。这一版定位为 sidecar-only 主线的正式发布版本，新增面向普通用户的 `setup` 整合安装器，已完成真实 Hermes Gateway + 真实 Feishu 测试应用验收，适合正式安装和小范围生产使用。
 
 ## 已具备

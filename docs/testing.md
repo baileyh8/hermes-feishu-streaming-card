@@ -1,5 +1,7 @@
 # 测试说明
 
+[中文](testing.md) | [English](testing.en.md)
+
 ## 单元测试
 
 ```bash
@@ -111,4 +113,4 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 python3 -m pytest -q -p no:cacheprovider
 ```
 
-结果：`352 passed`。
+结果：`356 passed`。
