@@ -11,6 +11,12 @@ import yaml
 DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     "server": {"host": "127.0.0.1", "port": 8765},
     "feishu": {"app_id": "", "app_secret": ""},
+    "bots": {"default": "default", "items": {}},
+    "bindings": {
+        "fallback_bot": "default",
+        "chats": {},
+        "group_rules": {"enabled": False},
+    },
     "card": {
         "max_wait_ms": 800,
         "max_chars": 240,
