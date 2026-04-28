@@ -13,6 +13,8 @@ feishu:
   timeout_seconds: 30
 
 card:
+  # Header title shown on Feishu cards.
+  title: Hermes Agent
   # Flush partial streaming text after this many milliseconds.
   max_wait_ms: 800
   # Flush partial streaming text after this many buffered characters.

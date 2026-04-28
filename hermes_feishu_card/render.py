@@ -13,12 +13,18 @@ DEFAULT_FOOTER_FIELDS = (
     "context",
 )
 MAIN_CONTENT_CHUNK_CHARS = 2400
+DEFAULT_TITLE = "Hermes Agent"
 
-def render_card(session: CardSession, footer_fields: list[str] | tuple[str, ...] | None = None) -> Dict[str, Any]:
+def render_card(
+    session: CardSession,
+    footer_fields: list[str] | tuple[str, ...] | None = None,
+    title: str = DEFAULT_TITLE,
+) -> Dict[str, Any]:
     status = _render_status(session)
     main_text = normalize_stream_text(session.visible_main_text) or ("正在思考..." if session.status == "thinking" else "")
     tool_summary = _render_tool_summary(session)
     footer = _render_footer(session, footer_fields)
+    header_title = title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
     elements = _render_main_content_elements(main_text)
     elements.extend(
         [
@@ -35,7 +41,7 @@ def render_card(session: CardSession, footer_fields: list[str] | tuple[str, ...]
         },
         "header": {
             "template": status["template"],
-            "title": {"tag": "plain_text", "content": "Hermes Agent"},
+            "title": {"tag": "plain_text", "content": header_title},
             "subtitle": {"tag": "plain_text", "content": status["subtitle"]},
         },
         "body": {

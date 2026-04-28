@@ -21,6 +21,7 @@ METRICS_KEY = web.AppKey("metrics", SidecarMetrics)
 LAST_UPDATE_AT_KEY = web.AppKey("last_update_at", dict)
 MESSAGE_LOCKS_KEY = web.AppKey("message_locks", dict)
 FOOTER_FIELDS_KEY = web.AppKey("footer_fields", Any)
+CARD_TITLE_KEY = web.AppKey("card_title", str)
 UPDATE_MAX_ATTEMPTS = 3
 UPDATE_MIN_INTERVAL_SECONDS = 2.0
 TERMINAL_EVENTS = {"message.completed", "message.failed"}
@@ -45,6 +46,8 @@ def create_app(
     app[DIAGNOSTICS_KEY] = {"last_update_error": "", "last_terminal_event": {}}
     footer_fields = card_config.get("footer_fields")
     app[FOOTER_FIELDS_KEY] = list(footer_fields) if isinstance(footer_fields, list) else None
+    title = card_config.get("title")
+    app[CARD_TITLE_KEY] = title if isinstance(title, str) else "Hermes Agent"
     app.router.add_get("/health", _health)
     app.router.add_post("/events", _events)
     return app
@@ -190,7 +193,11 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> web.
 
 def _render_session_card(request: web.Request, session: CardSession) -> dict[str, Any]:
     footer_fields = request.app[FOOTER_FIELDS_KEY]
-    return render_card(session, footer_fields=footer_fields)
+    return render_card(
+        session,
+        footer_fields=footer_fields,
+        title=request.app[CARD_TITLE_KEY],
+    )
 
 
 async def _send_card(request: web.Request, chat_id: str, card: dict[str, Any]) -> str | None:

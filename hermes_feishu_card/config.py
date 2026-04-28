@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     "card": {
         "max_wait_ms": 800,
         "max_chars": 240,
+        "title": "Hermes Agent",
         "footer_fields": [
             "duration",
             "model",

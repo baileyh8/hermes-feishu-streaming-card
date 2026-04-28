@@ -254,6 +254,33 @@ async def test_smoke_command_sends_and_updates_card(feishu_api, tmp_path):
     assert [request[0] for request in requests] == ["token", "send", "update"]
 
 
+async def test_smoke_command_uses_configured_card_title(feishu_api, tmp_path):
+    test_client, requests, _ = feishu_api
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "feishu:\n"
+        "  app_id: cli_test\n"
+        "  app_secret: secret\n"
+        f"  base_url: {test_client.make_url('/')}\n"
+        "card:\n"
+        "  title: 研发助手\n",
+        encoding="utf-8",
+    )
+
+    result = await asyncio.to_thread(
+        run_cli,
+        "smoke-feishu-card",
+        "--config",
+        str(config_path),
+        "--chat-id",
+        "oc_abc",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "研发助手" in requests[1][2]["content"]
+    assert "研发助手" in requests[2][2]["content"]
+
+
 async def test_smoke_command_requires_credentials(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("feishu:\n  app_id: ''\n  app_secret: ''\n", encoding="utf-8")

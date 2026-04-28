@@ -29,6 +29,7 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
         "card": {
             "max_wait_ms": 800,
             "max_chars": 240,
+            "title": "Hermes Agent",
             "footer_fields": [
                 "duration",
                 "model",
@@ -75,6 +76,7 @@ card:
     assert config["card"] == {
         "max_wait_ms": 800,
         "max_chars": 120,
+        "title": "Hermes Agent",
         "footer_fields": [
             "duration",
             "model",
@@ -99,6 +101,15 @@ def test_load_config_accepts_custom_footer_fields(tmp_path):
     config = load_config(path)
 
     assert config["card"]["footer_fields"] == ["model", "duration", "context"]
+
+
+def test_load_config_accepts_custom_card_title(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("card:\n  title: 研发助手\n", encoding="utf-8")
+
+    config = load_config(path)
+
+    assert config["card"]["title"] == "研发助手"
 
 
 def test_load_config_accepts_yaml_string_port_and_normalizes_to_int(tmp_path):

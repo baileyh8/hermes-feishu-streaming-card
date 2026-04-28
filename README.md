@@ -59,6 +59,7 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 
 ```yaml
 card:
+  title: Hermes Agent
   footer_fields:
     - duration
     - model
@@ -67,7 +68,7 @@ card:
     - context
 ```
 
-可用字段为 `duration`、`model`、`input_tokens`、`output_tokens`、`context`。
+`title` 控制飞书卡片 header 主标题，默认是 `Hermes Agent`。footer 可用字段为 `duration`、`model`、`input_tokens`、`output_tokens`、`context`。
 
 真实飞书卡片 smoke：
 

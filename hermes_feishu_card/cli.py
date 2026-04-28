@@ -238,7 +238,15 @@ async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
         chat_id=chat_id,
         thinking_text="飞书卡片 smoke test 正在运行。",
     )
-    message_id = await client.send_card(chat_id, render_card(session))
+    card_config = config.get("card", {})
+    title = card_config.get("title", "Hermes Agent")
+    footer_fields = card_config.get("footer_fields")
+    if not isinstance(footer_fields, list):
+        footer_fields = None
+    message_id = await client.send_card(
+        chat_id,
+        render_card(session, footer_fields=footer_fields, title=title),
+    )
 
     completed = SidecarEvent(
         schema_version="1",
@@ -256,7 +264,10 @@ async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
         },
     )
     session.apply(completed)
-    await client.update_card_message(message_id, render_card(session))
+    await client.update_card_message(
+        message_id,
+        render_card(session, footer_fields=footer_fields, title=title),
+    )
     return message_id
 
 

@@ -132,6 +132,24 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert metrics["feishu_update_retries"] == 0
 
 
+async def test_card_config_customizes_header_title():
+    feishu_client = FakeFeishuClient()
+    app = create_app(feishu_client, card_config={"title": "研发助手"})
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        response = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0),
+        )
+    finally:
+        await test_client.close()
+
+    assert response.status == 200
+    assert feishu_client.sent[0][1]["header"]["title"]["content"] == "研发助手"
+
+
 async def test_invalid_event_returns_400_json(client):
     test_client, feishu_client = client
 

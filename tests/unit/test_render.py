@@ -8,10 +8,19 @@ def test_render_thinking_card_has_two_state_label_and_tools():
     session.tools["t1"] = ToolState(tool_id="t1", name="search", status="running")
     card = render_card(session)
     assert card["schema"] == "2.0"
+    assert card["header"]["title"]["content"] == "Hermes Agent"
     assert card["header"]["subtitle"]["content"] == "思考中"
     content = str(card)
     assert "正在分析。" in content
     assert "工具调用 1 次" in content
+
+
+def test_render_card_accepts_custom_header_title():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    card = render_card(session, title="研发助手")
+
+    assert card["header"]["title"]["content"] == "研发助手"
 
 
 def test_render_completed_card_replaces_thinking():
