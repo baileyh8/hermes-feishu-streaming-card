@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from hermes_feishu_card.config import load_config
+from hermes_feishu_card.bots import BotRegistry
 from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient, FeishuClientConfig
 from hermes_feishu_card.install.detect import HermesDetection, detect_hermes
@@ -46,6 +47,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_status(args)
     if args.command == "smoke-feishu-card":
         return _run_smoke_feishu_card(args)
+    if args.command == "bots":
+        return _run_bots(args)
     if args.command == "install":
         return _run_install(args)
     if args.command == "restore":
@@ -97,6 +100,30 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("smoke-feishu-card")
     smoke.add_argument("--config", default="config.yaml.example")
     smoke.add_argument("--chat-id", required=True)
+
+    bots = subparsers.add_parser("bots")
+    bot_subparsers = bots.add_subparsers(dest="bot_command")
+
+    bots_list = bot_subparsers.add_parser("list")
+    bots_list.add_argument("--config", required=True)
+
+    bots_add = bot_subparsers.add_parser("add")
+    bots_add.add_argument("bot_id")
+    bots_add.add_argument("--config", required=True)
+
+    bots_bind_chat = bot_subparsers.add_parser("bind-chat")
+    bots_bind_chat.add_argument("chat_id")
+    bots_bind_chat.add_argument("bot_id")
+    bots_bind_chat.add_argument("--config", required=True)
+
+    bots_unbind_chat = bot_subparsers.add_parser("unbind-chat")
+    bots_unbind_chat.add_argument("chat_id")
+    bots_unbind_chat.add_argument("--config", required=True)
+
+    bots_test = bot_subparsers.add_parser("test")
+    bots_test.add_argument("bot_id")
+    bots_test.add_argument("--chat-id", required=True)
+    bots_test.add_argument("--config", required=True)
 
     for command in ("install", "restore", "uninstall"):
         command_parser = subparsers.add_parser(command)
@@ -425,6 +452,126 @@ def _run_smoke_feishu_card(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_bots(args: argparse.Namespace) -> int:
+    try:
+        if args.bot_command == "list":
+            config = load_config(args.config)
+            registry = BotRegistry.from_config(config)
+            for bot in registry.list_bots():
+                print(f"{bot.bot_id}\t{bot.name}\t{bot.app_id}")
+            return 0
+
+        if args.bot_command == "add":
+            data = _read_local_yaml(args.config)
+            items = _ensure_mapping_path(data, "bots", "items")
+            if args.bot_id in items:
+                raise ValueError(f"bot {args.bot_id!r} already exists")
+            config = load_config(args.config)
+            if args.bot_id == "default" and _has_feishu_credentials(config):
+                raise ValueError("bot 'default' already exists")
+            items[args.bot_id] = {
+                "name": args.bot_id,
+                "app_id": "",
+                "app_secret": "",
+                "base_url": FeishuClientConfig.base_url,
+                "timeout_seconds": FeishuClientConfig.timeout_seconds,
+            }
+            _write_local_yaml(args.config, data)
+            print(f"bot added: {args.bot_id}")
+            return 0
+
+        if args.bot_command == "bind-chat":
+            config = load_config(args.config)
+            if not _config_has_bot(config, args.bot_id):
+                raise KeyError(f"unknown bot: {args.bot_id}")
+            data = _read_local_yaml(args.config)
+            chats = _ensure_mapping_path(data, "bindings", "chats")
+            chats[args.chat_id] = args.bot_id
+            _write_local_yaml(args.config, data)
+            print(f"bound: {args.chat_id} -> {args.bot_id}")
+            return 0
+
+        if args.bot_command == "unbind-chat":
+            data = _read_local_yaml(args.config)
+            chats = _ensure_mapping_path(data, "bindings", "chats")
+            chats.pop(args.chat_id, None)
+            _write_local_yaml(args.config, data)
+            print(f"unbound: {args.chat_id}")
+            return 0
+
+        if args.bot_command == "test":
+            config = load_config(args.config)
+            message_id = asyncio.run(
+                _smoke_feishu_card_with_bot(config, args.bot_id, args.chat_id)
+            )
+            print("bot smoke ok")
+            print(f"message_id: {message_id}")
+            return 0
+    except Exception as exc:
+        print(f"error: {_sanitize_error(exc, locals().get('config'))}", file=sys.stderr)
+        return 1
+
+    print("error: bots command is required", file=sys.stderr)
+    return 2
+
+
+def _read_local_yaml(path: str | Path) -> dict:
+    config_path = Path(path).expanduser()
+    if not config_path.exists():
+        return {}
+    with config_path.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle)
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise ValueError("Config top-level YAML value must be a mapping")
+    return loaded
+
+
+def _write_local_yaml(path: str | Path, data: dict) -> None:
+    config_path = Path(path).expanduser()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(
+        config_path,
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+    )
+
+
+def _ensure_mapping_path(data: dict, *path: str) -> dict:
+    current = data
+    for key in path:
+        value = current.get(key)
+        if value is None:
+            value = {}
+            current[key] = value
+        if not isinstance(value, dict):
+            raise ValueError(f"Config section {'.'.join(path)} must be a mapping")
+        current = value
+    return current
+
+
+def _config_has_bot(config: dict, bot_id: str) -> bool:
+    bots = config.get("bots")
+    if isinstance(bots, dict):
+        items = bots.get("items")
+        if isinstance(items, dict) and bot_id in items:
+            return True
+    return bot_id == "default" and _has_feishu_credentials(config)
+
+
+async def _smoke_feishu_card_with_bot(config: dict, bot_id: str, chat_id: str) -> str:
+    registry = BotRegistry.from_config(config)
+    bot = registry.get(bot_id)
+    bot_config = dict(config)
+    bot_config["feishu"] = {
+        "app_id": bot.app_id,
+        "app_secret": bot.app_secret,
+        "base_url": bot.base_url,
+        "timeout_seconds": bot.timeout_seconds,
+    }
+    return await _smoke_feishu_card(bot_config, chat_id)
+
+
 async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
     feishu = config.get("feishu", {})
     app_id = feishu.get("app_id", "")
@@ -486,15 +633,31 @@ async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
 
 def _sanitize_error(exc: Exception, config: dict | None) -> str:
     message = str(exc)
-    if config is not None:
-        secret = config.get("feishu", {}).get("app_secret", "")
-        if isinstance(secret, str) and secret:
+    for secret in _secret_values(config):
+        if secret:
             message = message.replace(secret, "[redacted]")
     message = re.sub(r"Bearer\s+[A-Za-z0-9._~+/=-]+", "[redacted-auth]", message)
     message = re.sub(r"tenant-token-[A-Za-z0-9._~+/=-]+", "tenant-token-[redacted]", message)
     if isinstance(exc, FeishuAPIError):
         return message
     return message or exc.__class__.__name__
+
+
+def _secret_values(config: dict | None) -> list[str]:
+    if not isinstance(config, dict):
+        return []
+    secrets: list[str] = []
+    feishu = config.get("feishu")
+    if isinstance(feishu, dict) and isinstance(feishu.get("app_secret"), str):
+        secrets.append(feishu["app_secret"])
+    bots = config.get("bots")
+    if isinstance(bots, dict):
+        items = bots.get("items")
+        if isinstance(items, dict):
+            for value in items.values():
+                if isinstance(value, dict) and isinstance(value.get("app_secret"), str):
+                    secrets.append(value["app_secret"])
+    return secrets
 
 
 def _run_install(args: argparse.Namespace) -> int:

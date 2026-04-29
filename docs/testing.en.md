@@ -113,4 +113,4 @@ Latest full automated regression:
 python3 -m pytest -q -p no:cacheprovider
 ```
 
-Result: `360 passed`.
+Result: `396 passed`.

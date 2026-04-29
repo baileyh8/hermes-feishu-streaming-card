@@ -96,3 +96,18 @@ def test_allows_extra_fields():
     payload["extra"] = "ignored"
     event = SidecarEvent.from_dict(payload)
     assert event.event == "thinking.delta"
+
+
+def test_event_accepts_optional_group_routing_context():
+    payload = valid_payload()
+    payload["data"] = {
+        "chat_type": "group",
+        "tenant_key": "tenant_a",
+        "agent_id": "reserved-agent",
+        "profile_id": "reserved-profile",
+    }
+
+    event = SidecarEvent.from_dict(payload)
+
+    assert event.data["chat_type"] == "group"
+    assert event.data["tenant_key"] == "tenant_a"

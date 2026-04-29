@@ -27,3 +27,15 @@ card:
     - input_tokens
     - output_tokens
     - context
+
+# Optional V3.2 multi-bot config. Existing single-bot users can leave this empty.
+bots:
+  default: default
+  items: {}
+
+bindings:
+  fallback_bot: default
+  chats: {}
+  # Reserved for a future release. V3.2 does not filter group triggers.
+  group_rules:
+    enabled: false

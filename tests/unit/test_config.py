@@ -26,6 +26,11 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
     assert config == {
         "server": {"host": "127.0.0.1", "port": 8765},
         "feishu": {"app_id": "", "app_secret": ""},
+        "bots": {"default": "default", "items": {}},
+        "bindings": {
+            "chats": {},
+            "group_rules": {"enabled": False},
+        },
         "card": {
             "max_wait_ms": 800,
             "max_chars": 240,
@@ -85,6 +90,43 @@ card:
             "context",
         ],
     }
+
+
+def test_load_config_defaults_include_multi_bot_sections(tmp_path):
+    config = load_config(tmp_path / "missing.yaml")
+
+    assert config["bots"] == {"default": "default", "items": {}}
+    assert config["bindings"] == {
+        "chats": {},
+        "group_rules": {"enabled": False},
+    }
+
+
+def test_load_config_accepts_multi_bot_sections(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+feishu:
+  app_id: cli_default
+  app_secret: default-secret
+bots:
+  default: default
+  items:
+    sales:
+      app_id: cli_sales
+      app_secret: sales-secret
+bindings:
+  fallback_bot: default
+  chats:
+    oc_sales: sales
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config["bots"]["items"]["sales"]["app_id"] == "cli_sales"
+    assert config["bindings"]["chats"] == {"oc_sales": "sales"}
 
 
 def test_load_config_accepts_custom_footer_fields(tmp_path):

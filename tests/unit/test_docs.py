@@ -11,7 +11,7 @@ def read_doc(path: str) -> str:
 def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
-    assert "V3.1.0" in readme
+    assert "V3.2.0" in readme
     assert "[English](README.en.md)" in readme
     assert "docs/assets/readme-cover.png" in readme
     assert "sidecar-only" in readme.lower()
@@ -26,6 +26,11 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "docs/assets/feishu-weather-card.png" in readme
     assert (ROOT / "docs/assets/readme-cover.png").exists()
     assert (ROOT / "docs/assets/feishu-weather-card.png").exists()
+    assert "V3.2" in readme
+    assert "多 bot" in readme
+    assert "群聊" in readme
+    assert "bindings.chats" in readme
+    assert "group_rules" in readme
 
 
 def test_english_readme_and_docs_are_linked():
@@ -42,7 +47,7 @@ def test_english_readme_and_docs_are_linked():
     ]
 
     assert "[中文](README.md)" in english_readme
-    assert "Hermes Feishu Streaming Card Plugin V3.1.0" in english_readme
+    assert "Hermes Feishu Streaming Card Plugin V3.2.0" in english_readme
     assert "docs/assets/readme-cover.png" in english_readme
     assert "setup --hermes-dir" in english_readme
     assert "Hermes Gateway Streaming And Thinking" in english_readme
@@ -50,7 +55,9 @@ def test_english_readme_and_docs_are_linked():
     assert "display.platforms.feishu.streaming" in english_readme
     assert "Do not treat `display.show_reasoning`" in english_readme
     assert "thinking.delta" in english_readme
-    assert "360 passed" in english_readme
+    assert "396 passed" in english_readme
+    assert "Multi-bot" in english_readme
+    assert "group chat" in english_readme
 
     for name in expected_docs:
         zh_path = f"docs/{name}.md"
@@ -257,7 +264,7 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.1.0" in docs
+    assert "3.2.0" in docs
     assert "python3 -m pytest -q" in docs
     assert "真实 Hermes Gateway" in docs
     assert "真实飞书应用" in docs

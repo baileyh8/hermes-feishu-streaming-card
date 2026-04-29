@@ -3,6 +3,7 @@ import asyncio
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from hermes_feishu_card.bots import RouteResult
 from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.server import FEISHU_MESSAGE_IDS_KEY, create_app
 
@@ -13,6 +14,7 @@ class FakeFeishuClient:
         self.updated = []
         self.fail_send = False
         self.update_failures_remaining = 0
+        self.update_error_message = "update unavailable"
         self.update_delay = 0.0
 
     async def send_card(self, chat_id, card):
@@ -26,8 +28,30 @@ class FakeFeishuClient:
             await asyncio.sleep(self.update_delay)
         if self.update_failures_remaining > 0:
             self.update_failures_remaining -= 1
-            raise RuntimeError("update unavailable")
+            raise RuntimeError(self.update_error_message)
         self.updated.append((message_id, card))
+
+
+class FakeBotRegistry:
+    def safe_diagnostics(self):
+        return {
+            "default_bot": "default",
+            "bot_count": 2,
+            "chat_binding_count": 1,
+            "secret": "registry-secret",
+        }
+
+
+class FakeFeishuClientFactory:
+    def __init__(self):
+        self.registry = FakeBotRegistry()
+        self.clients = {
+            "default": FakeFeishuClient(),
+            "sales": FakeFeishuClient(),
+        }
+
+    def get_client(self, bot_id):
+        return self.clients[bot_id]
 
 
 def event_payload(
@@ -554,3 +578,221 @@ async def test_send_failure_returns_json_error_and_allows_started_retry(client):
     assert retried.status == 200
     assert await retried.json() == {"ok": True, "applied": True}
     assert len(feishu_client.sent) == 1
+
+
+async def test_started_routes_card_to_bound_bot_client():
+    factory = FakeFeishuClientFactory()
+
+    def bot_router(event):
+        assert event.chat_id == "oc_sales"
+        return RouteResult("sales", "bindings.chats")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        response = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        status = response.status
+        body = await response.json()
+    finally:
+        await test_client.close()
+
+    assert status == 200
+    assert body == {"ok": True, "applied": True}
+    assert factory.clients["default"].sent == []
+    assert len(factory.clients["sales"].sent) == 1
+    assert factory.clients["sales"].sent[0][0] == "oc_sales"
+
+
+async def test_update_reuses_original_bot_without_rerouting():
+    factory = FakeFeishuClientFactory()
+    route_calls = 0
+
+    def bot_router(event):
+        nonlocal route_calls
+        route_calls += 1
+        if route_calls == 1:
+            return ("sales", "bindings.chats")
+        raise AssertionError("updates must not reroute")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        started = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        completed = await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {"answer": "成交"},
+                chat_id="oc_sales",
+            ),
+        )
+    finally:
+        await test_client.close()
+
+    assert started.status == 200
+    assert completed.status == 200
+    assert route_calls == 1
+    assert factory.clients["default"].updated == []
+    assert len(factory.clients["sales"].updated) == 1
+    assert factory.clients["sales"].updated[0][0] == "feishu-message-1"
+
+
+async def test_health_reports_safe_routing_diagnostics_without_secrets():
+    factory = FakeFeishuClientFactory()
+
+    def bot_router(event):
+        return ("sales", "bindings.chats")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        response = await test_client.get("/health")
+        status = response.status
+        body = await response.json()
+    finally:
+        await test_client.close()
+
+    assert status == 200
+    routing = body["routing"]
+    assert routing["default_bot"] == "default"
+    assert routing["bot_count"] == 2
+    assert routing["chat_binding_count"] == 1
+    assert routing["last_route"] == {
+        "message_id": "hermes-message-1",
+        "chat_id": "oc_sales",
+        "bot_id": "sales",
+        "reason": "bindings.chats",
+    }
+    assert routing["last_route_error"] == ""
+    assert "registry-secret" not in str(body)
+    assert "secret" not in routing
+
+
+async def test_route_failure_returns_502_and_reports_safe_error():
+    factory = FakeFeishuClientFactory()
+
+    def bot_router(event):
+        raise RuntimeError("cannot route with app_secret=super-secret")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        failed = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        failed_status = failed.status
+        failed_body = await failed.json()
+        health = await test_client.get("/health")
+        health_body = await health.json()
+    finally:
+        await test_client.close()
+
+    assert failed_status == 502
+    assert failed_body == {"ok": False, "error": "bot route failed"}
+    assert factory.clients["default"].sent == []
+    assert factory.clients["sales"].sent == []
+    assert health_body["active_sessions"] == 0
+    assert health_body["metrics"]["events_rejected"] == 1
+    assert health_body["diagnostics"]["last_route_error"] == "RuntimeError"
+    assert health_body["routing"]["last_route_error"] == "RuntimeError"
+    assert "super-secret" not in str(health_body)
+
+
+async def test_routed_update_failure_reports_safe_bot_id():
+    factory = FakeFeishuClientFactory()
+    factory.clients["sales"].update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
+
+    def bot_router(event):
+        return ("sales", "bindings.chats")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        started = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        updated = await test_client.post(
+            "/events",
+            json=event_payload(
+                "thinking.delta",
+                1,
+                {"text": "需要更新"},
+                chat_id="oc_sales",
+            ),
+        )
+        health = await test_client.get("/health")
+        health_body = await health.json()
+    finally:
+        await test_client.close()
+
+    assert started.status == 200
+    assert updated.status == 502
+    assert health_body["diagnostics"]["last_update_error"] == "bot_id=sales RuntimeError"
+    assert "secret" not in health_body["diagnostics"]["last_update_error"].lower()
+    assert "token" not in health_body["diagnostics"]["last_update_error"].lower()
+
+
+async def test_routed_update_failure_redacts_sensitive_exception_text():
+    factory = FakeFeishuClientFactory()
+    factory.clients["sales"].update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
+    factory.clients["sales"].update_error_message = (
+        "Authorization Bearer tenant-token-secret app_secret=super-secret"
+    )
+
+    def bot_router(event):
+        return ("sales", "bindings.chats")
+
+    app = create_app(factory, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0, chat_id="oc_sales"),
+        )
+        updated = await test_client.post(
+            "/events",
+            json=event_payload(
+                "thinking.delta",
+                1,
+                {"text": "需要更新"},
+                chat_id="oc_sales",
+            ),
+        )
+        health = await test_client.get("/health")
+        health_body = await health.json()
+    finally:
+        await test_client.close()
+
+    last_update_error = health_body["diagnostics"]["last_update_error"]
+    assert updated.status == 502
+    assert "bot_id=sales" in last_update_error
+    assert "RuntimeError" in last_update_error
+    assert "tenant-token-secret" not in last_update_error
+    assert "super-secret" not in last_update_error
+    assert "Authorization" not in last_update_error
+    assert "Bearer" not in last_update_error

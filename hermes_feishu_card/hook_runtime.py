@@ -287,6 +287,18 @@ def _event_data(
     if event_name == "message.failed":
         error = _first_string(local_vars, ("error", "exception")) or "消息处理失败"
         return {"error": error}
+    if event_name == "message.started":
+        data: dict[str, Any] = {}
+        for source_key, data_key in (
+            ("chat_type", "chat_type"),
+            ("tenant_key", "tenant_key"),
+            ("agent_id", "agent_id"),
+            ("profile_id", "profile_id"),
+        ):
+            value = _first_string(local_vars, (source_key,)) or _first_attr_string(message_obj, (source_key,))
+            if value:
+                data[data_key] = value
+        return data if data else {}
     return {}
 
 

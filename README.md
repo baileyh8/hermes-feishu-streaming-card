@@ -1,10 +1,10 @@
-# Hermes 飞书流式卡片插件 V3.1.0
+# Hermes 飞书流式卡片插件 V3.2.0
 
 [中文](README.md) | [English](README.en.md)
 
 ![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)
 
-为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.1.0 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
+为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.2.0 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
 
 当前版本已完成真实 Feishu E2E 主链路验收：新消息创建新卡片，思考过程和最终答案在同一张卡片内渐进更新，工具调用状态实时统计，完成后卡片显示耗时、模型、token 和上下文占用，且不会再额外刷出灰色原生文本消息。
 
@@ -35,6 +35,48 @@ Feishu CardKit HTTP client 已实现，并通过 mock Feishu server、真实 Fei
 - 希望飞书聊天记录保持干净，避免流式文本刷屏。
 - 希望长 Markdown、表格、列表和统计信息在卡片内稳定展示。
 - 希望对 Hermes Gateway 的侵入尽可能小，方便升级和回滚。
+
+## V3.2 多 bot 与群聊
+
+V3.2 支持一个 sidecar 管理多个飞书机器人，并按 `chat_id/open_chat_id` 把群聊或私聊绑定到指定 bot。未绑定会话使用 fallback/default bot。插件不接管群聊触发规则；Hermes 仍负责决定何时响应，插件只负责把 Hermes 已经产生的回复渲染到对应飞书会话。
+
+配置示例：
+
+```yaml
+feishu:
+  app_id: "cli_default"
+  app_secret: "..."
+
+bots:
+  default: default
+  items:
+    sales:
+      name: "销售群机器人"
+      app_id: "cli_sales"
+      app_secret: "..."
+
+bindings:
+  fallback_bot: default
+  chats:
+    oc_sales_group: sales
+  # Reserved for a future release. V3.2 does not filter group triggers.
+  group_rules:
+    enabled: false
+```
+
+常用命令：
+
+```bash
+python3 -m hermes_feishu_card.cli bots list --config ~/.hermes_feishu_card/config.yaml
+python3 -m hermes_feishu_card.cli bots bind-chat <chat_id> <bot_id> --config ~/.hermes_feishu_card/config.yaml
+python3 -m hermes_feishu_card.cli bots unbind-chat <chat_id> --config ~/.hermes_feishu_card/config.yaml
+```
+
+故障排查：
+
+- 机器人回复错误：检查 `bindings.chats` 配置
+- 群卡片未发送：确认机器人在群中、有权限、Hermes 已触发、`/health.routing` 正常
+- 未知 bot 绑定：运行 `doctor` 或 `bots list` 排查
 
 ## 环境依赖
 
@@ -317,9 +359,9 @@ python3 -m pytest tests/unit/test_docs.py -q
 python3 -m pytest tests/integration/test_feishu_client_http.py -q
 ```
 
-当前 V3.1.0 验收状态：
+当前 V3.2.0 验收状态：
 
-- 自动化全量测试：`360 passed`
+- 自动化全量测试：`396 passed`
 - GitHub Actions：Python 3.9 / 3.12 测试矩阵通过
 - 安装/恢复专项测试：覆盖备份、manifest、重复安装、用户改动拒绝恢复、卸载和恢复幂等
 - 真实 Hermes Gateway E2E：已验证新卡片创建、流式更新、工具调用计数、完成状态和 footer 元数据
@@ -340,4 +382,4 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 ## 安全说明
 
-不要把 App Secret、tenant token、真实 chat_id 或个人隐私内容提交到仓库。README 中的效果图仅用于展示 V3.1.0 的真实卡片效果；生产环境凭据应始终保存在本机配置、环境变量或专用密钥管理系统中。
+不要把 App Secret、tenant token、真实 chat_id 或个人隐私内容提交到仓库。README 中的效果图仅用于展示 V3.2.0 的真实卡片效果；生产环境凭据应始终保存在本机配置、环境变量或专用密钥管理系统中。

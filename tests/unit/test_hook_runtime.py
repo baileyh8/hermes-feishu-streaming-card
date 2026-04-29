@@ -840,3 +840,22 @@ async def test_post_json_propagates_http_errors_from_open_request(monkeypatch):
             {"event": "message.started"},
             0.8,
         )
+
+
+def test_build_event_includes_routing_context_from_local_vars():
+    payload = hook_runtime.build_event(
+        "message.started",
+        {
+            "chat_id": "oc_group",
+            "conversation_id": "conv_group",
+            "chat_type": "group",
+            "tenant_key": "tenant_a",
+            "agent_id": "reserved-agent",
+            "profile_id": "reserved-profile",
+        },
+    )
+
+    assert payload["data"]["chat_type"] == "group"
+    assert payload["data"]["tenant_key"] == "tenant_a"
+    assert payload["data"]["agent_id"] == "reserved-agent"
+    assert payload["data"]["profile_id"] == "reserved-profile"

@@ -1,10 +1,10 @@
-# Hermes Feishu Streaming Card Plugin V3.1.0
+# Hermes Feishu Streaming Card Plugin V3.2.0
 
 [中文](README.md) | [English](README.en.md)
 
 ![Hermes Feishu Streaming Card cover](docs/assets/readme-cover.png)
 
-Hermes Feishu Streaming Card adds stable streaming card messages to the Feishu/Lark platform adapter in Hermes Agent Gateway. V3.1.0 uses a **sidecar-only** architecture: Hermes receives only a minimal hook, while Feishu CardKit rendering, session state, update throttling, retries, health metrics, and fault isolation live in an independent sidecar process.
+Hermes Feishu Streaming Card adds stable streaming card messages to the Feishu/Lark platform adapter in Hermes Agent Gateway. V3.2.0 uses a **sidecar-only** architecture: Hermes receives only a minimal hook, while Feishu CardKit rendering, session state, update throttling, retries, health metrics, and fault isolation live in an independent sidecar process.
 
 The current release has completed the real Feishu E2E main flow: each new user message creates a new card, thinking and final answers update progressively in that same card, tool calls are tracked in real time, the completed card shows duration/model/token/context metadata, and Hermes no longer emits duplicate gray native text messages after the card is delivered.
 
@@ -31,6 +31,45 @@ Real card screenshot:
 Use this plugin if you want Hermes Agent replies inside Feishu to appear like modern AI chat cards instead of plain streaming text.
 
 It is designed for users who want visible tool progress, clean chat history, stable Markdown/table/list rendering, token/context stats, and minimal intrusion into Hermes Gateway.
+
+## V3.2 Multi-bot And Group Chat
+
+V3.2 adds multi-bot routing and formal group chat support: one sidecar manages multiple Feishu bots and routes cards by `chat_id/open_chat_id` to the bound bot. Unbound chats use the fallback/default bot. This plugin does not decide group trigger rules; Hermes still decides when to respond, and the plugin only renders cards for events Hermes already emits.
+
+Example config:
+
+```yaml
+feishu:
+  app_id: "cli_default"
+  app_secret: "..."
+
+bots:
+  default: default
+  items:
+    sales:
+      name: "Sales Group Bot"
+      app_id: "cli_sales"
+      app_secret: "..."
+
+bindings:
+  fallback_bot: default
+  chats:
+    oc_sales_group: sales
+```
+
+Common commands:
+
+```bash
+python3 -m hermes_feishu_card.cli bots list --config ~/.hermes_feishu_card/config.yaml
+python3 -m hermes_feishu_card.cli bots bind-chat <chat_id> <bot_id> --config ~/.hermes_feishu_card/config.yaml
+python3 -m hermes_feishu_card.cli bots unbind-chat <chat_id> --config ~/.hermes_feishu_card/config.yaml
+```
+
+Troubleshooting:
+
+- Wrong bot replied: check `bindings.chats`
+- Group card not sent: verify bot is in the group, has permissions, Hermes triggered, and `/health.routing` looks healthy
+- Unknown bot binding: run `doctor` or `bots list`
 
 ## Requirements
 
@@ -314,9 +353,9 @@ python3 -m pytest tests/unit/test_docs.py -q
 python3 -m pytest tests/integration/test_feishu_client_http.py -q
 ```
 
-Current V3.1.0 acceptance status:
+Current V3.2.0 acceptance status:
 
-- Full automated test suite: `360 passed`
+- Full automated test suite: `396 passed`
 - GitHub Actions: Python 3.9 / 3.12 matrix passed
 - Installer/restore tests cover backups, manifest, duplicate install, modified-file refusal, uninstall, and restore idempotency
 - Real Hermes Gateway E2E verified card creation, streaming updates, tool counts, completion state, and footer metadata
