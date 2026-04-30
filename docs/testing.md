@@ -113,4 +113,4 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 python3 -m pytest -q -p no:cacheprovider
 ```
 
-结果：`396 passed`。
+结果：**398 passed**。

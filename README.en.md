@@ -469,6 +469,27 @@ V3.2.0 filters obviously abnormal token totals. If the footer still looks wrong,
 
 `restore` refuses to overwrite files when Hermes files or backups changed after installation. Back up the current Hermes directory, then inspect `gateway/run.py`, the backup, and the manifest before restoring manually.
 
+### Card table limit exceeded
+
+Feishu CardKit enforces a strict limit: **maximum 5 table components per card** (per language if multi-language is configured). Exceeding this returns:
+```
+Failed to create card content, ext=ErrCode: 11310; ErrMsg: card table number over limit; ErrorValue: table
+```
+
+**Cause**: Markdown tables in the content are converted to Feishu `table` elements without counting.
+
+**Workarounds**:
+1. Keep tables ≤ 5 per card
+2. Split excess tables into separate messages (future versions may auto-split)
+3. Replace simple tables with plain text/Markdown description
+
+**Technical notes**:
+- Tables must be direct children of the card root; nesting is not supported
+- Max 50 columns, 1-10 rows per page (pagination required for more)
+- This plugin **does not currently auto-truncate or split tables**; terminal events hitting 11310 skip retry
+
+Recommendation: control Markdown table generation upstream, or wait for V3.2.1 table protection.
+
 ## Testing
 
 Full local test suite:
