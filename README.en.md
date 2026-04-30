@@ -1,10 +1,10 @@
-# Hermes Feishu Streaming Card Plugin V3.2.0
+# Hermes Feishu Streaming Card Plugin V3.2.1
 
 [中文](README.md) | [English](README.en.md)
 
 ![Hermes Feishu Streaming Card cover](docs/assets/readme-cover.png)
 
-Hermes Feishu Streaming Card adds stable streaming card messages to the Feishu/Lark platform adapter in Hermes Agent Gateway. V3.2.0 uses a **sidecar-only** architecture: Hermes receives only a minimal hook, while Feishu CardKit rendering, session state, update throttling, retries, health metrics, and fault isolation live in an independent sidecar process.
+Hermes Feishu Streaming Card adds stable streaming card messages to the Feishu/Lark platform adapter in Hermes Agent Gateway. V3.2.1 uses a **sidecar-only** architecture: Hermes receives only a minimal hook, while Feishu CardKit rendering, session state, update throttling, retries, health metrics, and fault isolation live in an independent sidecar process.
 
 The current release has completed the real Feishu E2E main flow: each new user message creates a new card, thinking and final answers update progressively in that same card, tool calls are tracked in real time, the completed card shows duration/model/token/context metadata, and Hermes no longer emits duplicate gray native text messages after the card is delivered.
 
@@ -44,18 +44,18 @@ It is designed for users who want visible tool progress, clean chat history, sta
 - **Safe installer**: fails closed, checks Hermes version/code shape/backup/manifest before writing
 - **Recovery path**: `restore` and `uninstall` refuse to overwrite user-modified Hermes files
 
-## V3.2 Multi-bot And Group Chat
+## V3.2.1 Multi-bot And Group Chat
 
-V3.2 adds multi-bot routing and formal group chat support: one sidecar manages multiple Feishu bots and routes cards by `chat_id/open_chat_id` to the bound bot. Unbound chats use the fallback/default bot. This plugin does not decide group trigger rules; Hermes still decides when to respond, and the plugin only renders cards for events Hermes already emits.
+V3.2.1 adds multi-bot routing and formal group chat support: one sidecar manages multiple Feishu bots and routes cards by `chat_id/open_chat_id` to the bound bot. Unbound chats use the fallback/default bot. This plugin does not decide group trigger rules; Hermes still decides when to respond, and the plugin only renders cards for events Hermes already emits.
 
 ### Key Features
 
 - **Multi-bot registry**: Define multiple bots under `bots.items` with independent `app_id`/`app_secret`
 - **Chat-to-bot bindings**: `bindings.chats` maps `chat_id` → `bot_id`; unmatched chats fall back to `bindings.fallback_bot`
-- **Group rules framework**: `bindings.group_rules.enabled` reserved for future filtering (no-op in V3.2)
+- **Group rules framework**: `bindings.group_rules.enabled` reserved for future filtering (no-op in V3.2.1)
 - **Bot management CLI**: `hermes_feishu_card.cli bots` provides `list`/`show`/`add`/`remove`/`bind-chat`/`unbind-chat`
 - **Sidecar routing diagnostics**: `/health.routing` exposes `bot_count`, `chat_binding_count`, `last_route`, and bot details
-- **Routing context passthrough**: `message.started` fields (`chat_type`, `tenant_key`, `agent_id`, `profile_id`) are extracted and forwarded (unused in V3.2, for future features)
+- **Routing context passthrough**: `message.started` fields (`chat_type`, `tenant_key`, `agent_id`, `profile_id`) are extracted and forwarded (unused in V3.2.1, for future features)
 
 ### Configuration Steps
 
@@ -100,7 +100,7 @@ bindings:
     # Support group → support bot
     oc_7dd7b36e9826701fb901ee0337007f94: support
   group_rules:
-    enabled: false  # V3.2 does not filter group triggers
+     enabled: false  # V3.2.1 does not filter group triggers
 
 card:
   title: Hermes Agent
@@ -182,7 +182,7 @@ curl http://127.0.0.1:8765/health | jq '.routing'
 - No match → uses `bindings.fallback_bot`
 - If `fallback_bot` missing/invalid → falls back to `bots.default` (typically `"default"`)
 - Each bot gets its own `FeishuClient` with its own `app_id`/`app_secret` credential pool
-- `message.started` carries `chat_type`, `tenant_key`, `agent_id`, `profile_id` — currently passed through for future group filtering (no-op in V3.2)
+- `message.started` carries `chat_type`, `tenant_key`, `agent_id`, `profile_id` — currently passed through for future group filtering (no-op in V3.2.1)
 
 ## Requirements
 
@@ -292,7 +292,7 @@ card:
     - context
 ```
 
-**V3.2 multi-bot configuration** (new `bots` and `bindings` sections):
+**V3.2.1 multi-bot configuration** (new `bots` and `bindings` sections):
 
 ```yaml
 server:
@@ -322,7 +322,7 @@ bindings:
     oc_5cc6a25d8815790fa890dd0226005e83: sales
     oc_7dd7b36e9826701fb901ee0337007f94: support
   group_rules:
-    enabled: false        # V3.2 does not filter group triggers
+     enabled: false        # V3.2.1 does not filter group triggers
 
 card:
   title: Hermes Agent
@@ -479,7 +479,7 @@ Check Hermes `config.yaml` for `streaming.enabled: true` and `streaming.transpor
 
 ### Duplicate cards appear
 
-Check `feishu_send_successes`, `events_received`, and `events_rejected` in `/health`. V3.2.0 uses a per-message lock and message_id mapping, so one Hermes message should create one Feishu card.
+Check `feishu_send_successes`, `events_received`, and `events_rejected` in `/health`. V3.2.1 uses a per-message lock and message_id mapping, so one Hermes message should create one Feishu card.
 
 ### Gray native text appears
 
@@ -487,7 +487,7 @@ Check whether the sidecar received and applied `message.completed`. After the si
 
 ### Footer token numbers look wrong
 
-V3.2.0 filters obviously abnormal token totals. If the footer still looks wrong, inspect the `tokens` and `context` metadata passed by Hermes Gateway.
+V3.2.1 filters obviously abnormal token totals. If the footer still looks wrong, inspect the `tokens` and `context` metadata passed by Hermes Gateway.
 
 ### Restore fails
 
@@ -531,7 +531,7 @@ python3 -m pytest tests/unit/test_docs.py -q
 python3 -m pytest tests/integration/test_feishu_client_http.py -q
 ```
 
-Current V3.2.0 acceptance status:
+Current V3.2.1 acceptance status:
 
 - Full automated test suite: **398 passed**
 - GitHub Actions: Python 3.9 / 3.12 matrix passed
@@ -541,8 +541,8 @@ Current V3.2.0 acceptance status:
 - Real long-card stress test updated one Feishu card to 16k Chinese characters
 - Fresh Hermes `v2026.4.23`: `doctor → install → doctor → restore → doctor` loop completed
 - Ordinary-user `setup --hermes-dir ... --yes` covers config creation, hook install, sidecar startup, and health check
-- V3.2 multi-bot routing verified: `oc_sales` → `sales` bot routing correct, `/health.routing` diagnostics healthy
-- V3.2 multi-bot routing verified: `oc_sales` → `sales` bot routing correct, `/health.routing` diagnostics healthy
+- V3.2.1 multi-bot routing verified: `oc_sales` → `sales` bot routing correct, `/health.routing` diagnostics healthy
+- V3.2.1 multi-bot routing verified: `oc_sales` → `sales` bot routing correct, `/health.routing` diagnostics healthy
 
 ## Changelog
 

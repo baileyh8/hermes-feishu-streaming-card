@@ -57,6 +57,77 @@ python3 -m hermes_feishu_card.cli status --config config.yaml.example
 
 `status` should show `status: running`, `active_sessions`, and metrics. Without Feishu credentials, advanced starts use a no-op client. With credentials, the sidecar reads them only from local config or environment variables.
 
+## Upgrading From V3.1 To V3.2.1
+
+V3.2.1 is **backward compatible** with V3.1 on the sidecar-only architecture. Single-bot configurations continue to work without changes; to use the new multi-bot / group chat binding features, the configuration must be extended.
+
+### Upgrade Steps
+
+1. **Back up current config**
+
+   ```bash
+   cp ~/.hermes_feishu_card/config.yaml ~/.hermes_feishu_card/config.yaml.v3.1.backup
+   ```
+
+2. **Stop the sidecar (recommended)**
+
+   ```bash
+   python3 -m hermes_feishu_card.cli stop --config ~/.hermes_feishu_card/config.yaml
+   ```
+
+3. **Update code to V3.2.1**
+
+   ```bash
+   cd /path/to/hermes-feishu-streaming-card
+   git checkout v3.2.1  # or the latest tag
+   python3 -m pip install -e ".[test]" --upgrade
+   ```
+
+4. **Update configuration**
+
+   Option A: Use CLI to generate an updated template (preserves existing config, adds V3.2.1 fields)
+   ```bash
+   python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --config ~/.hermes_feishu_card/config.yaml --yes
+   ```
+   This supplements the existing `config.yaml` with new top-level fields (`bots`, `bindings`, etc.) without overwriting existing values.
+
+   Option B: Manual merge (see `config.yaml.example` for a complete sample)
+   - Add a `bots:` list under `hermes:` (at least one bot; its `app_id`/`app_secret` can be inherited from the original single-bot fields)
+   - Add a `bindings:` section with `fallback_bot` and optional `chats:` mappings
+   - The old `feishu.app_id` / `feishu.app_secret` are still valid in single-bot mode, but migrating to `bots[0]` is recommended for consistency
+
+5. **Validate configuration**
+
+   ```bash
+   python3 -m hermes_feishu_card.cli doctor --config ~/.hermes_feishu_card/config.yaml
+   ```
+   Expect `config: valid` and correct detection of `bots` / `bindings` fields.
+
+6. **Restart sidecar**
+
+   ```bash
+   python3 -m hermes_feishu_card.cli start --config ~/.hermes_feishu_card/config.yaml
+   python3 -m hermes_feishu_card.cli status --config ~/.hermes_feishu_card/config.yaml
+   ```
+
+7. **Functional validation**
+   - Send a card message in a 1-to-1 or group chat to confirm normal rendering
+   - If multi-bot is configured, check `/health.routing` for routing stats
+   - Run `cli bots list` to verify the bot registry
+
+### Compatibility Notes
+
+- V3.1 single-bot configs **continue to work** on V3.2.1 without modification (old fields still supported)
+- V3.2.1's multi-bot features are optional; if `bindings.chats` is unset, all conversations route to `bindings.fallback_bot`
+- Environment variables `FEISHU_APP_ID` / `FEISHU_APP_SECRET` remain effective in V3.2.1, but `config.yaml`'s `bots[]` takes precedence
+- To roll back to V3.1: stop the sidecar, restore the backed-up `config.yaml`, and reinstall the V3.1 version
+
+### Important Notes
+
+- Each bot used in multi-bot mode must be created in the Feishu Open Platform with `send_message` and `update_message` permissions
+- Group chat bindings require `chat_id` (obtained from the Feishu client or API), not the group name
+- After upgrading, it is recommended to run `pytest -q` locally to ensure all tests pass
+
 ## Rollback
 
 To roll back:

@@ -1,8 +1,8 @@
-# Hermes Feishu Streaming Card - V3.2 交付总结
+# Hermes Feishu Streaming Card - V3.2.1 交付总结
 
-> 生成时间：2026-04-29  
-> 分支：`main`（已合并）  
-> 最新 tag：`v3.2.1`  
+> 生成时间：2026-04-29
+> 分支：`main`（已合并）
+> 最新 tag：`v3.2.1`
 > 状态：✅ 生产就绪
 
 ---
@@ -11,13 +11,15 @@
 
 | 版本 | 日期 | 类型 | 说明 | Tag |
 |------|------|------|------|-----|
-| V3.2.0 | 2026-04-29 | Feature | 多 bot 路由、群聊绑定、CLI 管理、routing diagnostics | ✅ `v3.2.0` |
 | V3.2.1 | 2026-04-29 | Patch | 修复 brotli 解码错误（Accept-Encoding header） | ✅ `v3.2.1` |
+| V3.2.0 | 2026-04-29 | Feature | 多 bot 路由、群聊绑定、CLI 管理、routing diagnostics | ✅ `v3.2.0` |
 | V3.1.0 | 2026-04-XX | Feature | sidecar-only 架构首次发布 | ✅ `v3.1.0` |
 
 ---
 
-## ✅ 已完成功能（V3.2.0）
+## ✅ 已完成功能（V3.2.1 包含 V3.2.0 全部功能）
+
+V3.2.1 在 V3.2.0 基础上修复了 brotli 解码问题，所有 V3.2.0 功能保持兼容。
 
 ### 1. 多 Bot 注册表
 - `bots.yaml` 配置支持多个 bot 定义

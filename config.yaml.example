@@ -28,7 +28,7 @@ card:
     - output_tokens
     - context
 
-# Optional V3.2 multi-bot config. Existing single-bot users can leave this empty
+# Optional V3.2.1 multi-bot config. Existing single-bot users can leave this empty
 # and rely on the top-level `feishu.app_id` / `feishu.app_secret` as the default bot.
 #
 # Multi-bot pattern:
@@ -36,7 +36,7 @@ card:
 # - Map group/private chat IDs to bot IDs under `bindings.chats`
 # - Unbound sessions use `bindings.fallback_bot` (default: "default")
 #
-# Note: V3.2 does NOT filter group triggers. Hermes Gateway still decides
+# Note: V3.2.1 does NOT filter group triggers. Hermes Gateway still decides
 # whether to respond to a message based on its own rules (mention, private,
 # reply, etc.). The sidecar only ensures the card is sent via the correct bot.
 bots:
@@ -59,6 +59,6 @@ bindings:
     # Map Feishu chat_id to bot_id defined above
     oc_xxxxxxxxxxxx: sales
     oc_yyyyyyyyyyyy: support
-  # Reserved for a future release. V3.2 does not filter group triggers.
+   # Reserved for a future release. V3.2.1 does not filter group triggers.
   group_rules:
     enabled: false

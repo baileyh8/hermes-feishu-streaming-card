@@ -1,10 +1,10 @@
-# Hermes 飞书流式卡片插件 V3.2.0
+# Hermes 飞书流式卡片插件 V3.2.1
 
 [中文](README.md) | [English](README.en.md)
 
 ![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)
 
-为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.2.0 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
+为 Hermes Agent Gateway 的飞书/Lark 平台适配器提供稳定的流式卡片消息能力。V3.2.1 采用 **sidecar-only** 架构：Hermes 主项目只注入极小 hook，飞书 CardKit 渲染、会话状态、更新节流、重试、健康指标和故障隔离全部由独立 sidecar 进程承担。
 
 当前版本已完成真实 Feishu E2E 主链路验收：新消息创建新卡片，思考过程和最终答案在同一张卡片内渐进更新，工具调用状态实时统计，完成后卡片显示耗时、模型、token 和上下文占用，且不会再额外刷出灰色原生文本消息。
 
@@ -26,15 +26,15 @@ Feishu CardKit HTTP client 已实现，并通过 mock Feishu server、真实 Fei
 - **安全安装**：安装器 fail-closed，写入前检查 Hermes 版本、代码结构、备份和 manifest
 - **自动恢复**：`restore`/`uninstall` 检测用户改动时拒绝覆盖，避免破坏 Hermes 原文件
 
-## V3.2 多机器人群聊路由
+## V3.2.1 多机器人群聊路由
 
-V3.2 引入**多 bot 注册与路由**：单个 sidecar 管理多个飞书机器人，根据 `chat_id`/`open_chat_id` 将群聊或私聊路由到指定 bot。未绑定会话使用 fallback/default bot。插件**不管**群聊触发规则，Hermes 仍决定何时响应，插件仅负责把 Hermes 已产生的回复渲染到对应飞书会话。
+V3.2.1 引入**多 bot 注册与路由**：单个 sidecar 管理多个飞书机器人，根据 `chat_id`/`open_chat_id` 将群聊或私聊路由到指定 bot。未绑定会话使用 fallback/default bot。插件**不管**群聊触发规则，Hermes 仍决定何时响应，插件仅负责把 Hermes 已产生的回复渲染到对应飞书会话。
 
 ### 主要特性
 
 - **Bot Registry**：`bots.items` 定义多个 bot，每个含独立 `app_id`/`app_secret`
 - **Chat Bindings**：`bindings.chats` 映射 `chat_id → bot_id`，未匹配走 `bindings.fallback_bot`
-- **Group Rules 框架**：`bindings.group_rules.enabled` 为未来群聊过滤预留（V3.2 为 `false`，无实际过滤）
+- **Group Rules 框架**：`bindings.group_rules.enabled` 为未来群聊过滤预留（V3.2.1 为 `false`，无实际过滤）
 - **Bot CLI 管理**：`hermes_feishu_card.cli bots` 支持 `list`/`show`/`add`/`remove`/`bind-chat`/`unbind-chat`
 - **Sidecar 路由诊断**：`/health.routing` 暴露 `bot_count`、`chat_binding_count`、`last_route`、`bots[]` 详情
 - **透传路由上下文**：`message.started` 的 `chat_type`、`tenant_key`、`agent_id`、`profile_id` 已提取并传递给 bot 客户端（当前版本不使用，供未来功能）
@@ -82,7 +82,7 @@ bindings:
     # 技术支持群 → support bot
     oc_7dd7b36e9826701fb901ee0337007f94: support
   group_rules:
-    enabled: false  # V3.2 不启用群聊触发过滤
+    enabled: false  # V3.2.1 不启用群聊触发过滤
 
 card:
   title: Hermes Agent
@@ -274,7 +274,7 @@ card:
     - context
 ```
 
-**V3.2 多 bot 配置**（新增 `bots` 与 `bindings`）：
+**V3.2.1 多 bot 配置**（新增 `bots` 与 `bindings`）：
 
 ```yaml
 server:
@@ -304,7 +304,7 @@ bindings:
     oc_5cc6a25d8815790fa890dd0226005e83: sales
     oc_7dd7b36e9826701fb901ee0337007f94: support
   group_rules:
-    enabled: false        # V3.2 暂不启用群聊触发过滤
+     enabled: false        # V3.2.1 暂不启用群聊触发过滤
 
 card:
   title: Hermes Agent
@@ -460,7 +460,7 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 ### 出现重复卡片
 
-检查 `/health` 中的 `feishu_send_successes`、`events_received` 和 `events_rejected`。V3.2.0 对同一个 Hermes message 使用 per-message lock 和 message_id 映射，正常情况下同一轮对话只创建一张卡片。
+检查 `/health` 中的 `feishu_send_successes`、`events_received` 和 `events_rejected`。V3.2.1 对同一个 Hermes message 使用 per-message lock 和 message_id 映射，正常情况下同一轮对话只创建一张卡片。
 
 ### 出现灰色原生文本消息
 
@@ -468,7 +468,7 @@ sidecar 持有完整会话状态，负责飞书 CardKit 边界。这样可以把
 
 ### footer token 数异常
 
-V3.2.0 会过滤明显异常的 token 累计值。仍异常时，优先检查 Hermes Gateway 传入的 `tokens` 和 `context` 元数据。
+V3.2.1 会过滤明显异常的 token 累计值。仍异常时，优先检查 Hermes Gateway 传入的 `tokens` 和 `context` 元数据。
 
 ### 恢复失败
 
@@ -512,7 +512,7 @@ python3 -m pytest tests/unit/test_docs.py -q
 python3 -m pytest tests/integration/test_feishu_client_http.py -q
 ```
 
-当前 V3.2.0 验收状态：
+当前 V3.2.1 验收状态：
 
 - 自动化全量测试：**398 passed**
 - GitHub Actions：Python 3.9 / 3.12 测试矩阵通过
@@ -522,7 +522,7 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 - 真实长卡压力测试：同一张飞书卡片更新到 16k 中文字符成功
 - fresh Hermes `v2026.4.23`：已完成 `doctor → install → doctor → restore → doctor` 闭环
 - 普通用户整合安装器：`setup --hermes-dir ... --yes` 已覆盖自动生成配置、安装 hook、启动 sidecar 和健康检查
-- V3.2 多 bot 路由验证：`oc_sales` → `sales` bot 路由正确，`/health.routing` 诊断正常
+- V3.2.1 多 bot 路由验证：`oc_sales` → `sales` bot 路由正确，`/health.routing` 诊断正常
 
 ## 更新日志
 
@@ -540,4 +540,4 @@ python3 -m pytest tests/integration/test_feishu_client_http.py -q
 
 ## 安全说明
 
-不要把 App Secret、tenant token、真实 chat_id 或个人隐私内容提交到仓库。README 中的效果图仅用于展示 V3.2.0 的真实卡片效果；生产环境凭据应始终保存在本机配置、环境变量或专用密钥管理系统中。
+不要把 App Secret、tenant token、真实 chat_id 或个人隐私内容提交到仓库。README 中的效果图仅用于展示 V3.2.1 的真实卡片效果；生产环境凭据应始终保存在本机配置、环境变量或专用密钥管理系统中。
