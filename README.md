@@ -98,6 +98,30 @@ card:
 
 > **注意**：`feishu.app_id`/`feishu.app_secret` 仅用于未配置多 bot 或作为 fallback。建议为每个 bot 提供独立凭据，避免权限交叉。
 
+### 如何获取 chat_id
+
+**重要**：`bindings.chats` 默认为空 `{}`，所有未绑定的消息都会路由到 `fallback_bot`。如果使用多 bot，必须配置 chat_id 绑定。
+
+获取 chat_id 的方法：
+
+1. **从 Gateway 日志提取**（推荐）：
+   ```bash
+   # 查看 Gateway 日志中的 chat_id
+   grep "chat_id=" ~/.hermes/profiles/*/logs/gateway.log | grep "Inbound" | tail -20
+   
+   # 输出示例：
+   # ... chat_id=oc_xxxxxxxxxxxxxxxx
+   ```
+
+2. **从 sidecar 健康检查确认路由**：
+   ```bash
+   curl -s http://127.0.0.1:8765/health | jq '.routing.last_route'
+   # 输出: {"message_id": "...", "chat_id": "oc_xxx", "bot_id": "main", "reason": "bindings.fallback_bot"}
+   ```
+   如果 `reason` 显示 `bindings.fallback_bot`，说明该 chat_id 未绑定，需要添加到配置中。
+
+3. **从飞书群聊 URL 获取**：打开飞书群聊，URL 中的 `oc_xxx` 即为 chat_id。
+
 ### 常用命令
 
 ```bash

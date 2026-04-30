@@ -129,7 +129,7 @@ class FeishuClient:
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         url = f"{self.config.base_url.rstrip('/')}/{path.lstrip('/')}"
-        headers = {"Content-Type": "application/json; charset=utf-8"}
+        headers = {"Content-Type": "application/json; charset=utf-8", "Accept-Encoding": "gzip, deflate"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
 

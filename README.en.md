@@ -116,6 +116,30 @@ card:
 
 > **Note**: `feishu.app_id` / `feishu.app_secret` are only used for the fallback bot or single-bot setups. For multi-bot, provide per-bot credentials to avoid cross-bot permission issues.
 
+### How to Get chat_id
+
+**Important**: `bindings.chats` defaults to empty `{}`. All unbound messages will route to `fallback_bot`. When using multiple bots, you must configure chat_id bindings.
+
+Methods to obtain chat_id:
+
+1. **Extract from Gateway logs** (recommended):
+   ```bash
+   # Check Gateway logs for chat_id
+   grep "chat_id=" ~/.hermes/profiles/*/logs/gateway.log | grep "Inbound" | tail -20
+   
+   # Example output:
+   # ... chat_id=oc_xxxxxxxxxxxxxxxx
+   ```
+
+2. **Verify routing via sidecar health check**:
+   ```bash
+   curl -s http://127.0.0.1:8765/health | jq '.routing.last_route'
+   # Output: {"message_id": "...", "chat_id": "oc_xxx", "bot_id": "main", "reason": "bindings.fallback_bot"}
+   ```
+   If `reason` shows `bindings.fallback_bot`, the chat_id is unbound and needs to be added to config.
+
+3. **From Feishu group URL**: Open the Feishu group chat, the `oc_xxx` in the URL is the chat_id.
+
 ### Common Commands
 
 ```bash
