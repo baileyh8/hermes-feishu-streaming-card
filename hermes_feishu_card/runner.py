@@ -50,6 +50,10 @@ def build_feishu_client(config: dict[str, Any]) -> NoopFeishuClient | FeishuClie
 
 
 def build_feishu_boundary(config: dict[str, Any]) -> FeishuBoundary:
+    profiles = config.get("profiles")
+    if isinstance(profiles, dict) and profiles:
+        return _build_multi_profile_boundary(config, profiles)
+
     registry = BotRegistry.from_config(_normalize_feishu_boundary_config(config))
     factory = FeishuClientFactory(registry)
 
@@ -68,6 +72,43 @@ def build_feishu_boundary(config: dict[str, Any]) -> FeishuBoundary:
         )
 
     return FeishuBoundary(client=factory, router=router)
+
+
+def _build_multi_profile_boundary(
+    config: dict[str, Any], profiles: dict[str, Any]
+) -> FeishuBoundary:
+    """Build a FeishuBoundary with per-profile clients and router."""
+    factories: dict[str, FeishuClientFactory] = {}
+    for profile_id, profile_cfg in profiles.items():
+        sub_config = {**config, **profile_cfg}
+        registry = BotRegistry.from_config(
+            _normalize_feishu_boundary_config(sub_config)
+        )
+        factories[profile_id] = FeishuClientFactory(registry)
+
+    def profile_router(event: Any) -> Any:
+        """Route event to the appropriate profile's bot."""
+        profile_id = "default"
+        data = getattr(event, "data", {})
+        if isinstance(data, dict):
+            profile_id = str(data.get("profile_id") or "default")
+        if profile_id not in factories:
+            profile_id = "default"
+        registry = factories[profile_id].registry
+        data = getattr(event, "data", {})
+        if not isinstance(data, dict):
+            data = {}
+        return registry.resolve(
+            RoutingContext(
+                chat_id=str(getattr(event, "chat_id", "") or ""),
+                chat_type=str(data.get("chat_type") or ""),
+                tenant_key=str(data.get("tenant_key") or ""),
+                agent_id=str(data.get("agent_id") or ""),
+                profile_id=str(data.get("profile_id") or ""),
+            )
+        )
+
+    return FeishuBoundary(client=factories, router=profile_router)
 
 
 def _has_any_feishu_credentials(config: dict[str, Any]) -> bool:

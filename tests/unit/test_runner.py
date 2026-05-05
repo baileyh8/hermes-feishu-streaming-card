@@ -169,6 +169,44 @@ def test_main_ignores_partial_legacy_feishu_when_named_bot_credentials_exist(
     assert captured["kwargs"]["bot_router"] is not None
 
 
+def test_build_feishu_boundary_single_profile_unchanged():
+    """单 profile 模式下，client 应为 FeishuClientFactory（非 dict），行为不变。"""
+    config = {
+        "feishu": {"app_id": "cli_a", "app_secret": "s_a"},
+        "bots": {"default": "default", "items": {}},
+        "bindings": {"chats": {}, "fallback_bot": "default"},
+        "server": {"host": "127.0.0.1", "port": 8765},
+    }
+    boundary = build_feishu_boundary(config)
+    assert isinstance(boundary.client, FeishuClientFactory)
+    assert hasattr(boundary.client, "get_client")
+
+
+def test_build_feishu_boundary_multi_profile():
+    """多 profile 模式下，client 应为 dict[str, FeishuClientFactory]，router 可调用。"""
+    config = {
+        "profiles": {
+            "default": {
+                "feishu": {"app_id": "cli_a", "app_secret": "s_a"},
+                "bots": {"default": "default", "items": {}},
+                "bindings": {"chats": {}, "fallback_bot": "default"},
+            },
+            "work": {
+                "feishu": {"app_id": "cli_b", "app_secret": "s_b"},
+                "bots": {"default": "default", "items": {}},
+                "bindings": {"chats": {}, "fallback_bot": "default"},
+            },
+        },
+        "server": {"host": "127.0.0.1", "port": 8765},
+    }
+    boundary = build_feishu_boundary(config)
+    assert isinstance(boundary.client, dict)
+    assert set(boundary.client.keys()) == {"default", "work"}
+    for factory in boundary.client.values():
+        assert isinstance(factory, FeishuClientFactory)
+    assert callable(boundary.router)
+
+
 def test_main_rejects_malformed_named_bot_without_leaking_secret(monkeypatch):
     config = {
         "server": {"host": "127.0.0.1", "port": 0},
