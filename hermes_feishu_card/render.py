@@ -99,7 +99,11 @@ def _render_tool_summary(session: CardSession) -> str:
         return "工具调用 0 次"
     lines = [f"工具调用 {session.tool_count} 次"]
     for tool in session.tools.values():
-        lines.append(f"- `{tool.name}`: {tool.status}")
+        if tool.detail and tool.name == "send_message":
+            lines.append(f"- `{tool.name}`: {tool.status}")
+            lines.append(f"  > {tool.detail}")
+        else:
+            lines.append(f"- `{tool.name}`: {tool.status}")
     return "\n".join(lines)
 
 

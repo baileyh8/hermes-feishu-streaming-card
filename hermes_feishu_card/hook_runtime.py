@@ -193,11 +193,11 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
     created_at_lifecycle_token = _created_at_lifecycle_token(created_at_value)
     fallback_key = (conversation_id, chat_id)
     explicit_message_id = _first_string(
-        local_vars, ("message_id", "msg_id")
+        local_vars, ("message_id", "msg_id", "event_message_id")
     ) or _first_attr_string(
-        message_obj, ("message_id", "msg_id")
+        message_obj, ("message_id", "msg_id", "event_message_id")
     ) or _first_attr_string(
-        gateway_event_obj, ("message_id", "msg_id")
+        gateway_event_obj, ("message_id", "msg_id", "event_message_id")
     )
     message_id = explicit_message_id
     is_terminal_event = event_name in {"message.completed", "message.failed"}
@@ -264,29 +264,43 @@ def build_event(event_name: str, local_vars: dict[str, Any]) -> dict[str, Any] |
 def _event_data(
     event_name: str, local_vars: dict[str, Any], message_obj: Any
 ) -> dict[str, Any]:
+    profile_id = _extract_profile_id(local_vars)
+
     if event_name in {"thinking.delta", "answer.delta"}:
         text = _first_string(local_vars, ("text", "delta", "delta_text", "content"))
         if text is None:
             text = _first_attr_string(message_obj, ("text", "content"))
-        return {"text": text or ""}
+        data = {"text": text or ""}
+        if profile_id:
+            data["profile_id"] = profile_id
+        return data
     if event_name == "tool.updated":
         tool_id = _first_string(local_vars, ("tool_id", "tool_call_id", "name")) or "tool"
         name = _first_string(local_vars, ("name", "tool_name")) or tool_id
         status = _first_string(local_vars, ("status", "tool_status")) or "running"
         detail = _first_string(local_vars, ("detail", "tool_detail")) or ""
-        return {"tool_id": tool_id, "name": name, "status": status, "detail": detail}
+        data = {"tool_id": tool_id, "name": name, "status": status, "detail": detail}
+        if profile_id:
+            data["profile_id"] = profile_id
+        return data
     if event_name == "message.completed":
         answer = _first_string(local_vars, ("answer", "final_answer", "text", "content")) or ""
-        return {
+        data = {
             "answer": answer,
             "duration": _completion_duration(local_vars),
             "model": _completion_model(local_vars),
             "tokens": _completion_tokens(local_vars, answer),
             "context": _completion_context(local_vars),
         }
+        if profile_id:
+            data["profile_id"] = profile_id
+        return data
     if event_name == "message.failed":
         error = _first_string(local_vars, ("error", "exception")) or "消息处理失败"
-        return {"error": error}
+        data = {"error": error}
+        if profile_id:
+            data["profile_id"] = profile_id
+        return data
     if event_name == "message.started":
         data: dict[str, Any] = {}
         for source_key, data_key in (
@@ -298,8 +312,25 @@ def _event_data(
             value = _first_string(local_vars, (source_key,)) or _first_attr_string(message_obj, (source_key,))
             if value:
                 data[data_key] = value
+        if "profile_id" not in data:
+            hermes_home = os.environ.get("HERMES_HOME", "")
+            if hermes_home and "/profiles/" in hermes_home:
+                profile_id = hermes_home.rstrip("/").split("/profiles/")[-1]
+                if profile_id:
+                    data["profile_id"] = profile_id
         return data if data else {}
     return {}
+
+
+def _extract_profile_id(local_vars: dict[str, Any]) -> str | None:
+    """Extract profile_id from local_vars or HERMES_HOME env var."""
+    profile_id = _first_string(local_vars, ("profile_id",))
+    if profile_id:
+        return profile_id
+    hermes_home = os.environ.get("HERMES_HOME", "")
+    if hermes_home and "/profiles/" in hermes_home:
+        return hermes_home.rstrip("/").split("/profiles/")[-1]
+    return None
 
 
 def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
