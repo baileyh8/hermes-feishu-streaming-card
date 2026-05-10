@@ -143,9 +143,9 @@ def _session_key(event: SidecarEvent) -> str:
     When profiles are active, uses composite key profile_id:message_id.
     Otherwise uses message_id directly (backward compatible).
     """
-    profile_id = event.data.get("profile_id") if isinstance(event.data, dict) else None
-    profile_id = _safe_profile_id(profile_id)
-    if profile_id != "default" or (isinstance(event.data, dict) and event.data.get("profile_id")):
+    has_profile_id = isinstance(event.data, dict) and "profile_id" in event.data
+    profile_id = _safe_profile_id(event.data.get("profile_id") if has_profile_id else None)
+    if has_profile_id:
         return f"{profile_id}:{event.message_id}"
     return event.message_id
 

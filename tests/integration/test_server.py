@@ -687,7 +687,8 @@ async def test_started_routes_card_to_bound_bot_client():
     assert factory.clients["sales"].sent[0][0] == "oc_sales"
 
 
-async def test_invalid_profile_routes_with_default_factory_and_health_key():
+@pytest.mark.parametrize("profile_id", ["bad:profile/path", "", "x" * 65])
+async def test_invalid_profile_routes_with_default_factory_and_health_key(profile_id):
     factory = FakeFeishuClientFactory()
 
     def bot_router(event):
@@ -703,7 +704,7 @@ async def test_invalid_profile_routes_with_default_factory_and_health_key():
             json=event_payload(
                 "message.started",
                 0,
-                {"profile_id": "bad:profile/path", "profile_source": "env"},
+                {"profile_id": profile_id, "profile_source": "env"},
                 chat_id="oc_sales",
             ),
         )
@@ -718,7 +719,7 @@ async def test_invalid_profile_routes_with_default_factory_and_health_key():
     assert body == {"ok": True, "applied": True}
     assert factory.clients["default"].sent == []
     assert len(factory.clients["sales"].sent) == 1
-    assert "bad:profile/path" not in health_body["profile_diagnostics"]
+    assert profile_id not in health_body["profile_diagnostics"]
     assert health_body["profile_diagnostics"]["default"]["events"] == 1
     assert health_body["routing"]["last_route_error"] == ""
 
@@ -937,3 +938,15 @@ async def test_session_key_no_profile_is_just_message_id():
         data={},
     )
     assert _session_key(event) == "m"
+
+
+async def test_session_key_explicit_empty_profile_uses_default_composite_key():
+    from hermes_feishu_card.server import _session_key
+    from hermes_feishu_card.events import SidecarEvent
+    event = SidecarEvent(
+        schema_version="1", event="message.started",
+        conversation_id="c", message_id="m", chat_id="c",
+        platform="feishu", sequence=0, created_at=0.0,
+        data={"profile_id": ""},
+    )
+    assert _session_key(event) == "default:m"
