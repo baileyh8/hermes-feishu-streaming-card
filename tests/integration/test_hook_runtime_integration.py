@@ -165,20 +165,33 @@ async def test_installed_hook_forwards_streaming_tool_and_completion_events(
         ]
         assert {item["chat_id"] for item in received} == {"oc_fixture"}
         assert {item["message_id"] for item in received} == {"msg_fixture"}
-        assert received[1]["data"] == {"text": "thinking fixture delta"}
+        assert received[1]["data"] == {
+            "profile_id": "default",
+            "profile_source": "fallback_default",
+            "text": "thinking fixture delta",
+        }
         assert received[2]["data"] == {
+            "profile_id": "default",
+            "profile_source": "fallback_default",
             "tool_id": "fixture_tool",
             "name": "fixture_tool",
             "status": "running",
             "detail": "fixture tool preview",
         }
-        assert received[3]["data"] == {"text": "answer fixture delta"}
+        assert received[3]["data"] == {
+            "profile_id": "default",
+            "profile_source": "fallback_default",
+            "text": "answer fixture delta",
+        }
         assert received[4]["data"] == {
+            "profile_id": "default",
+            "profile_source": "fallback_default",
             "answer": "fixture answer",
             "duration": 0.25,
             "model": "Unknown",
             "tokens": {"input_tokens": 7, "output_tokens": 11},
             "context": {"used_tokens": 0, "max_tokens": 0},
+            "attachments": [],
         }
     finally:
         await client.close()
