@@ -11,7 +11,7 @@ def read_doc(path: str) -> str:
 def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
-    assert "V3.4.0" in readme
+    assert "V3.4.1" in readme
     assert "[English](README.en.md)" in readme
     assert "docs/assets/readme-cover.png" in readme
     assert "sidecar-only" in readme.lower()
@@ -36,7 +36,8 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
 def test_readme_documents_v340_hermes_compatibility():
     readme = read_doc("README.md")
 
-    assert "V3.4.0" in readme
+    assert "V3.4.1" in readme
+    assert "issue #25" in readme
     assert "Hermes 0.13.0" in readme
     assert "旧版本" in readme
     assert "hook_strategy" in readme
@@ -57,7 +58,8 @@ def test_readme_documents_v340_hermes_compatibility():
 def test_english_readme_documents_v340_hermes_compatibility():
     readme = read_doc("README.en.md")
 
-    assert "V3.4.0" in readme
+    assert "V3.4.1" in readme
+    assert "issue #25" in readme
     assert "Hermes 0.13.0" in readme
     assert "older Hermes" in readme
     assert "hook_strategy" in readme
@@ -89,7 +91,7 @@ def test_english_readme_and_docs_are_linked():
     ]
 
     assert "[中文](README.md)" in english_readme
-    assert "Hermes Feishu Streaming Card Plugin V3.4.0" in english_readme
+    assert "Hermes Feishu Streaming Card Plugin V3.4.1" in english_readme
     assert "docs/assets/readme-cover.png" in english_readme
     assert "setup --hermes-dir" in english_readme
     assert "Hermes Gateway Streaming And Thinking" in english_readme
@@ -268,6 +270,16 @@ def test_changelog_documents_v340_release_notes():
     assert "Cron final card delivery" in changelog
     assert "Attachment summaries with native media delivery" in changelog
     assert "Card reply context" in changelog
+
+
+def test_changelog_documents_v341_release_notes():
+    changelog = read_doc("CHANGELOG.md")
+
+    assert "## V3.4.1 — 2026-05-14" in changelog
+    assert "issue #25" in changelog
+    assert "event_message_id" in changelog
+    assert "_preview_fallback_message_id" in changelog
+    assert "_create_active_fallback_message_id" in changelog
     assert "issue #23" in changelog
 
 
@@ -374,7 +386,7 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.4.0" in docs
+    assert "3.4.1" in docs
     assert "python3 -m pytest -q" in docs
     assert "真实 Hermes Gateway" in docs
     assert "真实飞书应用" in docs
