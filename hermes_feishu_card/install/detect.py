@@ -200,7 +200,9 @@ def _select_hook_strategy(version: str) -> str:
     parsed = _parse_version(version)
     if parsed is None:
         return ""
-    if parsed[0] == 0 and parsed >= (0, 13, 0):
+    # Support Hermes calendar versioning (v2026.x.x maps to 0.13.0+ capabilities)
+    # AND standard semantic versioning (0.13.0+).
+    if (parsed[0] >= 2026) or (parsed[0] == 0 and parsed >= (0, 13, 0)):
         return "gateway_run_013_plus"
     return "legacy_gateway_run"
 
