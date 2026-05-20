@@ -1,7 +1,9 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import threading
+import time
 from urllib import error
 
 import pytest
@@ -870,6 +872,27 @@ def test_build_event_increments_sequence_per_message():
 
     assert first["sequence"] == 0
     assert second["sequence"] == 1
+
+
+def test_build_event_allocates_unique_sequences_across_threads(monkeypatch):
+    class SlowSequenceStore(dict):
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            time.sleep(0.02)
+            return value
+
+    monkeypatch.setattr(hook_runtime, "_SEQUENCES", SlowSequenceStore())
+    local_vars = {"chat_id": "oc_abc", "message_id": "msg_seq", "text": "hi"}
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        payloads = list(
+            executor.map(
+                lambda _: hook_runtime.build_event("answer.delta", local_vars),
+                range(2),
+            )
+        )
+
+    assert sorted(payload["sequence"] for payload in payloads) == [0, 1]
 
 
 class SenderProbe:

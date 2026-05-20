@@ -32,6 +32,19 @@ class FakeFeishuClient:
         self.updated.append((message_id, card))
 
 
+class ReorderingFeishuClient(FakeFeishuClient):
+    def __init__(self):
+        super().__init__()
+        self.update_calls = 0
+
+    async def update_card_message(self, message_id, card):
+        self.update_calls += 1
+        update_call = self.update_calls
+        if update_call == 1:
+            await asyncio.sleep(0.05)
+        self.updated.append((message_id, card))
+
+
 class FakeBotRegistry:
     def safe_diagnostics(self):
         return {
@@ -616,6 +629,34 @@ async def test_concurrent_streaming_deltas_share_message_update_window(client):
     assert metrics["events_applied"] == 3
     assert metrics["feishu_update_attempts"] == 1
     assert metrics["feishu_update_successes"] == 1
+
+
+async def test_concurrent_card_updates_preserve_newer_content(monkeypatch):
+    feishu_client = ReorderingFeishuClient()
+    app = create_app(feishu_client)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    monkeypatch.setattr(sidecar_server, "UPDATE_MIN_INTERVAL_SECONDS", 0)
+    await test_client.start_server()
+    try:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+        first_delta, second_delta = await asyncio.gather(
+            test_client.post(
+                "/events",
+                json=event_payload("answer.delta", 1, {"text": "第一段"}),
+            ),
+            test_client.post(
+                "/events",
+                json=event_payload("answer.delta", 2, {"text": "第二段"}),
+            ),
+        )
+
+        assert first_delta.status == 200
+        assert second_delta.status == 200
+        assert len(feishu_client.updated) == 2
+        assert "第一段第二段" in str(feishu_client.updated[-1][1])
+    finally:
+        await test_client.close()
 
 
 async def test_terminal_event_waits_for_update_window(client, monkeypatch):

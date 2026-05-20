@@ -21,6 +21,7 @@ FEISHU_MESSAGE_IDS_KEY = web.AppKey("feishu_message_ids", dict)
 CARD_SUMMARIES_KEY = web.AppKey("card_summaries", dict)
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
+UPDATE_TASKS_KEY = web.AppKey("update_tasks", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -54,6 +55,7 @@ def create_app(
     app[CARD_SUMMARIES_KEY] = {}
     app[MESSAGE_BOT_IDS_KEY] = {}
     app[SESSION_CARD_CONFIGS_KEY] = {}
+    app[UPDATE_TASKS_KEY] = {}
     app[BOT_ROUTER_KEY] = bot_router
     app[PROCESS_TOKEN_KEY] = process_token
     app[METRICS_KEY] = SidecarMetrics()
@@ -186,6 +188,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     feishu_message_ids: Dict[str, str] = request.app[FEISHU_MESSAGE_IDS_KEY]
     message_bot_ids: Dict[str, str] = request.app[MESSAGE_BOT_IDS_KEY]
     last_update_at: Dict[str, float] = request.app[LAST_UPDATE_AT_KEY]
+    update_tasks: Dict[str, asyncio.Task] = request.app[UPDATE_TASKS_KEY]
     _record_profile_diagnostics(request.app, event)
     session = sessions.get(_session_key(event))
 
@@ -319,6 +322,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
             card = _render_session_card(request, session)
             bot_id = message_bot_ids.get(_session_key(event))
             is_terminal = event.event in TERMINAL_EVENTS
+            session_key = _session_key(event)
 
             async def _do_update():
                 if is_terminal:
@@ -329,7 +333,23 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 if not updated and is_terminal:
                     await _retry_terminal_update(request.app, feishu_message_id, card, bot_id)
 
-            post_lock_task = _do_update()
+            previous_task = update_tasks.get(session_key)
+
+            async def _queued_update():
+                if previous_task is not None:
+                    try:
+                        await previous_task
+                    except Exception:
+                        logger.exception("previous Feishu card update task failed")
+                try:
+                    await _do_update()
+                finally:
+                    if update_tasks.get(session_key) is current_task:
+                        update_tasks.pop(session_key, None)
+
+            current_task = asyncio.create_task(_queued_update())
+            update_tasks[session_key] = current_task
+            post_lock_task = current_task
     if applied:
         metrics.events_applied += 1
     else:
