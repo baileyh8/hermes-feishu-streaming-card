@@ -90,8 +90,11 @@ def detect_hermes(root: str | Path) -> HermesDetection:
         return result(False, "Hermes VERSION missing, unknown, or invalid")
     hook_strategy = _select_hook_strategy(version)
     minimum_version = _parse_version(MIN_SUPPORTED_VERSION)
-    if hook_strategy == "legacy_gateway_run" and minimum_version is not None and parsed_version < minimum_version:
-        return result(False, f"Hermes version must be at least {MIN_SUPPORTED_VERSION}")
+    if minimum_version is not None and parsed_version < minimum_version:
+        # Calendar versions below MIN_SUPPORTED_VERSION are unsupported.
+        # Semver 0.13.0+ IS supported even though tuple-compared lower.
+        if parsed_version[0] != 0 or parsed_version < (0, 13, 0):
+            return result(False, f"Hermes version must be at least {MIN_SUPPORTED_VERSION}")
 
     contents, run_py_error = _read_text(run_py, "gateway/run.py")
     if run_py_error is not None:
@@ -200,7 +203,7 @@ def _select_hook_strategy(version: str) -> str:
     parsed = _parse_version(version)
     if parsed is None:
         return ""
-    if parsed[0] == 0 and parsed >= (0, 13, 0):
+    if parsed >= (0, 13, 0):
         return "gateway_run_013_plus"
     return "legacy_gateway_run"
 

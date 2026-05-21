@@ -32,7 +32,7 @@ def test_detect_legacy_strategy_for_v2026_4_23_fixture():
     detection = detect_hermes(FIXTURE_ROOT)
 
     assert detection.supported is True
-    assert detection.hook_strategy == "legacy_gateway_run"
+    assert detection.hook_strategy == "gateway_run_013_plus"
     assert detection.compatibility == "partial"
     assert detection.capabilities["message_handler"] is True
 
@@ -285,6 +285,16 @@ def test_detect_hermes_rejects_missing_required_anchor(tmp_path):
 
 
 def test_detect_hermes_rejects_versions_below_minimum(tmp_path):
+    _write_hermes_root(tmp_path, version="v2026.4.22")
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is False
+    assert "v2026.4.23" in result.reason
+
+
+def test_detect_hermes_rejects_v2026_4_22_even_with_013_strategy(tmp_path):
+    """v2026.4.22 is below MIN_SUPPORTED_VERSION despite strategy resolution."""
     _write_hermes_root(tmp_path, version="v2026.4.22")
 
     result = detect_hermes(tmp_path)
