@@ -103,12 +103,25 @@ def _split_text(text: str, chunk_size: int) -> list[str]:
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
 
 
+def _progress_bar(percent: int, width: int = 8) -> str:
+    """Render a text progress bar like ██████░░ 75%"""
+    filled = percent * width // 100
+    bar = "█" * filled + "░" * (width - filled)
+    return f"{bar} {percent}%"
+
+
 def _render_tool_summary(session: CardSession) -> str:
     if not session.tools:
         return "工具调用 0 次"
     lines = [f"工具调用 {session.tool_count} 次"]
     for tool in session.tools.values():
-        lines.append(f"- `{tool.name}`: {tool.status}")
+        if tool.status == "running" and tool.percent > 0:
+            eta_text = f" ETA {tool.eta}s" if tool.eta > 0 else ""
+            lines.append(f"- `{tool.name}`: {_progress_bar(tool.percent)}{eta_text}")
+        elif tool.detail:
+            lines.append(f"- `{tool.name}`: {tool.status} — {tool.detail}")
+        else:
+            lines.append(f"- `{tool.name}`: {tool.status}")
     return "\n".join(lines)
 
 

@@ -76,6 +76,7 @@ def create_app(
     app.router.add_get("/health", _health)
     app.router.add_get("/messages/{message_id}/summary", _message_summary)
     app.router.add_post("/events", _events)
+    app.router.add_post("/progress", _progress)
     return app
 
 
@@ -162,6 +163,104 @@ async def _events(request: web.Request) -> web.Response:
     if post_lock_task is not None:
         await post_lock_task
     return response
+
+
+async def _progress(request: web.Request) -> web.Response:
+    """Simple progress update endpoint for long-running tools.
+
+    Accepts {tool_id, percent, detail, eta} and updates the active
+    session's tool state without requiring a full SidecarEvent.
+    """
+    import math
+    import time as _time
+
+    metrics: SidecarMetrics = request.app[METRICS_KEY]
+    sessions: Dict[str, CardSession] = request.app[SESSIONS_KEY]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+
+    tool_id = body.get("tool_id", "tool")
+    percent = max(0, min(100, int(body.get("percent", 0))))
+    detail = str(body.get("detail", ""))
+    eta = max(0, int(body.get("eta", 0)))
+    message_id = str(body.get("message_id", ""))
+
+    if not message_id:
+        return web.json_response({"ok": False, "error": "message_id required"}, status=400)
+
+    # Find the session by exact message_id or composite key
+    session = sessions.get(message_id)
+    if session is None:
+        for key, s in sessions.items():
+            if key.endswith(f":{message_id}") or key == message_id:
+                session = s
+                break
+
+    if session is None:
+        metrics.events_rejected += 1
+        return web.json_response({"ok": False, "error": "session not found"}, status=404)
+
+    # Create a lightweight event-like data dict and update the session
+    data = {
+        "tool_id": tool_id,
+        "name": tool_id,
+        "status": "running",
+        "detail": detail,
+        "percent": percent,
+        "eta": eta,
+    }
+
+    # Manually update the tool state in the session
+    tool = session.tools.get(tool_id)
+    if tool is None:
+        from .session import ToolState
+        tool = ToolState(tool_id=tool_id, name=tool_id, status="running", detail=detail, percent=percent, eta=eta)
+        session.tools[tool_id] = tool
+        session._tool_call_count += 1
+    else:
+        tool.status = "running"
+        tool.detail = detail
+        tool.percent = percent
+        tool.eta = eta
+
+    # Queue a card update (same pattern as _apply_event_locked)
+    last_update_at: Dict[str, float] = request.app[LAST_UPDATE_AT_KEY]
+    update_tasks: Dict[str, asyncio.Task] = request.app[UPDATE_TASKS_KEY]
+    feishu_message_ids: Dict[str, str] = request.app[FEISHU_MESSAGE_IDS_KEY]
+    message_bot_ids: Dict[str, str] = request.app[MESSAGE_BOT_IDS_KEY]
+
+    feishu_message_id = feishu_message_ids.get(message_id)
+    if feishu_message_id:
+        from .render import render_card
+        card = render_card(session, request.app.get(FOOTER_FIELDS_KEY), request.app.get(CARD_TITLE_KEY, "Hermes Agent"))
+        bot_id = message_bot_ids.get(message_id)
+
+        async def _do_update():
+            try:
+                await _update_card_for_app(request.app, feishu_message_id, card, bot_id)
+            except Exception:
+                pass
+
+        async def _queued_update():
+            previous_task = update_tasks.get(message_id)
+            if previous_task is not None:
+                try:
+                    await previous_task
+                except Exception:
+                    pass
+            try:
+                await _do_update()
+            finally:
+                if update_tasks.get(message_id) is current_task:
+                    update_tasks.pop(message_id, None)
+
+        current_task = asyncio.create_task(_queued_update())
+        update_tasks[message_id] = current_task
+        metrics.events_applied += 1
+
+    return web.json_response({"ok": True, "applied": True})
 
 
 def _session_key(event: SidecarEvent) -> str:

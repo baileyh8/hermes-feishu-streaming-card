@@ -13,6 +13,8 @@ class ToolState:
     name: str
     status: str
     detail: str = ""
+    percent: int = 0
+    eta: int = 0
 
 
 @dataclass
@@ -73,11 +75,25 @@ class CardSession:
             name = event.data.get("name")
             status = event.data.get("status")
             detail = event.data.get("detail")
+            percent = event.data.get("percent", 0)
+            eta = event.data.get("eta", 0)
+            if not isinstance(percent, int):
+                try:
+                    percent = int(float(percent)) if percent else 0
+                except (TypeError, ValueError):
+                    percent = 0
+            if not isinstance(eta, int):
+                try:
+                    eta = int(float(eta)) if eta else 0
+                except (TypeError, ValueError):
+                    eta = 0
             self.tools[tool_id] = ToolState(
                 tool_id=tool_id,
                 name=name if isinstance(name, str) else tool_id,
                 status=status if isinstance(status, str) else "running",
                 detail=detail if isinstance(detail, str) else "",
+                percent=max(0, min(100, percent)),
+                eta=max(0, eta),
             )
             self._tool_call_count += 1
         elif event.event == "message.started":
