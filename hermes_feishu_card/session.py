@@ -77,6 +77,7 @@ class CardSession:
             detail = event.data.get("detail")
             percent = event.data.get("percent", 0)
             eta = event.data.get("eta", 0)
+            # Coerce types robustly
             if not isinstance(percent, int):
                 try:
                     percent = int(float(percent)) if percent else 0
@@ -87,15 +88,23 @@ class CardSession:
                     eta = int(float(eta)) if eta else 0
                 except (TypeError, ValueError):
                     eta = 0
-            self.tools[tool_id] = ToolState(
-                tool_id=tool_id,
-                name=name if isinstance(name, str) else tool_id,
-                status=status if isinstance(status, str) else "running",
-                detail=detail if isinstance(detail, str) else "",
-                percent=max(0, min(100, percent)),
-                eta=max(0, eta),
-            )
-            self._tool_call_count += 1
+            # Update existing tool in-place, or create new
+            existing = self.tools.get(tool_id)
+            if existing:
+                existing.status = status if isinstance(status, str) else existing.status
+                existing.detail = detail if isinstance(detail, str) else existing.detail
+                existing.percent = max(0, min(100, percent))
+                existing.eta = max(0, eta)
+            else:
+                self.tools[tool_id] = ToolState(
+                    tool_id=tool_id,
+                    name=name if isinstance(name, str) else tool_id,
+                    status=status if isinstance(status, str) else "running",
+                    detail=detail if isinstance(detail, str) else "",
+                    percent=max(0, min(100, percent)),
+                    eta=max(0, eta),
+                )
+                self._tool_call_count += 1
         elif event.event == "message.started":
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():

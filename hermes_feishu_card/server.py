@@ -146,6 +146,125 @@ async def _message_summary(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, **summary})
 
 
+async def _progress(request: web.Request) -> web.Response:
+    """POST /progress — update tool progress on an active card.
+
+    Accepts: { tool_id, percent, detail?, eta?, message_id? }
+    Updates the tool state directly in the CardSession and triggers a card update.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+
+    tool_id = data.get("tool_id", data.get("name", ""))
+    if not isinstance(tool_id, str) or not tool_id:
+        return web.json_response({"ok": False, "error": "tool_id required"}, status=400)
+
+    percent = data.get("percent")
+    if not isinstance(percent, int):
+        return web.json_response({"ok": False, "error": "percent must be int"}, status=400)
+
+    detail = data.get("detail", "")
+    eta = data.get("eta", 0)
+    message_id = data.get("message_id", "")
+
+    sessions: Dict[str, CardSession] = request.app[SESSIONS_KEY]
+    feishu_message_ids: Dict[str, str] = request.app[FEISHU_MESSAGE_IDS_KEY]
+
+    # Find the session to update
+    target_session = None
+    target_key = ""
+
+    if message_id and message_id in sessions:
+        target_key = message_id
+        target_session = sessions[message_id]
+    elif feishu_message_ids:
+        # Match by feishu_message_id (which maps card msg_id -> internal session key)
+        for sk, fm_id in feishu_message_ids.items():
+            if fm_id == message_id and sk in sessions:
+                target_key = sk
+                target_session = sessions[sk]
+                break
+
+    if not target_session:
+        # Try any active session with running tools
+        for sk, session in sessions.items():
+            if session.status in ("thinking", "answering"):
+                target_key = sk
+                target_session = session
+                break
+
+    if not target_session:
+        return web.json_response({
+            "ok": False,
+            "error": "no active session found",
+            "message_id": message_id,
+            "active_sessions": list(sessions.keys()),
+        }, status=404)
+
+    # Update the tool state
+    existing = target_session.tools.get(tool_id)
+    if existing:
+        existing.percent = min(100, max(0, percent))
+        existing.detail = str(detail) if detail else existing.detail
+        if isinstance(eta, int) and eta >= 0:
+            existing.eta = eta
+    else:
+        from .session import ToolState
+        target_session.tools[tool_id] = ToolState(
+            tool_id=tool_id,
+            name=tool_id,
+            status="running" if percent < 100 else "completed",
+            detail=str(detail),
+            percent=min(100, max(0, percent)),
+            eta=eta if isinstance(eta, int) and eta >= 0 else 0,
+        )
+        target_session._tool_call_count += 1
+
+    # Trigger card update
+    # Look up the Feishu message ID and bot_id for this session
+    feishu_msg_id = feishu_message_ids.get(target_key)
+    bot_id = request.app[MESSAGE_BOT_IDS_KEY].get(target_key)
+
+    if not feishu_msg_id:
+        return web.json_response({
+            "ok": False,
+            "error": "no feishu message id for session (card not created yet)",
+            "session": target_key,
+        }, status=409)
+
+    from .render import render_card
+    card = render_card(
+        session=target_session,
+        footer_fields=request.app[FOOTER_FIELDS_KEY],
+        title=request.app[CARD_TITLE_KEY],
+    )
+
+    update_tasks: Dict[str, asyncio.Task] = request.app[UPDATE_TASKS_KEY]
+
+    # Cancel any pending update for this session
+    old_task = update_tasks.get(target_key)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+    async def _do_update():
+        try:
+            await _update_card_for_app(request.app, feishu_msg_id, card, bot_id)
+        except Exception:
+            pass
+
+    task = asyncio.create_task(_do_update())
+    update_tasks[target_key] = task
+
+    return web.json_response({
+        "ok": True,
+        "tool_id": tool_id,
+        "percent": percent,
+        "session": target_key,
+    })
+
+
 async def _events(request: web.Request) -> web.Response:
     metrics: SidecarMetrics = request.app[METRICS_KEY]
     try:

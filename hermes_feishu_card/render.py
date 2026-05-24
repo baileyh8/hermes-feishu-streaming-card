@@ -71,7 +71,24 @@ def _render_status(session: CardSession) -> Dict[str, str]:
         return {"subtitle": "已完成", "template": "green"}
     if session.status == "failed":
         return {"subtitle": "处理失败", "template": "red"}
+    if session.status == "running" or session.status == "answering":
+        # Show progress bar in header if any tool has progress data
+        running_tools = [t for t in session.tools.values()
+                         if t.status == "running" and t.percent > 0]
+        if running_tools:
+            # Pick the most recently updated tool for display
+            tool = list(session.tools.values())[-1]
+            if tool.percent > 0:
+                subtitle = f"{_progress_bar(tool.percent)}{' ETA '+str(tool.eta)+'s' if tool.eta > 0 else ''}"
+                return {"subtitle": subtitle, "template": "blue"}
     return {"subtitle": "思考中", "template": "indigo"}
+
+
+def _progress_bar(percent: int, width: int = 8) -> str:
+    """Render a text progress bar like ██████░░ 75%"""
+    filled = percent * width // 100
+    bar = "█" * filled + "░" * (width - filled)
+    return f"{bar} {percent}%"
 
 
 def _render_main_content_elements(main_text: str) -> list[Dict[str, Any]]:
@@ -101,13 +118,6 @@ def _split_text(text: str, chunk_size: int) -> list[str]:
     if not text:
         return [""]
     return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
-
-
-def _progress_bar(percent: int, width: int = 8) -> str:
-    """Render a text progress bar like ██████░░ 75%"""
-    filled = percent * width // 100
-    bar = "█" * filled + "░" * (width - filled)
-    return f"{bar} {percent}%"
 
 
 def _render_tool_summary(session: CardSession) -> str:
