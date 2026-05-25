@@ -200,7 +200,7 @@ def _select_hook_strategy(version: str) -> str:
     parsed = _parse_version(version)
     if parsed is None:
         return ""
-    if parsed[0] == 0 and parsed >= (0, 13, 0):
+    if (parsed[0] == 0 and parsed >= (0, 13, 0)) or parsed >= (2026, 5, 0):
         return "gateway_run_013_plus"
     return "legacy_gateway_run"
 
