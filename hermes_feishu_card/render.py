@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from .session import CardSession
-from .text import normalize_stream_text
+from .text import normalize_stream_text, split_markdown_blocks
 import time as _time
 
 DEFAULT_FOOTER_FIELDS = (
@@ -87,18 +87,12 @@ def _render_main_content_elements(main_text: str) -> list[Dict[str, Any]]:
         main_text = main_text[:cutoff].rstrip() + (
             "\n\n> 内容含超过 5 个表格，超出部分已省略。"
         )
-    chunks = _split_text(main_text, MAIN_CONTENT_CHUNK_CHARS)
+    chunks = split_markdown_blocks(main_text, MAIN_CONTENT_CHUNK_CHARS)
     elements = []
     for index, chunk in enumerate(chunks):
         element_id = "main_content" if index == 0 else f"main_content_{index}"
         elements.append({"tag": "markdown", "element_id": element_id, "content": chunk})
     return elements
-
-
-def _split_text(text: str, chunk_size: int) -> list[str]:
-    if not text:
-        return [""]
-    return [text[index : index + chunk_size] for index in range(0, len(text), chunk_size)]
 
 
 def _render_tool_summary(session: CardSession) -> str:

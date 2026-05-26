@@ -105,3 +105,77 @@ def test_count_markdown_tables_seven():
 def test_max_card_tables_constant():
     from hermes_feishu_card.text import MAX_CARD_TABLES
     assert MAX_CARD_TABLES == 5
+
+
+# —— Markdown-aware text splitting ————————————————————————————————
+
+
+def test_split_markdown_blocks_short_text():
+    from hermes_feishu_card.text import split_markdown_blocks
+    assert split_markdown_blocks("你好世界", 2400) == ["你好世界"]
+
+
+def test_split_markdown_blocks_empty():
+    from hermes_feishu_card.text import split_markdown_blocks
+    assert split_markdown_blocks("", 2400) == [""]
+
+
+def test_split_markdown_blocks_at_limit():
+    from hermes_feishu_card.text import split_markdown_blocks
+    text = "X" * 2400
+    assert split_markdown_blocks(text, 2400) == [text]
+
+
+def test_split_markdown_blocks_at_paragraph_boundary():
+    from hermes_feishu_card.text import split_markdown_blocks
+    para_a = "A" * 1500
+    para_b = "B" * 1500
+    text = para_a + "\n\n" + para_b
+    chunks = split_markdown_blocks(text, 2000)
+    assert len(chunks) == 2
+    assert len(chunks[0]) <= 2000
+    assert len(chunks[1]) <= 2000
+    assert "A" in chunks[0] and "B" in chunks[1]
+
+
+def test_split_markdown_blocks_preserves_table():
+    from hermes_feishu_card.text import split_markdown_blocks
+    table = "| 功能 | 说明 |\n|------|------|\n| ASR | 识别中文 |\n| VAD | 静音切割 |"
+    text = "A" * 1000 + "\n\n" + table + "\n\n" + "B" * 1000
+    chunks = split_markdown_blocks(text, 1200)
+    # The table should be kept intact within a single chunk
+    table_chunks = [c for c in chunks if "ASR" in c and "VAD" in c]
+    assert len(table_chunks) == 1
+    assert "功能" in table_chunks[0]
+
+
+def test_split_markdown_blocks_preserves_fenced_code_block():
+    from hermes_feishu_card.text import split_markdown_blocks
+    code = "```python\nprint('hello')\nprint('world')\n```"
+    text = "X" * 1000 + "\n\n" + code + "\n\n" + "Y" * 1000
+    chunks = split_markdown_blocks(text, 1100)
+    code_chunks = [c for c in chunks if "```python" in c]
+    assert len(code_chunks) == 1
+    assert "```" in code_chunks[0]
+
+
+def test_split_markdown_blocks_merges_small_paragraphs():
+    from hermes_feishu_card.text import split_markdown_blocks
+    # Multiple small paragraphs that fit in one chunk
+    paras = "\n\n".join(["P" + str(i) * 100 for i in range(5)])
+    chunks = split_markdown_blocks(paras, 2400)
+    # All should fit in one chunk
+    assert len(chunks) == 1
+    for i in range(5):
+        assert f"P{i}" in chunks[0]
+
+
+def test_split_markdown_blocks_oversized_paragraph_without_breaks():
+    from hermes_feishu_card.text import split_markdown_blocks
+    # Multiple long lines without paragraph breaks — splits at line boundaries
+    long_text = "Hello world " * 400 + "\n" + "Goodbye world " * 400 + "\n" + "Foo bar baz " * 400
+    chunks = split_markdown_blocks(long_text, 2000)
+    assert len(chunks) >= 2
+    for chunk in chunks:
+        assert len(chunk) <= 2000
+    assert all(c for c in chunks), "No empty chunks"
