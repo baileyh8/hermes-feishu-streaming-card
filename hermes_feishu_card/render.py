@@ -40,15 +40,15 @@ def render_card(
                 "tag": "markdown",
                 "element_id": "attachment_summary",
                 "content": attachment_summary,
+                "text_size": "notation",
             }
         )
-    elements.extend(
-        [
-            {"tag": "hr", "element_id": "main_divider"},
-            {"tag": "markdown", "element_id": "tool_summary", "content": tool_summary},
-            {"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"},
-        ]
-    )
+    if tool_summary:
+        elements.append({"tag": "hr", "element_id": "main_divider"})
+        elements.append({"tag": "markdown", "element_id": "tool_summary", "content": tool_summary, "text_size": "notation"})
+    if footer:
+        elements.append({"tag": "hr", "element_id": "footer_divider"})
+        elements.append({"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"})
     return {
         "config": {
             "wide_screen_mode": True,
