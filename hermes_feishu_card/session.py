@@ -35,6 +35,7 @@ class CardSession:
     _tool_call_count: int = field(default=0)
     thinking_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
     answer_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
+    _had_delta: bool = field(default=False)
 
     @property
     def tool_count(self) -> int:
@@ -66,6 +67,7 @@ class CardSession:
             self.thinking_text += self.thinking_normalizer.feed(str(event.data.get("text", "")))
         elif event.event == "answer.delta":
             self.answer_text += self.answer_normalizer.feed(str(event.data.get("text", "")))
+            self._had_delta = True
         elif event.event == "tool.updated":
             tool_id = event.data.get("tool_id")
             if not isinstance(tool_id, str) or not tool_id:
@@ -89,7 +91,9 @@ class CardSession:
                 self.reply_to_message_id = reply_to_message_id
         elif event.event == "message.completed":
             self.status = "completed"
-            self.answer_text = normalize_stream_text(str(event.data.get("answer") or self.answer_text))
+            # Keep streamed text from delta events; only overwrite for non-streamed
+            if not self._had_delta:
+                self.answer_text = normalize_stream_text(str(event.data.get("answer") or self.answer_text))
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()

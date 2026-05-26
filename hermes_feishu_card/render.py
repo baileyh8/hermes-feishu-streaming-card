@@ -50,8 +50,8 @@ def render_card(
         ]
     )
     return {
-        "schema": "2.0",
         "config": {
+            "wide_screen_mode": True,
             "update_multi": True,
             "summary": {"content": status["subtitle"]},
         },
@@ -60,9 +60,7 @@ def render_card(
             "title": {"tag": "plain_text", "content": header_title},
             "subtitle": {"tag": "plain_text", "content": status["subtitle"]},
         },
-        "body": {
-            "elements": elements
-        },
+        "elements": elements,
     }
 
 
