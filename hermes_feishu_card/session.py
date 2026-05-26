@@ -91,9 +91,11 @@ class CardSession:
                 self.reply_to_message_id = reply_to_message_id
         elif event.event == "message.completed":
             self.status = "completed"
-            # Keep streamed text from delta events; only overwrite for non-streamed
-            if not self._had_delta:
-                self.answer_text = normalize_stream_text(str(event.data.get("answer") or self.answer_text))
+            # Use streamed text from deltas, but fall back to completed answer
+            # if it's significantly longer (handles partial streaming)
+            completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
+            if completed_answer and len(completed_answer) > len(self.answer_text):
+                self.answer_text = completed_answer
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()
