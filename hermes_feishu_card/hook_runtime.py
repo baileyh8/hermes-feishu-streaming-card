@@ -391,17 +391,55 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(job, dict) or content is None:
         return None
 
+    # Priority: job["deliver"] > resolved_targets > origin > env
+    # This ensures jobs migrated from other platforms (e.g. Discord/Telegram to Feishu)
+    # correctly route to Feishu streaming cards based on their deliver field.
+    deliver = str(job.get("deliver") or "").strip().lower()
+    resolved_targets = local_vars.get("_hfc_resolved_targets") or []
+
     origin = job.get("origin")
     if not isinstance(origin, dict):
         origin = {}
-    chat_id = str(
-        origin.get("chat_id") or os.environ.get("HERMES_CRON_AUTO_DELIVER_CHAT_ID") or ""
-    ).strip()
-    platform = str(
-        origin.get("platform")
-        or os.environ.get("HERMES_CRON_AUTO_DELIVER_PLATFORM")
-        or "feishu"
-    ).strip().lower()
+
+    # Determine platform: prefer deliver field, then resolved targets, then origin
+    platform = ""
+    chat_id = ""
+
+    if deliver == "feishu":
+        platform = "feishu"
+    elif deliver and deliver not in ("local", "origin", "all"):
+        platform = deliver
+
+    if not platform and resolved_targets:
+        for t in resolved_targets:
+            if isinstance(t, dict) and t.get("platform") == "feishu":
+                platform = "feishu"
+                chat_id = str(t.get("chat_id") or "").strip()
+                break
+
+    if not platform:
+        platform = str(
+            origin.get("platform")
+            or os.environ.get("HERMES_CRON_AUTO_DELIVER_PLATFORM")
+            or "feishu"
+        ).strip().lower()
+
+    # Get chat_id from resolved targets or origin
+    if not chat_id:
+        if deliver == "origin":
+            chat_id = str(origin.get("chat_id") or "").strip()
+        elif platform == "feishu":
+            for t in (resolved_targets or []):
+                if isinstance(t, dict) and t.get("platform") == "feishu":
+                    chat_id = str(t.get("chat_id") or "").strip()
+                    break
+            if not chat_id:
+                chat_id = str(
+                    origin.get("chat_id")
+                    or os.environ.get("HERMES_CRON_AUTO_DELIVER_CHAT_ID")
+                    or ""
+                ).strip()
+
     if platform != "feishu" or not chat_id:
         return None
 
