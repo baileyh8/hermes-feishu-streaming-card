@@ -11,7 +11,7 @@ def read_doc(path: str) -> str:
 def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
-    assert "V3.5.0" in readme
+    assert "V3.5.1" in readme
     assert "[English](README.en.md)" in readme
     assert "docs/assets/readme-cover.png" in readme
     assert "sidecar-only" in readme.lower()
@@ -36,7 +36,7 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
 def test_readme_documents_v340_hermes_compatibility():
     readme = read_doc("README.md")
 
-    assert "V3.5.0" in readme
+    assert "V3.5.1" in readme
     assert "issue #41" in readme
     assert "PR #42" in readme
     assert "授权/选项按钮" in readme
@@ -65,7 +65,7 @@ def test_readme_documents_v340_hermes_compatibility():
 def test_english_readme_documents_v340_hermes_compatibility():
     readme = read_doc("README.en.md")
 
-    assert "V3.5.0" in readme
+    assert "V3.5.1" in readme
     assert "issue #41" in readme
     assert "PR #42" in readme
     assert "Approval/choice buttons" in readme
@@ -105,7 +105,7 @@ def test_english_readme_and_docs_are_linked():
     ]
 
     assert "[中文](README.md)" in english_readme
-    assert "Hermes Feishu Streaming Card Plugin V3.5.0" in english_readme
+    assert "Hermes Feishu Streaming Card Plugin V3.5.1" in english_readme
     assert "docs/assets/readme-cover.png" in english_readme
     assert "setup --hermes-dir" in english_readme
     assert "Hermes Gateway Streaming And Thinking" in english_readme
@@ -322,6 +322,7 @@ def test_changelog_documents_v343_release_notes():
 def test_changelog_documents_v350_release_notes():
     changelog = read_doc("CHANGELOG.md")
 
+    assert "## V3.5.1 — 2026-06-01" in changelog
     assert "## V3.5.0 — 2026-06-01" in changelog
     assert "issue #41" in changelog
     assert "PR #42" in changelog
@@ -434,7 +435,7 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.5.0" in release_readiness
+    assert "3.5.1" in release_readiness
     assert "3.1.0" not in release_readiness
     assert "interaction.requested" in release_readiness
     assert "append_block" in release_readiness

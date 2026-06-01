@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.5.0`。这一版继续保持 sidecar-only 主线，重点补齐 Hermes 授权/选项请求的飞书卡片按钮交互闭环，并修复多条回复退回 text 模式、长表格/代码块 raw markdown、thinking 文本截断和 cron deliver 优先级问题。
+当前包版本为 `3.5.1`。这一版继续保持 sidecar-only 主线，在 V3.5.0 飞书卡片按钮交互闭环基础上，重点修复流式更新乱序/积压、queued follow-up 原生消息溢出、飞书 JSON 2.0 按钮渲染和手动重启 sidecar 时 `.env` 凭据未加载的问题。
 
 ## 已具备
 
@@ -18,6 +18,8 @@
 - 飞书卡片按钮交互覆盖 `interaction.requested`、`/card/actions`、`/interactions/{interaction_id}` 的本地 mock 验收。
 - Markdown 长表格/长代码块超过 `MAIN_CONTENT_CHUNK_CHARS` 后按完整结构重复切分，避免 raw markdown。
 - thinking/interim assistant 使用 `append_block` 完整块追加，避免 delta 累积导致漏字或截断。
+- 同一 message id 的 runtime event 发送、sidecar 更新和终态 PATCH 均有排序/合并保护。
+- `load_config()` 会读取 config 同目录 `.env`，真实环境变量仍保持最高优先级。
 - GitHub Actions 会在 PR/push 上运行 Python 3.9/3.12 的测试矩阵。
 
 ## 发布前必须验证

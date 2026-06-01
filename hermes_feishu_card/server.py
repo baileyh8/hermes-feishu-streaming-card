@@ -23,6 +23,7 @@ INTERACTION_RESULTS_KEY = web.AppKey("interaction_results", dict)
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
 UPDATE_TASKS_KEY = web.AppKey("update_tasks", dict)
+PENDING_UPDATE_REQUESTS_KEY = web.AppKey("pending_update_requests", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -34,7 +35,7 @@ FOOTER_FIELDS_KEY = web.AppKey("footer_fields", Any)
 CARD_TITLE_KEY = web.AppKey("card_title", str)
 BASE_CARD_CONFIG_KEY = web.AppKey("base_card_config", dict)
 UPDATE_MAX_ATTEMPTS = 3
-UPDATE_MIN_INTERVAL_SECONDS = 0.5
+UPDATE_MIN_INTERVAL_SECONDS = 0.2
 TERMINAL_EVENTS = {"message.completed", "message.failed"}
 DIAGNOSTICS_KEY = web.AppKey("diagnostics", dict)
 PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -58,6 +59,7 @@ def create_app(
     app[MESSAGE_BOT_IDS_KEY] = {}
     app[SESSION_CARD_CONFIGS_KEY] = {}
     app[UPDATE_TASKS_KEY] = {}
+    app[PENDING_UPDATE_REQUESTS_KEY] = {}
     app[BOT_ROUTER_KEY] = bot_router
     app[PROCESS_TOKEN_KEY] = process_token
     app[METRICS_KEY] = SidecarMetrics()
@@ -228,7 +230,7 @@ async def _events(request: web.Request) -> web.Response:
     lock = message_locks.setdefault(_session_key(event), asyncio.Lock())
     async with lock:
         response, post_lock_task = await _apply_event_locked(request, event)
-    if post_lock_task is not None:
+    if post_lock_task is not None and _should_await_card_update(event):
         await post_lock_task
     return response
 
@@ -258,6 +260,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     message_bot_ids: Dict[str, str] = request.app[MESSAGE_BOT_IDS_KEY]
     last_update_at: Dict[str, float] = request.app[LAST_UPDATE_AT_KEY]
     update_tasks: Dict[str, asyncio.Task] = request.app[UPDATE_TASKS_KEY]
+    pending_update_requests: Dict[str, bool] = request.app[PENDING_UPDATE_REQUESTS_KEY]
     _record_profile_diagnostics(request.app, event)
     session = sessions.get(_session_key(event))
 
@@ -427,14 +430,21 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     if applied and feishu_message_id is not None:
         if event.event in TERMINAL_EVENTS:
             _store_card_summary(request.app, event, session, feishu_message_id)
+        session_key = _session_key(event)
+        previous_task = update_tasks.get(session_key)
+        is_terminal = event.event in TERMINAL_EVENTS
+        has_pending_update = previous_task is not None and not previous_task.done()
         should_update = _should_update_card(last_update_at, event)
+        if should_update and has_pending_update and not is_terminal:
+            pending_update_requests[session_key] = True
+            should_update = False
         if should_update:
+            if is_terminal:
+                pending_update_requests.pop(session_key, None)
             # 锁内立即标记，防止后续事件在API完成前重复触发更新
-            last_update_at[_session_key(event)] = time.monotonic()
+            last_update_at[session_key] = time.monotonic()
             card = _render_session_card(request, session)
             bot_id = message_bot_ids.get(_session_key(event))
-            is_terminal = event.event in TERMINAL_EVENTS
-            session_key = _session_key(event)
 
             async def _do_update():
                 if is_terminal:
@@ -445,8 +455,6 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 if not updated and is_terminal:
                     await _retry_terminal_update(request.app, feishu_message_id, card, bot_id)
 
-            previous_task = update_tasks.get(session_key)
-
             async def _queued_update():
                 if previous_task is not None:
                     try:
@@ -455,6 +463,22 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                         logger.exception("previous Feishu card update task failed")
                 try:
                     await _do_update()
+                    while (
+                        not is_terminal
+                        and update_tasks.get(session_key) is current_task
+                        and pending_update_requests.pop(session_key, None) is not None
+                    ):
+                        latest_session = sessions.get(session_key)
+                        if latest_session is None or latest_session.status in {"completed", "failed"}:
+                            break
+                        last_update_at[session_key] = time.monotonic()
+                        latest_card = _render_session_card(request, latest_session)
+                        await _update_card_for_app(
+                            request.app,
+                            feishu_message_id,
+                            latest_card,
+                            bot_id,
+                        )
                 finally:
                     if update_tasks.get(session_key) is current_task:
                         update_tasks.pop(session_key, None)
@@ -568,6 +592,10 @@ def _record_profile_diagnostics(app: web.Application, event: SidecarEvent) -> No
 def _delivery_kind(event: SidecarEvent) -> str:
     data = event.data if isinstance(event.data, dict) else {}
     return str(data.get("delivery_kind") or "").strip().lower()
+
+
+def _should_await_card_update(event: SidecarEvent) -> bool:
+    return event.event in TERMINAL_EVENTS
 
 
 def _safe_profile_id(value: Any) -> str:

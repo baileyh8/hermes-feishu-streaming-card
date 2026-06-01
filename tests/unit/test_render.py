@@ -72,15 +72,17 @@ def test_render_pending_interaction_as_buttons():
 
     card = render_card(session)
 
-    actions = [
+    buttons = [
         element
         for element in card["body"]["elements"]
-        if element.get("element_id") == "interaction_actions"
-    ][0]["actions"]
-    assert [item["text"]["content"] for item in actions] == ["允许一次", "拒绝"]
-    assert actions[0]["value"]["interaction_id"] == "approval-1"
-    assert actions[0]["value"]["choice"] == "once"
-    assert actions[0]["value"]["token"]
+        if element.get("tag") == "button"
+    ]
+    assert [item["text"]["content"] for item in buttons] == ["允许一次", "拒绝"]
+    assert buttons[0]["behaviors"][0]["type"] == "callback"
+    assert buttons[0]["behaviors"][0]["value"]["interaction_id"] == "approval-1"
+    assert buttons[0]["behaviors"][0]["value"]["choice"] == "once"
+    assert buttons[0]["behaviors"][0]["value"]["token"]
+    assert "interaction_actions" not in str(card)
     assert "rm -rf /tmp/demo" in str(card)
 
 
@@ -126,9 +128,8 @@ def test_render_completed_interaction_replaces_buttons_with_choice():
     )
 
     card = render_card(session)
-    element_ids = [element.get("element_id") for element in card["body"]["elements"]]
 
-    assert "interaction_actions" not in element_ids
+    assert not any(element.get("tag") == "button" for element in card["body"]["elements"])
     assert "已选择：允许一次" in str(card)
     assert "Bailey" in str(card)
 

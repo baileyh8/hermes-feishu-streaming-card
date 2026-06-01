@@ -119,28 +119,27 @@ def _render_interaction_elements(session: CardSession) -> list[Dict[str, Any]]:
         }
     ]
     if interaction.status == "pending":
-        actions = []
-        for option in interaction.options:
-            actions.append(
-                {
-                    "tag": "button",
-                    "text": {"tag": "plain_text", "content": option.label},
-                    "type": _button_type(option.style),
-                    "value": {
-                        "hfc_action": "interaction.select",
-                        "interaction_id": interaction.interaction_id,
-                        "choice": option.value,
-                        "choice_label": option.label,
-                        "token": interaction.callback_token,
-                    },
-                }
-            )
-        if actions:
+        for index, option in enumerate(interaction.options):
             elements.append(
                 {
-                    "tag": "action",
-                    "element_id": "interaction_actions",
-                    "actions": actions,
+                    "tag": "button",
+                    "element_id": f"hfc_btn_{index}",
+                    "text": {"tag": "plain_text", "content": option.label},
+                    "type": _button_type(option.style),
+                    "size": "medium",
+                    "width": "default",
+                    "behaviors": [
+                        {
+                            "type": "callback",
+                            "value": {
+                                "hfc_action": "interaction.select",
+                                "interaction_id": interaction.interaction_id,
+                                "choice": option.value,
+                                "choice_label": option.label,
+                                "token": interaction.callback_token,
+                            },
+                        }
+                    ],
                 }
             )
         return elements

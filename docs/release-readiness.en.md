@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.5.0`. This release keeps the sidecar-only mainline and focuses on the Feishu card button interaction loop for Hermes approval/choice prompts, plus fixes for multi-reply text fallback, long table/code raw Markdown, thinking truncation, and cron deliver precedence.
+Current package version: `3.5.1`. This release keeps the sidecar-only mainline and builds on the V3.5.0 Feishu card button interaction loop with fixes for streaming update ordering/backlog, queued follow-up native text spillover, Feishu JSON 2.0 button rendering, and `.env` credential loading during manual sidecar restarts.
 
 ## Ready
 
@@ -18,6 +18,8 @@ Current package version: `3.5.0`. This release keeps the sidecar-only mainline a
 - Feishu card button interactions are covered through local mock acceptance for `interaction.requested`, `/card/actions`, and `/interactions/{interaction_id}`.
 - Long Markdown tables and fenced code blocks over `MAIN_CONTENT_CHUNK_CHARS` are split as complete repeated structures to avoid raw Markdown rendering.
 - Thinking/interim assistant messages use complete `append_block` chunks to avoid delta accumulation truncation or missing text.
+- Runtime event sends, sidecar updates, and terminal PATCH calls are ordered/coalesced for the same message id.
+- `load_config()` reads a `.env` file next to the selected config file while preserving real process environment variables as the highest-precedence source.
 - GitHub Actions Python 3.9 / 3.12 test matrix for PRs and pushes.
 
 ## Required Pre-release Checks

@@ -1,14 +1,23 @@
-# Hermes Feishu Streaming Card Plugin V3.5.0
+# Hermes Feishu Streaming Card Plugin V3.5.1
 
 [中文](README.md) | [English](README.en.md)
 
 ![Hermes Feishu Streaming Card cover](docs/assets/readme-cover.png)
 
-Streaming card messages for the Feishu/Lark platform in Hermes Agent Gateway. V3.5.0 **sidecar-only** architecture with Hermes 0.13.0+/0.14.0 and `v2026.5.16+` compatibility, multi-profile in-process isolation, multi-bot routing, Feishu button interactions, DeepSeek chain-of-thought compatibility, and structure-aware Markdown table/code rendering.
+Streaming card messages for the Feishu/Lark platform in Hermes Agent Gateway. V3.5.1 keeps the **sidecar-only** architecture and focuses on making real Feishu cards interactive, ordered, and reliably completed across Hermes 0.13.0+/0.14.0 and `v2026.5.16+`, while preserving older Hermes compatibility.
 
 ![Real Feishu streaming card screenshot](docs/assets/feishu-weather-card.png)
 
-## V3.5.0 Highlights
+## V3.5.1 Patch Highlights
+
+- **End-to-end ordering for one card**: runtime sends, sidecar updates, and terminal Feishu PATCH calls are ordered/coalesced by message id, reducing thinking/answer truncation under backlog.
+- **Faster streaming updates**: non-terminal events ACK quickly and card updates are coalesced; terminal events remain awaited so completed cards land before the task finishes.
+- **Feishu JSON 2.0 buttons fixed**: interaction buttons now use direct `button` elements with `behaviors.callback`, avoiding PATCH failures in active cards.
+- **Queued follow-up native text suppression**: queued completions emit `message.completed` into the card path and suppress native resend once the Feishu card is delivered.
+- **`.env` credential fallback**: `load_config()` reads `.env` next to the selected config file, so manual sidecar restarts do not silently enter no-op mode when credentials live beside Hermes config.
+- **Chinese README homepage reorganized**: the homepage now leads with user scenarios, V3.5.x value, installation, troubleshooting, and release history.
+
+## V3.5.0 Feature Highlights
 
 - **Feishu button interaction loop**: Hermes approval and choice prompts are rendered inside the same streaming card; clicking a button records the choice in the sidecar, lets the Hermes hook continue, and updates the original card.
 - **issue #41 fixed**: multi-reply and newer Hermes streaming flows keep using card updates, so final answers no longer fall back to native text after the first reply.
@@ -57,7 +66,7 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 
 ## Upgrading
 
-Upgrading from V3.2.x/V3.3.0/V3.4.x to V3.5.0 is backward-compatible. **Single-profile configs need no changes.** For Hermes 0.13.0+/0.14.0 or `v2026.5.16+`, you must run `install --hermes-dir ... --yes` again so the installer writes the `gateway_run_013_plus` hook strategy; Hermes `v2026.4.x` continues to use `legacy_gateway_run`.
+Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.0 to V3.5.1 is backward-compatible. **Single-profile configs need no changes.** For Hermes 0.13.0+/0.14.0 or `v2026.5.16+`, you must run `install --hermes-dir ... --yes` again so the installer writes the `gateway_run_013_plus` hook strategy; Hermes `v2026.4.x` continues to use `legacy_gateway_run`.
 
 ```bash
 # 1. Stop sidecar
@@ -65,12 +74,12 @@ python3 -m hermes_feishu_card.cli stop --config ~/.hermes_feishu_card/config.yam
 
 # 2. Update code
 cd /path/to/hermes-feishu-streaming-card
-git checkout v3.5.0 && pip install -e ".[test]" --upgrade
+git checkout v3.5.1 && pip install -e ".[test]" --upgrade
 
 # 3. Diagnose Hermes hook strategy and anchors
 python3 -m hermes_feishu_card.cli doctor --config ~/.hermes_feishu_card/config.yaml --hermes-dir ~/.hermes/hermes-agent
 
-# 4. Reinstall hook (V3.5.0 selects hook_strategy by Hermes version)
+# 4. Reinstall hook (V3.5.1 selects hook_strategy by Hermes version)
 python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --yes
 
 # 5. Start sidecar
@@ -229,6 +238,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v3.5.1](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.5.1) | 2026-06 | Streaming update ordering/coalescing, Feishu JSON 2.0 button fix, queued follow-up suppression, `.env` credential fallback, Chinese README refresh |
 | [v3.5.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.5.0) | 2026-06 | Feishu button interaction loop, issue #41, PR #42, long table/code splitting, thinking truncation fix |
 | [v3.4.3](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.4.3) | 2026-05 | Fixes issue #39, adds structure-aware Markdown splitting, and verifies Hermes v0.14.0/v2026.5.16+ support |
 | [v3.4.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.4.2) | 2026-05 | Fixes issue #31, preventing concurrent PATCH and sequence races from rolling back or dropping streaming card text |

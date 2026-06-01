@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.5.1 — 2026-06-01
+
+### Fixed
+- Feishu card updates are now ordered end-to-end for the same message id, covering Hermes runtime sends, interaction requests, sidecar state updates, and terminal card patches so thinking/answer text no longer rolls back or truncates under backlog.
+- Sidecar non-terminal updates are coalesced and acknowledged quickly while terminal events remain awaited, improving perceived streaming speed and preventing a long update backlog from outliving `message.completed`.
+- Feishu JSON 2.0 interaction buttons now use direct `button` elements with `behaviors.callback`, fixing card PATCH failures when approval/choice buttons render inside an active card.
+- Queued follow-up completions now emit `message.completed` into the card path and suppress native resend once the Feishu card is delivered, preventing final answers from spilling into gray plain-text messages.
+- Runtime delta extraction preserves raw boundary spaces for `thinking.delta` and `answer.delta`, preventing sentence/code spacing loss while streaming.
+- `load_config()` reads a `.env` file next to the selected config file before applying real process environment variables, preventing manual sidecar restarts from silently entering no-op mode when Feishu credentials live beside Hermes config.
+
+### Docs
+- Reorganized the Chinese README homepage around the V3.5.x value proposition, live user scenarios, installation/upgrade flow, troubleshooting, and version history.
+
+### Tests
+- Added regression coverage for ordered runtime sends, interaction event retries on transient sidecar state, Feishu JSON 2.0 button callback payloads, queued follow-up suppression, `.env` config fallback, and update coalescing.
+
 ## V3.5.0 — 2026-06-01
 
 ### Added

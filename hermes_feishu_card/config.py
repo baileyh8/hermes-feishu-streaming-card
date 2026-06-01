@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 import os
 from pathlib import Path
+import shlex
 from typing import Any
 
 import yaml
@@ -66,8 +68,9 @@ def load_config(path: str | Path) -> dict[str, dict[str, Any]]:
             profile_cfg.setdefault("bindings", copy.deepcopy(DEFAULT_CONFIG["bindings"]))
             profile_cfg["card"] = profile_card
 
-    config["server"]["port"] = _normalize_port(config["server"]["port"], "server.port")
+    _apply_env_file_overrides(config, config_path)
     _apply_env_overrides(config)
+    config["server"]["port"] = _normalize_port(config["server"]["port"], "server.port")
     return config
 
 
@@ -83,11 +86,26 @@ def _merge_sections(config: dict[str, dict[str, Any]], loaded: dict[str, Any]) -
 
 
 def _apply_env_overrides(config: dict[str, dict[str, Any]]) -> None:
-    if "HERMES_FEISHU_CARD_HOST" in os.environ:
-        config.setdefault("server", {})["host"] = os.environ["HERMES_FEISHU_CARD_HOST"]
+    _apply_env_mapping_overrides(config, os.environ)
 
-    if "HERMES_FEISHU_CARD_PORT" in os.environ:
-        raw_port = os.environ["HERMES_FEISHU_CARD_PORT"]
+
+def _apply_env_file_overrides(config: dict[str, dict[str, Any]], config_path: Path) -> None:
+    dotenv_path = config_path.parent / ".env"
+    if not dotenv_path.exists() or not dotenv_path.is_file():
+        return
+    values = _read_dotenv(dotenv_path)
+    if values:
+        _apply_env_mapping_overrides(config, values)
+
+
+def _apply_env_mapping_overrides(
+    config: dict[str, dict[str, Any]], values: Mapping[str, str]
+) -> None:
+    if "HERMES_FEISHU_CARD_HOST" in values:
+        config.setdefault("server", {})["host"] = values["HERMES_FEISHU_CARD_HOST"]
+
+    if "HERMES_FEISHU_CARD_PORT" in values:
+        raw_port = values["HERMES_FEISHU_CARD_PORT"]
         port = _normalize_port(raw_port, "HERMES_FEISHU_CARD_PORT")
         config.setdefault("server", {})["port"] = port
 
@@ -96,11 +114,56 @@ def _apply_env_overrides(config: dict[str, dict[str, Any]]) -> None:
     if isinstance(profiles, dict) and profiles:
         return
 
-    if "FEISHU_APP_ID" in os.environ:
-        config.setdefault("feishu", {})["app_id"] = os.environ["FEISHU_APP_ID"]
+    if "FEISHU_APP_ID" in values:
+        config.setdefault("feishu", {})["app_id"] = values["FEISHU_APP_ID"]
 
-    if "FEISHU_APP_SECRET" in os.environ:
-        config.setdefault("feishu", {})["app_secret"] = os.environ["FEISHU_APP_SECRET"]
+    if "FEISHU_APP_SECRET" in values:
+        config.setdefault("feishu", {})["app_secret"] = values["FEISHU_APP_SECRET"]
+
+
+def _read_dotenv(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        parsed = _parse_dotenv_line(line)
+        if parsed is None:
+            continue
+        key, value = parsed
+        values[key] = value
+    return values
+
+
+def _parse_dotenv_line(line: str) -> tuple[str, str] | None:
+    text = line.strip()
+    if not text or text.startswith("#"):
+        return None
+    if text.startswith("export "):
+        text = text[7:].lstrip()
+    if "=" not in text:
+        return None
+    key, raw_value = text.split("=", 1)
+    key = key.strip()
+    if not key:
+        return None
+    return key, _parse_dotenv_value(raw_value)
+
+
+def _parse_dotenv_value(raw_value: str) -> str:
+    value = raw_value.strip()
+    if not value:
+        return ""
+    if value[0] in {"'", '"'}:
+        try:
+            parts = shlex.split(value, posix=True)
+        except ValueError:
+            return value.strip(value[0])
+        if parts:
+            return parts[0]
+        return ""
+    return value
 
 
 def _normalize_port(value: Any, name: str) -> int:

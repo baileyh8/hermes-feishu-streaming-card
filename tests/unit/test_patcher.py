@@ -150,6 +150,32 @@ def test_apply_patch_inserts_completion_hook_before_response_return():
     assert patched.index(patcher.COMPLETE_PATCH_BEGIN) < patched.index("    return response\n")
 
 
+def test_apply_patch_suppresses_queued_followup_native_resend():
+    content = (
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "    event_message_id = event.message_id\n"
+        "    response = await self._run_agent(event, source)\n"
+        "    return response\n"
+        "\n"
+        "async def _run_agent(self, event, source):\n"
+        "    result = {'final_response': 'done'}\n"
+        "    _already_streamed = False\n"
+        "    first_response = result.get(\"final_response\", \"\")\n"
+        "    if first_response and not _already_streamed:\n"
+        "        await adapter.send(source.chat_id, first_response)\n"
+    )
+
+    patched = patcher.apply_patch(content)
+
+    assert patcher.QUEUED_COMPLETE_PATCH_BEGIN in patched
+    assert "_hfc_card_delivered = await _hfc_emit_async" in patched
+    assert "_already_streamed = True" in patched
+    assert patched.index(patcher.QUEUED_COMPLETE_PATCH_BEGIN) < patched.index(
+        "    if first_response and not _already_streamed:\n"
+    )
+    assert patcher.remove_patch(patched) == content
+
+
 def test_apply_patch_upgrades_legacy_completion_hook_block():
     content = (
         "async def _handle_message_with_agent(message):\n"
@@ -332,6 +358,7 @@ def test_apply_patch_inserts_streaming_callback_hooks():
         in patched
     )
     assert '"mode": "append_block"' in patched
+    assert '"_hfc_loop": locals().get("_loop_for_step")' in patched
     assert '}, event_name="tool.updated"):\n                    return\n' in patched
     assert "if text and _run_still_current():" in patched
     assert "if text and not already_streamed and _run_still_current():" in patched

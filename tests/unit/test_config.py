@@ -213,6 +213,49 @@ def test_load_config_applies_supported_environment_overrides(tmp_path, monkeypat
     assert config["feishu"] == {"app_id": "cli_app", "app_secret": "cli_secret"}
 
 
+def test_load_config_applies_dotenv_next_to_config(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "HERMES_FEISHU_CARD_HOST=0.0.0.0",
+                "HERMES_FEISHU_CARD_PORT=9012",
+                "FEISHU_APP_ID=dotenv_app",
+                "FEISHU_APP_SECRET='dotenv secret'",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config["server"] == {"host": "0.0.0.0", "port": 9012}
+    assert config["feishu"] == {
+        "app_id": "dotenv_app",
+        "app_secret": "dotenv secret",
+    }
+
+
+def test_load_config_environment_overrides_dotenv(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("", encoding="utf-8")
+    (tmp_path / ".env").write_text(
+        "HERMES_FEISHU_CARD_PORT=9012\n"
+        "FEISHU_APP_ID=dotenv_app\n"
+        "FEISHU_APP_SECRET=dotenv_secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_FEISHU_CARD_PORT", "9013")
+    monkeypatch.setenv("FEISHU_APP_ID", "env_app")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "env_secret")
+
+    config = load_config(config_path)
+
+    assert config["server"]["port"] == 9013
+    assert config["feishu"] == {"app_id": "env_app", "app_secret": "env_secret"}
+
+
 def test_load_config_rejects_invalid_environment_port(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_FEISHU_CARD_PORT", "not-a-port")
 

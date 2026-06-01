@@ -50,6 +50,9 @@ _ACTIVE_FALLBACK_MESSAGE_IDS: dict[tuple[str, str, str | None], str] = {}
 _CURRENT_FALLBACK_KEYS: dict[tuple[str, str], tuple[str, str, str | None]] = {}
 _FALLBACK_LIFECYCLE_COUNTS: dict[tuple[str, str], int] = {}
 _AMBIGUOUS_TERMINAL = object()
+_SEND_LOCKS: dict[tuple[int, str, str], asyncio.Lock] = {}
+_SEND_LOCKS_GUARD = threading.Lock()
+_POST_FAILED = object()
 
 
 def reset_runtime_state() -> None:
@@ -58,6 +61,8 @@ def reset_runtime_state() -> None:
     _ACTIVE_FALLBACK_MESSAGE_IDS.clear()
     _CURRENT_FALLBACK_KEYS.clear()
     _FALLBACK_LIFECYCLE_COUNTS.clear()
+    with _SEND_LOCKS_GUARD:
+        _SEND_LOCKS.clear()
 
 
 def load_runtime_config() -> RuntimeConfig:
@@ -99,7 +104,11 @@ def emit_from_hermes_locals(
             return False
         asyncio.get_running_loop()
         asyncio.create_task(
-            _send_fail_open(config.event_url, payload, config.timeout_seconds)
+            _send_fail_open_ordered(
+                config.event_url,
+                payload,
+                _timeout_for_event(config, event_name),
+            )
         )
         return True
     except Exception:
@@ -118,7 +127,11 @@ def emit_from_hermes_locals_threadsafe(
         if payload is None:
             return False
         if "_hfc_loop" in local_vars:
-            coroutine = _send_fail_open(config.event_url, payload, config.timeout_seconds)
+            coroutine = _send_fail_open_ordered(
+                config.event_url,
+                payload,
+                _timeout_for_event(config, event_name),
+            )
             try:
                 asyncio.run_coroutine_threadsafe(coroutine, local_vars["_hfc_loop"])
             except Exception:
@@ -127,7 +140,11 @@ def emit_from_hermes_locals_threadsafe(
         else:
             asyncio.get_running_loop()
             asyncio.create_task(
-                _send_fail_open(config.event_url, payload, config.timeout_seconds)
+                _send_fail_open_ordered(
+                    config.event_url,
+                    payload,
+                    _timeout_for_event(config, event_name),
+                )
             )
         return True
     except Exception:
@@ -145,7 +162,11 @@ async def emit_from_hermes_locals_async(
         payload = build_event(event_name, local_vars)
         if payload is None:
             return False
-        await _post_json(config.event_url, payload, _timeout_for_event(config, event_name))
+        await _post_json_ordered(
+            config.event_url,
+            payload,
+            _timeout_for_event(config, event_name),
+        )
         return True
     except Exception:
         return False
@@ -212,17 +233,57 @@ def request_interaction_from_hermes_locals(
         )
         if payload is None:
             return None
-        if not _post_json_sync(
-            config.event_url, payload, _timeout_for_event(config, payload["event"])
-        ):
+        post_result = _post_interaction_event(
+            local_vars,
+            config.event_url,
+            payload,
+            _timeout_for_event(config, payload["event"]),
+        )
+        if post_result is _POST_FAILED:
             return None
+        if isinstance(post_result, dict) and post_result.get("ok") is False:
+            return None
+        if isinstance(post_result, dict) and post_result.get("applied") is False:
+            for _ in range(2):
+                time.sleep(0.05)
+                payload = build_interaction_event(
+                    local_vars,
+                    kind=kind,
+                    interaction_id=interaction_id,
+                    prompt=prompt,
+                    options=options or [],
+                    description=description,
+                    timeout_seconds=timeout_seconds,
+                )
+                if payload is None:
+                    return None
+                post_result = _post_interaction_event(
+                    local_vars,
+                    config.event_url,
+                    payload,
+                    _timeout_for_event(config, payload["event"]),
+                )
+                if post_result is _POST_FAILED:
+                    return None
+                if isinstance(post_result, dict) and post_result.get("ok") is False:
+                    return None
+                if not (
+                    isinstance(post_result, dict)
+                    and post_result.get("applied") is False
+                ):
+                    break
+            else:
+                return None
         base_url = _summary_base_url(config.event_url)
         url = f"{base_url}/interactions/{parse.quote(interaction_id, safe='')}"
         timeout = _interaction_timeout(timeout_seconds)
         poll_interval = _interaction_poll_interval(poll_interval_seconds)
         deadline = time.monotonic() + timeout
         while True:
-            result = _get_json_sync(url, config.timeout_seconds)
+            try:
+                result = _get_json_sync(url, config.timeout_seconds)
+            except Exception:
+                result = None
             if isinstance(result, dict) and result.get("status") in {"completed", "failed"}:
                 return result
             if time.monotonic() >= deadline:
@@ -338,6 +399,29 @@ def _post_json_sync(url: str, payload: dict[str, Any], timeout: float) -> bool:
     return result["error"] is None
 
 
+def _post_interaction_event(
+    local_vars: dict[str, Any],
+    url: str,
+    payload: dict[str, Any],
+    timeout: float,
+) -> dict[str, Any] | None | object:
+    loop = local_vars.get("_hfc_loop")
+    if loop is not None:
+        try:
+            if loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    _post_json_ordered_response(url, payload, timeout),
+                    loop,
+                )
+                return future.result(timeout=max(1.0, timeout + 1.0))
+        except Exception:
+            return _POST_FAILED
+    try:
+        return _post_json_sync_response(url, payload, timeout)
+    except Exception:
+        return _POST_FAILED
+
+
 def _timeout_for_event(config: RuntimeConfig, event_name: str) -> float:
     if event_name in {"message.completed", "message.failed"}:
         return max(config.timeout_seconds, TERMINAL_TIMEOUT_SECONDS)
@@ -353,6 +437,50 @@ async def _send_fail_open(
         return
 
 
+async def _send_fail_open_ordered(
+    url: str, payload: dict[str, Any], timeout: float
+) -> None:
+    try:
+        await _post_json_ordered(url, payload, timeout)
+    except Exception:
+        return
+
+
+async def _post_json_ordered(
+    url: str, payload: dict[str, Any], timeout: float
+) -> None:
+    lock = _send_lock(url, payload)
+    if lock is None:
+        await _post_json(url, payload, timeout)
+        return
+    async with lock:
+        await _post_json(url, payload, timeout)
+
+
+async def _post_json_ordered_response(
+    url: str, payload: dict[str, Any], timeout: float
+) -> Any:
+    lock = _send_lock(url, payload)
+    if lock is None:
+        return await _post_json_response(url, payload, timeout)
+    async with lock:
+        return await _post_json_response(url, payload, timeout)
+
+
+def _send_lock(url: str, payload: dict[str, Any]) -> asyncio.Lock | None:
+    message_id = payload.get("message_id")
+    if not isinstance(message_id, str) or not message_id:
+        return None
+    loop = asyncio.get_running_loop()
+    key = (id(loop), url, message_id)
+    with _SEND_LOCKS_GUARD:
+        lock = _SEND_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SEND_LOCKS[key] = lock
+        return lock
+
+
 async def _post_json(url: str, payload: dict[str, Any], timeout: float) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(
@@ -363,6 +491,29 @@ async def _post_json(url: str, payload: dict[str, Any], timeout: float) -> None:
     )
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _open_request, req, timeout)
+
+
+async def _post_json_response(url: str, payload: dict[str, Any], timeout: float) -> Any:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _open_json_request, req, timeout)
+
+
+def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) -> Any:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    return _open_json_request(req, timeout)
 
 
 async def lookup_card_summary(
@@ -679,9 +830,9 @@ def _event_data(
         "profile_source": profile_source,
     }
     if event_name in {"thinking.delta", "answer.delta"}:
-        text = _first_string(local_vars, ("text", "delta", "delta_text", "content"))
+        text = _first_raw_string(local_vars, ("text", "delta", "delta_text", "content"))
         if text is None:
-            text = _first_attr_string(message_obj, ("text", "content"))
+            text = _first_attr_raw_string(message_obj, ("text", "content"))
         data["text"] = text or ""
         mode = _first_string(local_vars, ("mode", "_hfc_text_mode"))
         if mode:
@@ -829,6 +980,14 @@ def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
         value = source.get(name)
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return None
+
+
+def _first_raw_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
+    for name in names:
+        value = source.get(name)
+        if isinstance(value, str) and value:
+            return value
     return None
 
 
@@ -1000,6 +1159,21 @@ def _first_attr_string(obj: Any, names: tuple[str, ...]) -> str | None:
             continue
         if isinstance(value, str) and value.strip():
             return value.strip()
+    return None
+
+
+def _first_attr_raw_string(obj: Any, names: tuple[str, ...]) -> str | None:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return _first_raw_string(obj, names)
+    for name in names:
+        try:
+            value = getattr(obj, name, None)
+        except Exception:
+            continue
+        if isinstance(value, str) and value:
+            return value
     return None
 
 
