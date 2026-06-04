@@ -205,7 +205,10 @@ def test_module_doctor_json_reports_skipped_hermes(tmp_path):
 
 def test_module_doctor_json_reports_supported_hermes_and_clean_install_state(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text("server:\n  port: 9013\n", encoding="utf-8")
+    config_path.write_text(
+        "server:\n  port: 9013\nstreaming:\n  enabled: true\n  transport: edit\n",
+        encoding="utf-8",
+    )
 
     result = run_cli(
         "doctor",
