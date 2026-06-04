@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -205,8 +206,11 @@ def test_module_doctor_json_reports_skipped_hermes(tmp_path):
 
 def test_module_doctor_json_reports_supported_hermes_and_clean_install_state(tmp_path):
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        "server:\n  port: 9013\nstreaming:\n  enabled: true\n  transport: edit\n",
+    config_path.write_text("server:\n  port: 9013\n", encoding="utf-8")
+    hermes_dir = tmp_path / "hermes"
+    shutil.copytree(FIXTURE, hermes_dir)
+    (hermes_dir / "config.yaml").write_text(
+        "streaming:\n  enabled: true\n  transport: edit\n",
         encoding="utf-8",
     )
 
@@ -215,7 +219,7 @@ def test_module_doctor_json_reports_supported_hermes_and_clean_install_state(tmp
         "--config",
         str(config_path),
         "--hermes-dir",
-        str(FIXTURE),
+        str(hermes_dir),
         "--json",
     )
 
