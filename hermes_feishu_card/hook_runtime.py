@@ -734,7 +734,7 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
             "delivery_kind": "cron",
             "profile_id": profile_id,
             "profile_source": profile_source,
-            "attachments": _extract_attachments(content),
+            "attachments": _extract_attachments(content, local_vars),
         },
     }
 
@@ -883,7 +883,7 @@ def _event_data(
         answer = _first_string(local_vars, ("answer", "response", "final_answer", "text", "content")) or ""
         data.update({
             "answer": answer,
-            "attachments": _extract_attachments(answer),
+            "attachments": _extract_attachments(answer, local_vars),
             "duration": _completion_duration(local_vars),
             "model": _completion_model(local_vars),
             "tokens": _completion_tokens(local_vars, answer),
@@ -991,9 +991,20 @@ def _first_raw_string(source: dict[str, Any], names: tuple[str, ...]) -> str | N
     return None
 
 
-def _extract_attachments(text: str) -> list[dict[str, str]]:
+def _extract_attachments(
+    text: str, local_vars: dict[str, Any] | None = None
+) -> list[dict[str, str]]:
     seen = set()
     attachments = []
+    for candidate in _structured_attachment_candidates(local_vars or {}):
+        attachment = _coerce_attachment(candidate)
+        if attachment is None:
+            continue
+        name = attachment["name"]
+        if name in seen:
+            continue
+        seen.add(name)
+        attachments.append(attachment)
     for raw in list(MEDIA_RE.findall(text or "")) + list(LOCAL_FILE_RE.findall(text or "")):
         name = _attachment_name(raw)
         if not name or name in seen:
@@ -1003,8 +1014,106 @@ def _extract_attachments(text: str) -> list[dict[str, str]]:
     return attachments
 
 
+def _structured_attachment_candidates(local_vars: dict[str, Any]) -> list[Any]:
+    candidates: list[Any] = []
+    for name in (
+        "attachments",
+        "attachment",
+        "files",
+        "file",
+        "media_files",
+        "media",
+        "images",
+        "image_files",
+        "audio_files",
+        "video_files",
+    ):
+        value = local_vars.get(name)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple, set)):
+            candidates.extend(value)
+        else:
+            candidates.append(value)
+    return candidates
+
+
+def _coerce_attachment(value: Any) -> dict[str, str] | None:
+    if isinstance(value, str):
+        name = _attachment_name(value)
+        if not name:
+            return None
+        return {"kind": _attachment_kind(name), "name": name, "summary": name}
+    if isinstance(value, dict):
+        raw_name = _first_attachment_mapping_value(
+            value,
+            ("name", "filename", "file_name", "path", "file_path", "url", "display_name", "summary"),
+        )
+        summary = _first_attachment_mapping_value(
+            value,
+            ("summary", "display_name", "title", "name", "filename", "file_name"),
+        )
+        kind_hint = _first_attachment_mapping_value(
+            value,
+            ("kind", "type", "media_type", "mime_type", "mime"),
+        )
+    else:
+        raw_name = _first_attachment_attr_value(
+            value,
+            ("name", "filename", "file_name", "path", "file_path", "url", "display_name", "summary"),
+        )
+        summary = _first_attachment_attr_value(
+            value,
+            ("summary", "display_name", "title", "name", "filename", "file_name"),
+        )
+        kind_hint = _first_attachment_attr_value(
+            value,
+            ("kind", "type", "media_type", "mime_type", "mime"),
+        )
+    name = _attachment_name(raw_name or "")
+    if not name:
+        return None
+    clean_summary = str(summary or name).strip() or name
+    return {
+        "kind": _attachment_kind_from_hint(name, kind_hint),
+        "name": name,
+        "summary": clean_summary,
+    }
+
+
+def _first_attachment_mapping_value(
+    value: dict[str, Any], names: tuple[str, ...]
+) -> str:
+    for name in names:
+        item = value.get(name)
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    return ""
+
+
+def _first_attachment_attr_value(value: Any, names: tuple[str, ...]) -> str:
+    for name in names:
+        item = getattr(value, name, None)
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    return ""
+
+
 def _attachment_name(raw: str) -> str:
     return Path(raw.strip().rstrip(ATTACHMENT_TRAILING_PUNCTUATION)).name.strip()
+
+
+def _attachment_kind_from_hint(name: str, hint: str) -> str:
+    normalized = str(hint or "").strip().lower()
+    if normalized.startswith("image/") or normalized in {"image", "img", "photo"}:
+        return "image"
+    if normalized.startswith("audio/") or normalized in {"audio", "voice"}:
+        return "audio"
+    if normalized.startswith("video/") or normalized == "video":
+        return "video"
+    if normalized in {"file", "document", "doc"}:
+        return "file"
+    return _attachment_kind(name)
 
 
 def _attachment_kind(name: str) -> str:

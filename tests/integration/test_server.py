@@ -852,6 +852,35 @@ async def test_terminal_update_failure_still_accepts_event_to_prevent_native_fal
     assert metrics["feishu_update_failures"] == sidecar_server.UPDATE_MAX_ATTEMPTS
 
 
+async def test_health_reports_last_attachment_event_for_native_delivery(client):
+    test_client, _ = client
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    completed = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            1,
+            {
+                "answer": "最终答案",
+                "attachments": [
+                    {"kind": "image", "name": "cover.png", "summary": "cover.png"}
+                ],
+            },
+        ),
+    )
+
+    assert completed.status == 200
+    health = await test_client.get("/health")
+    diagnostics = (await health.json())["diagnostics"]
+    assert diagnostics["last_attachment_event"] == {
+        "message_id": "hermes-message-1",
+        "event": "message.completed",
+        "attachment_count": 1,
+        "native_delivery": "allowed",
+    }
+
+
 async def test_terminal_update_failure_is_retried_in_background(client, monkeypatch):
     test_client, feishu_client = client
     feishu_client.update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
@@ -1075,6 +1104,53 @@ async def test_health_reports_safe_routing_diagnostics_without_secrets():
     assert routing["last_route_error"] == ""
     assert "registry-secret" not in str(body)
     assert "secret" not in routing
+
+
+async def test_health_routing_groups_multi_profile_diagnostics_without_secrets():
+    factories = {
+        "default": FakeFeishuClientFactory(),
+        "work": FakeFeishuClientFactory(),
+    }
+
+    def bot_router(event):
+        return ("sales", "bindings.chats")
+
+    app = create_app(factories, bot_router=bot_router)
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started",
+                0,
+                {"profile_id": "work", "profile_source": "env"},
+                chat_id="oc_sales",
+            ),
+        )
+        response = await test_client.get("/health")
+        body = await response.json()
+    finally:
+        await test_client.close()
+
+    routing = body["routing"]
+    assert routing["profile_count"] == 2
+    assert routing["bot_count"] == 4
+    assert routing["chat_binding_count"] == 2
+    assert routing["last_route"] == {
+        "message_id": "hermes-message-1",
+        "chat_id": "oc_sales",
+        "profile_id": "work",
+        "bot_id": "sales",
+        "reason": "bindings.chats",
+    }
+    assert routing["profiles"]["work"]["bot_count"] == 2
+    assert routing["profiles"]["work"]["chat_binding_count"] == 1
+    assert routing["profiles"]["work"]["last_route"]["bot_id"] == "sales"
+    assert routing["profiles"]["work"]["last_route_error"] == ""
+    assert "registry-secret" not in str(routing)
+    assert "secret" not in routing["profiles"]["work"]
 
 
 async def test_route_failure_returns_502_and_reports_safe_error():

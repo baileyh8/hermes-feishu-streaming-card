@@ -644,6 +644,65 @@ def test_reinstall_refuses_to_bless_user_edited_run_py(tmp_path):
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
 
 
+def test_doctor_json_reports_changed_installed_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9015\n", encoding="utf-8")
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    run_py(hermes_dir).write_text(
+        run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n",
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(hermes_dir),
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == "warning"
+    assert report["install_state"]["checked"] is True
+    assert report["install_state"]["status"] == "changed"
+    assert report["install_state"]["manual_action_required"] is True
+    assert "run.py changed since install" in report["install_state"]["message"]
+    assert any(
+        item["code"] == "install_state_changed"
+        for item in report["recommendations"]
+    )
+
+
+def test_doctor_json_reports_repairable_missing_manifest(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9016\n", encoding="utf-8")
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    manifest_path(hermes_dir).unlink()
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(hermes_dir),
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["install_state"]["status"] == "incomplete"
+    assert report["install_state"]["automatic_repair_available"] is True
+    assert "manifest missing" in report["install_state"]["message"]
+
+
 def test_restore_refuses_changed_backup_with_manifest(tmp_path):
     hermes_dir = copy_hermes(tmp_path)
 
@@ -872,6 +931,108 @@ def test_reinstall_without_backup_refuses_user_edited_run_py(tmp_path):
     assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
     assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
     assert not backup_path(hermes_dir).exists()
+
+
+def test_repair_rebuilds_missing_manifest_for_owned_patch(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+    manifest_path(hermes_dir).unlink()
+
+    result = run_cli("repair", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert "repair ok" in result.stdout.lower()
+    assert "manifest: rebuilt" in result.stdout
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == backup
+    assert manifest_path(hermes_dir).exists()
+    reinstall = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert reinstall.returncode == 0, reinstall.stderr
+
+
+def test_repair_recreates_missing_backup_from_owned_patch(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    patched = run_py(hermes_dir).read_text(encoding="utf-8")
+    expected_backup = patcher.remove_patch(patched)
+    backup_path(hermes_dir).unlink()
+
+    result = run_cli("repair", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert "repair ok" in result.stdout.lower()
+    assert "backup: recreated" in result.stdout
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == patched
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == expected_backup
+    assert manifest_path(hermes_dir).exists()
+    restore = run_cli("restore", "--hermes-dir", str(hermes_dir), "--yes")
+    assert restore.returncode == 0, restore.stderr
+
+
+def test_repair_refuses_user_edited_installed_run_py(tmp_path):
+    hermes_dir = copy_hermes(tmp_path)
+
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    edited = run_py(hermes_dir).read_text(encoding="utf-8") + "\n# user edit\n"
+    run_py(hermes_dir).write_text(edited, encoding="utf-8")
+    original_manifest = manifest_path(hermes_dir).read_text(encoding="utf-8")
+    original_backup = backup_path(hermes_dir).read_text(encoding="utf-8")
+
+    result = run_cli("repair", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode != 0
+    assert "run.py changed since install" in result.stderr
+    assert run_py(hermes_dir).read_text(encoding="utf-8") == edited
+    assert manifest_path(hermes_dir).read_text(encoding="utf-8") == original_manifest
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == original_backup
+
+
+def test_setup_repair_rebuilds_missing_manifest_before_install(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_repair")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-repair-secret")
+    monkeypatch.setattr(cli, "start_sidecar", lambda *_args: "started")
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda _config: {
+            "running": True,
+            "pid": 12345,
+            "health": {"active_sessions": 0, "metrics": {}},
+            "pid_running": True,
+        },
+    )
+
+    assert cli.main(["install", "--hermes-dir", str(hermes_dir), "--yes"]) == 0
+    manifest_path(hermes_dir).unlink()
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--repair",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "repair ok" in captured.out
+    assert "setup ok" in captured.out
+    assert manifest_path(hermes_dir).exists()
 
 
 def test_reinstall_without_state_refuses_owned_patch_in_run_py(tmp_path):

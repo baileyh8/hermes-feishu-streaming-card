@@ -473,6 +473,59 @@ def test_completed_event_extracts_attachment_summaries_from_response_field():
     } in payload["data"]["attachments"]
 
 
+def test_completed_event_extracts_structured_attachment_fields():
+    class AttachmentObject:
+        file_name = "diagram.webp"
+        path = "/tmp/diagram.webp"
+        mime_type = "image/webp"
+
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_1",
+            "message_id": "m_1",
+            "answer": "生成完成",
+            "attachments": [
+                {"name": "report.pdf", "summary": "季度报告.pdf", "kind": "file"},
+                {"path": "/tmp/photo.jpg"},
+                "/tmp/audio.wav",
+                AttachmentObject(),
+            ],
+            "files": [{"file_path": "/tmp/archive.zip"}],
+        },
+    )
+
+    attachments = payload["data"]["attachments"]
+    assert {"kind": "file", "name": "report.pdf", "summary": "季度报告.pdf"} in attachments
+    assert {"kind": "image", "name": "photo.jpg", "summary": "photo.jpg"} in attachments
+    assert {"kind": "audio", "name": "audio.wav", "summary": "audio.wav"} in attachments
+    assert {"kind": "image", "name": "diagram.webp", "summary": "diagram.webp"} in attachments
+    assert {"kind": "file", "name": "archive.zip", "summary": "archive.zip"} in attachments
+
+
+def test_completed_event_extracts_hermes_media_files_for_native_delivery_guard():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_1",
+            "message_id": "m_1",
+            "answer": "视频已生成",
+            "media_files": [
+                {"path": "/tmp/demo.mp4", "mime_type": "video/mp4"},
+                {"filename": "cover.png", "type": "image"},
+            ],
+        },
+    )
+
+    attachments = payload["data"]["attachments"]
+    assert {"kind": "video", "name": "demo.mp4", "summary": "demo.mp4"} in attachments
+    assert {"kind": "image", "name": "cover.png", "summary": "cover.png"} in attachments
+    assert (
+        hook_runtime.should_suppress_native_response("feishu", True, attachments)
+        is False
+    )
+
+
 def test_completed_event_does_not_extract_url_paths_as_local_attachments():
     payload = hook_runtime.build_event(
         "message.completed",

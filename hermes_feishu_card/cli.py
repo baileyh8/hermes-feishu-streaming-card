@@ -8,6 +8,7 @@ import sys
 import time
 from uuid import uuid4
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -53,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_bots(args)
     if args.command == "install":
         return _run_install(args)
+    if args.command == "repair":
+        return _run_repair(args)
     if args.command == "restore":
         return _run_restore(args)
     if args.command == "uninstall":
@@ -72,6 +75,9 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--config", required=True)
     doctor.add_argument("--hermes-dir")
     doctor.add_argument("--skip-hermes", action="store_true")
+    doctor_output = doctor.add_mutually_exclusive_group()
+    doctor_output.add_argument("--json", action="store_true", dest="json_output")
+    doctor_output.add_argument("--explain", action="store_true")
 
     setup = subparsers.add_parser(
         "setup",
@@ -89,6 +95,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="install the Hermes hook but do not start the sidecar",
     )
     setup.add_argument(
+        "--repair",
+        action="store_true",
+        help="repair known-safe Hermes hook install state before installing",
+    )
+    setup.add_argument(
         "--yes",
         action="store_true",
         required=True,
@@ -102,6 +113,7 @@ def _build_parser() -> argparse.ArgumentParser:
     smoke = subparsers.add_parser("smoke-feishu-card")
     smoke.add_argument("--config", default="config.yaml.example")
     smoke.add_argument("--chat-id", required=True)
+    smoke.add_argument("--profile-id")
 
     bots = subparsers.add_parser("bots")
     bot_subparsers = bots.add_subparsers(dest="bot_command")
@@ -126,8 +138,9 @@ def _build_parser() -> argparse.ArgumentParser:
     bots_test.add_argument("bot_id")
     bots_test.add_argument("--chat-id", required=True)
     bots_test.add_argument("--config", required=True)
+    bots_test.add_argument("--profile-id")
 
-    for command in ("install", "restore", "uninstall"):
+    for command in ("install", "repair", "restore", "uninstall"):
         command_parser = subparsers.add_parser(command)
         command_parser.add_argument("--hermes-dir", required=True)
         command_parser.add_argument("--yes", action="store_true", required=True)
@@ -162,6 +175,13 @@ def _run_setup(args: argparse.Namespace) -> int:
     print("doctor: ok")
     print(_format_hermes_detection(detection))
     _print_hermes_streaming_guidance(Path(args.hermes_dir))
+
+    if args.repair:
+        repair_code = _run_repair(
+            argparse.Namespace(hermes_dir=args.hermes_dir, yes=True)
+        )
+        if repair_code != 0:
+            return repair_code
 
     install_code = _run_install(
         argparse.Namespace(hermes_dir=args.hermes_dir, yes=True)
@@ -253,11 +273,40 @@ card:
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser()
     try:
-        config = load_config(args.config)
+        config = load_config(config_path)
     except Exception as exc:
+        if args.json_output:
+            print(
+                json.dumps(
+                    _doctor_error_report(config_path, exc),
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 1
+        if args.explain:
+            print(_format_doctor_explanation(_doctor_error_report(config_path, exc)))
+            return 1
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if args.json_output or args.explain:
+        report = _build_doctor_report(config_path, config, args)
+        if args.json_output:
+            print(
+                json.dumps(
+                    report,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(_format_doctor_explanation(report))
+        return _doctor_exit_code(report)
 
     host = config["server"]["host"]
     port = config["server"]["port"]
@@ -274,6 +323,413 @@ def _run_doctor(args: argparse.Namespace) -> int:
         return 0 if detection.supported else 1
     print("hermes: not checked")
     return 0
+
+
+def _doctor_error_report(config_path: Path, exc: Exception) -> dict[str, Any]:
+    return {
+        "schema_version": "1",
+        "status": "error",
+        "config": {
+            "path": str(config_path),
+            "loaded": False,
+            "error": str(exc),
+        },
+        "sidecar": {"address": None},
+        "hermes": {"checked": False, "status": "not_checked"},
+        "streaming": {
+            "status": "not_checked",
+            "message": "Hermes streaming was not checked because config loading failed.",
+        },
+        "install_state": {
+            "checked": False,
+            "status": "skipped",
+            "message": "Install state was not checked because config loading failed.",
+        },
+        "recommendations": [
+            {
+                "severity": "error",
+                "code": "config_load_failed",
+                "message": f"Config could not be loaded: {exc}",
+                "next_step": "Fix the sidecar config file and rerun doctor.",
+            }
+        ],
+    }
+
+
+def _build_doctor_report(
+    config_path: Path,
+    config: dict[str, Any],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    server = config["server"]
+    host = str(server["host"])
+    port = int(server["port"])
+    recommendations: list[dict[str, str]] = []
+    report: dict[str, Any] = {
+        "schema_version": "1",
+        "status": "ok",
+        "config": {
+            "path": str(config_path),
+            "loaded": True,
+            "server": {"host": host, "port": port},
+            "feishu_credentials": (
+                "configured" if _has_feishu_credentials(config) else "missing"
+            ),
+            "profiles_enabled": _doctor_profile_count(config) > 0,
+            "profile_count": _doctor_profile_count(config),
+        },
+        "sidecar": {"address": f"{host}:{port}"},
+        "hermes": {"checked": False, "status": "not_checked"},
+        "streaming": {
+            "status": "not_checked",
+            "message": "Hermes streaming config was not checked.",
+        },
+        "install_state": {
+            "checked": False,
+            "status": "skipped",
+            "message": "Install state was not checked.",
+        },
+        "recommendations": recommendations,
+    }
+
+    if args.skip_hermes:
+        report["hermes"] = {"checked": False, "status": "skipped"}
+        report["streaming"] = {
+            "status": "skipped",
+            "message": "Hermes streaming config was skipped by request.",
+        }
+        report["install_state"] = {
+            "checked": False,
+            "status": "skipped",
+            "message": "Install state was skipped by request.",
+        }
+        recommendations.append(
+            {
+                "severity": "info",
+                "code": "hermes_check_skipped",
+                "message": "Hermes detection was skipped.",
+                "next_step": "Run doctor with --hermes-dir to check hook compatibility.",
+            }
+        )
+        return _finalize_doctor_report(report)
+
+    if not args.hermes_dir:
+        recommendations.append(
+            {
+                "severity": "info",
+                "code": "hermes_not_checked",
+                "message": "Hermes detection was not checked.",
+                "next_step": "Run doctor with --hermes-dir PATH to check hook compatibility.",
+            }
+        )
+        return _finalize_doctor_report(report)
+
+    detection = detect_hermes(args.hermes_dir)
+    report["hermes"] = _doctor_hermes_report(detection)
+    if not detection.supported:
+        report["streaming"] = {
+            "status": "skipped",
+            "message": "Hermes streaming config was skipped because Hermes is unsupported.",
+        }
+        report["install_state"] = {
+            "checked": False,
+            "status": "skipped",
+            "message": "Install state was skipped because Hermes is unsupported.",
+        }
+        recommendations.append(
+            {
+                "severity": "error",
+                "code": "hermes_unsupported",
+                "message": f"Hermes is unsupported: {detection.reason}",
+                "next_step": "Use a supported Hermes install before running install or setup.",
+            }
+        )
+        return _finalize_doctor_report(report)
+
+    if detection.compatibility != "full":
+        recommendations.append(
+            {
+                "severity": "warning",
+                "code": "hermes_compatibility_partial",
+                "message": (
+                    "Hermes is supported, but optional compatibility anchors are missing."
+                ),
+                "next_step": (
+                    "Review the anchors section if streaming, cron, reply, or "
+                    "attachment features do not behave as expected."
+                ),
+            }
+        )
+
+    streaming = _doctor_streaming_report(Path(args.hermes_dir))
+    report["streaming"] = streaming
+    if streaming["status"] == "disabled":
+        recommendations.append(
+            {
+                "severity": "warning",
+                "code": "streaming_disabled",
+                "message": streaming["message"],
+                "next_step": (
+                    "Set streaming.enabled: true with streaming.transport: edit, "
+                    "or set display.platforms.feishu.streaming: true."
+                ),
+            }
+        )
+    elif streaming["status"] == "not_detected":
+        recommendations.append(
+            {
+                "severity": "warning",
+                "code": "streaming_not_detected",
+                "message": streaming["message"],
+                "next_step": (
+                    "If cards miss answer.delta updates, add Hermes streaming "
+                    "config and rerun doctor."
+                ),
+            }
+        )
+
+    install_state = _diagnose_install_state(detection)
+    report["install_state"] = install_state
+    _append_install_state_recommendation(recommendations, install_state)
+    return _finalize_doctor_report(report)
+
+
+def _doctor_profile_count(config: dict[str, Any]) -> int:
+    profiles = config.get("profiles")
+    if not isinstance(profiles, dict):
+        return 0
+    return len([key for key in profiles if str(key).strip()])
+
+
+def _doctor_hermes_report(detection: HermesDetection) -> dict[str, Any]:
+    return {
+        "checked": True,
+        "status": "supported" if detection.supported else "unsupported",
+        "root": str(detection.root),
+        "run_py": str(detection.run_py),
+        "run_py_exists": detection.run_py_exists,
+        "cron_py": str(detection.cron_py) if detection.cron_py is not None else None,
+        "cron_py_exists": detection.cron_py_exists,
+        "version_source": detection.version_source,
+        "version": detection.version,
+        "minimum_supported_version": detection.minimum_version,
+        "hook_strategy": detection.hook_strategy,
+        "cron_hook_strategy": detection.cron_hook_strategy,
+        "compatibility": detection.compatibility,
+        "anchors": dict(detection.capabilities),
+        "reason": detection.reason,
+    }
+
+
+def _doctor_streaming_report(hermes_root: Path) -> dict[str, str]:
+    config = _load_hermes_user_config(hermes_root)
+    status = _detect_hermes_streaming_status(config)
+    if status == "enabled":
+        message = "Hermes Gateway streaming config appears enabled for Feishu."
+    elif status == "disabled":
+        message = (
+            "Hermes Gateway streaming appears disabled for Feishu."
+        )
+    else:
+        message = (
+            "Hermes Gateway streaming config was not detected."
+        )
+    return {"status": status, "message": message}
+
+
+def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
+    run_py = detection.run_py
+    backup_path = _backup_path(run_py)
+    manifest_path = _manifest_path(detection.root)
+    cron_py = detection.cron_py
+    cron_backup_path = _backup_path(cron_py) if cron_py is not None else None
+    backup_exists = backup_path.exists()
+    manifest_exists = manifest_path.exists()
+    cron_backup_exists = (
+        cron_backup_path.exists() if cron_backup_path is not None else False
+    )
+    base: dict[str, Any] = {
+        "checked": True,
+        "manifest_path": str(manifest_path),
+        "manifest_exists": manifest_exists,
+        "backup_path": str(backup_path),
+        "backup_exists": backup_exists,
+        "cron_backup_path": (
+            str(cron_backup_path) if cron_backup_path is not None else None
+        ),
+        "cron_backup_exists": cron_backup_exists,
+        "automatic_repair_available": False,
+    }
+
+    try:
+        _validate_existing_install_state(
+            run_py,
+            backup_path,
+            manifest_path,
+            cron_py=cron_py,
+            cron_backup_path=cron_backup_path,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status = _install_state_status_from_error(message)
+        automatic_repair_available = _automatic_repair_available(detection)
+        return {
+            **base,
+            "status": status,
+            "message": message,
+            "manual_action_required": True,
+            "automatic_repair_available": automatic_repair_available,
+        }
+    except (OSError, UnicodeError) as exc:
+        return {
+            **base,
+            "status": "error",
+            "message": f"install state could not be read: {exc.__class__.__name__}",
+            "manual_action_required": True,
+        }
+
+    if backup_exists or manifest_exists or cron_backup_exists:
+        return {
+            **base,
+            "status": "installed",
+            "message": "Hermes Feishu hook install state is complete and consistent.",
+            "manual_action_required": False,
+        }
+    return {
+        **base,
+        "status": "clean",
+        "message": "No Hermes Feishu hook install state was found.",
+        "manual_action_required": False,
+    }
+
+
+def _install_state_status_from_error(message: str) -> str:
+    lowered = message.lower()
+    if "changed since install" in lowered or "backup changed" in lowered:
+        return "changed"
+    if "incomplete" in lowered or "manifest" in lowered or "backup missing" in lowered:
+        return "incomplete"
+    return "error"
+
+
+def _append_install_state_recommendation(
+    recommendations: list[dict[str, str]],
+    install_state: dict[str, Any],
+) -> None:
+    status = install_state["status"]
+    if status == "clean":
+        recommendations.append(
+            {
+                "severity": "info",
+                "code": "install_state_clean",
+                "message": "No existing Hermes Feishu hook install state was found.",
+                "next_step": "Run install --hermes-dir PATH --yes when ready to patch Hermes.",
+            }
+        )
+        return
+    if status == "installed":
+        recommendations.append(
+            {
+                "severity": "info",
+                "code": "install_state_installed",
+                "message": "Existing hook install state is complete and consistent.",
+                "next_step": "No install-state action is required.",
+            }
+        )
+        return
+    code = "install_state_changed" if status == "changed" else "install_state_incomplete"
+    if install_state.get("automatic_repair_available"):
+        next_step = (
+            "Run repair --hermes-dir PATH --yes to rebuild known-safe "
+            "backup/manifest state, then rerun doctor."
+        )
+    else:
+        next_step = (
+            "Back up the Hermes directory, inspect gateway/run.py and the "
+            "manifest, then restore or reinstall only after confirming the "
+            "local edits are intentional."
+        )
+    recommendations.append(
+        {
+            "severity": "warning",
+            "code": code,
+            "message": install_state["message"],
+            "next_step": next_step,
+        }
+    )
+
+
+def _finalize_doctor_report(report: dict[str, Any]) -> dict[str, Any]:
+    severities = {
+        item.get("severity")
+        for item in report.get("recommendations", [])
+        if isinstance(item, dict)
+    }
+    if "error" in severities:
+        report["status"] = "error"
+    elif "warning" in severities:
+        report["status"] = "warning"
+    else:
+        report["status"] = "ok"
+    return report
+
+
+def _doctor_exit_code(report: dict[str, Any]) -> int:
+    return 1 if report.get("status") == "error" else 0
+
+
+def _format_doctor_explanation(report: dict[str, Any]) -> str:
+    config = report["config"]
+    lines = ["Doctor Summary"]
+    if config.get("loaded"):
+        lines.append(f"- Config: OK ({config['path']})")
+        lines.append(f"- Sidecar: {report['sidecar']['address']}")
+    else:
+        lines.append(f"- Config: ERROR ({config['path']})")
+        lines.append(f"- Error: {config.get('error', 'unknown')}")
+
+    hermes = report["hermes"]
+    hermes_status = hermes["status"]
+    if hermes.get("checked"):
+        details = []
+        if hermes.get("version"):
+            details.append(str(hermes["version"]))
+        if hermes.get("hook_strategy"):
+            details.append(str(hermes["hook_strategy"]))
+        if hermes.get("compatibility"):
+            details.append(f"compatibility {hermes['compatibility']}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        lines.append(f"- Hermes: {hermes_status}{suffix}")
+    else:
+        lines.append(f"- Hermes: {hermes_status}")
+
+    streaming = report["streaming"]
+    if streaming.get("status"):
+        lines.append(
+            f"- Streaming: {streaming['status']} - {streaming.get('message', '')}"
+        )
+
+    install_state = report["install_state"]
+    if install_state.get("status"):
+        lines.append(
+            f"- Install state: {install_state['status']} - "
+            f"{install_state.get('message', '')}"
+        )
+
+    lines.append("")
+    lines.append("Next steps")
+    recommendations = report.get("recommendations", [])
+    if not recommendations:
+        lines.append("- No action required.")
+        return "\n".join(lines)
+    for item in recommendations:
+        severity = item.get("severity", "info")
+        message = item.get("message", "")
+        next_step = item.get("next_step", "")
+        lines.append(f"- [{severity}] {message}")
+        if next_step:
+            lines.append(f"  Next: {next_step}")
+    return "\n".join(lines)
 
 
 def _format_hermes_detection(detection: HermesDetection) -> str:
@@ -457,6 +913,7 @@ def _run_status(args: argparse.Namespace) -> int:
                 value = metrics.get(name)
                 if isinstance(value, int):
                     print(f"{name}: {value}")
+        _print_status_routing(status["health"])
     else:
         print("status: stopped")
         if status["pid"] is not None:
@@ -464,9 +921,43 @@ def _run_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_status_routing(health: dict[str, Any]) -> None:
+    routing = health.get("routing")
+    if isinstance(routing, dict):
+        bot_count = routing.get("bot_count")
+        chat_binding_count = routing.get("chat_binding_count")
+        if isinstance(bot_count, int):
+            print(f"routing.bot_count: {bot_count}")
+        if isinstance(chat_binding_count, int):
+            print(f"routing.chat_binding_count: {chat_binding_count}")
+        route = routing.get("last_route")
+        if isinstance(route, dict) and route:
+            profile_id = str(route.get("profile_id") or "").strip()
+            bot_id = str(route.get("bot_id") or "").strip()
+            reason = str(route.get("reason") or "").strip()
+            profile_part = f"profile={profile_id} " if profile_id else ""
+            print(f"routing.last_route: {profile_part}bot={bot_id} reason={reason}")
+        last_route_error = routing.get("last_route_error")
+        if isinstance(last_route_error, str) and last_route_error:
+            print(f"routing.last_route_error: {last_route_error}")
+    profiles = health.get("profile_diagnostics")
+    if isinstance(profiles, dict):
+        for profile_id in sorted(profiles):
+            item = profiles[profile_id]
+            if not isinstance(item, dict):
+                continue
+            events = item.get("events")
+            if isinstance(events, int):
+                print(f"profile.{profile_id}.events: {events}")
+            source = item.get("last_profile_source")
+            if isinstance(source, str) and source:
+                print(f"profile.{profile_id}.last_profile_source: {source}")
+
+
 def _run_smoke_feishu_card(args: argparse.Namespace) -> int:
     try:
         config = load_config(args.config)
+        config = _select_profile_config(config, args.profile_id)
         message_id = asyncio.run(_smoke_feishu_card(config, args.chat_id))
     except Exception as exc:
         print(f"error: {_sanitize_error(exc, config if 'config' in locals() else None)}", file=sys.stderr)
@@ -526,6 +1017,7 @@ def _run_bots(args: argparse.Namespace) -> int:
 
         if args.bot_command == "test":
             config = load_config(args.config)
+            config = _select_profile_config(config, args.profile_id)
             message_id = asyncio.run(
                 _smoke_feishu_card_with_bot(config, args.bot_id, args.chat_id)
             )
@@ -538,6 +1030,21 @@ def _run_bots(args: argparse.Namespace) -> int:
 
     print("error: bots command is required", file=sys.stderr)
     return 2
+
+
+def _select_profile_config(config: dict[str, Any], profile_id: str | None) -> dict[str, Any]:
+    if not profile_id:
+        return config
+    profiles = config.get("profiles")
+    if not isinstance(profiles, dict) or profile_id not in profiles:
+        raise KeyError(f"unknown profile: {profile_id}")
+    profile_config = profiles[profile_id]
+    if not isinstance(profile_config, dict):
+        raise ValueError(f"profile {profile_id!r} must be a mapping")
+    selected = dict(config)
+    selected.update(profile_config)
+    selected["profiles"] = {}
+    return selected
 
 
 def _read_local_yaml(path: str | Path) -> dict:
@@ -756,6 +1263,25 @@ def _run_install(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_repair(args: argparse.Namespace) -> int:
+    detection = detect_hermes(args.hermes_dir)
+    if not detection.supported:
+        print(_format_hermes_detection(detection), file=sys.stderr)
+        return 1
+    try:
+        actions = _repair_install_state(detection)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if actions:
+        for action in actions:
+            print(action)
+    else:
+        print("repair: no changes")
+    print("repair ok")
+    return 0
+
+
 def _run_restore(args: argparse.Namespace) -> int:
     try:
         _restore(Path(args.hermes_dir))
@@ -776,6 +1302,180 @@ def _run_uninstall(args: argparse.Namespace) -> int:
 
     print("uninstall ok")
     return 0
+
+
+def _automatic_repair_available(detection: HermesDetection) -> bool:
+    try:
+        return bool(_repair_install_state(detection, dry_run=True))
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def _repair_install_state(
+    detection: HermesDetection, *, dry_run: bool = False
+) -> list[str]:
+    run_py = detection.run_py
+    backup_path = _backup_path(run_py)
+    manifest_path = _manifest_path(detection.root)
+    cron_py = detection.cron_py if detection.cron_py_exists else None
+    cron_backup_path = _backup_path(cron_py) if cron_py is not None else None
+
+    try:
+        _validate_existing_install_state(
+            run_py,
+            backup_path,
+            manifest_path,
+            cron_py=cron_py,
+            cron_backup_path=cron_backup_path,
+        )
+        return []
+    except ValueError:
+        pass
+
+    current = _read_text_preserve_newlines(run_py)
+    unpatched = _owned_unpatched_text(current, "run.py")
+    has_owned_patch = unpatched != current
+    if not has_owned_patch:
+        raise ValueError("install state is inconsistent but run.py has no owned patch")
+
+    backup_exists = backup_path.exists()
+    manifest_exists = manifest_path.exists()
+    backup_text = _read_text_preserve_newlines(backup_path) if backup_exists else None
+    if backup_text is not None:
+        _validate_backup_contains_original(backup_text, "repair")
+        if backup_text != unpatched:
+            raise ValueError("run.py changed since install; refusing to repair")
+
+    manifest = _read_manifest_for_repair(manifest_path)
+    if manifest is not None:
+        _validate_repair_manifest_run_py(run_py, manifest)
+        if backup_exists:
+            _validate_repair_manifest_backup(backup_path, manifest)
+
+    actions: list[str] = []
+    should_write_backup = not backup_exists
+    if should_write_backup:
+        actions.append("backup: recreated")
+
+    cron_actions = _repair_cron_state(
+        cron_py,
+        cron_backup_path,
+        manifest,
+        dry_run=dry_run,
+    )
+    should_write_manifest = (
+        not manifest_exists
+        or manifest is None
+        or should_write_backup
+        or bool(cron_actions)
+    )
+    if should_write_manifest:
+        actions.append("manifest: rebuilt")
+
+    if dry_run:
+        return actions
+
+    if should_write_backup:
+        _atomic_write_text(backup_path, unpatched)
+    for action in cron_actions:
+        if action == "cron backup: recreated" and cron_py is not None and cron_backup_path is not None:
+            cron_current = _read_text_preserve_newlines(cron_py)
+            _atomic_write_text(
+                cron_backup_path,
+                _owned_cron_unpatched_text(cron_current, "cron/scheduler.py"),
+            )
+    if should_write_manifest:
+        _write_manifest(manifest_path, run_py, backup_path, cron_py, cron_backup_path)
+    _validate_existing_install_state(
+        run_py,
+        backup_path,
+        manifest_path,
+        cron_py=cron_py,
+        cron_backup_path=cron_backup_path,
+    )
+    return actions + cron_actions
+
+
+def _read_manifest_for_repair(manifest_path: Path) -> dict[str, object] | None:
+    if not manifest_path.exists():
+        return None
+    try:
+        return _read_manifest(manifest_path)
+    except ValueError:
+        return None
+
+
+def _validate_repair_manifest_run_py(
+    run_py: Path, manifest: dict[str, object]
+) -> None:
+    patched_sha256 = manifest.get("patched_sha256")
+    if isinstance(patched_sha256, str) and patched_sha256:
+        if file_sha256(run_py) != patched_sha256:
+            raise ValueError("run.py changed since install; refusing to repair")
+
+
+def _validate_repair_manifest_backup(
+    backup_path: Path, manifest: dict[str, object]
+) -> None:
+    backup_sha256 = manifest.get("backup_sha256")
+    if isinstance(backup_sha256, str) and backup_sha256:
+        if file_sha256(backup_path) != backup_sha256:
+            raise ValueError("backup changed since install; refusing to repair")
+
+
+def _repair_cron_state(
+    cron_py: Path | None,
+    cron_backup_path: Path | None,
+    manifest: dict[str, object] | None,
+    *,
+    dry_run: bool,
+) -> list[str]:
+    if cron_py is None or cron_backup_path is None or not cron_py.exists():
+        return []
+    cron_current = _read_text_preserve_newlines(cron_py)
+    cron_unpatched = _owned_cron_unpatched_text(cron_current, "cron/scheduler.py")
+    has_owned_cron_patch = cron_unpatched != cron_current
+    cron_backup_exists = cron_backup_path.exists()
+    if not has_owned_cron_patch:
+        if cron_backup_exists:
+            raise ValueError(
+                "install state incomplete; cron backup exists without owned patch"
+            )
+        return []
+    if cron_backup_exists:
+        cron_backup_text = _read_text_preserve_newlines(cron_backup_path)
+        if remove_cron_patch(cron_backup_text) != cron_backup_text:
+            raise ValueError("cron backup changed since install; refusing to repair")
+        if cron_backup_text != cron_unpatched:
+            raise ValueError("cron scheduler changed since install; refusing to repair")
+    if manifest is not None:
+        cron_patched_sha256 = manifest.get("cron_patched_sha256")
+        if isinstance(cron_patched_sha256, str) and cron_patched_sha256:
+            if file_sha256(cron_py) != cron_patched_sha256:
+                raise ValueError(
+                    "cron scheduler changed since install; refusing to repair"
+                )
+        cron_backup_sha256 = manifest.get("cron_backup_sha256")
+        if cron_backup_exists and isinstance(cron_backup_sha256, str) and cron_backup_sha256:
+            if file_sha256(cron_backup_path) != cron_backup_sha256:
+                raise ValueError("cron backup changed since install; refusing to repair")
+    if cron_backup_exists:
+        return []
+    return ["cron backup: recreated"]
+
+
+def _owned_unpatched_text(current: str, label: str) -> str:
+    try:
+        return remove_patch(current)
+    except ValueError as exc:
+        raise ValueError(f"{label} has corrupt patch markers; refusing to repair") from exc
+
+
+def _owned_cron_unpatched_text(current: str, label: str) -> str:
+    try:
+        return remove_cron_patch(current)
+    except ValueError as exc:
+        raise ValueError(f"{label} has corrupt patch markers; refusing to repair") from exc
 
 
 def _restore(hermes_root: Path) -> None:

@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -70,6 +71,46 @@ def test_status_reports_cron_metrics_when_sidecar_is_running(monkeypatch, capsys
     assert "cron_fallbacks: 1" in captured.out
 
 
+def test_status_reports_routing_and_profile_diagnostics(monkeypatch, capsys):
+    def fake_status_sidecar(config):
+        return {
+            "running": True,
+            "pid": 12345,
+            "health": {
+                "active_sessions": 0,
+                "metrics": {},
+                "routing": {
+                    "bot_count": 3,
+                    "chat_binding_count": 2,
+                    "last_route": {
+                        "profile_id": "work",
+                        "bot_id": "sales",
+                        "reason": "bindings.chats",
+                    },
+                    "last_route_error": "",
+                },
+                "profile_diagnostics": {
+                    "work": {
+                        "events": 4,
+                        "last_profile_source": "env",
+                    }
+                },
+            },
+        }
+
+    monkeypatch.setattr("hermes_feishu_card.cli.status_sidecar", fake_status_sidecar)
+
+    exit_code = main(["status"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "routing.bot_count: 3" in captured.out
+    assert "routing.chat_binding_count: 2" in captured.out
+    assert "routing.last_route: profile=work bot=sales reason=bindings.chats" in captured.out
+    assert "profile.work.events: 4" in captured.out
+    assert "profile.work.last_profile_source: env" in captured.out
+
+
 def test_doctor_bad_config_returns_nonzero(tmp_path, capsys):
     config_path = tmp_path / "bad.yaml"
     config_path.write_text("- bad\n", encoding="utf-8")
@@ -134,6 +175,80 @@ def test_module_doctor_reports_supported_hermes_detection(tmp_path):
     assert "anchors:" in result.stdout
     assert "  message_handler: found" in result.stdout
     assert "reason: supported" in result.stdout
+
+
+def test_module_doctor_json_reports_skipped_hermes(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  host: 0.0.0.0\n  port: 9012\n", encoding="utf-8")
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--skip-hermes",
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["schema_version"] == "1"
+    assert report["status"] == "ok"
+    assert report["config"]["path"] == str(config_path)
+    assert report["config"]["loaded"] is True
+    assert report["config"]["server"] == {"host": "0.0.0.0", "port": 9012}
+    assert report["sidecar"]["address"] == "0.0.0.0:9012"
+    assert report["hermes"]["checked"] is False
+    assert report["hermes"]["status"] == "skipped"
+    assert report["install_state"]["status"] == "skipped"
+    assert isinstance(report["recommendations"], list)
+
+
+def test_module_doctor_json_reports_supported_hermes_and_clean_install_state(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9013\n", encoding="utf-8")
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(FIXTURE),
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == "warning"
+    assert report["hermes"]["checked"] is True
+    assert report["hermes"]["status"] == "supported"
+    assert report["hermes"]["version"] == "v2026.4.23"
+    assert report["hermes"]["hook_strategy"] == "legacy_gateway_run"
+    assert report["hermes"]["compatibility"] == "partial"
+    assert report["install_state"]["checked"] is True
+    assert report["install_state"]["status"] == "clean"
+    assert report["streaming"]["status"] == "enabled"
+    assert any(item["code"] == "hermes_compatibility_partial" for item in report["recommendations"])
+
+
+def test_module_doctor_explain_reports_summary_and_next_steps(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9014\n", encoding="utf-8")
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(FIXTURE),
+        "--explain",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Doctor Summary" in result.stdout
+    assert "Sidecar: 127.0.0.1:9014" in result.stdout
+    assert "Hermes: supported" in result.stdout
+    assert "Install state: clean" in result.stdout
+    assert "Next steps" in result.stdout
 
 
 def test_module_doctor_reports_unsupported_hermes_detection(tmp_path):
@@ -418,3 +533,89 @@ bots:
     assert calls[0][1:] == ("sales", "oc-chat-1")
     assert "om-message-1" in captured.out
     assert "sales-secret" not in captured.out
+
+
+def test_smoke_feishu_card_selects_profile_config(tmp_path, capsys, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+profiles:
+  work:
+    feishu:
+      app_id: cli-work-app
+      app_secret: work-secret
+""",
+        encoding="utf-8",
+    )
+    calls = []
+
+    async def fake_smoke(config, chat_id):
+        calls.append((config, chat_id))
+        return "om-profile-smoke"
+
+    monkeypatch.setattr("hermes_feishu_card.cli._smoke_feishu_card", fake_smoke)
+
+    exit_code = main(
+        [
+            "smoke-feishu-card",
+            "--profile-id",
+            "work",
+            "--config",
+            str(config_path),
+            "--chat-id",
+            "oc-chat-1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert calls[0][0]["feishu"]["app_id"] == "cli-work-app"
+    assert calls[0][1] == "oc-chat-1"
+    assert "om-profile-smoke" in captured.out
+    assert "work-secret" not in captured.out
+
+
+def test_bots_test_selects_profile_config(tmp_path, capsys, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+profiles:
+  work:
+    bots:
+      default: sales
+      items:
+        sales:
+          name: Sales Bot
+          app_id: cli-work-sales
+          app_secret: work-sales-secret
+""",
+        encoding="utf-8",
+    )
+    calls = []
+
+    async def fake_smoke(config, bot_id, chat_id):
+        calls.append((config, bot_id, chat_id))
+        return "om-profile-bot-smoke"
+
+    monkeypatch.setattr("hermes_feishu_card.cli._smoke_feishu_card_with_bot", fake_smoke)
+
+    exit_code = main(
+        [
+            "bots",
+            "test",
+            "sales",
+            "--profile-id",
+            "work",
+            "--chat-id",
+            "oc-chat-1",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert calls[0][0]["bots"]["items"]["sales"]["app_id"] == "cli-work-sales"
+    assert calls[0][1:] == ("sales", "oc-chat-1")
+    assert "om-profile-bot-smoke" in captured.out
+    assert "work-sales-secret" not in captured.out

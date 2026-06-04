@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.5.2`. This release keeps the sidecar-only mainline and builds on V3.5.1 streaming stability with cross-platform one-line installers, Release packages, safer macOS `.env` parsing, uv/PEP 668 Python install handling, and Windows installer CI parser validation.
+Current package version: `3.6.0`. This release keeps the sidecar-only mainline and builds on the V3.5.x streaming stability, in-card interactions, and installer experience with `doctor --json/--explain`, safe `repair`, structured media/file summaries, profile-targeted smoke checks, routing profile diagnostics, and a Hermes compatibility matrix.
 
 ## Ready
 
@@ -22,6 +22,11 @@ Current package version: `3.5.2`. This release keeps the sidecar-only mainline a
 - `load_config()` reads a `.env` file next to the selected config file while preserving real process environment variables as the highest-precedence source.
 - `install.sh` imports only Feishu/sidecar variables from `.env`, avoiding execution of unrelated values such as paths with spaces.
 - `install.sh` retries pip with `--break-system-packages` when uv/PEP 668 reports an externally managed Python environment.
+- `doctor --json` / `doctor --explain` report config, sidecar, Hermes, streaming, install_state, and recommendations.
+- `repair --hermes-dir ... --yes` and `setup --repair` repair verifiable manifest/backup state and refuse unverifiable user edits.
+- Structured attachment, media, and file objects keep card summaries while preserving Hermes native media/file delivery paths.
+- `smoke-feishu-card --profile-id`, `bots test --profile-id`, CLI `status`, and `/health.routing.profiles` support profile-scoped troubleshooting.
+- Hermes key release matrix covers `v2026.4.23`, `v2026.5.7`, `v2026.5.16+`, `v2026.5.29`, `0.13.x`, and `0.14.x`.
 - GitHub Actions Python 3.9 / 3.12 test matrix for PRs and pushes, plus Windows parser validation for `install.ps1`.
 - Release assets workflow packages macOS/Linux/Windows installers and checksums for tags.
 
@@ -29,7 +34,7 @@ Current package version: `3.5.2`. This release keeps the sidecar-only mainline a
 
 ```bash
 python3 -m pytest -q
-python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent
+python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --explain
 python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --yes
 python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --yes
 ```

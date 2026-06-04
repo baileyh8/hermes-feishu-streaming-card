@@ -20,3 +20,15 @@ def test_github_actions_runs_full_pytest_matrix():
     assert "runs-on: windows-latest" in text
     assert "ParseFile" in text
     assert "install.ps1" in text
+
+
+def test_release_assets_workflow_supports_manual_package_dry_run():
+    workflow = ROOT / ".github" / "workflows" / "release-assets.yml"
+
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "inputs:" in text
+    assert "tag:" in text
+    assert "Build install packages" in text
+    assert "gh release upload" in text

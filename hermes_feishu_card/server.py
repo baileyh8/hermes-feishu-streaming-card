@@ -262,6 +262,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     update_tasks: Dict[str, asyncio.Task] = request.app[UPDATE_TASKS_KEY]
     pending_update_requests: Dict[str, bool] = request.app[PENDING_UPDATE_REQUESTS_KEY]
     _record_profile_diagnostics(request.app, event)
+    _record_attachment_diagnostics(request.app, event)
     session = sessions.get(_session_key(event))
 
     if event.event == "message.started":
@@ -589,6 +590,21 @@ def _record_profile_diagnostics(app: web.Application, event: SidecarEvent) -> No
     diagnostics["last_message_id"] = event.message_id
 
 
+def _record_attachment_diagnostics(app: web.Application, event: SidecarEvent) -> None:
+    data = event.data if isinstance(event.data, dict) else {}
+    attachments = data.get("attachments")
+    if not isinstance(attachments, list) or not attachments:
+        return
+    app[DIAGNOSTICS_KEY]["last_attachment_event"] = {
+        "message_id": event.message_id,
+        "event": event.event,
+        "attachment_count": len(
+            [item for item in attachments if isinstance(item, dict)]
+        ),
+        "native_delivery": "allowed",
+    }
+
+
 def _delivery_kind(event: SidecarEvent) -> str:
     data = event.data if isinstance(event.data, dict) else {}
     return str(data.get("delivery_kind") or "").strip().lower()
@@ -732,7 +748,9 @@ def _resolve_route(request: web.Request, event: SidecarEvent) -> RouteResult | N
         current_profile_id = _safe_profile_id(raw_profile_id)
         factory = feishu_client.get(current_profile_id) or feishu_client.get("default")
         if factory is None:
-            diagnostics["last_route_error"] = f"no factory for profile {current_profile_id}"
+            error = f"no factory for profile {current_profile_id}"
+            diagnostics["last_route_error"] = error
+            _record_profile_route_error(diagnostics, current_profile_id, error)
             return None
         feishu_client = factory
 
@@ -756,16 +774,23 @@ def _resolve_route(request: web.Request, event: SidecarEvent) -> RouteResult | N
         diagnostics["last_route_error"] = safe_error
         app_diagnostics["last_route_error"] = safe_error
         diagnostics["last_route"] = {}
+        if current_profile_id is not None:
+            _record_profile_route_error(diagnostics, current_profile_id, safe_error)
         return None
 
-    diagnostics["last_route"] = {
+    route_diagnostics = {
         "message_id": event.message_id,
         "chat_id": event.chat_id,
         "bot_id": route.bot_id,
         "reason": route.reason,
     }
+    if current_profile_id is not None:
+        route_diagnostics["profile_id"] = current_profile_id
+    diagnostics["last_route"] = route_diagnostics
     diagnostics["last_route_error"] = ""
     app_diagnostics["last_route_error"] = ""
+    if current_profile_id is not None:
+        _record_profile_route_success(diagnostics, current_profile_id, route_diagnostics)
     # 多 profile 模式：将 profile_id 注入 bot_id，以便 _client_for_bot 正确路由
     if current_profile_id is not None:
         route = RouteResult(f"{current_profile_id}:{route.bot_id}", route.reason)
@@ -824,6 +849,40 @@ def _initial_routing_diagnostics(feishu_client: Any) -> dict[str, Any]:
         "last_route": {},
         "last_route_error": "",
     }
+    if isinstance(feishu_client, dict):
+        profiles: dict[str, Any] = {}
+        total_bots = 0
+        total_bindings = 0
+        for profile_id, factory in sorted(feishu_client.items()):
+            profile_diagnostics = _routing_diagnostics_for_factory(factory)
+            profiles[str(profile_id)] = profile_diagnostics
+            bot_count = profile_diagnostics.get("bot_count")
+            chat_binding_count = profile_diagnostics.get("chat_binding_count")
+            if isinstance(bot_count, int):
+                total_bots += bot_count
+            if isinstance(chat_binding_count, int):
+                total_bindings += chat_binding_count
+        diagnostics.update(
+            {
+                "profile_count": len(profiles),
+                "bot_count": total_bots,
+                "chat_binding_count": total_bindings,
+                "profiles": profiles,
+            }
+        )
+        return diagnostics
+    diagnostics.update(_routing_diagnostics_for_factory(feishu_client))
+    return diagnostics
+
+
+def _routing_diagnostics_for_factory(feishu_client: Any) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "default_bot": "",
+        "bot_count": 0,
+        "chat_binding_count": 0,
+        "last_route": {},
+        "last_route_error": "",
+    }
     registry = getattr(feishu_client, "registry", None)
     safe_diagnostics = getattr(registry, "safe_diagnostics", None)
     if callable(safe_diagnostics):
@@ -836,6 +895,50 @@ def _initial_routing_diagnostics(feishu_client: Any) -> dict[str, Any]:
     diagnostics.setdefault("last_route", {})
     diagnostics.setdefault("last_route_error", "")
     return diagnostics
+
+
+def _record_profile_route_success(
+    diagnostics: dict[str, Any], profile_id: str, route: dict[str, Any]
+) -> None:
+    profiles = diagnostics.setdefault("profiles", {})
+    if not isinstance(profiles, dict):
+        return
+    profile = profiles.setdefault(
+        profile_id,
+        {
+            "default_bot": "",
+            "bot_count": 0,
+            "chat_binding_count": 0,
+            "last_route": {},
+            "last_route_error": "",
+        },
+    )
+    if not isinstance(profile, dict):
+        return
+    profile["last_route"] = dict(route)
+    profile["last_route_error"] = ""
+
+
+def _record_profile_route_error(
+    diagnostics: dict[str, Any], profile_id: str, error: str
+) -> None:
+    profiles = diagnostics.setdefault("profiles", {})
+    if not isinstance(profiles, dict):
+        return
+    profile = profiles.setdefault(
+        profile_id,
+        {
+            "default_bot": "",
+            "bot_count": 0,
+            "chat_binding_count": 0,
+            "last_route": {},
+            "last_route_error": "",
+        },
+    )
+    if not isinstance(profile, dict):
+        return
+    profile["last_route"] = {}
+    profile["last_route_error"] = error
 
 
 def _sanitize_routing_diagnostics(value: Any) -> Any:

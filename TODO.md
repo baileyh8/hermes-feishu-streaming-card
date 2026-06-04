@@ -2,27 +2,27 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## 下一版计划：V3.5.2 / V3.6.0 / V3.7.0
+## 下一版计划：V3.6.0 / V3.7.0
 
 详细路线见 [docs/roadmap-v3.6.0.md](docs/roadmap-v3.6.0.md)。
 
 ### V3.5.2：安装补丁版
 
 - [x] 更新 CHANGELOG、README 和 Release notes，说明一行安装、Release 包、checksum。
-- [ ] 发布 tag 后验证 `.github/workflows/release-assets.yml` 能上传 macOS/Linux/Windows 安装包。
+- [x] 发布 tag 后验证 `.github/workflows/release-assets.yml` 能上传 macOS/Linux/Windows 安装包。
 - [x] 确认 `install.sh` 在 macOS 临时 Hermes fixture 上完整跑通。
 - [x] 补 Windows PowerShell 安装脚本的语法验证路径。
 
 ### V3.6.0：安装与运维产品化
 
-- [ ] **P0 安装自救**：新增 `doctor --explain` / `doctor --json`，解释 hook strategy、manifest、backup 和 anchor 状态。
-- [ ] **P0 安装修复**：新增 `setup --repair` 或 `repair` 子命令，处理 `run.py changed since install`、manifest mismatch、旧 patch 残留等安全拒绝场景。
-- [ ] **P0 媒体/文件消息处理**：图片、文件等非文本消息不走流式卡片，由 sidecar 识别后走飞书原生媒体/文件发送，并在卡片中保留摘要。
-- [ ] **P1 多 Profile CLI**：`smoke-feishu-card`、`bots test` 支持 `--profile-id` 和 profile 维度排障。
-- [ ] **P1 health routing 分组**：`/health.routing` 在多 Profile 下按 profile 分组展示 bot、chat binding 和 last_route。
-- [ ] **P1 E2E 矩阵**：覆盖 Hermes `v2026.4.23`、`v2026.5.7`、`v2026.5.16+`、`v2026.5.29`、`0.13.x`、`0.14.x`。
-- [ ] **P1 发布矩阵**：CI 验证 Release 打包 dry run、macOS/Linux install dry run、Windows PowerShell parser。
-- [ ] **P2 Docker 部署**：提供 Docker 镜像 / docker-compose 一键部署草案。
+- [x] **P0 安装自救**：新增 `doctor --explain` / `doctor --json`，解释 hook strategy、manifest、backup 和 anchor 状态。
+- [x] **P0 安装修复**：新增 `setup --repair` 和 `repair` 子命令，处理 manifest/backup 缺失等可验证修复场景，并拒绝用户改动。
+- [x] **P0 媒体/文件消息处理**：识别结构化 attachments/files/media_files，在卡片中保留摘要，同时不抑制 Hermes 原生媒体/文件投递路径。
+- [x] **P1 多 Profile CLI**：`smoke-feishu-card`、`bots test` 支持 `--profile-id` 和 profile 维度排障。
+- [x] **P1 health routing 分组**：`/health.routing` 在多 Profile 下按 profile 分组展示 bot、chat binding、last_route、last_route_error 和 events。
+- [x] **P1 E2E 矩阵**：覆盖 Hermes `v2026.4.23`、`v2026.5.7`、`v2026.5.16+`、`v2026.5.29`、`0.13.x`、`0.14.x`。
+- [x] **P1 发布矩阵**：CI 验证 Release 打包 dry run、macOS/Linux install dry run、Windows PowerShell parser。
+- [ ] **P2 Docker 部署**：本版按用户要求暂不考虑，移入后续版本候选。
 
 ### V3.7.0：体验增强候选
 

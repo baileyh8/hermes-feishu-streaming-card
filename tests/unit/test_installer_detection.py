@@ -369,6 +369,26 @@ def test_detect_hermes_uses_numeric_version_comparison(tmp_path):
     assert result.supported is True
 
 
+@pytest.mark.parametrize(
+    ("version", "expected_strategy"),
+    [
+        ("v2026.4.23", "legacy_gateway_run"),
+        ("v2026.5.7", "gateway_run_013_plus"),
+        ("v2026.5.16", "gateway_run_013_plus"),
+        ("v2026.5.29", "gateway_run_013_plus"),
+        ("v0.13.0", "gateway_run_013_plus"),
+        ("v0.14.0", "gateway_run_013_plus"),
+    ],
+)
+def test_detect_hermes_key_release_matrix(tmp_path, version, expected_strategy):
+    _write_hermes_root(tmp_path, version=version)
+
+    result = detect_hermes(tmp_path)
+
+    assert result.supported is True
+    assert result.hook_strategy == expected_strategy
+
+
 def test_detect_hermes_version_components_are_semantic_not_calendar_bounds(tmp_path):
     _write_hermes_root(tmp_path, version="v2026.99.99")
 

@@ -19,9 +19,20 @@ Run a read-only diagnostic first:
 
 ```bash
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent
+python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --explain
+python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --json
 ```
 
-Diagnostic output includes Hermes support status, Hermes root, `gateway/run.py`, `run_py_exists`, `version_source`, `version`, `minimum_supported_version`, and `reason`.
+Diagnostic output includes Hermes support status, Hermes root, `gateway/run.py`, `run_py_exists`, `version_source`, `version`, `minimum_supported_version`, `hook_strategy`, `compatibility`, anchors, and `reason`. `--explain` renders streaming config, manifest/backup/run.py install state, and next-step recommendations as a human-readable summary. `--json` emits a machine-readable report with `schema_version`, top-level `status`, `install_state`, and `recommendations` for issue templates and automation. All `doctor` modes are read-only and do not write Hermes files.
+
+## Repair
+
+```bash
+python3 -m hermes_feishu_card.cli repair --hermes-dir ~/.hermes/hermes-agent --yes
+python3 -m hermes_feishu_card.cli setup --repair --hermes-dir ~/.hermes/hermes-agent --config ~/.hermes_feishu_card/config.yaml --yes
+```
+
+`repair` only fixes install-state files this project can verify. If backup is missing but the current `run.py` can safely remove this project's owned patch, it recreates the backup. If manifest is missing, malformed, or stale after backup recreation, it rebuilds the manifest. It does not rewrite `gateway/run.py` and does not overwrite unverifiable user edits. `run.py changed since install`, backup hash mismatches, symlinks, corrupt markers, and uncertain cron state still fail closed.
 
 ## Backup And Manifest
 
