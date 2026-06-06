@@ -61,7 +61,7 @@ python3 -m hermes_feishu_card.cli smoke-feishu-card --config config.yaml.example
 python3 -m pytest tests/unit/test_docs.py -q
 ```
 
-文档测试只做低脆弱度守卫：确认 README 保留 sidecar-only、`v2026.4.23` 旧版本支持范围和 Hermes `0.13.0+` / `0.14.0` / `v2026.5.16+` 兼容说明，确认主线文档仍明确 legacy/dual 代码不是 active runtime，并确保事件协议持续声明卡片状态。它不替代人工文档 review。
+文档测试只做低脆弱度守卫：确认 README 保留 sidecar-only、`v2026.4.23` 旧版本支持范围和 Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `v2026.5.16+` 兼容说明，确认主线文档仍明确 legacy/dual 代码不是 active runtime，并确保事件协议持续声明卡片状态。它不替代人工文档 review。
 
 ## E2E visual preview
 
@@ -94,7 +94,7 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 
 当前 CLI 的 `doctor` 需要显式传入 `--config`。`--skip-hermes` 适合仓库内 dry-run；真实安装前应使用 `--hermes-dir` 做只读 Hermes 检测。输出包含 `version_source`、`version`、`minimum_supported_version`、`run_py_exists`、`hook_strategy`、`compatibility`、anchors 和 `reason`，不写入 Hermes 文件、备份或 manifest。`--json` 用于 issue/自动化，`--explain` 用于人工排障并会提示是否可运行 `repair --hermes-dir ... --yes`。
 
-自动化矩阵显式覆盖 Hermes `v2026.4.23`、`v2026.5.7`、`v2026.5.16`、`v2026.5.29`、`v0.13.0` 和 `v0.14.0` 的 hook strategy。Hermes `0.13.0+`、`0.14.0` / `v2026.5.16+` 应显示 `gateway_run_013_plus`，旧版本 Hermes `v2026.4.23` 到 `v2026.4.x` 应显示 `legacy_gateway_run`。
+自动化矩阵显式覆盖 Hermes `v2026.4.23`、`v2026.5.7`、`v2026.5.16`、`v2026.5.29`、`0.13.0`、`v0.13.0`、`0.14.0`、`v0.14.0`、`0.15.1` 和 `v0.15.1` 的 hook strategy。Hermes `0.13.0+`、`0.14.0`、`0.15.x` / `v2026.5.16+` 应显示 `gateway_run_013_plus`，旧版本 Hermes `v2026.4.23` 到 `v2026.4.x` 应显示 `legacy_gateway_run`。
 
 ## 真实飞书联调
 

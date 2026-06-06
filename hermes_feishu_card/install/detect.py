@@ -19,7 +19,7 @@ OPTIONAL_CAPABILITIES = (
     "reply_context",
     "attachment_delivery",
 )
-_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 
 @dataclass(frozen=True)

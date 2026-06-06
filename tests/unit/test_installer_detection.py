@@ -376,8 +376,12 @@ def test_detect_hermes_uses_numeric_version_comparison(tmp_path):
         ("v2026.5.7", "gateway_run_013_plus"),
         ("v2026.5.16", "gateway_run_013_plus"),
         ("v2026.5.29", "gateway_run_013_plus"),
+        ("0.13.0", "gateway_run_013_plus"),
         ("v0.13.0", "gateway_run_013_plus"),
+        ("0.14.0", "gateway_run_013_plus"),
         ("v0.14.0", "gateway_run_013_plus"),
+        ("0.15.1", "gateway_run_013_plus"),
+        ("v0.15.1", "gateway_run_013_plus"),
     ],
 )
 def test_detect_hermes_key_release_matrix(tmp_path, version, expected_strategy):

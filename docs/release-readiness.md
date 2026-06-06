@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.6.0`。这一版继续保持 sidecar-only 主线，在 V3.5.x 流式稳定性、交互按钮和安装体验基础上，重点补齐 `doctor --json/--explain`、安全 `repair`、结构化媒体/文件摘要、多 profile 定向 smoke、routing profile diagnostics 和 Hermes 兼容矩阵。
+当前包版本为 `3.6.1`。这一版继续保持 sidecar-only 主线，在 V3.6.0 运维诊断基础上修复 issue #47：Hermes `0.15.x` 和无 `v` 前缀的语义版本不再被 `doctor --explain` 误判为 unsupported。
 
 ## 已具备
 
@@ -14,7 +14,7 @@
 - E2E 预览材料和生成器。
 - 真实长卡压力测试：同一张 Feishu 卡片更新到 16k 中文字符成功。
 - 真实 Hermes `v2026.4.23` 目录 `restore -> install` 循环验证。
-- Hermes `0.13.0+` / `0.14.0` / `v2026.5.16+` 使用 `gateway_run_013_plus` hook strategy，旧版 `v2026.4.x` 保持 `legacy_gateway_run`。
+- Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `v2026.5.16+` 使用 `gateway_run_013_plus` hook strategy，旧版 `v2026.4.x` 保持 `legacy_gateway_run`。
 - 飞书卡片按钮交互覆盖 `interaction.requested`、`/card/actions`、`/interactions/{interaction_id}` 的本地 mock 验收。
 - Markdown 长表格/长代码块超过 `MAIN_CONTENT_CHUNK_CHARS` 后按完整结构重复切分，避免 raw markdown。
 - thinking/interim assistant 使用 `append_block` 完整块追加，避免 delta 累积导致漏字或截断。
@@ -26,7 +26,7 @@
 - `repair --hermes-dir ... --yes` 和 `setup --repair` 能修复可验证的 manifest/backup 状态，无法验证用户改动时拒绝覆盖。
 - 结构化附件、媒体和文件对象会在卡片保留摘要，同时不抑制 Hermes 原生媒体/文件投递路径。
 - `smoke-feishu-card --profile-id`、`bots test --profile-id`、CLI `status` 和 `/health.routing.profiles` 支持 profile 维度排障。
-- Hermes key release matrix 覆盖 `v2026.4.23`、`v2026.5.7`、`v2026.5.16+`、`v2026.5.29`、`0.13.x`、`0.14.x`。
+- Hermes key release matrix 覆盖 `v2026.4.23`、`v2026.5.7`、`v2026.5.16+`、`v2026.5.29`、`0.13.x`、`0.14.x`、`0.15.x`，并覆盖语义版本带/不带 `v` 前缀。
 - GitHub Actions 会在 PR/push 上运行 Python 3.9/3.12 的测试矩阵，并在 Windows 上解析验证 `install.ps1`。
 - Release assets workflow 会为 tag 生成 macOS/Linux/Windows 安装包和 checksum。
 

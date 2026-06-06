@@ -61,7 +61,7 @@ This command sends and updates a real test card. Run it only when local credenti
 python3 -m pytest tests/unit/test_docs.py -q
 ```
 
-Documentation tests are low-brittleness guards: they verify that README keeps sidecar-only, older Hermes `v2026.4.23` support range, and Hermes `0.13.0+` / `0.14.0` / `v2026.5.16+` compatibility statements, that mainline docs clearly say legacy/dual code is not the active runtime, and that the event protocol keeps declaring card states. They do not replace human documentation review.
+Documentation tests are low-brittleness guards: they verify that README keeps sidecar-only, older Hermes `v2026.4.23` support range, and Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `v2026.5.16+` compatibility statements, that mainline docs clearly say legacy/dual code is not the active runtime, and that the event protocol keeps declaring card states. They do not replace human documentation review.
 
 ## E2E Visual Preview
 
@@ -94,7 +94,7 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 
 `doctor` requires an explicit `--config`. `--skip-hermes` is useful for repository dry-runs; real installation should use `--hermes-dir` for read-only Hermes detection. Output includes `version_source`, `version`, `minimum_supported_version`, `run_py_exists`, `hook_strategy`, `compatibility`, anchors, and `reason`. It does not write Hermes files, backups, or manifests. `--json` is for issues/automation, while `--explain` is for human troubleshooting and reports whether `repair --hermes-dir ... --yes` is available.
 
-The automated matrix explicitly covers Hermes `v2026.4.23`, `v2026.5.7`, `v2026.5.16`, `v2026.5.29`, `v0.13.0`, and `v0.14.0` hook strategy selection. Hermes `0.13.0+`, `0.14.0` / `v2026.5.16+` should report `gateway_run_013_plus`; older Hermes from `v2026.4.23` through `v2026.4.x` should report `legacy_gateway_run`.
+The automated matrix explicitly covers Hermes `v2026.4.23`, `v2026.5.7`, `v2026.5.16`, `v2026.5.29`, `0.13.0`, `v0.13.0`, `0.14.0`, `v0.14.0`, `0.15.1`, and `v0.15.1` hook strategy selection. Hermes `0.13.0+`, `0.14.0`, `0.15.x` / `v2026.5.16+` should report `gateway_run_013_plus`; older Hermes from `v2026.4.23` through `v2026.4.x` should report `legacy_gateway_run`.
 
 ## Real Feishu Integration
 

@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_package_has_version():
-    assert __version__ == "3.6.0"
+    assert __version__ == "3.6.1"
 
 
 def test_console_entrypoint_target_exists():
@@ -18,7 +18,7 @@ def test_console_entrypoint_target_exists():
 def test_pyproject_has_open_source_package_metadata():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert 'version = "3.6.0"' in pyproject
+    assert 'version = "3.6.1"' in pyproject
     assert 'readme = "README.md"' in pyproject
     assert 'keywords = ["Hermes", "Feishu", "Lark", "streaming-card", "sidecar"]' in pyproject
     assert 'classifiers = [' in pyproject

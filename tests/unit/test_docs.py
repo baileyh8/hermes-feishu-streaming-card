@@ -12,7 +12,7 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
     assert readme.startswith("# Hermes 飞书流式卡片插件\n")
-    assert "V3.6.0" in readme
+    assert "V3.6.1" in readme
     assert "[English](README.en.md)" in readme
     assert "img.shields.io/github/stars/baileyh8/hermes-feishu-streaming-card" in readme
     assert "img.shields.io/github/v/release/baileyh8/hermes-feishu-streaming-card" in readme
@@ -52,6 +52,7 @@ def test_readme_documents_v340_hermes_compatibility():
     assert "授权/选项按钮" in readme
     assert "issue #39" in readme
     assert "v0.14.0" in readme
+    assert "0.15.x" in readme
     assert "v2026.5.16+" in readme
     assert "issue #31" in readme
     assert "issue #25" in readme
@@ -77,12 +78,13 @@ def test_readme_documents_v340_hermes_compatibility():
 def test_english_readme_documents_v340_hermes_compatibility():
     readme = read_doc("README.en.md")
 
-    assert "V3.6.0" in readme
+    assert "V3.6.1" in readme
     assert "issue #41" in readme
     assert "PR #42" in readme
     assert "Approval/choice buttons" in readme
     assert "issue #39" in readme
     assert "v0.14.0" in readme
+    assert "0.15.x" in readme
     assert "v2026.5.16+" in readme
     assert "issue #31" in readme
     assert "issue #25" in readme
@@ -114,7 +116,8 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert "curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.sh | bash" in readme
     assert "irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.ps1 | iex" in readme
     assert "README-install.md" in readme
-    assert "docs/release-notes-v3.6.0.md" in readme
+    assert "docs/release-notes-v3.6.1.md" in readme
+    assert "docs/release-notes-v3.6.0.md" in readme or "v3.6.0" in readme
     assert "docs/release-notes-v3.5.2.md" in readme or "v3.5.2" in readme
     assert "docs/roadmap-v3.6.0.md" in readme
     assert "hermes-feishu-card-<version>-macos.tar.gz" in readme
@@ -126,11 +129,12 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert "bash install.sh" in install_doc
     assert "install.ps1" in install_doc
     assert "HFC_VERSION" in install_doc
-    assert "v3.6.0" in install_doc
+    assert "v3.6.1" in install_doc
 
     assert (ROOT / "install.sh").exists()
     assert (ROOT / "install.ps1").exists()
     assert (ROOT / "README-install.md").exists()
+    assert (ROOT / "docs/release-notes-v3.6.1.md").exists()
     assert (ROOT / "docs/release-notes-v3.6.0.md").exists()
     assert (ROOT / "docs/release-notes-v3.5.2.md").exists()
     assert (ROOT / "docs/roadmap-v3.6.0.md").exists()
@@ -416,6 +420,21 @@ def test_changelog_documents_v360_release_notes():
     assert "Docker packaging is intentionally out of scope" in release_notes
 
 
+def test_changelog_documents_v361_release_notes():
+    changelog = read_doc("CHANGELOG.md")
+    release_notes = read_doc("docs/release-notes-v3.6.1.md")
+
+    assert "## V3.6.1 — 2026-06-06" in changelog
+    assert "issue #47" in changelog
+    assert "0.15.1" in changelog
+    assert "v0.15.1" in changelog
+    assert "gateway_run_013_plus" in changelog
+    assert "doctor --explain" in changelog
+    assert "V3.6.1 Release Notes" in release_notes
+    assert "hermes-feishu-card-v3.6.1-macos.tar.gz" in release_notes
+    assert "0.15.x" in release_notes
+
+
 def test_config_example_documents_profile_and_bot_card_titles():
     config = read_doc("config.yaml.example")
 
@@ -520,7 +539,7 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.6.0" in release_readiness
+    assert "3.6.1" in release_readiness
     assert "Release assets workflow" in release_readiness
     assert "install.ps1" in release_readiness
     assert "3.1.0" not in release_readiness
@@ -530,6 +549,7 @@ def test_docs_describe_release_readiness_boundaries():
     assert "doctor --json" in release_readiness
     assert "repair --hermes-dir" in release_readiness
     assert "/health.routing.profiles" in release_readiness
+    assert "0.15.x" in release_readiness
     assert "python3 -m pytest -q" in docs
     assert "真实 Hermes Gateway" in docs
     assert "真实飞书应用" in docs

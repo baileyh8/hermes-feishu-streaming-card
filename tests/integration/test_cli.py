@@ -258,6 +258,29 @@ def test_module_doctor_explain_reports_summary_and_next_steps(tmp_path):
     assert "Next steps" in result.stdout
 
 
+def test_module_doctor_explain_supports_hermes_015_without_v_prefix(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9015\n", encoding="utf-8")
+    hermes_dir = tmp_path / "hermes"
+    shutil.copytree(FIXTURE, hermes_dir)
+    (hermes_dir / "VERSION").write_text("0.15.1\n", encoding="utf-8")
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(hermes_dir),
+        "--explain",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Hermes: supported" in result.stdout
+    assert "0.15.1" in result.stdout
+    assert "gateway_run_013_plus" in result.stdout
+    assert "unsupported" not in result.stdout
+
+
 def test_module_doctor_reports_unsupported_hermes_detection(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("server:\n  port: 9008\n", encoding="utf-8")
