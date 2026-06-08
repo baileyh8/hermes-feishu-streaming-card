@@ -78,6 +78,7 @@ def create_app(
         "last_update_error": "",
         "last_route_error": "",
         "last_terminal_event": {},
+        "last_card_action": {},
     }
     app[RECENT_EVENTS_KEY] = deque(maxlen=25)
     app[ROUTING_DIAGNOSTICS_KEY] = _initial_routing_diagnostics(feishu_client)
@@ -174,6 +175,11 @@ async def _card_actions(request: web.Request) -> web.Response:
     try:
         payload = await request.json()
     except ValueError:
+        _record_card_action_diagnostics(
+            request.app,
+            action="invalid",
+            reason="invalid_json",
+        )
         return web.json_response({"ok": False, "error": "invalid json"}, status=400)
 
     value = _extract_action_value(payload)
@@ -182,11 +188,31 @@ async def _card_actions(request: web.Request) -> web.Response:
     choice = str(value.get("choice") or "").strip()
     choice_label = str(value.get("choice_label") or choice).strip()
     if not interaction_id or not token or not choice:
+        _record_card_action_diagnostics(
+            request.app,
+            action="invalid",
+            reason="invalid_action",
+            interaction_id=interaction_id,
+            choice=choice,
+        )
         return web.json_response({"ok": False, "error": "invalid action"}, status=400)
 
     callback_chat_id = _extract_callback_chat_id(payload)
-    found = _find_session_by_interaction(request.app, interaction_id, token, callback_chat_id)
+    found, failure_reason = _find_session_by_interaction(
+        request.app,
+        interaction_id,
+        token,
+        callback_chat_id,
+    )
     if found is None:
+        _record_card_action_diagnostics(
+            request.app,
+            action="not_found",
+            reason=failure_reason,
+            interaction_id=interaction_id,
+            callback_chat_id=callback_chat_id,
+            choice=choice,
+        )
         return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
     session_key, session = found
     user_name = _extract_operator_name(payload)
@@ -217,7 +243,25 @@ async def _card_actions(request: web.Request) -> web.Response:
     if post_lock_task is not None:
         await post_lock_task
     if response.status >= 400:
+        _record_card_action_diagnostics(
+            request.app,
+            action="rejected",
+            reason=f"event_apply_status_{response.status}",
+            interaction_id=interaction_id,
+            callback_chat_id=callback_chat_id,
+            session_key=session_key,
+            choice=choice,
+        )
         return response
+    _record_card_action_diagnostics(
+        request.app,
+        action="completed",
+        reason="",
+        interaction_id=interaction_id,
+        callback_chat_id=callback_chat_id,
+        session_key=session_key,
+        choice=choice,
+    )
     return web.json_response(
         {
             "ok": True,
@@ -686,24 +730,48 @@ def _extract_operator_name(payload: dict[str, Any]) -> str:
     ).strip()
 
 
+def _record_card_action_diagnostics(
+    app: web.Application,
+    *,
+    action: str,
+    reason: str = "",
+    interaction_id: str = "",
+    callback_chat_id: str = "",
+    session_key: str = "",
+    choice: str = "",
+) -> None:
+    app[DIAGNOSTICS_KEY]["last_card_action"] = {
+        "action": action,
+        "reason": reason,
+        "interaction_id": interaction_id,
+        "callback_chat_id": callback_chat_id,
+        "session_key": session_key,
+        "choice": choice,
+    }
+
+
 def _find_session_by_interaction(
     app: web.Application,
     interaction_id: str,
     token: str,
     callback_chat_id: str,
-) -> tuple[str, CardSession] | None:
+) -> tuple[tuple[str, CardSession] | None, str]:
+    found_interaction = False
     for session_key, session in app[SESSIONS_KEY].items():
         interaction = session.active_interaction
         if interaction is None:
             continue
         if interaction.interaction_id != interaction_id:
             continue
+        found_interaction = True
         if interaction.callback_token != token:
-            return None
+            return None, "token_mismatch"
         if callback_chat_id and callback_chat_id != session.chat_id:
-            return None
-        return str(session_key), session
-    return None
+            return None, "chat_id_mismatch"
+        return (str(session_key), session), ""
+    if found_interaction:
+        return None, "not_matched"
+    return None, "interaction_id_not_found"
 
 
 def _store_card_summary(

@@ -423,6 +423,103 @@ async def test_interaction_request_renders_buttons_and_callback_resolves(client)
     assert "已选择：允许一次" in str(feishu_client.updated[-1][1])
 
 
+async def test_thread_interaction_callback_resolves_same_thread_session(client):
+    test_client, feishu_client = client
+    thread_data = {
+        "thread_id": "omt_topic",
+        "reply_to_message_id": "om_original",
+    }
+
+    await test_client.post(
+        "/events",
+        json=event_payload("message.started", 0, thread_data),
+    )
+    requested = await test_client.post(
+        "/events",
+        json=event_payload(
+            "interaction.requested",
+            1,
+            {
+                **thread_data,
+                "interaction_id": "approval-thread-1",
+                "kind": "approval",
+                "prompt": "允许执行命令吗？",
+                "options": [{"label": "允许一次", "value": "once"}],
+            },
+        ),
+    )
+
+    assert requested.status == 200
+    interaction_card = feishu_client.updated[-1][1]
+    button = next(
+        element
+        for element in interaction_card["body"]["elements"]
+        if element.get("tag") == "button"
+    )
+
+    callback = await test_client.post(
+        "/card/actions",
+        json={
+            "event": {
+                "operator": {"open_id": "ou_bailey", "name": "Bailey"},
+                "context": {"open_chat_id": "oc_abc"},
+                "action": {"value": button["behaviors"][0]["value"]},
+            }
+        },
+    )
+    result = await test_client.get("/interactions/approval-thread-1")
+    health = await test_client.get("/health")
+
+    assert callback.status == 200
+    assert await result.json() == {
+        "ok": True,
+        "status": "completed",
+        "choice": "once",
+        "choice_label": "允许一次",
+        "interaction_id": "approval-thread-1",
+    }
+    health_body = await health.json()
+    assert health_body["diagnostics"]["last_card_action"] == {
+        "action": "completed",
+        "reason": "",
+        "interaction_id": "approval-thread-1",
+        "callback_chat_id": "oc_abc",
+        "session_key": "hermes-message-1",
+        "choice": "once",
+    }
+
+
+async def test_card_action_records_failure_diagnostics(client):
+    test_client, _ = client
+
+    callback = await test_client.post(
+        "/card/actions",
+        json={
+            "event": {
+                "context": {"open_chat_id": "oc_abc"},
+                "action": {
+                    "value": {
+                        "interaction_id": "missing",
+                        "token": "bad-token",
+                        "choice": "once",
+                    }
+                },
+            }
+        },
+    )
+    health = await test_client.get("/health")
+
+    assert callback.status == 404
+    assert (await health.json())["diagnostics"]["last_card_action"] == {
+        "action": "not_found",
+        "reason": "interaction_id_not_found",
+        "interaction_id": "missing",
+        "callback_chat_id": "oc_abc",
+        "session_key": "",
+        "choice": "once",
+    }
+
+
 async def test_completed_card_summary_can_be_looked_up_by_feishu_message_id(client):
     test_client, _ = client
     long_answer = "最终答案" * 1000
