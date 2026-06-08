@@ -83,6 +83,18 @@ def test_build_message_payload_serializes_card():
     assert json.loads(payload["content"]) == card
 
 
+def test_build_message_payload_uses_thread_id_when_present():
+    cfg = FeishuClientConfig(app_id="cli_a", app_secret="sec")
+    client = FeishuClient(cfg)
+    card = {"schema": "2.0", "header": {"title": "hello"}}
+
+    payload = client.build_message_payload("oc_abc", card, thread_id="omt_thread")
+
+    assert payload["receive_id"] == "omt_thread"
+    assert payload["msg_type"] == "interactive"
+    assert json.loads(payload["content"]) == card
+
+
 def test_build_message_payload_preserves_non_ascii_content():
     cfg = FeishuClientConfig(app_id="cli_a", app_secret="sec")
     client = FeishuClient(cfg)

@@ -248,6 +248,14 @@ def _session_key(event: SidecarEvent) -> str:
     return event.message_id
 
 
+def _thread_id_for_event(event: SidecarEvent) -> str | None:
+    """Return a Feishu thread id from sidecar conversation metadata."""
+    raw_thread = event.conversation_id if event.conversation_id != event.chat_id else None
+    if isinstance(raw_thread, str) and raw_thread.startswith(("omt_", "om_")):
+        return raw_thread
+    return None
+
+
 async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tuple[web.Response, Any]:
     """Process event state inside the lock. Returns (response, post_lock_task).
 
@@ -293,6 +301,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 event.chat_id,
                 _render_session_card(request, session),
                 route.bot_id,
+                thread_id=_thread_id_for_event(event),
             )
             if message_id is None:
                 sessions.pop(_session_key(event), None)
@@ -336,6 +345,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                     event.chat_id,
                     _render_session_card(request, session),
                     route.bot_id,
+                    thread_id=_thread_id_for_event(event),
                 )
                 if message_id is None:
                     sessions.pop(_session_key(event), None)
@@ -378,6 +388,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                     event.chat_id,
                     _render_session_card(request, session),
                     route.bot_id,
+                    thread_id=_thread_id_for_event(event),
                 )
                 if message_id is None:
                     sessions.pop(_session_key(event), None)
@@ -685,12 +696,20 @@ def _card_config_for_client(
 
 
 async def _send_card(
-    request: web.Request, chat_id: str, card: dict[str, Any], bot_id: str | None
+    request: web.Request,
+    chat_id: str,
+    card: dict[str, Any],
+    bot_id: str | None,
+    thread_id: str | None = None,
 ) -> str | None:
     metrics: SidecarMetrics = request.app[METRICS_KEY]
     metrics.feishu_send_attempts += 1
     try:
-        message_id = await _client_for_bot(request.app, bot_id).send_card(chat_id, card)
+        message_id = await _client_for_bot(request.app, bot_id).send_card(
+            chat_id,
+            card,
+            thread_id=thread_id,
+        )
     except Exception:
         metrics.feishu_send_failures += 1
         return None

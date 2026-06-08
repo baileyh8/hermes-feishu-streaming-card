@@ -602,11 +602,11 @@ def _build_event(
     if chat_id is None:
         return None
 
-    conversation_id = (
-        _first_string(local_vars, ("conversation_id", "thread_id", "session_id"))
-        or _first_attr_string(message_obj, ("conversation_id", "thread_id", "session_id"))
-        or _first_attr_string(source_obj, ("conversation_id", "thread_id", "session_id"))
-        or chat_id
+    conversation_id = _conversation_id_for_event(
+        local_vars=local_vars,
+        message_obj=message_obj,
+        source_obj=source_obj,
+        chat_id=chat_id,
     )
     created_at_value = local_vars.get("created_at")
     created_at = _created_at(created_at_value)
@@ -981,6 +981,40 @@ def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _is_feishu_thread_id(value: str | None) -> bool:
+    return bool(value and value.startswith(("omt_", "om_")))
+
+
+def _is_hermes_session_key(value: str | None) -> bool:
+    return bool(value and value.startswith("agent:main:"))
+
+
+def _conversation_id_for_event(
+    *,
+    local_vars: dict[str, Any],
+    message_obj: Any,
+    source_obj: Any,
+    chat_id: str,
+) -> str:
+    explicit = (
+        _first_string(local_vars, ("conversation_id",))
+        or _first_attr_string(message_obj, ("conversation_id",))
+        or _first_attr_string(source_obj, ("conversation_id",))
+    )
+    if explicit and not _is_hermes_session_key(explicit):
+        return explicit
+
+    thread_id = (
+        _first_string(local_vars, ("thread_id",))
+        or _first_attr_string(message_obj, ("thread_id",))
+        or _first_attr_string(source_obj, ("thread_id",))
+    )
+    if _is_feishu_thread_id(thread_id):
+        return thread_id
+
+    return chat_id
 
 
 def _first_raw_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:

@@ -55,26 +55,38 @@ class FeishuClient:
         self._tenant_access_token: str | None = None
         self._tenant_access_token_expires_at = 0.0
 
-    def build_message_payload(self, chat_id: str, card: Dict[str, Any]) -> Dict[str, str]:
+    def build_message_payload(
+        self,
+        chat_id: str,
+        card: Dict[str, Any],
+        thread_id: Optional[str] = None,
+    ) -> Dict[str, str]:
         if not isinstance(chat_id, str) or not chat_id.strip():
             raise ValueError("chat_id is required")
         if not isinstance(card, dict):
             raise TypeError("card must be a dict")
 
+        receive_id = thread_id if thread_id else chat_id
         return {
-            "receive_id": chat_id,
+            "receive_id": receive_id,
             "msg_type": "interactive",
             "content": json.dumps(card, ensure_ascii=False),
         }
 
-    async def send_card(self, chat_id: str, card: Dict[str, Any]) -> str:
+    async def send_card(
+        self,
+        chat_id: str,
+        card: Dict[str, Any],
+        thread_id: Optional[str] = None,
+    ) -> str:
         token = await self._tenant_token()
-        payload = self.build_message_payload(chat_id, card)
+        payload = self.build_message_payload(chat_id, card, thread_id=thread_id)
+        receive_id_type = "thread_id" if thread_id else "chat_id"
         body = await self._request_json(
             "POST",
             "/im/v1/messages",
             token=token,
-            params={"receive_id_type": "chat_id"},
+            params={"receive_id_type": receive_id_type},
             json_body=payload,
         )
         data = body.get("data")

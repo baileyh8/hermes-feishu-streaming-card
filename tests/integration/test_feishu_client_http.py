@@ -102,6 +102,31 @@ async def test_send_card_fetches_token_and_posts_interactive_message(feishu_api)
     assert send_request[3]["Authorization"] == "Bearer tenant-token-1"
 
 
+async def test_send_card_posts_to_thread_when_thread_id_present(feishu_api):
+    test_client, requests, token_calls = feishu_api
+    client = FeishuClient(
+        FeishuClientConfig(
+            app_id="cli_test",
+            app_secret="secret",
+            base_url=str(test_client.make_url("/")),
+        )
+    )
+
+    message_id = await client.send_card(
+        "oc_abc",
+        {"schema": "2.0", "body": "你好"},
+        thread_id="omt_thread",
+    )
+
+    assert message_id == "om_message_1"
+    assert token_calls() == 1
+    send_request = requests[1]
+    assert send_request[0] == "send"
+    assert send_request[1] == "thread_id"
+    assert send_request[2]["receive_id"] == "omt_thread"
+    assert send_request[2]["msg_type"] == "interactive"
+
+
 async def test_update_card_reuses_cached_token_and_patches_message(feishu_api):
     test_client, requests, token_calls = feishu_api
     client = FeishuClient(

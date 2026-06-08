@@ -165,8 +165,55 @@ def test_build_event_extracts_gateway_source_object():
 
     assert payload["event"] == "message.started"
     assert payload["chat_id"] == "oc_source"
-    assert payload["conversation_id"] == "session_source"
+    assert payload["conversation_id"] == "oc_source"
     assert payload["message_id"].startswith("hfc_")
+
+
+def test_build_event_uses_feishu_thread_id_as_conversation_id():
+    class ThreadSourceObject:
+        platform = "feishu"
+        chat_id = "oc_source"
+        thread_id = "omt_thread"
+
+    payload = hook_runtime.build_event(
+        "message.started",
+        {
+            "source": ThreadSourceObject(),
+            "session_id": "agent:main:feishu:dm:oc_source:omt_thread",
+        },
+    )
+
+    assert payload["chat_id"] == "oc_source"
+    assert payload["conversation_id"] == "omt_thread"
+
+
+def test_build_event_ignores_hermes_session_key_as_conversation_id():
+    payload = hook_runtime.build_event(
+        "message.started",
+        {
+            "chat_id": "oc_direct",
+            "session_id": "agent:main:feishu:dm:oc_direct:omt_thread",
+        },
+    )
+
+    assert payload["conversation_id"] == "oc_direct"
+
+
+def test_build_event_prefers_feishu_thread_over_hermes_conversation_key():
+    class ThreadSourceObject:
+        platform = "feishu"
+        chat_id = "oc_source"
+        thread_id = "omt_thread"
+
+    payload = hook_runtime.build_event(
+        "message.started",
+        {
+            "source": ThreadSourceObject(),
+            "conversation_id": "agent:main:feishu:dm:oc_source:omt_thread",
+        },
+    )
+
+    assert payload["conversation_id"] == "omt_thread"
 
 
 def test_build_event_uses_gateway_event_message_id_for_card_lifecycle():

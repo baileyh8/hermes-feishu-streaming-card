@@ -17,10 +17,10 @@ class FakeFeishuClient:
         self.update_error_message = "update unavailable"
         self.update_delay = 0.0
 
-    async def send_card(self, chat_id, card):
+    async def send_card(self, chat_id, card, thread_id=None):
         if self.fail_send:
             raise RuntimeError("send unavailable")
-        self.sent.append((chat_id, card))
+        self.sent.append((chat_id, card, thread_id))
         return f"feishu-message-{len(self.sent)}"
 
     async def update_card_message(self, message_id, card):
@@ -259,6 +259,46 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert metrics["feishu_update_successes"] == 2
     assert metrics["feishu_update_failures"] == 0
     assert metrics["feishu_update_retries"] == 0
+
+
+async def test_message_started_passes_feishu_thread_id_to_send_card(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id="omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][0] == "oc_abc"
+    assert feishu_client.sent[0][2] == "omt_thread"
+
+
+async def test_message_started_ignores_non_feishu_session_key_as_thread_id(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id="agent:main:feishu:dm:oc_abc:omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][0] == "oc_abc"
+    assert feishu_client.sent[0][2] is None
 
 
 async def test_interaction_request_renders_buttons_and_callback_resolves(client):
