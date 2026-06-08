@@ -5,7 +5,7 @@ import math
 import time
 from dataclasses import dataclass
 from numbers import Real
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Union
 from urllib.parse import quote, urlparse
 
 import aiohttp
@@ -60,13 +60,16 @@ class FeishuClient:
         chat_id: str,
         card: Dict[str, Any],
         thread_id: Optional[str] = None,
+        reply_to_message_id: Optional[str] = None,
     ) -> Dict[str, str]:
         if not isinstance(chat_id, str) or not chat_id.strip():
             raise ValueError("chat_id is required")
         if not isinstance(card, dict):
             raise TypeError("card must be a dict")
 
-        receive_id = thread_id if thread_id else chat_id
+        receive_id = chat_id
+        if thread_id and not reply_to_message_id:
+            receive_id = thread_id
         return {
             "receive_id": receive_id,
             "msg_type": "interactive",
@@ -78,17 +81,35 @@ class FeishuClient:
         chat_id: str,
         card: Dict[str, Any],
         thread_id: Optional[str] = None,
+        reply_to_message_id: Optional[str] = None,
     ) -> str:
         token = await self._tenant_token()
-        payload = self.build_message_payload(chat_id, card, thread_id=thread_id)
-        receive_id_type = "thread_id" if thread_id else "chat_id"
-        body = await self._request_json(
-            "POST",
-            "/im/v1/messages",
-            token=token,
-            params={"receive_id_type": receive_id_type},
-            json_body=payload,
+        payload = self.build_message_payload(
+            chat_id,
+            card,
+            thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
         )
+        if thread_id and reply_to_message_id:
+            body = await self._request_json(
+                "POST",
+                f"/im/v1/messages/{quote(reply_to_message_id, safe='')}/reply",
+                token=token,
+                json_body={
+                    "msg_type": payload["msg_type"],
+                    "content": payload["content"],
+                    "reply_in_thread": True,
+                },
+            )
+        else:
+            receive_id_type = "thread_id" if thread_id else "chat_id"
+            body = await self._request_json(
+                "POST",
+                "/im/v1/messages",
+                token=token,
+                params={"receive_id_type": receive_id_type},
+                json_body=payload,
+            )
         data = body.get("data")
         if not isinstance(data, dict) or not isinstance(data.get("message_id"), str):
             raise FeishuAPIError("Feishu send message response missing message_id")

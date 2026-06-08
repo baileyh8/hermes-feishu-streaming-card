@@ -5,7 +5,8 @@ import time
 import asyncio
 import logging
 import re
-from typing import Any, Dict
+from collections import deque
+from typing import Any, Deque, Dict
 
 from aiohttp import web
 
@@ -37,7 +38,15 @@ BASE_CARD_CONFIG_KEY = web.AppKey("base_card_config", dict)
 UPDATE_MAX_ATTEMPTS = 3
 UPDATE_MIN_INTERVAL_SECONDS = 0.2
 TERMINAL_EVENTS = {"message.completed", "message.failed"}
+SESSION_START_EVENTS = {
+    "message.started",
+    "thinking.delta",
+    "answer.delta",
+    "tool.updated",
+    "interaction.requested",
+}
 DIAGNOSTICS_KEY = web.AppKey("diagnostics", dict)
+RECENT_EVENTS_KEY = web.AppKey("recent_events", Deque)
 PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 logger = logging.getLogger(__name__)
 
@@ -70,6 +79,7 @@ def create_app(
         "last_route_error": "",
         "last_terminal_event": {},
     }
+    app[RECENT_EVENTS_KEY] = deque(maxlen=25)
     app[ROUTING_DIAGNOSTICS_KEY] = _initial_routing_diagnostics(feishu_client)
     app[PROFILE_DIAGNOSTICS_KEY] = {}
     app[BASE_CARD_CONFIG_KEY] = dict(card_config)
@@ -113,6 +123,7 @@ async def _health(request: web.Request) -> web.Response:
             for message_id, session in sessions.items()
         },
         "diagnostics": diagnostics,
+        "recent_events": list(request.app[RECENT_EVENTS_KEY]),
         "routing": request.app[ROUTING_DIAGNOSTICS_KEY],
         "profile_diagnostics": request.app[PROFILE_DIAGNOSTICS_KEY],
     }
@@ -256,6 +267,23 @@ def _thread_id_for_event(event: SidecarEvent) -> str | None:
     return None
 
 
+def _reply_to_message_id_for_event(event: SidecarEvent) -> str | None:
+    data = event.data if isinstance(event.data, dict) else {}
+    reply_to = data.get("reply_to_message_id")
+    if isinstance(reply_to, str) and reply_to.startswith("om_"):
+        return reply_to
+    # When in a thread, reply to the user's message so the response stays in the thread.
+    # Feishu API does not support receive_id_type=thread_id; we must use the reply API.
+    if _thread_id_for_event(event) and isinstance(event.message_id, str) and event.message_id.startswith("om_"):
+        return event.message_id
+    return None
+
+
+def _last_send_error(app: web.Application) -> str:
+    error = str(app[DIAGNOSTICS_KEY].get("last_send_error") or "").strip()
+    return error or "feishu_send_failed"
+
+
 async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tuple[web.Response, Any]:
     """Process event state inside the lock. Returns (response, post_lock_task).
 
@@ -271,10 +299,19 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     pending_update_requests: Dict[str, bool] = request.app[PENDING_UPDATE_REQUESTS_KEY]
     _record_profile_diagnostics(request.app, event)
     _record_attachment_diagnostics(request.app, event)
-    session = sessions.get(_session_key(event))
+    session_key = _session_key(event)
+    session = sessions.get(session_key)
 
     if event.event == "message.started":
         if session is not None:
+            _record_recent_event(
+                request.app,
+                event,
+                session_key=session_key,
+                applied=False,
+                action="ignored",
+                reason="duplicate_started",
+            )
             metrics.events_ignored += 1
             return web.json_response({"ok": True, "applied": False}), None
         session = CardSession(
@@ -282,18 +319,26 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
             message_id=event.message_id,
             chat_id=event.chat_id,
         )
-        sessions[_session_key(event)] = session
+        sessions[session_key] = session
         applied = session.apply(event)
-        if applied and _session_key(event) not in feishu_message_ids:
+        if applied and session_key not in feishu_message_ids:
             route = _resolve_route(request, event)
             if route is None:
-                sessions.pop(_session_key(event), None)
+                sessions.pop(session_key, None)
+                _record_recent_event(
+                    request.app,
+                    event,
+                    session_key=session_key,
+                    applied=False,
+                    action="rejected",
+                    reason="bot_route_failed",
+                )
                 metrics.events_rejected += 1
                 return web.json_response(
                     {"ok": False, "error": "bot route failed"},
                     status=502,
                 ), None
-            request.app[SESSION_CARD_CONFIGS_KEY][_session_key(event)] = (
+            request.app[SESSION_CARD_CONFIGS_KEY][session_key] = (
                 _resolve_session_card_config(request.app, route.bot_id, event)
             )
             message_id = await _send_card(
@@ -302,42 +347,67 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 _render_session_card(request, session),
                 route.bot_id,
                 thread_id=_thread_id_for_event(event),
+                reply_to_message_id=_reply_to_message_id_for_event(event),
             )
             if message_id is None:
-                sessions.pop(_session_key(event), None)
-                request.app[SESSION_CARD_CONFIGS_KEY].pop(_session_key(event), None)
+                sessions.pop(session_key, None)
+                request.app[SESSION_CARD_CONFIGS_KEY].pop(session_key, None)
+                _record_recent_event(
+                    request.app,
+                    event,
+                    session_key=session_key,
+                    applied=False,
+                    action="rejected",
+                    reason=_last_send_error(request.app),
+                )
                 metrics.events_rejected += 1
                 return web.json_response(
                     {"ok": False, "error": "feishu send failed"},
                     status=502,
                 ), None
-            feishu_message_ids[_session_key(event)] = message_id
-            message_bot_ids[_session_key(event)] = route.bot_id
+            feishu_message_ids[session_key] = message_id
+            message_bot_ids[session_key] = route.bot_id
         if applied:
             metrics.events_applied += 1
         else:
             metrics.events_ignored += 1
+        _record_recent_event(
+            request.app,
+            event,
+            session_key=session_key,
+            applied=applied,
+            action="started",
+            reason="" if applied else "session_apply_rejected",
+        )
         return web.json_response({"ok": True, "applied": applied}), None
 
     if session is None:
-        if event.event == "interaction.requested":
+        if event.event in SESSION_START_EVENTS:
             session = CardSession(
                 conversation_id=event.conversation_id,
                 message_id=event.message_id,
                 chat_id=event.chat_id,
             )
-            sessions[_session_key(event)] = session
+            sessions[session_key] = session
             applied = session.apply(event)
             if applied:
                 route = _resolve_route(request, event)
                 if route is None:
-                    sessions.pop(_session_key(event), None)
+                    sessions.pop(session_key, None)
+                    _record_recent_event(
+                        request.app,
+                        event,
+                        session_key=session_key,
+                        applied=False,
+                        action="rejected",
+                        reason="bot_route_failed",
+                    )
                     metrics.events_rejected += 1
                     return web.json_response(
                         {"ok": False, "error": "bot route failed"},
                         status=502,
                     ), None
-                request.app[SESSION_CARD_CONFIGS_KEY][_session_key(event)] = (
+                request.app[SESSION_CARD_CONFIGS_KEY][session_key] = (
                     _resolve_session_card_config(request.app, route.bot_id, event)
                 )
                 message_id = await _send_card(
@@ -346,21 +416,39 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                     _render_session_card(request, session),
                     route.bot_id,
                     thread_id=_thread_id_for_event(event),
+                    reply_to_message_id=_reply_to_message_id_for_event(event),
                 )
                 if message_id is None:
-                    sessions.pop(_session_key(event), None)
-                    request.app[SESSION_CARD_CONFIGS_KEY].pop(_session_key(event), None)
+                    sessions.pop(session_key, None)
+                    request.app[SESSION_CARD_CONFIGS_KEY].pop(session_key, None)
+                    _record_recent_event(
+                        request.app,
+                        event,
+                        session_key=session_key,
+                        applied=False,
+                        action="rejected",
+                        reason=_last_send_error(request.app),
+                    )
                     metrics.events_rejected += 1
                     return web.json_response(
                         {"ok": False, "error": "feishu send failed"},
                         status=502,
                     ), None
-                feishu_message_ids[_session_key(event)] = message_id
-                message_bot_ids[_session_key(event)] = route.bot_id
-                _store_interaction_result(request.app, session)
+                feishu_message_ids[session_key] = message_id
+                message_bot_ids[session_key] = route.bot_id
+                if event.event == "interaction.requested":
+                    _store_interaction_result(request.app, session)
                 metrics.events_applied += 1
             else:
                 metrics.events_ignored += 1
+            _record_recent_event(
+                request.app,
+                event,
+                session_key=session_key,
+                applied=applied,
+                action="auto_started",
+                reason="" if applied else "session_apply_rejected",
+            )
             return web.json_response({"ok": True, "applied": applied}), None
         if event.event == "message.completed" and _delivery_kind(event) == "cron":
             session = CardSession(
@@ -368,19 +456,27 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 message_id=event.message_id,
                 chat_id=event.chat_id,
             )
-            sessions[_session_key(event)] = session
+            sessions[session_key] = session
             applied = session.apply(event)
             if applied:
                 route = _resolve_route(request, event)
                 if route is None:
-                    sessions.pop(_session_key(event), None)
+                    sessions.pop(session_key, None)
+                    _record_recent_event(
+                        request.app,
+                        event,
+                        session_key=session_key,
+                        applied=False,
+                        action="rejected",
+                        reason="bot_route_failed",
+                    )
                     metrics.cron_fallbacks += 1
                     metrics.events_rejected += 1
                     return web.json_response(
                         {"ok": False, "error": "bot route failed"},
                         status=502,
                     ), None
-                request.app[SESSION_CARD_CONFIGS_KEY][_session_key(event)] = (
+                request.app[SESSION_CARD_CONFIGS_KEY][session_key] = (
                     _resolve_session_card_config(request.app, route.bot_id, event)
                 )
                 message_id = await _send_card(
@@ -389,18 +485,27 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                     _render_session_card(request, session),
                     route.bot_id,
                     thread_id=_thread_id_for_event(event),
+                    reply_to_message_id=_reply_to_message_id_for_event(event),
                 )
                 if message_id is None:
-                    sessions.pop(_session_key(event), None)
-                    request.app[SESSION_CARD_CONFIGS_KEY].pop(_session_key(event), None)
+                    sessions.pop(session_key, None)
+                    request.app[SESSION_CARD_CONFIGS_KEY].pop(session_key, None)
+                    _record_recent_event(
+                        request.app,
+                        event,
+                        session_key=session_key,
+                        applied=False,
+                        action="rejected",
+                        reason=_last_send_error(request.app),
+                    )
                     metrics.cron_fallbacks += 1
                     metrics.events_rejected += 1
                     return web.json_response(
                         {"ok": False, "error": "feishu send failed"},
                         status=502,
                     ), None
-                feishu_message_ids[_session_key(event)] = message_id
-                message_bot_ids[_session_key(event)] = route.bot_id
+                feishu_message_ids[session_key] = message_id
+                message_bot_ids[session_key] = route.bot_id
                 _store_card_summary(request.app, event, session, message_id)
                 request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
                     "message_id": event.message_id,
@@ -414,12 +519,36 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 metrics.cron_cards_sent += 1
             else:
                 metrics.events_ignored += 1
+            _record_recent_event(
+                request.app,
+                event,
+                session_key=session_key,
+                applied=applied,
+                action="cron_completed",
+                reason="" if applied else "session_apply_rejected",
+            )
             return web.json_response({"ok": True, "applied": applied}), None
+        _record_recent_event(
+            request.app,
+            event,
+            session_key=session_key,
+            applied=False,
+            action="ignored",
+            reason="session_missing",
+        )
         metrics.events_ignored += 1
         return web.json_response({"ok": True, "applied": False}), None
 
-    feishu_message_id = feishu_message_ids.get(_session_key(event))
+    feishu_message_id = feishu_message_ids.get(session_key)
     if _would_apply(session, event) and feishu_message_id is None:
+        _record_recent_event(
+            request.app,
+            event,
+            session_key=session_key,
+            applied=False,
+            action="rejected",
+            reason="feishu_message_id_missing",
+        )
         metrics.events_rejected += 1
         return web.json_response(
             {"ok": False, "error": "feishu_message_id missing"},
@@ -453,7 +582,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
         if should_update:
             if is_terminal:
                 pending_update_requests.pop(session_key, None)
-            # 锁内立即标记，防止后续事件在API完成前重复触发更新
+            # Mark inside the lock so bursts do not schedule duplicate API updates.
             last_update_at[session_key] = time.monotonic()
             card = _render_session_card(request, session)
             bot_id = message_bot_ids.get(_session_key(event))
@@ -502,6 +631,14 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
         metrics.events_applied += 1
     else:
         metrics.events_ignored += 1
+    _record_recent_event(
+        request.app,
+        event,
+        session_key=session_key,
+        applied=applied,
+        action="updated" if applied else "ignored",
+        reason="" if applied else "session_apply_rejected",
+    )
     return web.json_response({"ok": True, "applied": applied}), post_lock_task
 
 
@@ -616,6 +753,31 @@ def _record_attachment_diagnostics(app: web.Application, event: SidecarEvent) ->
     }
 
 
+def _record_recent_event(
+    app: web.Application,
+    event: SidecarEvent,
+    *,
+    session_key: str,
+    applied: bool,
+    action: str,
+    reason: str = "",
+) -> None:
+    app[RECENT_EVENTS_KEY].append(
+        {
+            "event": event.event,
+            "message_id": event.message_id,
+            "conversation_id": event.conversation_id,
+            "chat_id": event.chat_id,
+            "session_key": session_key,
+            "thread_id": _thread_id_for_event(event) or "",
+            "sequence": event.sequence,
+            "applied": applied,
+            "action": action,
+            "reason": reason,
+        }
+    )
+
+
 def _delivery_kind(event: SidecarEvent) -> str:
     data = event.data if isinstance(event.data, dict) else {}
     return str(data.get("delivery_kind") or "").strip().lower()
@@ -701,6 +863,7 @@ async def _send_card(
     card: dict[str, Any],
     bot_id: str | None,
     thread_id: str | None = None,
+    reply_to_message_id: str | None = None,
 ) -> str | None:
     metrics: SidecarMetrics = request.app[METRICS_KEY]
     metrics.feishu_send_attempts += 1
@@ -709,12 +872,20 @@ async def _send_card(
             chat_id,
             card,
             thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
         )
-    except Exception:
+    except Exception as exc:
+        request.app[DIAGNOSTICS_KEY]["last_send_error"] = _safe_error_summary(exc)
         metrics.feishu_send_failures += 1
         return None
+    request.app[DIAGNOSTICS_KEY]["last_send_error"] = ""
     metrics.feishu_send_successes += 1
     return message_id
+
+
+def _safe_error_summary(exc: Exception) -> str:
+    message = str(exc).strip() or exc.__class__.__name__
+    return message[:500]
 
 
 async def _update_card(
