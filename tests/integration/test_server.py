@@ -17,10 +17,10 @@ class FakeFeishuClient:
         self.update_error_message = "update unavailable"
         self.update_delay = 0.0
 
-    async def send_card(self, chat_id, card):
+    async def send_card(self, chat_id, card, thread_id=None, reply_to_message_id=None):
         if self.fail_send:
             raise RuntimeError("send unavailable")
-        self.sent.append((chat_id, card))
+        self.sent.append((chat_id, card, thread_id, reply_to_message_id))
         return f"feishu-message-{len(self.sent)}"
 
     async def update_card_message(self, message_id, card):
@@ -137,6 +137,7 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     assert body["reply_index"] == {"entries": 0, "last_lookup": {}}
     assert body["cron"] == {"cards_sent": 0, "fallbacks": 0}
     assert body["profile_diagnostics"] == {}
+    assert body["recent_events"] == []
 
 
 async def test_health_reports_profile_diagnostics_for_profile_events():
@@ -261,6 +262,108 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert metrics["feishu_update_retries"] == 0
 
 
+async def test_message_started_passes_feishu_thread_id_to_send_card(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id="omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][0] == "oc_abc"
+    assert feishu_client.sent[0][2] == "omt_thread"
+
+
+async def test_thread_card_uses_reply_anchor_when_present(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            {"reply_to_message_id": "om_user_message"},
+            conversation_id="omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][2] == "omt_thread"
+    assert feishu_client.sent[0][3] == "om_user_message"
+
+
+async def test_delta_before_started_starts_thread_card(client):
+    test_client, feishu_client = client
+
+    delta = await test_client.post(
+        "/events",
+        json=event_payload(
+            "answer.delta",
+            0,
+            {"text": "话题回答"},
+            conversation_id="omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+    completed = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            1,
+            {"answer": "话题最终回答"},
+            conversation_id="omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+
+    assert delta.status == 200
+    assert await delta.json() == {"ok": True, "applied": True}
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][0] == "oc_abc"
+    assert feishu_client.sent[0][2] == "omt_thread"
+    assert len(feishu_client.updated) == 1
+    assert "话题最终回答" in str(feishu_client.updated[-1][1])
+
+    health = await test_client.get("/health")
+    body = await health.json()
+    assert body["recent_events"][0]["event"] == "answer.delta"
+    assert body["recent_events"][0]["action"] == "auto_started"
+    assert body["recent_events"][0]["thread_id"] == "omt_thread"
+
+
+async def test_message_started_ignores_non_feishu_session_key_as_thread_id(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id="agent:main:feishu:dm:oc_abc:omt_thread",
+            chat_id="oc_abc",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][0] == "oc_abc"
+    assert feishu_client.sent[0][2] is None
+
+
 async def test_interaction_request_renders_buttons_and_callback_resolves(client):
     test_client, feishu_client = client
 
@@ -318,6 +421,103 @@ async def test_interaction_request_renders_buttons_and_callback_resolves(client)
         "interaction_id": "approval-1",
     }
     assert "已选择：允许一次" in str(feishu_client.updated[-1][1])
+
+
+async def test_thread_interaction_callback_resolves_same_thread_session(client):
+    test_client, feishu_client = client
+    thread_data = {
+        "thread_id": "omt_topic",
+        "reply_to_message_id": "om_original",
+    }
+
+    await test_client.post(
+        "/events",
+        json=event_payload("message.started", 0, thread_data),
+    )
+    requested = await test_client.post(
+        "/events",
+        json=event_payload(
+            "interaction.requested",
+            1,
+            {
+                **thread_data,
+                "interaction_id": "approval-thread-1",
+                "kind": "approval",
+                "prompt": "允许执行命令吗？",
+                "options": [{"label": "允许一次", "value": "once"}],
+            },
+        ),
+    )
+
+    assert requested.status == 200
+    interaction_card = feishu_client.updated[-1][1]
+    button = next(
+        element
+        for element in interaction_card["body"]["elements"]
+        if element.get("tag") == "button"
+    )
+
+    callback = await test_client.post(
+        "/card/actions",
+        json={
+            "event": {
+                "operator": {"open_id": "ou_bailey", "name": "Bailey"},
+                "context": {"open_chat_id": "oc_abc"},
+                "action": {"value": button["behaviors"][0]["value"]},
+            }
+        },
+    )
+    result = await test_client.get("/interactions/approval-thread-1")
+    health = await test_client.get("/health")
+
+    assert callback.status == 200
+    assert await result.json() == {
+        "ok": True,
+        "status": "completed",
+        "choice": "once",
+        "choice_label": "允许一次",
+        "interaction_id": "approval-thread-1",
+    }
+    health_body = await health.json()
+    assert health_body["diagnostics"]["last_card_action"] == {
+        "action": "completed",
+        "reason": "",
+        "interaction_id": "approval-thread-1",
+        "callback_chat_id": "oc_abc",
+        "session_key": "hermes-message-1",
+        "choice": "once",
+    }
+
+
+async def test_card_action_records_failure_diagnostics(client):
+    test_client, _ = client
+
+    callback = await test_client.post(
+        "/card/actions",
+        json={
+            "event": {
+                "context": {"open_chat_id": "oc_abc"},
+                "action": {
+                    "value": {
+                        "interaction_id": "missing",
+                        "token": "bad-token",
+                        "choice": "once",
+                    }
+                },
+            }
+        },
+    )
+    health = await test_client.get("/health")
+
+    assert callback.status == 404
+    assert (await health.json())["diagnostics"]["last_card_action"] == {
+        "action": "not_found",
+        "reason": "interaction_id_not_found",
+        "interaction_id": "missing",
+        "callback_chat_id": "oc_abc",
+        "session_key": "",
+        "choice": "once",
+    }
 
 
 async def test_completed_card_summary_can_be_looked_up_by_feishu_message_id(client):
@@ -442,7 +642,7 @@ async def test_non_object_json_payload_returns_400_json(client):
     assert feishu_client.updated == []
 
 
-async def test_event_before_started_is_not_applied(client):
+async def test_delta_before_started_auto_starts_card(client):
     test_client, feishu_client = client
 
     response = await test_client.post(
@@ -451,14 +651,16 @@ async def test_event_before_started_is_not_applied(client):
     )
 
     assert response.status == 200
-    assert await response.json() == {"ok": True, "applied": False}
-    assert feishu_client.sent == []
+    assert await response.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
     assert feishu_client.updated == []
     health = await test_client.get("/health")
-    metrics = (await health.json())["metrics"]
+    body = await health.json()
+    metrics = body["metrics"]
     assert metrics["events_received"] == 1
-    assert metrics["events_applied"] == 0
-    assert metrics["events_ignored"] == 1
+    assert metrics["events_applied"] == 1
+    assert metrics["events_ignored"] == 0
+    assert body["recent_events"][0]["action"] == "auto_started"
 
 
 async def test_cron_completed_event_sends_completed_card_without_started(client):
