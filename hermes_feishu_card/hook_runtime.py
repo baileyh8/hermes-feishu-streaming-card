@@ -323,6 +323,8 @@ def request_approval_choice_from_hermes_locals(
     if isinstance(result, dict) and result.get("status") == "completed":
         choice = str(result.get("choice") or "").strip()
         return choice or None
+    if isinstance(result, dict) and result.get("status") in {"timeout", "failed"}:
+        return "deny"
     return None
 
 
