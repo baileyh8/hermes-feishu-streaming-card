@@ -82,6 +82,25 @@ def create_app(
     app.router.add_get("/interactions/{interaction_id}", _interaction_result)
     app.router.add_post("/card/actions", _card_actions)
     app.router.add_post("/events", _events)
+
+    # Startup GC: clean up any zombie sessions left in the dict.
+    async def _startup_gc(app: web.Application) -> None:
+        _gc_zombie_sessions(
+            app,
+            app[SESSIONS_KEY],
+            app[FEISHU_MESSAGE_IDS_KEY],
+            app[LAST_UPDATE_AT_KEY],
+            app[UPDATE_TASKS_KEY],
+            app[PENDING_UPDATE_REQUESTS_KEY],
+            app[METRICS_KEY],
+        )
+        if app[METRICS_KEY].zombie_sessions_removed:
+            logger.info(
+                "startup gc removed %d zombie session(s)",
+                app[METRICS_KEY].zombie_sessions_removed,
+            )
+
+    app.on_startup.append(_startup_gc)
     return app
 
 
@@ -94,6 +113,7 @@ async def _health(request: web.Request) -> web.Response:
         "active_sessions": len(sessions),
         "process_pid": os.getpid(),
         "metrics": metrics.snapshot(),
+        "zombie_sessions_removed": metrics.zombie_sessions_removed,
         "reply_index": {
             "entries": len(request.app[CARD_SUMMARIES_KEY]),
             "last_lookup": diagnostics.get("last_reply_lookup", {}),
@@ -248,6 +268,62 @@ def _session_key(event: SidecarEvent) -> str:
     return event.message_id
 
 
+def _is_zombie_session(session: "CardSession", has_feishu_card: bool) -> bool:
+    """A session is a zombie if it has no progress AND never produced a card.
+
+    These are produced when a non-message.started event hits the sidecar first
+    and the fallback message_id path runs in hook_runtime, but the event is
+    neither 'interaction.requested' nor a cron 'message.completed', so the
+    server.py:407-408 path drops it without ever calling session.apply().
+    Result: a CardSession in the dict with all counters at initial values
+    (last_sequence=-1, no text, no tools) and no card to update. They
+    accumulate forever and pollute /health output.
+
+    Note: CardSession.last_sequence defaults to -1 (never touched). A session
+    that has been touched at least once will have last_sequence >= 0.
+    """
+    return (
+        not has_feishu_card
+        and session.last_sequence < 0
+        and not session.answer_text
+        and not session.thinking_text
+        and session.tool_count == 0
+    )
+
+
+def _gc_zombie_sessions(
+    app,
+    sessions: "Dict[str, CardSession]",
+    feishu_message_ids: "Dict[str, str]",
+    last_update_at: "Dict[str, float]",
+    update_tasks: "Dict[str, asyncio.Task]",
+    pending_update_requests: "Dict[str, bool]",
+    metrics,
+) -> None:
+    """Remove zombie sessions (and their parallel dict entries) in place.
+
+    Safe to call on every event: iterates a snapshot of keys to avoid
+    'dict changed size during iteration'. Idempotent.
+    """
+    for key in list(sessions.keys()):
+        session = sessions.get(key)
+        if session is None:
+            continue
+        if not _is_zombie_session(session, key in feishu_message_ids):
+            continue
+        sessions.pop(key, None)
+        last_update_at.pop(key, None)
+        update_tasks.pop(key, None)
+        pending_update_requests.pop(key, None)
+        app[DIAGNOSTICS_KEY].setdefault("zombie_sessions", []).append(
+            {"key": key, "removed_at": time.time()}
+        )
+        zs = app[DIAGNOSTICS_KEY]["zombie_sessions"]
+        if len(zs) > 50:
+            del zs[: len(zs) - 50]
+        metrics.zombie_sessions_removed += 1
+
+
 async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tuple[web.Response, Any]:
     """Process event state inside the lock. Returns (response, post_lock_task).
 
@@ -263,6 +339,8 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     pending_update_requests: Dict[str, bool] = request.app[PENDING_UPDATE_REQUESTS_KEY]
     _record_profile_diagnostics(request.app, event)
     _record_attachment_diagnostics(request.app, event)
+    # GC zombie sessions (see _gc_zombie_sessions docstring). Cheap, idempotent.
+    _gc_zombie_sessions(request.app, sessions, feishu_message_ids, last_update_at, update_tasks, pending_update_requests, metrics)
     session = sessions.get(_session_key(event))
 
     if event.event == "message.started":

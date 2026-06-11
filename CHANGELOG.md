@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.6.2 — 2026-06-11
+
+### Fixed
+- **Zombie session leak in `server.py`**: when a non-`message.started` event
+  reached the sidecar first (e.g. a normal `message.delta` or
+  `message.completed` arriving before `message.started`), the fallback
+  message_id path in `hook_runtime` allocated an `om_xxx` id and registered
+  it in `_ACTIVE_FALLBACK_MESSAGE_IDS`, but `server.py`'s `if session is
+  None:` branch only handles `interaction.requested` and cron
+  `message.completed` — other event types returned 200/ignored without ever
+  calling `session.apply()`. This created a `CardSession` in the dict with
+  all counters at initial values and no Feishu card binding, which
+  accumulated forever and polluted `/health` output.
+  Fix: added `_gc_zombie_sessions()` that runs on every event and once at
+  startup, removing sessions with no progress (`last_sequence < 0`, no
+  text, no tools) and no card binding. Counters exposed via
+  `metrics.zombie_sessions_removed` and `/health.zombie_sessions_removed`.
+
+### Tests
+- 11 new unit tests in `tests/unit/test_zombie_gc.py` covering the
+  detection predicate, idempotence, log capping, and metric exposure.
+
 ## V3.6.1 — 2026-06-06
 
 ### Fixed

@@ -119,7 +119,10 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     body = await response.json()
     assert body["status"] == "healthy"
     assert body["active_sessions"] == 0
-    assert body["metrics"] == {
+    # Use subset match so future metrics additions don't break this test.
+    # The contract: every original metric starts at 0, and the new zombie
+    # counter is exposed at the top level (not inside metrics) for visibility.
+    expected_metrics_subset = {
         "events_received": 0,
         "events_applied": 0,
         "events_ignored": 0,
@@ -134,6 +137,9 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
         "cron_cards_sent": 0,
         "cron_fallbacks": 0,
     }
+    for key, value in expected_metrics_subset.items():
+        assert body["metrics"].get(key) == value, f"metric {key} mismatch"
+    assert body["zombie_sessions_removed"] == 0
     assert body["reply_index"] == {"entries": 0, "last_lookup": {}}
     assert body["cron"] == {"cards_sent": 0, "fallbacks": 0}
     assert body["profile_diagnostics"] == {}
