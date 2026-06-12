@@ -26,6 +26,7 @@ def render_card(
     session: CardSession,
     footer_fields: list[str] | tuple[str, ...] | None = None,
     title: str = DEFAULT_TITLE,
+    hide_footer: bool = False,
 ) -> Dict[str, Any]:
     status = _render_status(session)
     main_text = normalize_stream_text(session.visible_main_text) or ("正在思考..." if session.status == "thinking" else "")
@@ -43,13 +44,14 @@ def render_card(
                 "content": attachment_summary,
             }
         )
-    elements.extend(
-        [
-            {"tag": "hr", "element_id": "main_divider"},
-            {"tag": "markdown", "element_id": "tool_summary", "content": tool_summary},
-            {"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"},
-        ]
-    )
+    if not hide_footer:
+        elements.extend(
+            [
+                {"tag": "hr", "element_id": "main_divider"},
+                {"tag": "markdown", "element_id": "tool_summary", "content": tool_summary},
+                {"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"},
+            ]
+        )
     return {
         "schema": "2.0",
         "config": {
@@ -69,6 +71,8 @@ def render_card(
 
 def _render_status(session: CardSession) -> Dict[str, str]:
     if session.status == "completed":
+        if getattr(session, "delivery_kind", "") == "cron":
+            return {"subtitle": "", "template": "green"}
         return {"subtitle": "已完成", "template": "green"}
     if session.status == "failed":
         return {"subtitle": "处理失败", "template": "red"}

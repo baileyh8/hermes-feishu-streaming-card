@@ -735,8 +735,24 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
             "profile_id": profile_id,
             "profile_source": profile_source,
             "attachments": _extract_attachments(content, local_vars),
+            "card": _cron_card_config(job),
         },
     }
+
+
+def _cron_card_config(job: dict[str, Any]) -> dict[str, Any]:
+    """Build card config for cron delivery from env vars.
+
+    HERMES_CRON_CARD_TITLE — card title (default: job name)
+    HERMES_CRON_CARD_FOOTER — comma-separated footer fields (empty = no footer)
+    """
+    title = os.environ.get("HERMES_CRON_CARD_TITLE", "").strip()
+    if not title:
+        title = str(job.get("name") or "定时任务").strip()
+    footer_raw = os.environ.get("HERMES_CRON_CARD_FOOTER", "").strip()
+    footer_fields = [f.strip() for f in footer_raw.split(",") if f.strip()] if footer_raw else []
+    hide_footer = not bool(footer_fields)
+    return {"title": title, "footer_fields": footer_fields, "hide_footer": hide_footer}
 
 
 def _interaction_timeout(value: float | None) -> float:

@@ -634,10 +634,12 @@ def _render_session_card(request: web.Request, session: CardSession) -> dict[str
     title = card_config.get("title", request.app[CARD_TITLE_KEY])
     if not isinstance(title, str):
         title = request.app[CARD_TITLE_KEY]
+    hide_footer = bool(card_config.get("hide_footer", False))
     return render_card(
         session,
         footer_fields=footer_fields,
         title=title,
+        hide_footer=hide_footer,
     )
 
 
