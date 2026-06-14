@@ -558,13 +558,18 @@ async def _get_json(url: str, timeout: float) -> Any:
     return await loop.run_in_executor(None, _open_json_request, req, timeout)
 
 
+# Build a no-proxy opener so local sidecar calls bypass the system HTTP proxy.
+_NO_PROXY_HANDLER = request.ProxyHandler({})
+_NO_PROXY_OPENER = request.build_opener(_NO_PROXY_HANDLER)
+
+
 def _open_request(req: request.Request, timeout: float) -> None:
-    with request.urlopen(req, timeout=timeout) as response:
+    with _NO_PROXY_OPENER.open(req, timeout=timeout) as response:
         response.read()
 
 
 def _open_json_request(req: request.Request, timeout: float) -> Any:
-    with request.urlopen(req, timeout=timeout) as response:
+    with _NO_PROXY_OPENER.open(req, timeout=timeout) as response:
         body = response.read()
     if not body:
         return None
