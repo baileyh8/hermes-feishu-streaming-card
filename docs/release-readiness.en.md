@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.6.1`. This release keeps the sidecar-only mainline and builds on V3.6.0 operations diagnostics by fixing issue #47: Hermes `0.15.x` and no-`v` semantic versions are no longer reported as unsupported by `doctor --explain`.
+Current package version: `3.6.2`. This release keeps the sidecar-only mainline and builds on V3.6.0 operations diagnostics plus the V3.6.1 Hermes compatibility fix by addressing issue #53: the installer now installs the package into the Python venv actually used by Hermes Gateway, and `doctor` checks runtime import.
 
 ## Ready
 
@@ -23,6 +23,8 @@ Current package version: `3.6.1`. This release keeps the sidecar-only mainline a
 - `install.sh` imports only Feishu/sidecar variables from `.env`, avoiding execution of unrelated values such as paths with spaces.
 - `install.sh` retries pip with `--break-system-packages` when uv/PEP 668 reports an externally managed Python environment.
 - `doctor --json` / `doctor --explain` report config, sidecar, Hermes, streaming, install_state, and recommendations.
+- `setup` / `install` detect the Hermes runtime venv Python and install the same plugin release there; `doctor` reports `runtime_import`.
+- Hook import/emit failures remain fail-open but write `[hermes-feishu-card] hook failed: ...` diagnostic warnings to Hermes stderr.
 - `repair --hermes-dir ... --yes` and `setup --repair` repair verifiable manifest/backup state and refuse unverifiable user edits.
 - Structured attachment, media, and file objects keep card summaries while preserving Hermes native media/file delivery paths.
 - `smoke-feishu-card --profile-id`, `bots test --profile-id`, CLI `status`, and `/health.routing.profiles` support profile-scoped troubleshooting.

@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 from uuid import uuid4
@@ -319,6 +321,11 @@ def _run_doctor(args: argparse.Namespace) -> int:
         detection = detect_hermes(args.hermes_dir)
         print(_format_hermes_detection(detection))
         if detection.supported:
+            runtime_import = _doctor_runtime_import_report(detection)
+            print(
+                "runtime_import: "
+                f"{runtime_import['status']} - {runtime_import.get('message', '')}"
+            )
             _print_hermes_streaming_guidance(Path(args.hermes_dir))
         return 0 if detection.supported else 1
     print("hermes: not checked")
@@ -344,6 +351,11 @@ def _doctor_error_report(config_path: Path, exc: Exception) -> dict[str, Any]:
             "checked": False,
             "status": "skipped",
             "message": "Install state was not checked because config loading failed.",
+        },
+        "runtime_import": {
+            "checked": False,
+            "status": "skipped",
+            "message": "Hermes runtime import was not checked because config loading failed.",
         },
         "recommendations": [
             {
@@ -389,6 +401,11 @@ def _build_doctor_report(
             "status": "skipped",
             "message": "Install state was not checked.",
         },
+        "runtime_import": {
+            "checked": False,
+            "status": "not_checked",
+            "message": "Hermes runtime import was not checked.",
+        },
         "recommendations": recommendations,
     }
 
@@ -402,6 +419,11 @@ def _build_doctor_report(
             "checked": False,
             "status": "skipped",
             "message": "Install state was skipped by request.",
+        }
+        report["runtime_import"] = {
+            "checked": False,
+            "status": "skipped",
+            "message": "Hermes runtime import was skipped by request.",
         }
         recommendations.append(
             {
@@ -436,6 +458,11 @@ def _build_doctor_report(
             "status": "skipped",
             "message": "Install state was skipped because Hermes is unsupported.",
         }
+        report["runtime_import"] = {
+            "checked": False,
+            "status": "skipped",
+            "message": "Hermes runtime import was skipped because Hermes is unsupported.",
+        }
         recommendations.append(
             {
                 "severity": "error",
@@ -460,6 +487,10 @@ def _build_doctor_report(
                 ),
             }
         )
+
+    runtime_import = _doctor_runtime_import_report(detection)
+    report["runtime_import"] = runtime_import
+    _append_runtime_import_recommendation(recommendations, runtime_import)
 
     streaming = _doctor_streaming_report(Path(args.hermes_dir))
     report["streaming"] = streaming
@@ -535,6 +566,222 @@ def _doctor_streaming_report(hermes_root: Path) -> dict[str, str]:
             "Hermes Gateway streaming config was not detected."
         )
     return {"status": status, "message": message}
+
+
+def _doctor_runtime_import_report(detection: HermesDetection) -> dict[str, Any]:
+    runtime_python = _detect_hermes_runtime_python(detection.root)
+    if runtime_python is None:
+        return {
+            "checked": False,
+            "status": "skipped",
+            "python": None,
+            "message": "Hermes runtime venv Python was not found.",
+        }
+    return _check_runtime_hook_import(runtime_python)
+
+
+def _append_runtime_import_recommendation(
+    recommendations: list[dict[str, str]],
+    runtime_import: dict[str, Any],
+) -> None:
+    if runtime_import.get("status") != "failed":
+        return
+    recommendations.append(
+        {
+            "severity": "warning",
+            "code": "runtime_import_failed",
+            "message": runtime_import.get("message", "Hermes runtime import failed."),
+            "next_step": (
+                "Run setup/install again so hermes-feishu-streaming-card is "
+                "installed into the Hermes Gateway venv Python."
+            ),
+        }
+    )
+
+
+def _detect_hermes_runtime_python(hermes_root: Path | str) -> Path | None:
+    root = Path(hermes_root).expanduser()
+    candidates = (
+        root / "venv" / "bin" / "python",
+        root / "venv" / "bin" / "python3",
+        root / ".venv" / "bin" / "python",
+        root / ".venv" / "bin" / "python3",
+        root / "venv" / "Scripts" / "python.exe",
+        root / ".venv" / "Scripts" / "python.exe",
+    )
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def _check_runtime_hook_import(runtime_python: Path) -> dict[str, Any]:
+    code = (
+        "import hermes_feishu_card.hook_runtime as hook_runtime; "
+        "print(getattr(hook_runtime, '__file__', ''))"
+    )
+    try:
+        result = subprocess.run(
+            [str(runtime_python), "-c", code],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "checked": True,
+            "status": "failed",
+            "python": str(runtime_python),
+            "message": "Hermes runtime hook_runtime import timed out.",
+        }
+    except OSError as exc:
+        return {
+            "checked": True,
+            "status": "failed",
+            "python": str(runtime_python),
+            "message": (
+                "Hermes runtime hook_runtime import could not start: "
+                f"{exc.__class__.__name__}"
+            ),
+        }
+    if result.returncode == 0:
+        location = result.stdout.strip()
+        suffix = f" from {location}" if location else ""
+        return {
+            "checked": True,
+            "status": "ok",
+            "python": str(runtime_python),
+            "message": f"Hermes runtime can import hook_runtime{suffix}.",
+        }
+    detail = _summarize_process_output(result)
+    return {
+        "checked": True,
+        "status": "failed",
+        "python": str(runtime_python),
+        "message": f"Hermes runtime cannot import hook_runtime: {detail}",
+    }
+
+
+def _ensure_hermes_runtime_package(detection: HermesDetection) -> None:
+    runtime_python = _detect_hermes_runtime_python(detection.root)
+    if runtime_python is None:
+        print("runtime package: skipped (Hermes venv Python not found)")
+        return
+    report = _check_runtime_hook_import(runtime_python)
+    if report["status"] == "ok":
+        print(f"runtime package: import ok ({runtime_python})")
+        return
+
+    spec = _runtime_install_spec()
+    if not spec:
+        raise ValueError(
+            "Hermes runtime Python cannot import hermes_feishu_card.hook_runtime, "
+            "and no install spec is available. Run the one-line installer or set "
+            "HFC_INSTALL_SPEC before install/setup."
+        )
+
+    pip_version = _run_runtime_pip(runtime_python, ["--version"], timeout=20)
+    if pip_version.returncode != 0:
+        raise ValueError(
+            "Hermes runtime Python pip is unavailable: "
+            f"{_summarize_process_output(pip_version)}"
+        )
+    install = _run_runtime_pip(
+        runtime_python,
+        ["install", "--upgrade", spec],
+        timeout=180,
+    )
+    if install.returncode != 0:
+        raise ValueError(
+            "failed to install hermes-feishu-streaming-card into Hermes runtime "
+            f"Python {runtime_python}: {_summarize_process_output(install)}"
+        )
+    report = _check_runtime_hook_import(runtime_python)
+    if report["status"] != "ok":
+        raise ValueError(report["message"])
+    print(f"runtime package: installed into {runtime_python}")
+
+
+def _run_runtime_pip(
+    runtime_python: Path,
+    args: list[str],
+    *,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        result = subprocess.run(
+            [str(runtime_python), "-m", "pip", *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(
+            f"Hermes runtime pip command timed out for {runtime_python}: {' '.join(args)}"
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            f"Hermes runtime pip command could not start for {runtime_python}: "
+            f"{exc.__class__.__name__}"
+        ) from exc
+    if args == ["--version"] and result.returncode != 0:
+        _run_runtime_ensurepip(runtime_python)
+        result = subprocess.run(
+            [str(runtime_python), "-m", "pip", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    return result
+
+
+def _run_runtime_ensurepip(runtime_python: Path) -> None:
+    try:
+        result = subprocess.run(
+            [str(runtime_python), "-m", "ensurepip", "--upgrade"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(
+            f"Hermes runtime ensurepip timed out for {runtime_python}"
+        ) from exc
+    except OSError as exc:
+        raise ValueError(
+            f"Hermes runtime ensurepip could not start for {runtime_python}: "
+            f"{exc.__class__.__name__}"
+        ) from exc
+    if result.returncode != 0:
+        raise ValueError(
+            "failed to bootstrap pip in Hermes runtime Python "
+            f"{runtime_python}: {_summarize_process_output(result)}"
+        )
+
+
+def _runtime_install_spec() -> str | None:
+    spec = os.environ.get("HFC_INSTALL_SPEC", "").strip()
+    if spec:
+        return spec
+    root = Path(__file__).resolve().parents[1]
+    if (root / "pyproject.toml").exists() and (root / "hermes_feishu_card").is_dir():
+        return str(root)
+    return None
+
+
+def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:
+    combined = "\n".join(
+        part.strip()
+        for part in (result.stderr, result.stdout)
+        if part and part.strip()
+    )
+    if not combined:
+        combined = f"exit {result.returncode}"
+    return combined[-800:]
 
 
 def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
@@ -702,6 +949,13 @@ def _format_doctor_explanation(report: dict[str, Any]) -> str:
         lines.append(f"- Hermes: {hermes_status}{suffix}")
     else:
         lines.append(f"- Hermes: {hermes_status}")
+
+    runtime_import = report.get("runtime_import", {})
+    if runtime_import.get("status"):
+        lines.append(
+            f"- Runtime import: {runtime_import['status']} - "
+            f"{runtime_import.get('message', '')}"
+        )
 
     streaming = report["streaming"]
     if streaming.get("status"):
@@ -1196,6 +1450,12 @@ def _run_install(args: argparse.Namespace) -> int:
     detection = detect_hermes(args.hermes_dir)
     if not detection.supported:
         print(_format_hermes_detection(detection), file=sys.stderr)
+        return 1
+
+    try:
+        _ensure_hermes_runtime_package(detection)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
 
     run_py = detection.run_py

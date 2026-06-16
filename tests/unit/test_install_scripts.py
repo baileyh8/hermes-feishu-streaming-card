@@ -31,6 +31,10 @@ if [ "$1" = "-m" ] && [ "$2" = "ensurepip" ]; then
   exit 0
 fi
 if [ "$1" = "-m" ] && [ "$2" = "hermes_feishu_card.cli" ]; then
+  if [ "${HFC_INSTALL_SPEC:-}" != "git+https://github.com/baileyh8/hermes-feishu-streaming-card.git" ]; then
+    echo "HFC_INSTALL_SPEC was not exported" >&2
+    exit 4
+  fi
   if [ "${FEISHU_APP_ID:-}" != "cli_dotenv" ]; then
     echo "FEISHU_APP_ID was not loaded" >&2
     exit 2

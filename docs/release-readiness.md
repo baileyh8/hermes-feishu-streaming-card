@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.6.1`。这一版继续保持 sidecar-only 主线，在 V3.6.0 运维诊断基础上修复 issue #47：Hermes `0.15.x` 和无 `v` 前缀的语义版本不再被 `doctor --explain` 误判为 unsupported。
+当前包版本为 `3.6.2`。这一版继续保持 sidecar-only 主线，在 V3.6.0 运维诊断和 V3.6.1 Hermes 兼容修复基础上修复 issue #53：安装器会把插件安装到 Hermes Gateway 实际运行的 venv Python，并让 `doctor` 检查 runtime import。
 
 ## 已具备
 
@@ -23,6 +23,8 @@
 - `install.sh` 白名单读取 `.env` 中的飞书/sidecar 变量，不会执行带空格路径等无关配置。
 - `install.sh` 会在 uv/PEP 668 externally managed Python 场景下重试 `--break-system-packages`。
 - `doctor --json` / `doctor --explain` 会展示 config、sidecar、Hermes、streaming、install_state 和 recommendations。
+- `setup` / `install` 会检测 Hermes runtime venv Python 并安装同一插件版本；`doctor` 会报告 `runtime_import`。
+- hook import/emit 失败保持 fail-open，但会向 Hermes stderr 写入 `[hermes-feishu-card] hook failed: ...` 诊断 warning。
 - `repair --hermes-dir ... --yes` 和 `setup --repair` 能修复可验证的 manifest/backup 状态，无法验证用户改动时拒绝覆盖。
 - 结构化附件、媒体和文件对象会在卡片保留摘要，同时不抑制 Hermes 原生媒体/文件投递路径。
 - `smoke-feishu-card --profile-id`、`bots test --profile-id`、CLI `status` 和 `/health.routing.profiles` 支持 profile 维度排障。

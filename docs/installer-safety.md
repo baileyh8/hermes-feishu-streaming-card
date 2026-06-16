@@ -12,6 +12,7 @@
 - Hermes 版本和代码结构符合默认支持范围：`VERSION=v2026.4.23+` 或 Git tag `v2026.4.23+`，且 `gateway/run.py` 存在当前 hook 可识别的结构。
 - `gateway/run.py` 中存在当前 hook 可识别的插入位置。
 - 既有安装状态、备份和 manifest 没有互相矛盾。
+- 若 Hermes 目录中存在 `venv/bin/python`、`.venv/bin/python` 或 Windows `Scripts/python.exe`，该 runtime Python 必须能 import `hermes_feishu_card.hook_runtime`；不能 import 时，安装器会先把当前插件版本安装到该 venv。
 
 检查失败时不写入 Hermes 文件。
 
@@ -23,7 +24,7 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --json
 ```
 
-诊断输出会展示 Hermes 是否支持、Hermes root、`gateway/run.py` 路径、`run_py_exists`、`version_source`、`version`、`minimum_supported_version`、`hook_strategy`、`compatibility`、anchors 和 `reason`。`--explain` 会把 streaming 配置、manifest/backup/run.py 安装状态和下一步建议整理成人可读摘要；`--json` 会输出包含 `schema_version`、顶层 `status`、`install_state` 和 `recommendations` 的机器可读报告，适合 issue 模板和自动化排障。`doctor` 所有模式都是只读诊断，不会写入 Hermes 文件。
+诊断输出会展示 Hermes 是否支持、Hermes root、`gateway/run.py` 路径、`run_py_exists`、`version_source`、`version`、`minimum_supported_version`、`hook_strategy`、`compatibility`、anchors 和 `reason`。V3.6.2 起还会展示 `runtime_import`，用于确认 Hermes Gateway 实际运行的 Python 是否能 import `hermes_feishu_card.hook_runtime`。`--explain` 会把 runtime import、streaming 配置、manifest/backup/run.py 安装状态和下一步建议整理成人可读摘要；`--json` 会输出包含 `schema_version`、顶层 `status`、`runtime_import`、`install_state` 和 `recommendations` 的机器可读报告，适合 issue 模板和自动化排障。`doctor` 所有模式都是只读诊断，不会写入 Hermes 文件。
 
 `install` 在拒绝不支持的目录时也会输出同一组 Hermes 检测信息，便于用户判断是版本过低、版本来源未知、`gateway/run.py` 缺失，还是 hook 锚点结构不兼容。
 
@@ -65,3 +66,5 @@ python3 -m hermes_feishu_card.cli uninstall --hermes-dir ~/.hermes/hermes-agent 
 ## 降级行为
 
 sidecar 不可用、超时或返回错误时，Hermes hook 应让 Hermes 继续原生文本回复。卡片不可用是插件故障，不应升级为 Agent 主流程故障。
+
+hook import 或 emit 异常同样保持 fail-open，但不应完全静默。V3.6.2 起，注入的 hook block 会向 Hermes stderr 写入 `[hermes-feishu-card] hook failed: ...`，便于从 Gateway 日志定位 runtime venv、import 或 sidecar emit 问题。

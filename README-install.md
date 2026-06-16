@@ -6,6 +6,13 @@ This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
 hook, start the sidecar, and print the health-check command.
 
+From V3.6.2, setup also checks the Python interpreter used by Hermes Gateway
+itself. When `HERMES_DIR/venv/bin/python`, `HERMES_DIR/.venv/bin/python`, or the
+Windows equivalent exists, the same package release is installed into that
+runtime venv before `gateway/run.py` is patched. This prevents a hook from being
+installed into Hermes while `hermes_feishu_card.hook_runtime` is only available
+in the user's shell Python.
+
 ## macOS / Linux
 
 ```bash
@@ -22,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.6.1` or `main`. |
+| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.6.2` or `main`. |
 | `HFC_REPO` | `baileyh8/hermes-feishu-streaming-card` | GitHub repository to install from. |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent root directory. |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | Sidecar config path. |
@@ -50,6 +57,7 @@ irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main
 
 ```bash
 python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
+python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes-dir ~/.hermes/hermes-agent --explain
 ```
 
 The installer stores missing Feishu credentials in a local `.env` file next to

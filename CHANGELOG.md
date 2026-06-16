@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.6.2 — 2026-06-16
+
+### Fixed
+- issue #53: `install` / `setup` now detects the Hermes Gateway runtime venv Python and installs `hermes-feishu-streaming-card` into that interpreter before patching `gateway/run.py`.
+- Hermes hook import/emit failures are no longer completely silent; injected hook blocks still fail open, but now write a diagnostic `[hermes-feishu-card] hook failed: ...` warning to Hermes stderr.
+- `doctor --json` and `doctor --explain` now report `runtime_import`, including whether Hermes runtime Python can import `hermes_feishu_card.hook_runtime`.
+
+### Docs
+- Documented Hermes venv deployment behavior and installer safety expectations in README and installer safety docs.
+- Kept `.env` search expansion out of this release scope; it remains a separate follow-up item from the venv runtime installation fix.
+
 ## V3.6.1 — 2026-06-06
 
 ### Fixed

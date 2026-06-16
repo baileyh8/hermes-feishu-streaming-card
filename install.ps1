@@ -126,6 +126,7 @@ function Install-HfcPackage {
     if ($tag -and $tag -ne "main") {
         $spec = "$spec@$tag"
     }
+    [Environment]::SetEnvironmentVariable("HFC_INSTALL_SPEC", $spec, "Process")
     Write-HfcLog "installing $Repo@$tag"
     $pipArgs = @("install", "--upgrade", $spec)
     if ($PipUserFlag -and $PipUserFlag -notin @("0", "false", "False")) {

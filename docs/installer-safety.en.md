@@ -12,6 +12,7 @@ Before installation, the installer verifies:
 - Hermes version and structure are in the supported range: `VERSION=v2026.4.23+` or Git tag `v2026.4.23+`.
 - `gateway/run.py` contains an insertion point recognized by the current hook.
 - Existing install state, backup, and manifest are not contradictory.
+- If the Hermes directory contains `venv/bin/python`, `.venv/bin/python`, or the Windows `Scripts/python.exe` equivalent, that runtime Python must be able to import `hermes_feishu_card.hook_runtime`; otherwise setup installs the current plugin release into that venv before patching Hermes.
 
 If a check fails, Hermes files are not modified.
 
@@ -23,7 +24,7 @@ python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-d
 python3 -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --json
 ```
 
-Diagnostic output includes Hermes support status, Hermes root, `gateway/run.py`, `run_py_exists`, `version_source`, `version`, `minimum_supported_version`, `hook_strategy`, `compatibility`, anchors, and `reason`. `--explain` renders streaming config, manifest/backup/run.py install state, and next-step recommendations as a human-readable summary. `--json` emits a machine-readable report with `schema_version`, top-level `status`, `install_state`, and `recommendations` for issue templates and automation. All `doctor` modes are read-only and do not write Hermes files.
+Diagnostic output includes Hermes support status, Hermes root, `gateway/run.py`, `run_py_exists`, `version_source`, `version`, `minimum_supported_version`, `hook_strategy`, `compatibility`, anchors, and `reason`. From V3.6.2, it also includes `runtime_import`, which confirms whether the Python interpreter actually used by Hermes Gateway can import `hermes_feishu_card.hook_runtime`. `--explain` renders runtime import, streaming config, manifest/backup/run.py install state, and next-step recommendations as a human-readable summary. `--json` emits a machine-readable report with `schema_version`, top-level `status`, `runtime_import`, `install_state`, and `recommendations` for issue templates and automation. All `doctor` modes are read-only and do not write Hermes files.
 
 ## Repair
 
@@ -63,3 +64,5 @@ When migrating from legacy/dual historical installs, read [migration.en.md](migr
 ## Degraded Behavior
 
 If the sidecar is unavailable, times out, or returns an error, the Hermes hook lets Hermes continue with native text replies. Card failure is a plugin failure, not an Agent workflow failure.
+
+Hook import or emit exceptions also remain fail-open, but should not be fully silent. From V3.6.2, injected hook blocks write `[hermes-feishu-card] hook failed: ...` to Hermes stderr so runtime venv, import, or sidecar emit problems are diagnosable from Gateway logs.

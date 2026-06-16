@@ -237,6 +237,45 @@ def test_module_doctor_json_reports_supported_hermes_and_clean_install_state(tmp
     assert any(item["code"] == "hermes_compatibility_partial" for item in report["recommendations"])
 
 
+def test_module_doctor_json_reports_runtime_import_failure(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9018\n", encoding="utf-8")
+    hermes_dir = tmp_path / "hermes"
+    shutil.copytree(FIXTURE, hermes_dir)
+    venv_bin = hermes_dir / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    runtime_python = venv_bin / "python"
+    runtime_python.write_text(
+        """#!/usr/bin/env bash
+if [ "$1" = "-c" ]; then
+  echo "No module named hermes_feishu_card" >&2
+  exit 1
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(hermes_dir),
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == "warning"
+    assert report["runtime_import"]["checked"] is True
+    assert report["runtime_import"]["status"] == "failed"
+    assert report["runtime_import"]["python"] == str(runtime_python)
+    assert "hook_runtime" in report["runtime_import"]["message"]
+    assert any(item["code"] == "runtime_import_failed" for item in report["recommendations"])
+
+
 def test_module_doctor_explain_reports_summary_and_next_steps(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("server:\n  port: 9014\n", encoding="utf-8")
@@ -254,6 +293,7 @@ def test_module_doctor_explain_reports_summary_and_next_steps(tmp_path):
     assert "Doctor Summary" in result.stdout
     assert "Sidecar: 127.0.0.1:9014" in result.stdout
     assert "Hermes: supported" in result.stdout
+    assert "Runtime import:" in result.stdout
     assert "Install state: clean" in result.stdout
     assert "Next steps" in result.stdout
 

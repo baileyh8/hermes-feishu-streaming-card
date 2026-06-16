@@ -597,9 +597,21 @@ def _find_owned_block(content: str):
         indent, newline, strategy="gateway_run_013_plus"
     )
     placeholder = _render_placeholder_hook_block(indent, newline)
+    legacy_silent = _with_silent_exception_handler(legacy, indent, newline)
+    gateway_013_plus_silent = _with_silent_exception_handler(
+        gateway_013_plus, indent, newline
+    )
+    placeholder_silent = _with_silent_exception_handler(placeholder, indent, newline)
     actual = lines[begin_index : end_index + 1]
 
-    if actual not in (legacy, gateway_013_plus, placeholder):
+    if actual not in (
+        legacy,
+        gateway_013_plus,
+        placeholder,
+        legacy_silent,
+        gateway_013_plus_silent,
+        placeholder_silent,
+    ):
         raise ValueError("corrupt patch markers")
 
     tree = _parse_content_with_markers(content)
@@ -612,7 +624,9 @@ def _find_owned_block(content: str):
 
     first_body_index, _body_indent = handler_body
     expected_begin_index = (
-        first_body_index - 2 if actual == gateway_013_plus else first_body_index - 1
+        first_body_index - 2
+        if actual in (gateway_013_plus, gateway_013_plus_silent)
+        else first_body_index - 1
     )
     if begin_index != expected_begin_index:
         raise ValueError("corrupt patch markers")
@@ -641,8 +655,25 @@ def _find_owned_complete_block(content: str):
     previous_async_without_platform = (
         _render_previous_async_complete_hook_block_without_platform_guard(indent, newline)
     )
+    expected_silent = _with_silent_exception_handler(expected, indent, newline)
+    legacy_silent = _with_silent_exception_handler(legacy, indent, newline)
+    previous_async_silent = _with_silent_exception_handler(
+        previous_async, indent, newline
+    )
+    previous_async_without_platform_silent = _with_silent_exception_handler(
+        previous_async_without_platform, indent, newline
+    )
     actual = lines[begin_index : end_index + 1]
-    if actual not in (expected, legacy, previous_async, previous_async_without_platform):
+    if actual not in (
+        expected,
+        legacy,
+        previous_async,
+        previous_async_without_platform,
+        expected_silent,
+        legacy_silent,
+        previous_async_silent,
+        previous_async_without_platform_silent,
+    ):
         raise ValueError("corrupt completion patch markers")
     return begin_index, end_index
 
@@ -662,8 +693,9 @@ def _find_owned_cron_block(content: str):
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = _render_cron_hook_block(indent, newline)
+    expected_silent = _with_silent_exception_handler(expected, indent, newline)
     actual = lines[begin_index : end_index + 1]
-    if actual != expected:
+    if actual not in (expected, expected_silent):
         raise ValueError("corrupt cron patch markers")
 
     tree = _parse_content_with_markers(content)
@@ -808,6 +840,45 @@ def _exact_marker_line_index(lines, marker: str):
     return None
 
 
+def _render_hook_exception_handler(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    return [
+        f"{indent}except Exception as _hfc_exc:{newline}",
+        f"{inner_indent}try:{newline}",
+        f"{deeper_indent}import sys as _hfc_sys{newline}",
+        (
+            f"{deeper_indent}print(\"[hermes-feishu-card] hook failed: \" "
+            f"+ _hfc_exc.__class__.__name__ + \": \" + str(_hfc_exc), "
+            f"file=_hfc_sys.stderr){newline}"
+        ),
+        f"{inner_indent}except Exception:{newline}",
+        f"{deeper_indent}pass{newline}",
+    ]
+
+
+def _render_silent_exception_handler(indent: str, newline: str):
+    return [
+        f"{indent}except Exception:{newline}",
+        f"{_child_indent(indent)}pass{newline}",
+    ]
+
+
+def _with_silent_exception_handler(block: list[str], indent: str, newline: str):
+    diagnostic = _render_hook_exception_handler(indent, newline)
+    silent = _render_silent_exception_handler(indent, newline)
+    result: list[str] = []
+    index = 0
+    while index < len(block):
+        if block[index : index + len(diagnostic)] == diagnostic:
+            result.extend(silent)
+            index += len(diagnostic)
+        else:
+            result.append(block[index])
+            index += 1
+    return result
+
+
 def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gateway_run"):
     inner_indent = _child_indent(indent)
     block = [
@@ -818,8 +889,7 @@ def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gatewa
             f"import emit_from_hermes_locals as _hfc_emit{newline}"
         ),
         f"{inner_indent}_hfc_emit(locals()){newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{PATCH_END}{newline}",
     ]
     if strategy == "gateway_run_013_plus":
@@ -870,8 +940,7 @@ def _render_complete_hook_block(indent: str, newline: str):
         f"{inner_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
         f"{inner_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments):{newline}",
         f"{deeper_indent}return None{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
 
@@ -917,8 +986,7 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
         f"{deeper_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments):{newline}",
         f"{deeper_indent}    _already_streamed = True{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{QUEUED_COMPLETE_PATCH_END}{newline}",
     ]
 
@@ -942,8 +1010,7 @@ def _render_legacy_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"output_tokens\": agent_result.get(\"output_tokens\", 0),{newline}",
         f"{deeper_indent}}},{newline}",
         f"{inner_indent}}}, event_name=\"message.completed\"){newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
 
@@ -969,8 +1036,7 @@ def _render_previous_async_complete_hook_block(indent: str, newline: str):
         f"{inner_indent}}}, event_name=\"message.completed\"){newline}",
         f"{inner_indent}if _hfc_card_delivered and source.platform.value == \"feishu\":{newline}",
         f"{deeper_indent}return None{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
 
@@ -998,8 +1064,7 @@ def _render_previous_async_complete_hook_block_without_platform_guard(
         f"{inner_indent}}}, event_name=\"message.completed\"){newline}",
         f"{inner_indent}if _hfc_card_delivered:{newline}",
         f"{deeper_indent}return None{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
 
@@ -1026,8 +1091,7 @@ def _render_tool_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"detail\": preview or \"\",{newline}",
         f"{deeper_indent}}}, event_name=\"tool.updated\"):{newline}",
         f"{deeper_indent}    return{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{TOOL_PATCH_END}{newline}",
     ]
 
@@ -1051,8 +1115,7 @@ def _render_answer_delta_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"text\": text,{newline}",
         f"{deeper_indent}}}, event_name=\"answer.delta\"):{newline}",
         f"{deeper_indent}    return{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{ANSWER_DELTA_PATCH_END}{newline}",
     ]
 
@@ -1077,8 +1140,7 @@ def _render_thinking_delta_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"mode\": \"append_block\",{newline}",
         f"{deeper_indent}}}, event_name=\"thinking.delta\"):{newline}",
         f"{deeper_indent}    return{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{THINKING_DELTA_PATCH_END}{newline}",
     ]
 
@@ -1106,8 +1168,7 @@ def _render_clarify_hook_block(indent: str, newline: str):
         f"{deeper_indent}}}, interaction_id=\"clarify_\" + _hfc_uuid4().hex[:10], question=question, choices=choices){newline}",
         f"{deeper_indent}if _hfc_clarify_response is not None:{newline}",
         f"{deeper_indent}    return _hfc_clarify_response{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{CLARIFY_PATCH_END}{newline}",
     ]
 
@@ -1136,8 +1197,7 @@ def _render_approval_hook_block(indent: str, newline: str):
         f"{deeper_indent}    from tools.approval import resolve_gateway_approval as _hfc_resolve_gateway_approval{newline}",
         f"{deeper_indent}    _hfc_resolve_gateway_approval(_approval_session_key, _hfc_approval_choice){newline}",
         f"{deeper_indent}    return{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{APPROVAL_PATCH_END}{newline}",
     ]
 
@@ -1155,8 +1215,7 @@ def _render_cron_hook_block(indent: str, newline: str):
         f"{inner_indent}# event_name=\"message.completed\"{newline}",
         f"{inner_indent}if _hfc_emit_cron(locals()):{newline}",
         f"{_child_indent(inner_indent)}return None{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{CRON_PATCH_END}{newline}",
     ]
 
@@ -1167,8 +1226,7 @@ def _render_placeholder_hook_block(indent: str, newline: str):
         f"{indent}{PATCH_BEGIN}{newline}",
         f"{indent}try:{newline}",
         f"{inner_indent}pass{newline}",
-        f"{indent}except Exception:{newline}",
-        f"{inner_indent}pass{newline}",
+        *_render_hook_exception_handler(indent, newline),
         f"{indent}{PATCH_END}{newline}",
     ]
 

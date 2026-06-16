@@ -429,7 +429,7 @@ def test_remove_patch_removes_phase_one_placeholder_block():
     assert "    return message\n" in restored
 
 
-def test_apply_patch_is_idempotent_for_existing_block():
+def test_apply_patch_upgrades_silent_existing_block_to_warning_block():
     content = """
 async def _handle_message_with_agent(message):
     # HERMES_FEISHU_CARD_PATCH_BEGIN
@@ -442,7 +442,11 @@ async def _handle_message_with_agent(message):
     return message
 """
 
-    assert patcher.apply_patch(content) == content
+    upgraded = patcher.apply_patch(content)
+
+    assert "except Exception as _hfc_exc:" in upgraded
+    assert "[hermes-feishu-card] hook failed" in upgraded
+    assert patcher.apply_patch(upgraded) == upgraded
 
 
 def test_remove_patch_removes_block_and_keeps_return_content():

@@ -86,8 +86,53 @@ def test_install_patches_run_py_and_writes_backup_and_manifest(tmp_path):
     assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
         encoding="utf-8"
     )
+    assert "[hermes-feishu-card] hook failed" in run_py(hermes_dir).read_text(
+        encoding="utf-8"
+    )
     assert backup_path(hermes_dir).exists()
     assert manifest_path(hermes_dir).exists()
+
+
+def test_install_bootstraps_package_into_hermes_runtime_venv(tmp_path, monkeypatch):
+    hermes_dir = copy_hermes(tmp_path)
+    venv_bin = hermes_dir / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    runtime_python = venv_bin / "python"
+    marker = tmp_path / "runtime-import-ok"
+    runtime_log = tmp_path / "runtime-python.log"
+    runtime_python.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> {str(runtime_log)!r}
+if [ "$1" = "-c" ]; then
+  if [ -f {str(marker)!r} ]; then
+    echo "hook-runtime-ok"
+    exit 0
+  fi
+  echo "No module named hermes_feishu_card" >&2
+  exit 1
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "--version" ]; then
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  touch {str(marker)!r}
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+    monkeypatch.setenv("HFC_INSTALL_SPEC", "git+https://example.test/pkg.git@v3.6.2")
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    log = runtime_log.read_text(encoding="utf-8")
+    assert "-m pip install --upgrade git+https://example.test/pkg.git@v3.6.2" in log
+    assert "runtime package: installed into" in result.stdout
+    assert "install ok" in result.stdout.lower()
 
 
 def test_setup_creates_config_installs_hook_and_starts_sidecar(tmp_path, monkeypatch, capsys):
@@ -382,6 +427,8 @@ def test_install_upgrades_phase_one_placeholder_install(tmp_path):
     assert result.returncode == 0, result.stderr
     patched = run_py(hermes_dir).read_text(encoding="utf-8")
     assert "emit_from_hermes_locals" in patched
+    assert "except Exception as _hfc_exc:" in patched
+    assert "[hermes-feishu-card] hook failed" in patched
     assert "        pass\n    except Exception:" not in patched
     assert backup_path(hermes_dir).exists()
     assert manifest_path(hermes_dir).exists()

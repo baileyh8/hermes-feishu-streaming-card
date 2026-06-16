@@ -133,6 +133,7 @@ install_package() {
   if [ -n "$tag" ] && [ "$tag" != "main" ]; then
     spec="$spec@$tag"
   fi
+  export HFC_INSTALL_SPEC="$spec"
   log "installing $REPO@$tag"
   local pip_args=(install --upgrade)
   case "$PIP_USER_FLAG" in
