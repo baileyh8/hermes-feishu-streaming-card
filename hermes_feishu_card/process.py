@@ -152,10 +152,21 @@ def pid_is_running(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+    except OSError:
+        # Windows: os.kill(pid, 0) raises OSError, not ProcessLookupError
+        import psutil
+        try:
+            psutil.Process(pid)
+            return True
+        except psutil.NoSuchProcess:
+            return False
     return True
 
 
 def stop_pid(pid: int) -> None:
+    if sys.platform == "win32":
+        _stop_pid_windows(pid)
+        return
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(pid, sig)
@@ -171,6 +182,20 @@ def stop_pid(pid: int) -> None:
             if not pid_is_running(pid):
                 return
             time.sleep(0.05)
+
+
+def _stop_pid_windows(pid: int) -> None:
+    import psutil
+    try:
+        proc = psutil.Process(pid)
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except psutil.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+    except psutil.NoSuchProcess:
+        return
 
 
 def pid_path() -> Path:
