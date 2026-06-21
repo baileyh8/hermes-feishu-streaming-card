@@ -143,6 +143,65 @@ def test_detect_semver_014_strategy_matches_calendar_v2026_5_16(tmp_path):
     assert detection.hook_strategy == "gateway_run_013_plus"
 
 
+def test_detect_semver_017_inner_run_agent_layout(tmp_path):
+    root = tmp_path / "hermes"
+    run_py = root / "gateway" / "run.py"
+    cron_py = root / "cron" / "scheduler.py"
+    run_py.parent.mkdir(parents=True)
+    cron_py.parent.mkdir(parents=True)
+    (root / "VERSION").write_text("v0.17.0\n", encoding="utf-8")
+    run_py.write_text(
+        '''
+class GatewayRunner:
+    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):
+        response = "ok"
+        agent_result = {"model": "m"}
+        _response_time = 1.0
+        await self.hooks.emit("agent:end", {"response": response})
+        return response
+
+    async def _run_agent(self, source, event_message_id=None):
+        return await self._run_agent_inner(source, event_message_id=event_message_id)
+
+    async def _run_agent_inner(self, source, event_message_id=None):
+        _loop_for_step = None
+        def _run_still_current():
+            return True
+        def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):
+            return None
+        def _stream_delta_cb(text: str) -> None:
+            return None
+        def _interim_assistant_cb(text: str, *, already_streamed: bool = False) -> None:
+            return None
+        return {}
+
+def _reply_anchor_for_event(event):
+    return getattr(event, "reply_to_message_id", None)
+
+def _deliver_media_from_response(response):
+    extract_media(response)
+''',
+        encoding="utf-8",
+    )
+    cron_py.write_text(
+        '''
+def _deliver_result(job: dict, content: str, adapters=None, loop=None):
+    return None
+''',
+        encoding="utf-8",
+    )
+
+    detection = detect_hermes(root)
+
+    assert detection.supported is True
+    assert detection.hook_strategy == "gateway_run_013_plus"
+    assert detection.compatibility == "full"
+    assert detection.capabilities["run_agent"] is True
+    assert detection.capabilities["tool_callback"] is True
+    assert detection.capabilities["answer_delta_callback"] is True
+    assert detection.capabilities["thinking_delta_callback"] is True
+
+
 def test_detect_calendar_v2026_4_30_stays_on_legacy_strategy(tmp_path):
     _write_hermes_root(tmp_path, version="v2026.4.30")
 

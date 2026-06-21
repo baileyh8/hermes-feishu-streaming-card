@@ -69,6 +69,11 @@ class SourceObject:
     thread_id = "thread_source"
 
 
+class TelegramSourceObject:
+    platform = "telegram"
+    chat_id = "telegram_chat"
+
+
 class GatewayEventObject:
     def __init__(self, message_id: str):
         self.message_id = message_id
@@ -167,6 +172,42 @@ def test_build_event_extracts_gateway_source_object():
     assert payload["chat_id"] == "oc_source"
     assert payload["conversation_id"] == "session_source"
     assert payload["message_id"].startswith("hfc_")
+
+
+def test_build_event_ignores_non_feishu_platforms():
+    assert (
+        hook_runtime.build_event(
+            "message.started",
+            {
+                "source": TelegramSourceObject(),
+                "message_id": "tg_message",
+                "conversation_id": "tg_conversation",
+            },
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_emit_does_not_post_non_feishu_events(monkeypatch):
+    posted = []
+
+    async def fake_post(url, payload, timeout):
+        posted.append(payload)
+
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered", fake_post)
+
+    delivered = await hook_runtime.emit_from_hermes_locals_async(
+        {
+            "source": TelegramSourceObject(),
+            "message_id": "tg_message",
+            "conversation_id": "tg_conversation",
+        },
+        event_name="message.completed",
+    )
+
+    assert delivered is False
+    assert posted == []
 
 
 def test_build_event_uses_gateway_event_message_id_for_card_lifecycle():
@@ -401,6 +442,31 @@ def test_request_interaction_retries_when_sidecar_reports_not_applied(monkeypatc
     assert [payload["sequence"] for payload in posted] == [0, 1]
 
 
+def test_request_interaction_returns_none_for_text_fallback_mode(monkeypatch):
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+
+    def fake_post(local_vars, url, payload, timeout):
+        return {"ok": True, "applied": True, "interaction_mode": "text"}
+
+    def fail_get(url, timeout):
+        raise AssertionError("text fallback should not poll card action state")
+
+    monkeypatch.setattr(hook_runtime, "_post_interaction_event", fake_post)
+    monkeypatch.setattr(hook_runtime, "_get_json_sync", fail_get)
+
+    result = hook_runtime.request_interaction_from_hermes_locals(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        kind="clarify",
+        interaction_id="clarify-1",
+        prompt="怎么处理？",
+        options=[{"label": "保留", "value": "保留"}],
+        timeout_seconds=0,
+        poll_interval_seconds=0,
+    )
+
+    assert result is None
+
+
 def test_request_interaction_polls_through_transient_not_found(monkeypatch):
     polls = iter(
         [
@@ -539,6 +605,67 @@ def test_completed_event_does_not_extract_url_paths_as_local_attachments():
     attachments = payload["data"]["attachments"]
     assert {"kind": "image", "name": "local.png", "summary": "local.png"} in attachments
     assert {"kind": "image", "name": "chart.png", "summary": "chart.png"} not in attachments
+
+
+def test_open_request_uses_no_proxy_opener_for_local_sidecar(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b""
+
+    class FakeOpener:
+        def open(self, req, timeout):
+            calls.append((req.full_url, timeout))
+            return FakeResponse()
+
+    def fail_urlopen(req, timeout):
+        raise AssertionError("request.urlopen should not be used for sidecar calls")
+
+    monkeypatch.setattr(hook_runtime, "_NO_PROXY_OPENER", FakeOpener(), raising=False)
+    monkeypatch.setattr(hook_runtime.request, "urlopen", fail_urlopen)
+
+    hook_runtime._open_request(
+        hook_runtime.request.Request("http://127.0.0.1:8765/events"),
+        0.8,
+    )
+
+    assert calls == [("http://127.0.0.1:8765/events", 0.8)]
+
+
+def test_open_json_request_uses_default_urlopen_for_remote_sidecar(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    class FailingOpener:
+        def open(self, req, timeout):
+            raise AssertionError("remote sidecar requests may need the default proxy")
+
+    def fake_urlopen(req, timeout):
+        return FakeResponse()
+
+    monkeypatch.setattr(hook_runtime, "_NO_PROXY_OPENER", FailingOpener())
+    monkeypatch.setattr(hook_runtime.request, "urlopen", fake_urlopen)
+
+    result = hook_runtime._open_json_request(
+        hook_runtime.request.Request("https://sidecar.example.com/events"),
+        0.8,
+    )
+
+    assert result == {"ok": True}
 
 
 def test_completed_event_strips_trailing_attachment_punctuation_and_deduplicates():
@@ -718,6 +845,18 @@ def test_build_completed_event_sanitizes_cumulative_token_counts():
 
 def test_build_event_returns_none_when_chat_id_missing():
     assert hook_runtime.build_event("message.started", {"message_id": "msg"}) is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        r"C:\Users\USER493274\AppData\Local\hermes\profiles\thinking",
+        "C:/Users/USER493274/AppData/Local/hermes/profiles/thinking",
+        r"C:\Users\USER493274\.hermes\profiles\thinking",
+    ],
+)
+def test_profile_from_path_supports_windows_hermes_profile_paths(path):
+    assert hook_runtime._profile_from_path(path) == "thinking"
 
 
 def test_build_event_uses_stable_message_id_fallback_with_created_at():

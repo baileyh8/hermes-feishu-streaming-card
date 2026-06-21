@@ -768,21 +768,28 @@ def _find_handler_node(tree):
 
 
 def _find_run_agent_node(tree):
+    inner = _find_direct_run_agent_node(tree, "_run_agent_inner")
+    if inner is not None:
+        return inner
+    return _find_direct_run_agent_node(tree, "_run_agent")
+
+
+def _find_direct_run_agent_node(tree, name: str):
     for node in tree.body:
-        if _is_run_agent(node):
+        if _is_run_agent(node, name):
             return node
 
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             for child in node.body:
-                if _is_run_agent(child):
+                if _is_run_agent(child, name):
                     return child
 
     return None
 
 
-def _is_run_agent(node) -> bool:
-    return isinstance(node, ast.AsyncFunctionDef) and node.name == "_run_agent"
+def _is_run_agent(node, name: str = "_run_agent") -> bool:
+    return isinstance(node, ast.AsyncFunctionDef) and node.name == name
 
 
 def _find_simple_owned_patch(

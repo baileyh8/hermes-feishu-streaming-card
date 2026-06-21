@@ -86,6 +86,41 @@ def test_render_pending_interaction_as_buttons():
     assert "rm -rf /tmp/demo" in str(card)
 
 
+def test_render_pending_interaction_as_text_choices_for_localhost_mode():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="interaction.requested",
+            conversation_id="chat-1",
+            message_id="msg-1",
+            chat_id="oc_abc",
+            platform="feishu",
+            sequence=1,
+            created_at=0.0,
+            data={
+                "interaction_id": "clarify-1",
+                "kind": "clarify",
+                "prompt": "请选择处理方式",
+                "options": [
+                    {"label": "删除空文件", "value": "delete"},
+                    {"label": "保留并补索引", "value": "keep"},
+                ],
+            },
+        )
+    )
+
+    card = render_card(session, interaction_mode="text")
+
+    content = str(card)
+    assert not any(element.get("tag") == "button" for element in card["body"]["elements"])
+    assert "1. 删除空文件" in content
+    assert "2. 保留并补索引" in content
+    assert "Reply with the number" in content
+
+
 def test_render_completed_interaction_replaces_buttons_with_choice():
     from hermes_feishu_card.events import SidecarEvent
 

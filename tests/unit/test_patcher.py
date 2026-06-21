@@ -368,6 +368,52 @@ def test_apply_patch_inserts_streaming_callback_hooks():
     assert patcher.remove_patch(patched) == content
 
 
+def test_apply_patch_inserts_streaming_hooks_into_run_agent_inner():
+    content = (
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "    return await self._run_agent(event_message_id=event.message_id)\n"
+        "\n"
+        "async def _run_agent(self, source, event_message_id=None):\n"
+        "    return await self._run_agent_inner(source, event_message_id=event_message_id)\n"
+        "\n"
+        "async def _run_agent_inner(self, source, event_message_id=None):\n"
+        "    _loop_for_step = asyncio.get_running_loop()\n"
+        "    session_key = 'sess-1'\n"
+        "    _status_chat_id = source.chat_id\n"
+        "    _approval_session_key = session_key\n"
+        "    def _run_still_current():\n"
+        "        return True\n"
+        "\n"
+        "    def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):\n"
+        "        progress_queue.put(tool_name)\n"
+        "\n"
+        "    def _stream_delta_cb(text: str) -> None:\n"
+        "        if _run_still_current():\n"
+        "            _stream_consumer.on_delta(text)\n"
+        "\n"
+        "    def _interim_assistant_cb(text: str, *, already_streamed: bool = False) -> None:\n"
+        "        if already_streamed:\n"
+        "            return\n"
+        "        status_queue.put(text)\n"
+        "\n"
+        "    def _clarify_callback_sync(question: str, choices):\n"
+        "        return \"\"\n"
+        "\n"
+        "    def _approval_notify_sync(approval_data: dict) -> None:\n"
+        "        return None\n"
+    )
+
+    patched = patcher.apply_patch(content)
+
+    inner_index = patched.index("async def _run_agent_inner")
+    assert patched.index(patcher.TOOL_PATCH_BEGIN) > inner_index
+    assert patched.index(patcher.ANSWER_DELTA_PATCH_BEGIN) > inner_index
+    assert patched.index(patcher.THINKING_DELTA_PATCH_BEGIN) > inner_index
+    assert patched.index(patcher.CLARIFY_PATCH_BEGIN) > inner_index
+    assert patched.index(patcher.APPROVAL_PATCH_BEGIN) > inner_index
+    assert patcher.remove_patch(patched) == content
+
+
 def test_apply_patch_skips_streaming_hooks_when_required_scope_is_missing():
     content = (
         "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"

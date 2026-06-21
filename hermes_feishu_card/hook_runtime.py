@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from hashlib import sha256
+from ipaddress import ip_address
 import json
 import math
 import os
@@ -243,6 +244,8 @@ def request_interaction_from_hermes_locals(
             return None
         if isinstance(post_result, dict) and post_result.get("ok") is False:
             return None
+        if _uses_text_interaction_fallback(post_result):
+            return None
         if isinstance(post_result, dict) and post_result.get("applied") is False:
             for _ in range(2):
                 time.sleep(0.05)
@@ -266,6 +269,8 @@ def request_interaction_from_hermes_locals(
                 if post_result is _POST_FAILED:
                     return None
                 if isinstance(post_result, dict) and post_result.get("ok") is False:
+                    return None
+                if _uses_text_interaction_fallback(post_result):
                     return None
                 if not (
                     isinstance(post_result, dict)
@@ -295,6 +300,14 @@ def request_interaction_from_hermes_locals(
             time.sleep(poll_interval)
     except Exception:
         return None
+
+
+def _uses_text_interaction_fallback(result: Any) -> bool:
+    return (
+        isinstance(result, dict)
+        and str(result.get("interaction_mode") or "").strip().lower()
+        in {"text", "markdown", "reply"}
+    )
 
 
 def request_approval_choice_from_hermes_locals(
@@ -558,17 +571,43 @@ async def _get_json(url: str, timeout: float) -> Any:
     return await loop.run_in_executor(None, _open_json_request, req, timeout)
 
 
+_NO_PROXY_OPENER = request.build_opener(request.ProxyHandler({}))
+
+
 def _open_request(req: request.Request, timeout: float) -> None:
-    with request.urlopen(req, timeout=timeout) as response:
+    with _open_sidecar_request(req, timeout) as response:
         response.read()
 
 
 def _open_json_request(req: request.Request, timeout: float) -> Any:
-    with request.urlopen(req, timeout=timeout) as response:
+    with _open_sidecar_request(req, timeout) as response:
         body = response.read()
     if not body:
         return None
     return json.loads(body.decode("utf-8"))
+
+
+def _open_sidecar_request(req: request.Request, timeout: float):
+    if _should_bypass_proxy(req.full_url):
+        return _NO_PROXY_OPENER.open(req, timeout=timeout)
+    return request.urlopen(req, timeout=timeout)
+
+
+def _should_bypass_proxy(url: str) -> bool:
+    host = parse.urlsplit(url).hostname or ""
+    normalized = host.strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        address = ip_address(normalized)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_unspecified
+    )
 
 
 def _get_json_sync(url: str, timeout: float) -> Any:
@@ -592,6 +631,9 @@ def _build_event(
     if event_name not in SUPPORTED_RUNTIME_EVENTS:
         return None
     source_obj = local_vars.get("source")
+    platform = _platform_name(local_vars, source_obj)
+    if platform != "feishu":
+        return None
     gateway_event_obj = local_vars.get("event")
     chat_id = _first_string(local_vars, ("chat_id", "open_chat_id", "receive_id"))
     message_obj = local_vars.get("message")
@@ -663,7 +705,7 @@ def _build_event(
         "conversation_id": conversation_id,
         "message_id": message_id,
         "chat_id": chat_id,
-        "platform": _platform_name(local_vars, source_obj),
+        "platform": platform,
         "sequence": sequence,
         "created_at": created_at,
         "data": _event_data(event_name, local_vars, source_obj, message_obj),
@@ -964,9 +1006,10 @@ def _safe_profile_id(value: str) -> str:
 def _profile_from_path(path: str) -> str | None:
     if not path:
         return None
-    parts = Path(path).expanduser().parts
+    normalized = str(Path(path).expanduser()).replace("\\", "/")
+    parts = tuple(part for part in normalized.split("/") if part)
     for index in range(len(parts) - 2):
-        if parts[index] == ".hermes" and parts[index + 1] == "profiles":
+        if parts[index] in {".hermes", "hermes"} and parts[index + 1] == "profiles":
             if index + 3 != len(parts):
                 return None
             candidate = parts[index + 2].strip()
@@ -1287,14 +1330,26 @@ def _first_attr_raw_string(obj: Any, names: tuple[str, ...]) -> str | None:
 
 
 def _platform_name(local_vars: dict[str, Any], source_obj: Any) -> str:
-    platform = _first_string(local_vars, ("platform",)) or _first_attr_string(
-        source_obj, ("platform",)
-    )
+    platform = _coerce_platform_value(local_vars.get("platform"))
+    if platform is None and source_obj is not None:
+        try:
+            platform = _coerce_platform_value(getattr(source_obj, "platform", None))
+        except Exception:
+            platform = None
     if platform is None:
         return "feishu"
     if "." in platform:
         platform = platform.rsplit(".", 1)[-1]
     return platform.lower()
+
+
+def _coerce_platform_value(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str) and enum_value.strip():
+        return enum_value.strip()
+    return None
 
 
 def _created_at(value: Any) -> float:

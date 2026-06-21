@@ -23,7 +23,7 @@ It targets the real pain points of using Hermes inside Feishu: missing or out-of
 ## Project Highlights
 
 - **Streaming card UX**: `thinking.delta`, `answer.delta`, `tool.updated`, and terminal events update one Feishu card.
-- **In-card interactions**: Hermes approval and clarify choices become Feishu buttons; clicks continue the original task.
+- **In-card interactions**: Hermes approval and clarify choices render as Feishu buttons for public callback deployments, or numbered text choices for localhost/private sidecars.
 - **Long content protection**: Markdown tables and fenced code blocks split on structure boundaries instead of raw character cuts.
 - **Multi-bot / multi-profile**: bot registry, chat bindings, profile-aware session keys, titles, and routing diagnostics.
 - **sidecar-only runtime**: Hermes hook stays fail-open while Feishu delivery, session state, retries, and health checks live in the sidecar.
@@ -35,10 +35,20 @@ It targets the real pain points of using Hermes inside Feishu: missing or out-of
 |---|---|
 | Feishu only shows a final wall of text | Reasoning, answer, tool status, and runtime footer stream into one card |
 | Tool-heavy runs lose text, reorder chunks, or spill native gray messages | per-message ordering, PATCH coalescing, terminal priority, and native resend suppression |
-| Approval or choice prompts require manual text replies | Feishu buttons record the choice and continue the Hermes task |
+| Approval or choice prompts require manual text replies | Feishu buttons or card-hosted numbered choices keep the prompt visible in the active card |
 | Long tables/code blocks render as raw Markdown | Markdown-aware table/code splitting with repeated headers and complete fences |
 | Multi-bot, group, and profile routing is hard to inspect | `bindings.chats`, profile-aware sessions, and `/health.routing` diagnostics |
 | Hook or sidecar failures are hard to debug | `doctor`, runtime import checks, `/health` metrics, fail-closed installer, restore/uninstall |
+
+## V3.6.3 Hermes v0.17 Compatibility and Interaction Patch
+
+V3.6.3 fixes issues #56-#59. For Hermes v0.17.0+ / `v2026.6.19+`, where the real streaming implementation can move into `_run_agent_inner`, the patcher now injects `tool.updated`, `answer.delta`, `thinking.delta`, clarify, and approval hooks into `_run_agent_inner` before falling back to `_run_agent`.
+
+localhost/private sidecars now default `card.interaction_mode: auto` to text-choice fallback. Cards show numbered choices and the hook immediately falls back to Hermes' native text interaction path. Deployments with a public Feishu Card Action callback URL can set `card.interaction_mode: callback` to keep real buttons.
+
+This release also ignores non-Feishu platforms such as Telegram at runtime event construction, and correctly resolves Windows profile paths like `C:\Users\...\AppData\Local\hermes\profiles\thinking`.
+
+Full release notes: [docs/release-notes-v3.6.3.md](docs/release-notes-v3.6.3.md).
 
 ## V3.6.2 Runtime Install Patch
 
@@ -62,7 +72,7 @@ V3.6.0 focuses on real deployment operations after the streaming-card baseline i
 - **Safe installer repair**: `repair --hermes-dir ... --yes` and `setup --repair` rebuild only verifiable manifest/backup state and refuse unverifiable user edits.
 - **Media/file safety**: structured Hermes `attachments`, `files`, `media_files`, and image/audio/video objects are summarized in cards while native Hermes media/file delivery remains unsuppressed.
 - **Multi-profile operations**: `smoke-feishu-card --profile-id`, `bots test --profile-id`, CLI `status`, and `/health.routing.profiles` expose profile-scoped routing state.
-- **Compatibility matrix**: tests cover Hermes `v2026.4.23`, `v2026.5.7`, `v2026.5.16+`, `v2026.5.29`, `0.13.x`, `0.14.x`, `0.15.x`, and semver `VERSION` values with or without a `v` prefix.
+- **Compatibility matrix**: tests cover Hermes `v2026.4.23`, `v2026.5.7`, `v2026.5.16+`, `v2026.5.29`, `v2026.6.19+`, `0.13.x`, `0.14.x`, `0.15.x`, `0.17.x`, and semver `VERSION` values with or without a `v` prefix.
 
 Full release notes: [docs/release-notes-v3.6.0.md](docs/release-notes-v3.6.0.md).
 
@@ -125,7 +135,7 @@ Common environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Version to install, such as `v3.6.2` or `main` |
+| `HFC_VERSION` | `latest` | Version to install, such as `v3.6.3` or `main` |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent Gateway directory |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | sidecar config path |
 | `HFC_ENV_FILE` | `.env` next to `HFC_CONFIG` | Feishu credential file |
@@ -143,7 +153,7 @@ export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx
 python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --yes
 ```
 
-`setup` generates config, validates Hermes (older Hermes from `v2026.4.23` through `v2026.4.x`, plus Hermes `0.13.0+`, `0.14.0`, `0.15.x` / `v2026.5.16+` anchors), installs the package into the Hermes Gateway runtime venv Python, installs the hook, starts the sidecar, and checks health — all in one pass. Hermes semantic `VERSION` values may include or omit the `v` prefix.
+`setup` generates config, validates Hermes (older Hermes from `v2026.4.23` through `v2026.4.x`, plus Hermes `0.13.0+`, `0.14.0`, `0.15.x`, `0.17.x` / `v2026.5.16+` / `v2026.6.19+` anchors), installs the package into the Hermes Gateway runtime venv Python, installs the hook, starts the sidecar, and checks health — all in one pass. Hermes semantic `VERSION` values may include or omit the `v` prefix.
 
 ## Core Features
 
@@ -152,7 +162,7 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 - **Profile / bot card titles**: global, profile, and bot card titles are supported, with bot-level titles taking precedence
 - **Streaming thinking**: renders `thinking.delta`, filters `<think>`/`</think>` and DeepSeek `<thinking>`/`</thinking>` tags
 - **Progressive answer**: streams `answer.delta` into one card, replaces thinking on completion
-- **Approval/choice buttons**: Hermes approval and clarify choices can be rendered as buttons in the same Feishu card, and clicks continue the original Hermes task
+- **Approval/choice interactions**: Hermes approval and clarify choices can render as Feishu buttons for public callback deployments; localhost/private sidecars default to numbered text choices and Hermes' native text reply path
 - **Cron final cards and reply context**: cron jobs can deliver final cards, and reply cards preserve the needed context
 - **Attachment summaries and native media delivery**: cards show attachment summaries while the hook keeps Hermes native media/file delivery paths unsuppressed
 - **Tool call tracking**: `tool.updated` shows cumulative call count and status
@@ -164,7 +174,7 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 
 ## Upgrading
 
-Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x to V3.6.2 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed.
+Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x to V3.6.3 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed.
 
 ```bash
 # 1. Stop sidecar
@@ -172,7 +182,7 @@ python3 -m hermes_feishu_card.cli stop --config ~/.hermes_feishu_card/config.yam
 
 # 2. Update code
 cd /path/to/hermes-feishu-streaming-card
-git checkout v3.6.2 && pip install -e ".[test]" --upgrade
+git checkout v3.6.3 && pip install -e ".[test]" --upgrade
 
 # 3. Diagnose Hermes hook strategy and anchors
 python3 -m hermes_feishu_card.cli doctor --config ~/.hermes_feishu_card/config.yaml --hermes-dir ~/.hermes/hermes-agent
@@ -332,7 +342,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 - **Multi-profile route is unclear**: run `status --config ...` and inspect `routing.last_route`, `profile.<id>.events`, and `profile.<id>.last_profile_source`, then verify directly with `smoke-feishu-card --profile-id ...` or `bots test --profile-id ...`.
 - **Gray native text**: after sidecar accepts `message.completed`, Hermes hook suppresses native text; fail-open on sidecar unavailable. V3.3.0 fixes non-Feishu platforms being swallowed.
 - **`doctor` unsupported**: Hermes ≥ `v2026.4.23` (reads `VERSION` or Git tag `v2026.4.23+`), `gateway/run.py` must exist.
-- **No cards after upgrading Hermes 0.13.0+/0.14.0/0.15.x**: run `doctor --config ... --hermes-dir ...` to inspect `hook_strategy`, `compatibility`, and anchors, then re-run `install --hermes-dir ... --yes` if needed.
+- **No cards after upgrading Hermes 0.13.0+/0.14.0/0.15.x/0.17.x**: run `doctor --config ... --hermes-dir ...` to inspect `hook_strategy`, `compatibility`, and anchors, then re-run `install --hermes-dir ... --yes` if needed.
 - **Restore fails**: file modified → `restore`/`uninstall` refuse to overwrite. Run `doctor --explain` to inspect manifest/backup/run.py state; if it reports an automatic repair path, run `repair --hermes-dir ... --yes`, otherwise back up and manually diff.
 - **Footer tokens wrong**: abnormal values filtered; if still wrong, inspect Hermes `tokens`/`context` metadata.
 - **Table limit exceeded**: V3.3.0 auto-truncates >5 tables with a notice. Reduce Markdown tables.
@@ -341,6 +351,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v3.6.3](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.3) | 2026-06 | Fixes issues #56-#59 with Hermes v0.17 `_run_agent_inner` hooks, localhost interaction text fallback, Telegram isolation, and Windows profile paths |
 | [v3.6.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.2) | 2026-06 | Fixes issue #53 with Hermes runtime venv installs, doctor runtime import checks, and hook failure warnings |
 | [v3.6.1](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.1) | 2026-06 | Fixes issue #47, supports Hermes `0.15.x` and no-`v` VERSION values so `doctor --explain` no longer reports them unsupported |
 | [v3.6.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.0) | 2026-06 | `doctor --json/--explain`, safe `repair`, structured media/file summaries, profile-targeted smoke checks, routing profile diagnostics, Hermes compatibility matrix |

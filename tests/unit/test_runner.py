@@ -138,6 +138,50 @@ def test_main_uses_noop_without_any_credentials(monkeypatch):
     assert captured["kwargs"]["bot_router"] is None
 
 
+def test_main_switches_auto_interactions_to_text_for_localhost(monkeypatch):
+    config = {
+        "server": {"host": "127.0.0.1", "port": 0},
+        "feishu": {},
+        "card": {"title": "Local Card", "interaction_mode": "auto"},
+    }
+    captured = {}
+
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+
+    def fake_create_app(feishu_client, **kwargs):
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(runner, "create_app", fake_create_app)
+    monkeypatch.setattr(runner.web, "run_app", lambda app, **kwargs: None)
+
+    assert main(["--config", "config.yaml"]) == 0
+
+    assert captured["kwargs"]["card_config"]["interaction_mode"] == "text"
+
+
+def test_main_preserves_explicit_callback_interactions_on_localhost(monkeypatch):
+    config = {
+        "server": {"host": "127.0.0.1", "port": 0},
+        "feishu": {},
+        "card": {"title": "Callback Card", "interaction_mode": "callback"},
+    }
+    captured = {}
+
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+
+    def fake_create_app(feishu_client, **kwargs):
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(runner, "create_app", fake_create_app)
+    monkeypatch.setattr(runner.web, "run_app", lambda app, **kwargs: None)
+
+    assert main(["--config", "config.yaml"]) == 0
+
+    assert captured["kwargs"]["card_config"]["interaction_mode"] == "callback"
+
+
 def test_main_ignores_partial_legacy_feishu_when_named_bot_credentials_exist(
     monkeypatch,
 ):

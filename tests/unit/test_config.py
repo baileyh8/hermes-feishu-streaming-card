@@ -36,6 +36,7 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
             "max_wait_ms": 800,
             "max_chars": 240,
             "title": "Hermes Agent",
+            "interaction_mode": "auto",
             "footer_fields": [
                 "duration",
                 "model",
@@ -83,6 +84,7 @@ card:
         "max_wait_ms": 800,
         "max_chars": 120,
         "title": "Hermes Agent",
+        "interaction_mode": "auto",
         "footer_fields": [
             "duration",
             "model",

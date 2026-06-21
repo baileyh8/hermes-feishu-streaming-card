@@ -23,6 +23,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "max_wait_ms": 800,
         "max_chars": 240,
         "title": "Hermes Agent",
+        "interaction_mode": "auto",
         "footer_fields": [
             "duration",
             "model",

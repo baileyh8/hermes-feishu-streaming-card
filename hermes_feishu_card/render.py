@@ -26,6 +26,7 @@ def render_card(
     session: CardSession,
     footer_fields: list[str] | tuple[str, ...] | None = None,
     title: str = DEFAULT_TITLE,
+    interaction_mode: str = "callback",
 ) -> Dict[str, Any]:
     status = _render_status(session)
     main_text = normalize_stream_text(session.visible_main_text) or ("正在思考..." if session.status == "thinking" else "")
@@ -34,7 +35,7 @@ def render_card(
     footer = _render_footer(session, footer_fields)
     header_title = title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
     elements = _render_main_content_elements(main_text)
-    elements.extend(_render_interaction_elements(session))
+    elements.extend(_render_interaction_elements(session, interaction_mode=interaction_mode))
     if attachment_summary:
         elements.append(
             {
@@ -100,7 +101,9 @@ def _render_main_content_elements(main_text: str) -> list[Dict[str, Any]]:
     return elements
 
 
-def _render_interaction_elements(session: CardSession) -> list[Dict[str, Any]]:
+def _render_interaction_elements(
+    session: CardSession, *, interaction_mode: str = "callback"
+) -> list[Dict[str, Any]]:
     interaction = session.active_interaction
     if interaction is None:
         return []
@@ -118,6 +121,27 @@ def _render_interaction_elements(session: CardSession) -> list[Dict[str, Any]]:
             "content": "\n".join(lines),
         }
     ]
+    if interaction.status == "pending" and _normalize_interaction_mode(interaction_mode) == "text":
+        choice_lines = [
+            f"{index}. {option.label}"
+            for index, option in enumerate(interaction.options, start=1)
+        ]
+        if choice_lines:
+            elements.append(
+                {
+                    "tag": "markdown",
+                    "element_id": "interaction_text_choices",
+                    "content": "\n".join(
+                        choice_lines
+                        + [
+                            "",
+                            "Reply with the number, the option text, or your own answer.",
+                        ]
+                    ),
+                }
+            )
+        return elements
+
     if interaction.status == "pending":
         for index, option in enumerate(interaction.options):
             elements.append(
@@ -158,6 +182,13 @@ def _render_interaction_elements(session: CardSession) -> list[Dict[str, Any]]:
         }
     )
     return elements
+
+
+def _normalize_interaction_mode(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"text", "markdown", "reply"}:
+        return "text"
+    return "callback"
 
 
 def _button_type(style: str) -> str:

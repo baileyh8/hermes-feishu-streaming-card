@@ -146,6 +146,8 @@ def clear_pid() -> None:
 
 
 def pid_is_running(pid: int) -> bool:
+    if sys.platform == "win32":
+        return _pid_is_running_windows(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -156,6 +158,9 @@ def pid_is_running(pid: int) -> bool:
 
 
 def stop_pid(pid: int) -> None:
+    if sys.platform == "win32":
+        _stop_pid_windows(pid)
+        return
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(pid, sig)
@@ -171,6 +176,38 @@ def stop_pid(pid: int) -> None:
             if not pid_is_running(pid):
                 return
             time.sleep(0.05)
+
+
+def _pid_is_running_windows(pid: int) -> bool:
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        process_handle = kernel32.OpenProcess(0x1000, False, pid)
+        if process_handle:
+            kernel32.CloseHandle(process_handle)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _stop_pid_windows(pid: int) -> None:
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if not pid_is_running(pid):
+            return
+        time.sleep(0.05)
 
 
 def pid_path() -> Path:

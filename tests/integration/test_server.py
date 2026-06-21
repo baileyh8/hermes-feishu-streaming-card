@@ -284,7 +284,11 @@ async def test_interaction_request_renders_buttons_and_callback_resolves(client)
     )
 
     assert requested.status == 200
-    assert (await requested.json()) == {"ok": True, "applied": True}
+    assert (await requested.json()) == {
+        "ok": True,
+        "applied": True,
+        "interaction_mode": "callback",
+    }
     interaction_card = feishu_client.updated[-1][1]
     button = next(
         element
@@ -318,6 +322,45 @@ async def test_interaction_request_renders_buttons_and_callback_resolves(client)
         "interaction_id": "approval-1",
     }
     assert "已选择：允许一次" in str(feishu_client.updated[-1][1])
+
+
+async def test_interaction_request_uses_text_fallback_when_configured():
+    feishu_client = FakeFeishuClient()
+    app = create_app(feishu_client, card_config={"interaction_mode": "text"})
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+        requested = await test_client.post(
+            "/events",
+            json=event_payload(
+                "interaction.requested",
+                1,
+                {
+                    "interaction_id": "clarify-1",
+                    "kind": "clarify",
+                    "prompt": "请选择处理方式",
+                    "options": [
+                        {"label": "删除空文件", "value": "delete"},
+                        {"label": "保留并补索引", "value": "keep"},
+                    ],
+                },
+            ),
+        )
+
+        assert requested.status == 200
+        assert (await requested.json())["interaction_mode"] == "text"
+        interaction_card = feishu_client.updated[-1][1]
+        content = str(interaction_card)
+        assert not any(
+            element.get("tag") == "button"
+            for element in interaction_card["body"]["elements"]
+        )
+        assert "1. 删除空文件" in content
+        assert "2. 保留并补索引" in content
+    finally:
+        await test_client.close()
 
 
 async def test_completed_card_summary_can_be_looked_up_by_feishu_message_id(client):

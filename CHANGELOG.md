@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.6.3 — 2026-06-21
+
+### Fixed
+- issue #59: patcher now prefers Hermes v0.17.0+ / `v2026.6.19+` `_run_agent_inner` when injecting streaming callbacks, so tool, answer, thinking, clarify, and approval hooks are no longer skipped when `_run_agent` is only a wrapper.
+- issue #57: `card.interaction_mode: auto` now switches localhost/private sidecars to text-choice fallback, and the Hermes hook stops polling for unreachable Feishu Card Action callbacks in that mode.
+- issue #56: non-Feishu platforms such as Telegram are ignored before runtime event construction, keeping native Telegram delivery untouched after hook installation.
+- issue #58: Windows `HERMES_HOME` profile paths under both `hermes/profiles/<id>` and `.hermes/profiles/<id>` now resolve the correct profile id.
+- Extracted PR #52's useful Windows/proxy fixes: local/private sidecar calls bypass system proxies while public sidecar URLs keep default proxy behavior, and sidecar PID stop/status uses a Windows-specific path instead of POSIX process groups.
+
+### Docs
+- Added V3.6.3 release notes, README compatibility guidance for Hermes v0.17.0+ / `v2026.6.19+`, and `card.interaction_mode` config documentation.
+
 ## V3.6.2 — 2026-06-16
 
 ### Fixed
