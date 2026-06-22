@@ -18,6 +18,10 @@ Hermes 最小 hook 向 sidecar 发送消息生命周期事件。第二阶段 hoo
 | `interaction.completed` | 用户点击卡片按钮后发出。sidecar 更新原卡片为已选择状态，并让 Hermes hook 轮询到选择结果后继续执行。 |
 | `interaction.failed` | 交互请求失败或超时。sidecar 保留失败状态，Hermes hook 可 fail-open 回到原生 Hermes 交互路径。 |
 
+## 路由字段
+
+所有事件都保留 `conversation_id`、`message_id` 和 `chat_id` 三个必填字段。V3.6.4 起，事件还可以携带可选 `thread_id` 字段；当它是飞书 `om_` / `omt_` thread 上下文时，sidecar 会在创建初始卡片时使用飞书 reply API，把卡片发回用户所在的同一 thread。后续更新仍然 PATCH 这条已创建的卡片消息。
+
 ## 卡片状态
 
 卡片正常状态只有两个：

@@ -32,6 +32,7 @@ class SidecarEvent:
     sequence: int
     created_at: float
     data: Dict[str, Any]
+    thread_id: str = ""
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "SidecarEvent":
@@ -80,12 +81,18 @@ class SidecarEvent:
         data = payload["data"]
         if not isinstance(data, dict):
             raise EventValidationError("data must be an object")
+        thread_id = payload.get("thread_id", "")
+        if thread_id is None:
+            thread_id = ""
+        if not isinstance(thread_id, str):
+            raise EventValidationError("thread_id must be a string")
         return cls(
             schema_version=payload["schema_version"],
             event=event,
             conversation_id=payload["conversation_id"],
             message_id=payload["message_id"],
             chat_id=payload["chat_id"],
+            thread_id=thread_id.strip(),
             platform=payload["platform"],
             sequence=payload["sequence"],
             created_at=created_at,

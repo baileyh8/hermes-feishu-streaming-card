@@ -18,7 +18,13 @@ class NoopFeishuClient:
     def __init__(self) -> None:
         self._sent_count = 0
 
-    async def send_card(self, chat_id: str, card: dict[str, Any]) -> str:
+    async def send_card(
+        self,
+        chat_id: str,
+        card: dict[str, Any],
+        thread_id: str | None = None,
+        reply_to_message_id: str | None = None,
+    ) -> str:
         self._sent_count += 1
         return f"noop-feishu-message-{self._sent_count}"
 

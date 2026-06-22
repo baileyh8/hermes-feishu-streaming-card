@@ -174,6 +174,25 @@ def test_build_event_extracts_gateway_source_object():
     assert payload["message_id"].startswith("hfc_")
 
 
+def test_build_event_carries_feishu_thread_id_from_source():
+    class ThreadSourceObject:
+        platform = "feishu"
+        chat_id = "oc_source"
+        thread_id = "omt_thread"
+
+    payload = hook_runtime.build_event(
+        "message.started",
+        {
+            "source": ThreadSourceObject(),
+            "session_id": "agent:main:feishu:dm:oc_source:omt_thread",
+            "message_id": "om_user_message",
+        },
+    )
+
+    assert payload["chat_id"] == "oc_source"
+    assert payload["thread_id"] == "omt_thread"
+
+
 def test_build_event_ignores_non_feishu_platforms():
     assert (
         hook_runtime.build_event(
@@ -726,6 +745,23 @@ def test_build_cron_event_from_feishu_job_origin():
     assert {"kind": "file", "name": "report.pdf", "summary": "report.pdf"} in payload[
         "data"
     ]["attachments"]
+
+
+def test_build_cron_event_extracts_chat_id_from_deliver_string():
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-deliver",
+                "deliver": "feishu:oc_cron_from_deliver",
+            },
+            "delivery_content": "定时结果",
+        }
+    )
+
+    assert payload is not None
+    assert payload["chat_id"] == "oc_cron_from_deliver"
+    assert payload["platform"] == "feishu"
+    assert payload["data"]["delivery_kind"] == "cron"
 
 
 def test_build_cron_event_prefers_cleaned_delivery_content():

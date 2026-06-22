@@ -17,10 +17,10 @@ class FakeFeishuClient:
         self.update_error_message = "update unavailable"
         self.update_delay = 0.0
 
-    async def send_card(self, chat_id, card):
+    async def send_card(self, chat_id, card, thread_id=None, reply_to_message_id=None):
         if self.fail_send:
             raise RuntimeError("send unavailable")
-        self.sent.append((chat_id, card))
+        self.sent.append((chat_id, card, thread_id, reply_to_message_id))
         return f"feishu-message-{len(self.sent)}"
 
     async def update_card_message(self, message_id, card):
@@ -83,8 +83,9 @@ def event_payload(
     conversation_id="conversation-1",
     message_id="hermes-message-1",
     chat_id="oc_abc",
+    thread_id="",
 ):
-    return {
+    payload = {
         "schema_version": "1",
         "event": event,
         "conversation_id": conversation_id,
@@ -95,6 +96,9 @@ def event_payload(
         "created_at": 1777017600.0 + sequence,
         "data": data or {},
     }
+    if thread_id:
+        payload["thread_id"] = thread_id
+    return payload
 
 
 @pytest.fixture
@@ -259,6 +263,29 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert metrics["feishu_update_successes"] == 2
     assert metrics["feishu_update_failures"] == 0
     assert metrics["feishu_update_retries"] == 0
+
+
+async def test_message_started_sends_card_as_thread_reply(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            {"reply_to_message_id": "om_user_message"},
+            conversation_id="conversation-1",
+            message_id="om_user_message",
+            thread_id="omt_thread",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][0] == "oc_abc"
+    assert feishu_client.sent[0][2] == "omt_thread"
+    assert feishu_client.sent[0][3] == "om_user_message"
 
 
 async def test_interaction_request_renders_buttons_and_callback_resolves(client):

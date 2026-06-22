@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.6.3`。这一版继续保持 sidecar-only 主线，在 V3.6.2 runtime 安装可靠性基础上修复 issues #56-#59：支持 Hermes v0.17.0+ / `v2026.6.19+` 的 `_run_agent_inner` hook anchor，补齐 localhost 交互 text fallback、Telegram 隔离和 Windows profile path。
+当前包版本为 `3.6.4`。这一版继续保持 sidecar-only 主线，在 V3.6.3 Hermes v0.17 兼容基础上修复 issues #61/#62：飞书 thread 内消息的初始卡片会回复到原 thread，cron `deliver: "feishu:oc_xxx"` 会解析为飞书卡片投递目标。
 
 ## 已具备
 
@@ -16,6 +16,8 @@
 - 真实 Hermes `v2026.4.23` 目录 `restore -> install` 循环验证。
 - Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `0.17.x` / `v2026.5.16+` / `v2026.6.19+` 使用 `gateway_run_013_plus` hook strategy，旧版 `v2026.4.x` 保持 `legacy_gateway_run`。
 - 飞书卡片按钮交互覆盖 `interaction.requested`、`/card/actions`、`/interactions/{interaction_id}` 的本地 mock 验收；localhost/private sidecar 覆盖 `card.interaction_mode: text` fallback。
+- 飞书 thread 消息会携带可选 `thread_id`，有 reply anchor 时通过 Feishu reply API 把初始卡片放回原 thread，后续更新继续 PATCH 同一张卡片。
+- cron delivery 支持从 `deliver: "feishu:oc_xxx"` 提取 chat id，避免定时投递退回 plain text。
 - Markdown 长表格/长代码块超过 `MAIN_CONTENT_CHUNK_CHARS` 后按完整结构重复切分，避免 raw markdown。
 - thinking/interim assistant 使用 `append_block` 完整块追加，避免 delta 累积导致漏字或截断。
 - 同一 message id 的 runtime event 发送、sidecar 更新和终态 PATCH 均有排序/合并保护。

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.6.4 — 2026-06-22
+
+### Fixed
+- issue #61: Feishu thread messages now keep the initial streaming card inside the originating thread by carrying `thread_id` through the event protocol and using the Feishu reply API with `reply_in_thread: true` when a reply anchor is available.
+- issue #62: cron jobs with `deliver: "feishu:oc_xxx"` now parse the chat id from the `deliver` field, allowing scheduled Feishu deliveries to render as cards instead of falling back to plain text.
+
+### Docs
+- Added V3.6.4 release notes and documented the optional event `thread_id` field used for Feishu thread routing.
+
 ## V3.6.3 — 2026-06-21
 
 ### Fixed

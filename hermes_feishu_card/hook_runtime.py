@@ -643,6 +643,7 @@ def _build_event(
         chat_id = _first_attr_string(source_obj, ("chat_id", "open_chat_id", "receive_id"))
     if chat_id is None:
         return None
+    thread_id = _thread_id_for_runtime_event(local_vars, message_obj, source_obj)
 
     conversation_id = (
         _first_string(local_vars, ("conversation_id", "thread_id", "session_id"))
@@ -699,16 +700,20 @@ def _build_event(
         if message_id is None:
             return None
     sequence = _peek_next_sequence(message_id) if preview else _next_sequence(message_id)
+    event_data = _event_data(event_name, local_vars, source_obj, message_obj)
+    if thread_id:
+        event_data.setdefault("thread_id", thread_id)
     payload = {
         "schema_version": "1",
         "event": event_name,
         "conversation_id": conversation_id,
         "message_id": message_id,
         "chat_id": chat_id,
+        "thread_id": thread_id,
         "platform": platform,
         "sequence": sequence,
         "created_at": created_at,
-        "data": _event_data(event_name, local_vars, source_obj, message_obj),
+        "data": event_data,
     }
     if is_terminal_event:
         if not preview:
@@ -749,6 +754,7 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
     ).strip().lower()
     chat_id = str(
         resolved_chat_id
+        or _deliver_chat_id(job.get("deliver"))
         or origin.get("chat_id")
         or os.environ.get("HERMES_CRON_AUTO_DELIVER_CHAT_ID")
         or ""
@@ -837,6 +843,21 @@ def _deliver_platform(value: Any) -> str:
     if ":" in text:
         return text.split(":", 1)[0].strip()
     return text
+
+
+def _deliver_chat_id(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(
+            value.get("chat_id")
+            or value.get("open_chat_id")
+            or value.get("receive_id")
+            or value.get("target")
+            or ""
+        ).strip()
+    text = str(value or "").strip()
+    if ":" not in text:
+        return ""
+    return text.split(":", 1)[1].strip()
 
 
 def _first_target_platform(targets: list[dict[str, Any]]) -> str:
@@ -1016,6 +1037,23 @@ def _profile_from_path(path: str) -> str | None:
             if candidate:
                 return candidate
     return None
+
+
+def _thread_id_for_runtime_event(
+    local_vars: dict[str, Any], message_obj: Any, source_obj: Any
+) -> str:
+    value = (
+        _first_string(local_vars, ("thread_id",))
+        or _first_attr_string(message_obj, ("thread_id",))
+        or _first_attr_string(source_obj, ("thread_id",))
+    )
+    if _is_feishu_thread_id(value):
+        return value or ""
+    return ""
+
+
+def _is_feishu_thread_id(value: str | None) -> bool:
+    return bool(value and value.startswith(("omt_", "om_")))
 
 
 def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:

@@ -116,6 +116,15 @@ def test_allows_extra_fields():
     assert event.event == "thinking.delta"
 
 
+def test_parses_optional_thread_id():
+    payload = valid_payload()
+    payload["thread_id"] = "omt_thread"
+
+    event = SidecarEvent.from_dict(payload)
+
+    assert event.thread_id == "omt_thread"
+
+
 def test_event_accepts_optional_group_routing_context():
     payload = valid_payload()
     payload["data"] = {

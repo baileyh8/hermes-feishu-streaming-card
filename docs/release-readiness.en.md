@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.6.3`. This release keeps the sidecar-only mainline and builds on V3.6.2 runtime install reliability by fixing issues #56-#59: Hermes v0.17.0+ / `v2026.6.19+` `_run_agent_inner` hook anchors, localhost interaction text fallback, Telegram isolation, and Windows profile paths.
+Current package version: `3.6.4`. This release keeps the sidecar-only mainline and builds on V3.6.3 Hermes v0.17 compatibility by fixing issues #61/#62: Feishu thread messages create the initial card in the original thread, and cron `deliver: "feishu:oc_xxx"` resolves to a Feishu card target.
 
 ## Ready
 
@@ -16,6 +16,8 @@ Current package version: `3.6.3`. This release keeps the sidecar-only mainline a
 - Real Hermes `v2026.4.23` `restore -> install` loop verification.
 - Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `0.17.x` / `v2026.5.16+` / `v2026.6.19+` use the `gateway_run_013_plus` hook strategy, while older `v2026.4.x` keeps `legacy_gateway_run`.
 - Feishu card button interactions are covered through local mock acceptance for `interaction.requested`, `/card/actions`, and `/interactions/{interaction_id}`; localhost/private sidecar text fallback is covered through `card.interaction_mode: text`.
+- Feishu thread messages can carry optional `thread_id`; with a reply anchor, the sidecar uses the Feishu reply API to create the initial card in the original thread, and later updates keep PATCHing the same card.
+- Cron delivery can extract chat ids from `deliver: "feishu:oc_xxx"`, avoiding plain-text fallback for scheduled Feishu deliveries.
 - Long Markdown tables and fenced code blocks over `MAIN_CONTENT_CHUNK_CHARS` are split as complete repeated structures to avoid raw Markdown rendering.
 - Thinking/interim assistant messages use complete `append_block` chunks to avoid delta accumulation truncation or missing text.
 - Runtime event sends, sidecar updates, and terminal PATCH calls are ordered/coalesced for the same message id.
