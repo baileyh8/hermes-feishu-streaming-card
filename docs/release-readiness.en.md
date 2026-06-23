@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.6.4`. This release keeps the sidecar-only mainline and builds on V3.6.3 Hermes v0.17 compatibility by fixing issues #61/#62: Feishu thread messages create the initial card in the original thread, and cron `deliver: "feishu:oc_xxx"` resolves to a Feishu card target.
+Current package version: `3.6.5`. This release keeps the sidecar-only mainline and builds on V3.6.4 Feishu thread / cron routing by fixing issues #64/#65: Feishu thread card sessions now use the same `message_id` as streaming callbacks, and DeepSeek-style completed-only model output can backfill the final answer into the same card.
 
 ## Ready
 

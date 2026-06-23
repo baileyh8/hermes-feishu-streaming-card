@@ -40,6 +40,12 @@ It targets the real pain points of using Hermes inside Feishu: missing or out-of
 | Multi-bot, group, and profile routing is hard to inspect | `bindings.chats`, profile-aware sessions, and `/health.routing` diagnostics |
 | Hook or sidecar failures are hard to debug | `doctor`, runtime import checks, `/health` metrics, fail-closed installer, restore/uninstall |
 
+## V3.6.5 Streaming Terminal Stability Patch
+
+V3.6.5 fixes issues #64 and #65. In Feishu thread scenarios, `message.started` now uses the same reply anchor as streaming callbacks for the card session `message_id`, preventing `events_applied=0`. For burst-output models such as DeepSeek, completed events can now backfill the final answer from `message.completed` / `agent_result.final_response` even when no `thinking.delta` or `answer.delta` events were emitted.
+
+Full release notes: [docs/release-notes-v3.6.5.md](docs/release-notes-v3.6.5.md).
+
 ## V3.6.4 Thread Reply and Cron Delivery Patch
 
 V3.6.4 fixes issues #61 and #62. When a user sends a message from a Feishu thread, the initial streaming card is now sent back into the same thread through the Feishu reply API and subsequent updates keep patching that card. Cron jobs configured with `deliver: "feishu:oc_xxx"` now parse the chat id from `deliver`, so scheduled jobs can render as cards instead of falling back to plain text.
@@ -141,7 +147,7 @@ Common environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Version to install, such as `v3.6.4` or `main` |
+| `HFC_VERSION` | `latest` | Version to install, such as `v3.6.5` or `main` |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent Gateway directory |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | sidecar config path |
 | `HFC_ENV_FILE` | `.env` next to `HFC_CONFIG` | Feishu credential file |
@@ -180,7 +186,7 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 
 ## Upgrading
 
-Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x to V3.6.4 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed.
+Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x to V3.6.5 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed.
 
 ```bash
 # 1. Stop sidecar
@@ -188,7 +194,7 @@ python3 -m hermes_feishu_card.cli stop --config ~/.hermes_feishu_card/config.yam
 
 # 2. Update code
 cd /path/to/hermes-feishu-streaming-card
-git checkout v3.6.4 && pip install -e ".[test]" --upgrade
+git checkout v3.6.5 && pip install -e ".[test]" --upgrade
 
 # 3. Diagnose Hermes hook strategy and anchors
 python3 -m hermes_feishu_card.cli doctor --config ~/.hermes_feishu_card/config.yaml --hermes-dir ~/.hermes/hermes-agent
@@ -357,6 +363,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v3.6.5](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.5) | 2026-06 | Fixes issues #64/#65 with Feishu thread `message_id` normalization and DeepSeek completed-only final-answer backfill |
 | [v3.6.4](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.4) | 2026-06 | Fixes issues #61/#62 with Feishu thread card replies and cron `deliver: "feishu:oc_xxx"` card routing |
 | [v3.6.3](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.3) | 2026-06 | Fixes issues #56-#59 with Hermes v0.17 `_run_agent_inner` hooks, localhost interaction text fallback, Telegram isolation, and Windows profile paths |
 | [v3.6.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.2) | 2026-06 | Fixes issue #53 with Hermes runtime venv installs, doctor runtime import checks, and hook failure warnings |

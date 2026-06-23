@@ -888,22 +888,40 @@ def _with_silent_exception_handler(block: list[str], indent: str, newline: str):
 
 def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gateway_run"):
     inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
     block = [
         f"{indent}{PATCH_BEGIN}{newline}",
-        f"{indent}try:{newline}",
-        (
-            f"{inner_indent}from hermes_feishu_card.hook_runtime "
-            f"import emit_from_hermes_locals as _hfc_emit{newline}"
-        ),
-        f"{inner_indent}_hfc_emit(locals()){newline}",
-        *_render_hook_exception_handler(indent, newline),
-        f"{indent}{PATCH_END}{newline}",
     ]
     if strategy == "gateway_run_013_plus":
-        block.insert(
-            1,
-            f"{indent}# HERMES_FEISHU_CARD_STRATEGY gateway_run_013_plus{newline}",
+        block.extend(
+            [
+                f"{indent}# HERMES_FEISHU_CARD_STRATEGY gateway_run_013_plus{newline}",
+                f"{indent}try:{newline}",
+                (
+                    f"{inner_indent}from hermes_feishu_card.hook_runtime "
+                    f"import emit_from_hermes_locals as _hfc_emit{newline}"
+                ),
+                f"{inner_indent}_hfc_started_message_id = None{newline}",
+                f"{inner_indent}try:{newline}",
+                f"{deeper_indent}_hfc_started_message_id = self._reply_anchor_for_event(event){newline}",
+                f"{inner_indent}except Exception:{newline}",
+                f"{deeper_indent}_hfc_started_message_id = getattr(event, \"message_id\", None){newline}",
+                f"{inner_indent}_hfc_emit({{**locals(), \"message_id\": _hfc_started_message_id}}){newline}",
+            ]
         )
+    else:
+        block.extend(
+            [
+                f"{indent}try:{newline}",
+                (
+                    f"{inner_indent}from hermes_feishu_card.hook_runtime "
+                    f"import emit_from_hermes_locals as _hfc_emit{newline}"
+                ),
+                f"{inner_indent}_hfc_emit(locals()){newline}",
+            ]
+        )
+    block.extend(_render_hook_exception_handler(indent, newline))
+    block.append(f"{indent}{PATCH_END}{newline}")
     return block
 
 

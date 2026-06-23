@@ -265,6 +265,37 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert metrics["feishu_update_retries"] == 0
 
 
+async def test_completed_without_deltas_updates_started_card(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload("message.started", 0),
+    )
+    completed = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            1,
+            {"answer": "DeepSeek 一次性返回的最终答案"},
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert len(feishu_client.updated) == 1
+    assert "DeepSeek 一次性返回的最终答案" in str(feishu_client.updated[-1][1])
+
+    health = await test_client.get("/health")
+    body = await health.json()
+    assert body["sessions"]["hermes-message-1"]["status"] == "completed"
+    assert body["sessions"]["hermes-message-1"]["answer_chars"] > 0
+    assert body["metrics"]["feishu_update_attempts"] == 1
+
+
 async def test_message_started_sends_card_as_thread_reply(client):
     test_client, feishu_client = client
 

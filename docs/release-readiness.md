@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.6.4`。这一版继续保持 sidecar-only 主线，在 V3.6.3 Hermes v0.17 兼容基础上修复 issues #61/#62：飞书 thread 内消息的初始卡片会回复到原 thread，cron `deliver: "feishu:oc_xxx"` 会解析为飞书卡片投递目标。
+当前包版本为 `3.6.5`。这一版继续保持 sidecar-only 主线，在 V3.6.4 Feishu thread / cron 路由修复基础上修复 issues #64/#65：Feishu thread 场景的 card session `message_id` 与 streaming callbacks 保持一致，DeepSeek 等 completed-only 模型也能把最终答案回填到同一张卡片。
 
 ## 已具备
 

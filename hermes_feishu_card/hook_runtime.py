@@ -943,7 +943,7 @@ def _event_data(
         data.update({"tool_id": tool_id, "name": name, "status": status, "detail": detail})
         return data
     if event_name == "message.completed":
-        answer = _first_string(local_vars, ("answer", "response", "final_answer", "text", "content")) or ""
+        answer = _completion_answer(local_vars)
         data.update({
             "answer": answer,
             "attachments": _extract_attachments(answer, local_vars),
@@ -1216,6 +1216,40 @@ def _completion_duration(local_vars: dict[str, Any]) -> float:
         if value is not None and value >= 0:
             return value
     return 0.0
+
+
+def _completion_answer(local_vars: dict[str, Any]) -> str:
+    direct = _first_string(
+        local_vars,
+        ("answer", "response", "final_answer", "final_response", "text", "content"),
+    )
+    if direct is not None:
+        return direct
+
+    agent_result = local_vars.get("agent_result")
+    answer = _first_attr_string(
+        agent_result,
+        ("answer", "response", "final_answer", "final_response", "text", "content"),
+    )
+    if answer is not None:
+        return answer
+    if isinstance(agent_result, dict):
+        for key in ("message", "assistant_message", "result", "output"):
+            nested = agent_result.get(key)
+            answer = _first_attr_string(
+                nested,
+                (
+                    "answer",
+                    "response",
+                    "final_answer",
+                    "final_response",
+                    "text",
+                    "content",
+                ),
+            )
+            if answer is not None:
+                return answer
+    return ""
 
 
 def _completion_model(local_vars: dict[str, Any]) -> str:

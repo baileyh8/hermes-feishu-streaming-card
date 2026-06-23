@@ -52,6 +52,32 @@ def test_apply_patch_accepts_013_plus_strategy_and_marks_strategy():
     assert patcher.COMPLETE_PATCH_BEGIN in patched
 
 
+def test_apply_patch_013_plus_started_hook_uses_reply_anchor_message_id():
+    content = (
+        "class GatewayRunner:\n"
+        "    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "        event_message_id = self._reply_anchor_for_event(event)\n"
+        "        response = 'ok'\n"
+        "        _response_time = 1\n"
+        "        agent_result = {}\n"
+        "        return response\n"
+        "\n"
+        "    def _reply_anchor_for_event(self, event):\n"
+        "        return getattr(event, 'reply_to_message_id', None) or event.message_id\n"
+    )
+
+    patched = patcher.apply_patch(content, strategy="gateway_run_013_plus")
+    started_block = patched[
+        patched.index(patcher.PATCH_BEGIN) : patched.index(patcher.PATCH_END)
+    ]
+
+    assert "_hfc_started_message_id = self._reply_anchor_for_event(event)" in started_block
+    assert '"message_id": _hfc_started_message_id' in started_block
+    assert started_block.index("_hfc_started_message_id") < started_block.index(
+        "_hfc_emit("
+    )
+
+
 def test_apply_patch_013_plus_inserts_cron_delivery_hook():
     content = (
         "def _deliver_result(job: dict, content: str, adapters=None, loop=None):\n"

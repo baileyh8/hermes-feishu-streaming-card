@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.6.5 — 2026-06-23
+
+### Fixed
+- issue #64: `gateway_run_013_plus` now emits `message.started` with the same Feishu reply anchor used by streaming callbacks, so thread sessions no longer split across different `message_id` values and increment `events_ignored` with `events_applied=0`.
+- issue #65: completed-only / burst-output models such as DeepSeek can now backfill the final answer from `agent_result.final_response` when no `thinking.delta` or `answer.delta` events were emitted before `message.completed`.
+- Added sidecar regression coverage proving a card created by `message.started` updates and completes correctly when the only content-bearing event is `message.completed`.
+
+### Docs
+- Added V3.6.5 release notes and refreshed install/readiness examples for the new tag.
+
 ## V3.6.4 — 2026-06-22
 
 ### Fixed

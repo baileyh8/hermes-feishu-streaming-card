@@ -861,6 +861,20 @@ def test_build_completed_event_uses_agent_result_token_fallbacks():
     assert payload["data"]["tokens"]["output_tokens"] > 0
 
 
+def test_completed_event_uses_agent_result_final_response_when_response_is_empty():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_abc",
+            "message_id": "msg_1",
+            "response": "",
+            "agent_result": {"final_response": "DeepSeek 一次性返回的最终答案"},
+        },
+    )
+
+    assert payload["data"]["answer"] == "DeepSeek 一次性返回的最终答案"
+
+
 def test_build_completed_event_sanitizes_cumulative_token_counts():
     payload = hook_runtime.build_event(
         "message.completed",
