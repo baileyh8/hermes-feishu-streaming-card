@@ -449,6 +449,12 @@ def _build_doctor_report(
     detection = detect_hermes(args.hermes_dir)
     report["hermes"] = _doctor_hermes_report(detection)
     if not detection.supported:
+        next_step = "Use a supported Hermes install before running install or setup."
+        if detection.suggested_root is not None:
+            next_step = (
+                f"Use --hermes-dir {detection.suggested_root} "
+                "and rerun doctor or install."
+            )
         report["streaming"] = {
             "status": "skipped",
             "message": "Hermes streaming config was skipped because Hermes is unsupported.",
@@ -468,7 +474,7 @@ def _build_doctor_report(
                 "severity": "error",
                 "code": "hermes_unsupported",
                 "message": f"Hermes is unsupported: {detection.reason}",
-                "next_step": "Use a supported Hermes install before running install or setup.",
+                "next_step": next_step,
             }
         )
         return _finalize_doctor_report(report)
@@ -549,6 +555,12 @@ def _doctor_hermes_report(detection: HermesDetection) -> dict[str, Any]:
         "compatibility": detection.compatibility,
         "anchors": dict(detection.capabilities),
         "reason": detection.reason,
+        "suggested_root": (
+            str(detection.suggested_root)
+            if detection.suggested_root is not None
+            else ""
+        ),
+        "suggestion_reason": detection.suggestion_reason,
     }
 
 
@@ -1002,6 +1014,8 @@ def _format_hermes_detection(detection: HermesDetection) -> str:
         f"hook_strategy: {detection.hook_strategy}",
         f"cron_hook_strategy: {detection.cron_hook_strategy}",
         f"compatibility: {detection.compatibility}",
+        f"suggested_root: {detection.suggested_root or ''}",
+        f"suggestion_reason: {detection.suggestion_reason}",
         "anchors:",
     ]
     for capability, found in detection.capabilities.items():

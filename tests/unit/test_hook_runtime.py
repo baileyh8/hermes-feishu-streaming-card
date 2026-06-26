@@ -982,6 +982,45 @@ def test_attachment_guard_uses_preview_before_terminal_emit_retires_fallback():
     )
 
 
+@pytest.mark.asyncio
+async def test_async_terminal_emit_uses_sidecar_applied_response(monkeypatch):
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+    responses = iter(
+        [
+            {"ok": True, "applied": True},
+            {"ok": True, "applied": False},
+            {"ok": False, "error": "session not found"},
+        ]
+    )
+
+    async def fake_post_response(url, payload, timeout):
+        assert url == "http://sidecar.test/events"
+        assert payload["event"] == "message.completed"
+        return next(responses)
+
+    async def fail_legacy_post(url, payload, timeout):
+        raise AssertionError("terminal emit should read sidecar JSON response")
+
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", fake_post_response)
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered", fail_legacy_post)
+
+    local_vars = {
+        "chat_id": "oc_abc",
+        "message_id": "msg_1",
+        "answer": "最终答案",
+    }
+
+    assert await hook_runtime.emit_from_hermes_locals_async(
+        local_vars, event_name="message.completed"
+    )
+    assert not await hook_runtime.emit_from_hermes_locals_async(
+        local_vars, event_name="message.completed"
+    )
+    assert not await hook_runtime.emit_from_hermes_locals_async(
+        local_vars, event_name="message.completed"
+    )
+
+
 def test_build_event_reuses_active_fallback_for_duplicate_started_before_terminal():
     local_vars = {
         "chat_id": "oc_abc",
@@ -1393,7 +1432,7 @@ async def test_emit_from_hermes_locals_async_serializes_same_message_deltas(monk
             await asyncio.sleep(0.05)
         completed.append((sequence, payload["data"]["text"]))
 
-    monkeypatch.setattr(hook_runtime, "_post_json", slow_first_sender)
+    monkeypatch.setattr(hook_runtime, "_post_json_response", slow_first_sender)
     monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
     first = asyncio.create_task(
         hook_runtime.emit_from_hermes_locals_async(
@@ -1649,7 +1688,7 @@ async def test_emit_from_hermes_locals_sender_error_is_swallowed(monkeypatch):
 @pytest.mark.asyncio
 async def test_emit_from_hermes_locals_async_reports_sender_success(monkeypatch):
     sender = SenderProbe()
-    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    monkeypatch.setattr(hook_runtime, "_post_json_response", sender)
     monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
 
     result = await hook_runtime.emit_from_hermes_locals_async(
@@ -1670,7 +1709,7 @@ async def test_emit_from_hermes_locals_async_reports_sender_success(monkeypatch)
 async def test_emit_from_hermes_locals_async_reports_sender_failure(monkeypatch):
     sender = SenderProbe()
     sender.raise_error = True
-    monkeypatch.setattr(hook_runtime, "_post_json", sender)
+    monkeypatch.setattr(hook_runtime, "_post_json_response", sender)
 
     result = await hook_runtime.emit_from_hermes_locals_async(
         {"chat_id": "oc_abc", "message_id": "msg_1"},

@@ -12,6 +12,7 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
 
     assert readme.startswith("# Hermes 飞书流式卡片插件\n")
+    assert "V3.6.6" in readme
     assert "V3.6.5" in readme
     assert "V3.6.4" in readme
     assert "V3.6.3" in readme
@@ -81,6 +82,7 @@ def test_readme_documents_v340_hermes_compatibility():
 def test_english_readme_documents_v340_hermes_compatibility():
     readme = read_doc("README.en.md")
 
+    assert "V3.6.6" in readme
     assert "V3.6.5" in readme
     assert "V3.6.4" in readme
     assert "V3.6.3" in readme
@@ -122,6 +124,7 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert "curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.sh | bash" in readme
     assert "irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.ps1 | iex" in readme
     assert "README-install.md" in readme
+    assert "docs/release-notes-v3.6.6.md" in readme
     assert "docs/release-notes-v3.6.5.md" in readme
     assert "docs/release-notes-v3.6.4.md" in readme
     assert "docs/release-notes-v3.6.3.md" in readme
@@ -139,11 +142,12 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert "bash install.sh" in install_doc
     assert "install.ps1" in install_doc
     assert "HFC_VERSION" in install_doc
-    assert "v3.6.5" in install_doc
+    assert "v3.6.6" in install_doc
 
     assert (ROOT / "install.sh").exists()
     assert (ROOT / "install.ps1").exists()
     assert (ROOT / "README-install.md").exists()
+    assert (ROOT / "docs/release-notes-v3.6.6.md").exists()
     assert (ROOT / "docs/release-notes-v3.6.5.md").exists()
     assert (ROOT / "docs/release-notes-v3.6.4.md").exists()
     assert (ROOT / "docs/release-notes-v3.6.3.md").exists()
@@ -503,6 +507,18 @@ def test_changelog_documents_v365_release_notes():
     assert "hermes-feishu-card-v3.6.5-macos.tar.gz" in release_notes
 
 
+def test_changelog_documents_v366_release_notes():
+    changelog = read_doc("CHANGELOG.md")
+    release_notes = read_doc("docs/release-notes-v3.6.6.md")
+
+    assert "## V3.6.6 — 2026-06-26" in changelog
+    assert "issue #67" in changelog
+    assert "issue #68" in changelog
+    assert "applied" in release_notes
+    assert "Hermes CLI reports project" in release_notes
+    assert "hermes-feishu-card-v3.6.6-macos.tar.gz" in release_notes
+
+
 def test_config_example_documents_profile_and_bot_card_titles():
     config = read_doc("config.yaml.example")
 
@@ -609,7 +625,7 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.6.5" in release_readiness
+    assert "3.6.6" in release_readiness
     assert "Release assets workflow" in release_readiness
     assert "install.ps1" in release_readiness
     assert "3.1.0" not in release_readiness

@@ -20,6 +20,7 @@ OPTIONAL_CAPABILITIES = (
     "attachment_delivery",
 )
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_HERMES_PROJECT_RE = re.compile(r"(?im)^\s*Project:\s*(.+?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,8 @@ class HermesDetection:
     cron_hook_strategy: str = ""
     compatibility: str = "unsupported"
     capabilities: dict[str, bool] = field(default_factory=dict)
+    suggested_root: Path | None = None
+    suggestion_reason: str = ""
 
 
 def detect_hermes(root: str | Path) -> HermesDetection:
@@ -58,6 +61,8 @@ def detect_hermes(root: str | Path) -> HermesDetection:
         hook_strategy: str = "",
         compatibility: str = "unsupported",
         capabilities: dict[str, bool] | None = None,
+        suggested_root: Path | None = None,
+        suggestion_reason: str = "",
     ) -> HermesDetection:
         return HermesDetection(
             root=hermes_root,
@@ -74,10 +79,23 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             cron_hook_strategy="cron_scheduler" if cron_py.exists() else "",
             compatibility=compatibility,
             capabilities=capabilities or {},
+            suggested_root=suggested_root,
+            suggestion_reason=suggestion_reason,
         )
 
     if not run_py.exists():
-        return result(False, "gateway/run.py missing")
+        suggested_root = _detect_hermes_cli_project_root(hermes_root)
+        reason = "gateway/run.py missing"
+        suggestion_reason = ""
+        if suggested_root is not None:
+            reason = f"{reason}; Hermes CLI reports project: {suggested_root}"
+            suggestion_reason = "hermes_cli_project"
+        return result(
+            False,
+            reason,
+            suggested_root=suggested_root,
+            suggestion_reason=suggestion_reason,
+        )
 
     if run_py.is_symlink():
         return result(False, "gateway/run.py must not be a symlink")
@@ -160,6 +178,34 @@ def _read_git_version(root: Path) -> str:
     except (OSError, subprocess.SubprocessError):
         return "unknown"
     return result.stdout.strip() or "unknown"
+
+
+def _detect_hermes_cli_project_root(current_root: Path) -> Path | None:
+    try:
+        result = subprocess.run(
+            ["hermes", "-V"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = f"{result.stdout}\n{result.stderr}"
+    match = _HERMES_PROJECT_RE.search(output)
+    if match is None:
+        return None
+    candidate = Path(match.group(1).strip()).expanduser()
+    try:
+        same_root = candidate.resolve() == current_root.resolve()
+    except OSError:
+        same_root = False
+    if same_root:
+        return None
+    if not (candidate / "gateway" / "run.py").exists():
+        return None
+    return candidate
 
 
 def _git_toplevel(root: Path) -> Path | None:

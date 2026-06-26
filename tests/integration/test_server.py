@@ -8,6 +8,9 @@ from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.server import FEISHU_MESSAGE_IDS_KEY, create_app
 
 
+_REAL_ASYNCIO_SLEEP = asyncio.sleep
+
+
 class FakeFeishuClient:
     def __init__(self):
         self.sent = []
@@ -112,6 +115,28 @@ async def client():
         yield test_client, feishu_client
     finally:
         await test_client.close()
+
+
+async def wait_for_card_update(feishu_client, expected_text, attempts=80):
+    for _ in range(attempts):
+        for message_id, card in reversed(feishu_client.updated):
+            if expected_text in str(card):
+                return message_id, card
+        await _REAL_ASYNCIO_SLEEP(0.01)
+    raise AssertionError(f"card update containing {expected_text!r} was not observed")
+
+
+async def wait_for_metric(test_client, metric_name, expected_value, attempts=80):
+    body = None
+    for _ in range(attempts):
+        health = await test_client.get("/health")
+        body = await health.json()
+        if body["metrics"][metric_name] == expected_value:
+            return body["metrics"]
+        await _REAL_ASYNCIO_SLEEP(0.01)
+    raise AssertionError(
+        f"metric {metric_name!r} did not become {expected_value!r}: {body}"
+    )
 
 
 async def test_health_reports_healthy_status_and_active_sessions(client):
@@ -245,6 +270,7 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert completed.status == 200
     assert (await completed.json())["applied"] is True
 
+    await wait_for_card_update(feishu_client, "最终答案")
     assert len(feishu_client.sent) == 1
     assert feishu_client.sent[0][0] == "oc_abc"
     assert len(feishu_client.updated) >= 1
@@ -286,6 +312,7 @@ async def test_completed_without_deltas_updates_started_card(client):
     assert completed.status == 200
     assert await completed.json() == {"ok": True, "applied": True}
     assert len(feishu_client.sent) == 1
+    await wait_for_card_update(feishu_client, "DeepSeek 一次性返回的最终答案")
     assert len(feishu_client.updated) == 1
     assert "DeepSeek 一次性返回的最终答案" in str(feishu_client.updated[-1][1])
 
@@ -679,6 +706,7 @@ async def test_parallel_message_sessions_update_their_own_feishu_cards(client):
         "/events",
         json=event_payload("message.completed", 2, {"answer": "第一条完成"}, **msg1),
     )
+    await wait_for_card_update(feishu_client, "第一条完成")
     updates_before_late = len(feishu_client.updated)
     late1 = await test_client.post(
         "/events",
@@ -728,6 +756,7 @@ async def test_streaming_deltas_are_throttled_but_terminal_event_updates(client)
     assert await completed.json() == {"ok": True, "applied": True}
 
     assert len(feishu_client.sent) == 1
+    await wait_for_card_update(feishu_client, "最终答案")
     assert len(feishu_client.updated) == 2
     assert "第一段" in str(feishu_client.updated[0][1])
     assert "第二段" not in str(feishu_client.updated[0][1])
@@ -756,6 +785,7 @@ async def test_terminal_event_with_stale_sequence_still_finalizes_card(client):
 
     assert completed.status == 200
     assert await completed.json() == {"ok": True, "applied": True}
+    await wait_for_card_update(feishu_client, "最终答案")
     assert "最终答案" in str(feishu_client.updated[-1][1])
     assert "已完成" in str(feishu_client.updated[-1][1])
 
@@ -857,6 +887,7 @@ async def test_terminal_update_is_not_blocked_by_streaming_update_backlog(client
     assert all(response.status == 200 for response in deltas)
     assert completed.status == 200
     assert elapsed < 0.5
+    await wait_for_card_update(feishu_client, "最终答案")
     assert "最终答案" in str(feishu_client.updated[-1][1])
     health = await test_client.get("/health")
     metrics = (await health.json())["metrics"]
@@ -864,6 +895,32 @@ async def test_terminal_update_is_not_blocked_by_streaming_update_backlog(client
     assert metrics["events_applied"] == 13
     assert metrics["feishu_update_attempts"] <= 3
     assert metrics["feishu_update_failures"] == 0
+
+
+async def test_terminal_event_ack_does_not_wait_for_slow_card_patch(client, monkeypatch):
+    test_client, feishu_client = client
+    feishu_client.update_delay = 0.25
+    monkeypatch.setattr(sidecar_server, "UPDATE_MIN_INTERVAL_SECONDS", 0)
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+
+    started_at = asyncio.get_running_loop().time()
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+    )
+    elapsed = asyncio.get_running_loop().time() - started_at
+
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    assert elapsed < 0.1
+    assert feishu_client.updated == []
+
+    for _ in range(40):
+        if feishu_client.updated:
+            break
+        await asyncio.sleep(0.01)
+    assert "最终答案" in str(feishu_client.updated[-1][1])
 
 
 async def test_terminal_event_waits_for_update_window(client, monkeypatch):
@@ -887,6 +944,7 @@ async def test_terminal_event_waits_for_update_window(client, monkeypatch):
 
     assert completed.status == 200
     assert await completed.json() == {"ok": True, "applied": True}
+    await wait_for_card_update(feishu_client, "最终答案")
     assert sleeps == [sidecar_server.UPDATE_MIN_INTERVAL_SECONDS]
     assert len(feishu_client.updated) == 2
     assert "最终答案" in str(feishu_client.updated[-1][1])
@@ -945,8 +1003,12 @@ async def test_terminal_update_failure_still_accepts_event_to_prevent_native_fal
 
     assert completed.status == 200
     assert await completed.json() == {"ok": True, "applied": True}
-    health = await test_client.get("/health")
-    metrics = (await health.json())["metrics"]
+    metrics = await wait_for_metric(
+        test_client,
+        "feishu_update_attempts",
+        sidecar_server.UPDATE_MAX_ATTEMPTS + 1,
+        attempts=180,
+    )
     assert metrics["events_applied"] == 2
     assert metrics["events_rejected"] == 0
     assert metrics["feishu_update_attempts"] == 4  # 3 from _update_card + 1 from _retry_terminal
@@ -1159,6 +1221,7 @@ async def test_update_reuses_original_bot_without_rerouting():
                 chat_id="oc_sales",
             ),
         )
+        await wait_for_card_update(factory.clients["sales"], "成交")
     finally:
         await test_client.close()
 

@@ -339,6 +339,38 @@ def test_module_doctor_reports_unsupported_hermes_detection(tmp_path):
     assert "reason: gateway/run.py missing" in result.stdout
 
 
+def test_module_doctor_suggests_hermes_cli_project_when_hermes_dir_is_wrong(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9008\n", encoding="utf-8")
+    wrong_dir = tmp_path / "wrong-hermes"
+    wrong_dir.mkdir()
+    actual_dir = tmp_path / "actual-hermes"
+    shutil.copytree(FIXTURE, actual_dir)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hermes_bin = bin_dir / "hermes"
+    hermes_bin.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = \"-V\" ]; then\n"
+        f"  printf 'Hermes Agent v0.17.0 (2026.6.19)\\nProject: {actual_dir}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    hermes_bin.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    result = run_cli("doctor", "--config", str(config_path), "--hermes-dir", str(wrong_dir), "--explain")
+
+    assert result.returncode != 0
+    assert f"Hermes CLI reports project: {actual_dir}" in result.stdout
+    assert f"Use --hermes-dir {actual_dir}" in result.stdout
+
+
 def test_module_status_reports_success():
     result = run_cli("status")
 

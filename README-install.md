@@ -13,6 +13,10 @@ runtime venv before `gateway/run.py` is patched. This prevents a hook from being
 installed into Hermes while `hermes_feishu_card.hook_runtime` is only available
 in the user's shell Python.
 
+From V3.6.6, if `--hermes-dir` points at the wrong directory and
+`gateway/run.py` is missing, `doctor --explain` and `install` read `hermes -V`
+and suggest the `Project:` path reported by the Hermes CLI.
+
 ## macOS / Linux
 
 ```bash
@@ -29,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.6.5` or `main`. |
+| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.6.6` or `main`. |
 | `HFC_REPO` | `baileyh8/hermes-feishu-streaming-card` | GitHub repository to install from. |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent root directory. |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | Sidecar config path. |

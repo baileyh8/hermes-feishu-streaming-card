@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.6.6 — 2026-06-26
+
+### Fixed
+- issue #67: terminal Hermes events now ACK before slow Feishu card PATCH calls finish, while the card update continues in the background. This prevents interrupted or backlogged sessions from making Hermes fall back to a duplicate native text reply while the streaming card still updates.
+- issue #67: `emit_from_hermes_locals_async()` now reads the sidecar JSON response and only reports delivery when `ok` and `applied` are not false, so stale or unapplied terminal events no longer masquerade as successful card delivery.
+- issue #68: when `--hermes-dir` points to a directory without `gateway/run.py`, Hermes detection reads `hermes -V`, extracts the CLI `Project:` path, and surfaces a concrete `Use --hermes-dir ...` recommendation in `doctor --explain` / install diagnostics.
+
+### Tests
+- Added regression coverage for slow terminal Feishu PATCH ACK behavior, sidecar `applied` handling in the Hermes async hook, and wrong `--hermes-dir` diagnostics using a mocked Hermes CLI.
+
 ## V3.6.5 — 2026-06-23
 
 ### Fixed

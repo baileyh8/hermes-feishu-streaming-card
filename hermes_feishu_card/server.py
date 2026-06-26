@@ -651,7 +651,9 @@ def _delivery_kind(event: SidecarEvent) -> str:
 
 
 def _should_await_card_update(event: SidecarEvent) -> bool:
-    return event.event in TERMINAL_EVENTS
+    # Hermes uses the /events response to decide whether to suppress native text.
+    # Slow Feishu PATCH calls must not keep terminal events waiting.
+    return False
 
 
 def _safe_profile_id(value: Any) -> str:

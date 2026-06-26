@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.6.5`. This release keeps the sidecar-only mainline and builds on V3.6.4 Feishu thread / cron routing by fixing issues #64/#65: Feishu thread card sessions now use the same `message_id` as streaming callbacks, and DeepSeek-style completed-only model output can backfill the final answer into the same card.
+Current package version: `3.6.6`. This release keeps the sidecar-only mainline and builds on V3.6.5 streaming terminal stability by fixing issues #67/#68: interrupted or slow-PATCH sessions no longer produce both a streaming card and a native text reply, and wrong `--hermes-dir` values now get a suggested Hermes CLI `Project:` path from `hermes -V`.
 
 ## Ready
 
@@ -21,11 +21,13 @@ Current package version: `3.6.5`. This release keeps the sidecar-only mainline a
 - Long Markdown tables and fenced code blocks over `MAIN_CONTENT_CHUNK_CHARS` are split as complete repeated structures to avoid raw Markdown rendering.
 - Thinking/interim assistant messages use complete `append_block` chunks to avoid delta accumulation truncation or missing text.
 - Runtime event sends, sidecar updates, and terminal PATCH calls are ordered/coalesced for the same message id.
+- Terminal events ACK Hermes quickly while slow Feishu PATCH calls complete in the background, preventing duplicate native replies after interrupts or update backlogs.
 - `load_config()` reads a `.env` file next to the selected config file while preserving real process environment variables as the highest-precedence source.
 - `install.sh` imports only Feishu/sidecar variables from `.env`, avoiding execution of unrelated values such as paths with spaces.
 - `install.sh` retries pip with `--break-system-packages` when uv/PEP 668 reports an externally managed Python environment.
 - Windows sidecar process `stop/status` avoids POSIX process-group signals and uses Windows-specific PID/`taskkill` handling.
 - `doctor --json` / `doctor --explain` report config, sidecar, Hermes, streaming, install_state, and recommendations.
+- `doctor --explain` / `install` suggest the Hermes CLI `Project:` directory as the correct `--hermes-dir` when `gateway/run.py` is missing and `hermes -V` is available.
 - `setup` / `install` detect the Hermes runtime venv Python and install the same plugin release there; `doctor` reports `runtime_import`.
 - Hook import/emit failures remain fail-open but write `[hermes-feishu-card] hook failed: ...` diagnostic warnings to Hermes stderr.
 - `repair --hermes-dir ... --yes` and `setup --repair` repair verifiable manifest/backup state and refuse unverifiable user edits.

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.6.5`。这一版继续保持 sidecar-only 主线，在 V3.6.4 Feishu thread / cron 路由修复基础上修复 issues #64/#65：Feishu thread 场景的 card session `message_id` 与 streaming callbacks 保持一致，DeepSeek 等 completed-only 模型也能把最终答案回填到同一张卡片。
+当前包版本为 `3.6.6`。这一版继续保持 sidecar-only 主线，在 V3.6.5 流式终态稳定性基础上修复 issues #67/#68：中断或慢 PATCH 场景下避免流式卡片与原生文本双发，并在 `--hermes-dir` 指错时提示 `hermes -V` 报告的真实 Project 目录。
 
 ## 已具备
 
@@ -21,11 +21,13 @@
 - Markdown 长表格/长代码块超过 `MAIN_CONTENT_CHUNK_CHARS` 后按完整结构重复切分，避免 raw markdown。
 - thinking/interim assistant 使用 `append_block` 完整块追加，避免 delta 累积导致漏字或截断。
 - 同一 message id 的 runtime event 发送、sidecar 更新和终态 PATCH 均有排序/合并保护。
+- terminal 事件会快速 ACK Hermes，慢 Feishu PATCH 在后台完成，避免中断或更新堆积后触发重复原生答复。
 - `load_config()` 会读取 config 同目录 `.env`，真实环境变量仍保持最高优先级。
 - `install.sh` 白名单读取 `.env` 中的飞书/sidecar 变量，不会执行带空格路径等无关配置。
 - `install.sh` 会在 uv/PEP 668 externally managed Python 场景下重试 `--break-system-packages`。
 - Windows sidecar 进程 stop/status 避免使用 POSIX process group signal，并走 Windows 专用 PID/`taskkill` 路径。
 - `doctor --json` / `doctor --explain` 会展示 config、sidecar、Hermes、streaming、install_state 和 recommendations。
+- `doctor --explain` / `install` 在 `gateway/run.py missing` 且 `hermes -V` 可用时，会提示 Hermes CLI `Project:` 目录作为正确 `--hermes-dir`。
 - `setup` / `install` 会检测 Hermes runtime venv Python 并安装同一插件版本；`doctor` 会报告 `runtime_import`。
 - hook import/emit 失败保持 fail-open，但会向 Hermes stderr 写入 `[hermes-feishu-card] hook failed: ...` 诊断 warning。
 - `repair --hermes-dir ... --yes` 和 `setup --repair` 能修复可验证的 manifest/backup 状态，无法验证用户改动时拒绝覆盖。
