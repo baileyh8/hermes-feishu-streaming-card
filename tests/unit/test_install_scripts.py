@@ -175,6 +175,20 @@ exit 0
     return path
 
 
+def make_fake_system_python(path: Path, marker: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "{marker}"
+exit 99
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
 def test_install_docker_sh_declares_container_defaults():
     script_path = ROOT / "install-docker.sh"
     script = script_path.read_text(encoding="utf-8")
@@ -198,6 +212,10 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
         encoding="utf-8",
     )
     runtime_python = make_fake_docker_python(hermes_dir / "venv" / "bin" / "python")
+    system_python_marker = tmp_path / "system-python.log"
+    fake_system_python = make_fake_system_python(
+        tmp_path / "system-python", system_python_marker
+    )
 
     env = os.environ.copy()
     env.update(
@@ -208,9 +226,9 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
             "HFC_ENV_FILE": str(env_file),
             "HFC_VERSION": "v3.7.0",
             "HFC_SKIP_START": "1",
+            "PYTHON": str(fake_system_python),
         }
     )
-    env.pop("PYTHON", None)
     env.pop("HFC_PYTHON", None)
     env.pop("FEISHU_APP_ID", None)
     env.pop("FEISHU_APP_SECRET", None)
@@ -233,6 +251,7 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     assert doctor_cmd in log
     assert setup_cmd in log
     assert log.index(doctor_cmd) < log.index(setup_cmd)
+    assert not system_python_marker.exists()
 
 
 def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
@@ -240,29 +259,12 @@ def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
     data_dir = tmp_path / "opt" / "data"
     (hermes_dir / "gateway").mkdir(parents=True)
     (hermes_dir / "gateway" / "run.py").write_text("# gateway\\n", encoding="utf-8")
-    system_bin = tmp_path / "system-bin"
-    system_bin.mkdir()
-    system_python = system_bin / "python"
-    system_python3 = system_bin / "python3"
     marker = tmp_path / "system-python.log"
-    system_python.write_text(
-        f"""#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "{marker}"
-exit 2
-""",
-        encoding="utf-8",
+    system_bin = tmp_path / "system-bin"
+    fake_system_python = make_fake_system_python(
+        system_bin / "python", marker
     )
-    system_python3.write_text(
-        f"""#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "{marker}"
-exit 2
-""",
-        encoding="utf-8",
-    )
-    system_python.chmod(system_python.stat().st_mode | stat.S_IXUSR)
-    system_python3.chmod(system_python3.stat().st_mode | stat.S_IXUSR)
+    make_fake_system_python(system_bin / "python3", marker)
     data_dir.mkdir(parents=True)
     env = os.environ.copy()
     env.update(
@@ -273,9 +275,9 @@ exit 2
             "FEISHU_APP_ID": "cli_docker",
             "FEISHU_APP_SECRET": "docker_secret",
             "HFC_VERSION": "main",
+            "PYTHON": str(fake_system_python),
         }
     )
-    env.pop("PYTHON", None)
     env.pop("HFC_PYTHON", None)
     env["PATH"] = f"{system_bin}:{env['PATH']}"
 
