@@ -32,7 +32,7 @@
 ```
 
 ## Notes
-- 未改动 `tests/unit/test_install_scripts.py`，因为当前实现已覆盖其断言目标。
+- 已补充 `tests/unit/test_install_scripts.py` 回归用例，覆盖 `.env` 中 `FEISHU_APP_SECRET` 含反斜杠字面值的场景（如 `docker\\secret`、`abc\ndef`），确保与 `printf '%b'` 语义分离。
 
 ## Follow-up Update (Task 2 Review Fix)
 - 已修复 reviewer 指出的问题：`install-docker.sh` 在 `HFC_VERSION=latest` 时不再请求 GitHub releases，也不再拼接 `@tag`。

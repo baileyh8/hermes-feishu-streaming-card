@@ -41,28 +41,24 @@ resolve_version() {
 load_env_file() {
   [ -f "$ENV_FILE" ] || return 0
   log "loading credentials from $ENV_FILE"
-  while IFS= read -r line || [ -n "$line" ]; do
-    local expanded_line
-    expanded_line="$(printf '%b' "$line")"
-    while IFS= read -r entry || [ -n "$entry" ]; do
-      case "$entry" in
-        ""|\#*) continue ;;
-        export\ *) entry="${entry#export }" ;;
-      esac
-      case "$entry" in
-        FEISHU_APP_ID=*|FEISHU_APP_SECRET=*|FEISHU_CONNECTION_MODE=*|FEISHU_HOME_CHANNEL=*|HERMES_FEISHU_CARD_HOST=*|HERMES_FEISHU_CARD_PORT=*)
-          key="${entry%%=*}"
-          value="${entry#*=}"
-          value="${value#"${value%%[![:space:]]*}"}"
-          value="${value%"${value##*[![:space:]]}"}"
-          case "$value" in
-            \"*\") value="${value#\"}"; value="${value%\"}" ;;
-            \'*\') value="${value#\'}"; value="${value%\'}" ;;
-          esac
-          export "$key=$value"
-          ;;
-      esac
-    done <<< "$expanded_line"
+  while IFS= read -r entry || [ -n "$entry" ]; do
+    case "$entry" in
+      ""|\#*) continue ;;
+      export\ *) entry="${entry#export }" ;;
+    esac
+    case "$entry" in
+      FEISHU_APP_ID=*|FEISHU_APP_SECRET=*|FEISHU_CONNECTION_MODE=*|FEISHU_HOME_CHANNEL=*|HERMES_FEISHU_CARD_HOST=*|HERMES_FEISHU_CARD_PORT=*)
+        key="${entry%%=*}"
+        value="${entry#*=}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        value="${value%"${value##*[![:space:]]}"}"
+        case "$value" in
+          \"*\") value="${value#\"}"; value="${value%\"}" ;;
+          \'*\') value="${value#\'}"; value="${value%\'}" ;;
+        esac
+        export "$key=$value"
+        ;;
+    esac
   done < "$ENV_FILE"
 }
 
