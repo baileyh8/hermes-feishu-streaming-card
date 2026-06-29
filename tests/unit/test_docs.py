@@ -124,6 +124,10 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert "curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.sh | bash" in readme
     assert "irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.ps1 | iex" in readme
     assert "README-install.md" in readme
+    assert "install-docker.sh" in readme
+    assert "docker-compose.example.yml" in readme
+    assert "Docker" in install_doc
+    assert "v3.7.0" in install_doc
     assert "docs/release-notes-v3.6.6.md" in readme
     assert "docs/release-notes-v3.6.5.md" in readme
     assert "docs/release-notes-v3.6.4.md" in readme
@@ -156,6 +160,9 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert (ROOT / "docs/release-notes-v3.6.0.md").exists()
     assert (ROOT / "docs/release-notes-v3.5.2.md").exists()
     assert (ROOT / "docs/roadmap-v3.6.0.md").exists()
+    assert (ROOT / "install-docker.sh").exists()
+    assert (ROOT / "docker-compose.example.yml").exists()
+    assert (ROOT / "docs/release-notes-v3.7.0.md").exists()
     assert (ROOT / ".github/workflows/release-assets.yml").exists()
     assert "gh release upload" in workflow
     assert 'NAME="hermes-feishu-card-${TAG}"' in workflow
@@ -519,6 +526,17 @@ def test_changelog_documents_v366_release_notes():
     assert "hermes-feishu-card-v3.6.6-macos.tar.gz" in release_notes
 
 
+def test_changelog_documents_v370_release_notes():
+    changelog = read_doc("CHANGELOG.md")
+    release_notes = read_doc("docs/release-notes-v3.7.0.md")
+
+    assert "## V3.7.0 — 2026-06-29" in changelog
+    assert "issue #70" in changelog
+    assert "install-docker.sh" in release_notes
+    assert "docker-compose.example.yml" in release_notes
+    assert "hermes-feishu-card-v3.7.0-linux.tar.gz" in release_notes
+
+
 def test_config_example_documents_profile_and_bot_card_titles():
     config = read_doc("config.yaml.example")
 
@@ -626,8 +644,10 @@ def test_docs_describe_release_readiness_boundaries():
 
     assert "docs/release-readiness.md" in docs
     assert "3.6.6" in release_readiness
+    assert "3.7.0" in release_readiness
     assert "Release assets workflow" in release_readiness
     assert "install.ps1" in release_readiness
+    assert "install-docker.sh" in release_readiness
     assert "3.1.0" not in release_readiness
     assert "interaction.requested" in release_readiness
     assert "interaction_mode: text" in release_readiness

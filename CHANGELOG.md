@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.7.0 — 2026-06-29
+
+### Added
+- issue #70: added `install-docker.sh` for existing Hermes Docker containers with `/opt/hermes`, `/opt/data`, and Hermes venv Python assumptions.
+- Added `docker-compose.example.yml` as a non-official Compose example for bind/volume layout and non-interactive installer execution.
+- Release packages now include Docker install assets.
+
+### Tests
+- Added Docker installer script coverage, Compose example checks, release packaging coverage, and docs assertions.
+
 ## V3.6.6 — 2026-06-26
 
 ### Fixed

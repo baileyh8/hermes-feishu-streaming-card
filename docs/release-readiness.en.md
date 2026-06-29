@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.6.6`. This release keeps the sidecar-only mainline and builds on V3.6.5 streaming terminal stability by fixing issues #67/#68: interrupted or slow-PATCH sessions no longer produce both a streaming card and a native text reply, and wrong `--hermes-dir` values now get a suggested Hermes CLI `Project:` path from `hermes -V`.
+Current package version: `3.7.0`. This release keeps the sidecar-only mainline and builds on V3.6.5 streaming terminal stability by fixing issues #67/#68; it also adds Docker container install/update support for issue #70 with `install-docker.sh`, `docker-compose.example.yml`, and defaults for `/opt/hermes`, `/opt/data`.
 
 ## Ready
 
@@ -29,6 +29,8 @@ Current package version: `3.6.6`. This release keeps the sidecar-only mainline a
 - `doctor --json` / `doctor --explain` report config, sidecar, Hermes, streaming, install_state, and recommendations.
 - `doctor --explain` / `install` suggest the Hermes CLI `Project:` directory as the correct `--hermes-dir` when `gateway/run.py` is missing and `hermes -V` is available.
 - `setup` / `install` detect the Hermes runtime venv Python and install the same plugin release there; `doctor` reports `runtime_import`.
+- `install-docker.sh` supports installer/update workflows inside existing Hermes Docker containers with defaults `HERMES_DIR=/opt/hermes`, `HFC_CONFIG=/opt/data/config.yaml`, and `HFC_ENV_FILE=/opt/data/.env`.
+- `docker-compose.example.yml` documents bind mounts and one-shot `bash install-docker.sh` execution for container topologies.
 - Hook import/emit failures remain fail-open but write `[hermes-feishu-card] hook failed: ...` diagnostic warnings to Hermes stderr.
 - `repair --hermes-dir ... --yes` and `setup --repair` repair verifiable manifest/backup state and refuse unverifiable user edits.
 - Structured attachment, media, and file objects keep card summaries while preserving Hermes native media/file delivery paths.

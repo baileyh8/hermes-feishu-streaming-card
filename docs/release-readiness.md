@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.6.6`。这一版继续保持 sidecar-only 主线，在 V3.6.5 流式终态稳定性基础上修复 issues #67/#68：中断或慢 PATCH 场景下避免流式卡片与原生文本双发，并在 `--hermes-dir` 指错时提示 `hermes -V` 报告的真实 Project 目录。
+当前包版本为 `3.7.0`。这一版在 V3.6.6 的可靠基础上继续保持 sidecar-only 主线，并补齐现有 Hermes Docker 容器内安装与更新路径（issue #70）：`install-docker.sh`、`docker-compose.example.yml` 与 `/opt/hermes`、`/opt/data` 默认目录。
 
 ## 已具备
 
@@ -29,6 +29,8 @@
 - `doctor --json` / `doctor --explain` 会展示 config、sidecar、Hermes、streaming、install_state 和 recommendations。
 - `doctor --explain` / `install` 在 `gateway/run.py missing` 且 `hermes -V` 可用时，会提示 Hermes CLI `Project:` 目录作为正确 `--hermes-dir`。
 - `setup` / `install` 会检测 Hermes runtime venv Python 并安装同一插件版本；`doctor` 会报告 `runtime_import`。
+- `install-docker.sh` 支持既有 Hermes Docker 容器内一键安装/更新，默认使用 `HERMES_DIR=/opt/hermes`、`HFC_CONFIG=/opt/data/config.yaml`、`HFC_ENV_FILE=/opt/data/.env`。
+- `docker-compose.example.yml` 覆盖 `/opt/hermes`、`/opt/data` 挂载与非交互安装执行路径，支持 compose 场景验证。
 - hook import/emit 失败保持 fail-open，但会向 Hermes stderr 写入 `[hermes-feishu-card] hook failed: ...` 诊断 warning。
 - `repair --hermes-dir ... --yes` 和 `setup --repair` 能修复可验证的 manifest/backup 状态，无法验证用户改动时拒绝覆盖。
 - 结构化附件、媒体和文件对象会在卡片保留摘要，同时不抑制 Hermes 原生媒体/文件投递路径。

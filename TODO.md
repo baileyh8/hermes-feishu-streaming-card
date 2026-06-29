@@ -22,7 +22,7 @@
 - [x] **P1 health routing 分组**：`/health.routing` 在多 Profile 下按 profile 分组展示 bot、chat binding、last_route、last_route_error 和 events。
 - [x] **P1 E2E 矩阵**：覆盖 Hermes `v2026.4.23`、`v2026.5.7`、`v2026.5.16+`、`v2026.5.29`、`0.13.x`、`0.14.x`。
 - [x] **P1 发布矩阵**：CI 验证 Release 打包 dry run、macOS/Linux install dry run、Windows PowerShell parser。
-- [ ] **P2 Docker 部署 / issue #70**：后续 Docker 适配版本提供一键安装、更新和排障脚本；覆盖容器内 Hermes/data 目录为 `/opt/hermes`、`/opt/data` 而不是 `~/.hermes`，文件可能由 `root` 持有的权限检查/修复，Hermes Python 位于 venv 且不能假设系统 `python` / `pip` 可用，以及 `doctor` / `setup` / `install` 自动定位容器内 Hermes Gateway 目录和实际运行 Python。
+- [x] **P2 Docker 部署 / issue #70**：V3.7.0 提供 `install-docker.sh`、`docker-compose.example.yml`、容器路径/venv Python/权限诊断和发布包文档。
 
 ### V3.7.0：体验增强候选
 

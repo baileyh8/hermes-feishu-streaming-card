@@ -46,6 +46,12 @@ V3.6.6 fixes issues #67 and #68. `message.completed` now uses the sidecar `appli
 
 Full release notes: [docs/release-notes-v3.6.6.md](docs/release-notes-v3.6.6.md).
 
+## V3.7.0 Docker Deployment Adapter
+
+V3.7.0 adds issue #70: existing Hermes Docker container upgrade and install support.
+
+Full release notes: [docs/release-notes-v3.7.0.md](docs/release-notes-v3.7.0.md).
+
 ## V3.6.5 Streaming Terminal Stability Patch
 
 V3.6.5 fixes issues #64 and #65. In Feishu thread scenarios, `message.started` now uses the same reply anchor as streaming callbacks for the card session `message_id`, preventing `events_applied=0`. For burst-output models such as DeepSeek, completed events can now backfill the final answer from `message.completed` / `agent_result.final_response` even when no `thinking.delta` or `answer.delta` events were emitted.
@@ -159,6 +165,22 @@ Common environment variables:
 | `HFC_ENV_FILE` | `.env` next to `HFC_CONFIG` | Feishu credential file |
 | `HFC_SKIP_START` | `0` | Set to `1` to install the hook without starting sidecar |
 | `HFC_NO_PROMPT` | `0` | Set to `1` for non-interactive automation |
+
+## Docker Containers
+
+Use `install-docker.sh` inside an existing Hermes container. It defaults to
+`/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
+script selects Hermes venv Python and does not fall back to system Python unless
+`HFC_PYTHON` is set.
+
+Example:
+
+```bash
+export FEISHU_APP_ID=cli_xxx
+export FEISHU_APP_SECRET=xxx
+export HFC_VERSION=v3.7.0
+bash install-docker.sh
+```
 
 GitHub Releases also include `hermes-feishu-card-<version>-macos.tar.gz`, `hermes-feishu-card-<version>-linux.tar.gz`, and `hermes-feishu-card-<version>-windows.zip`. Download one, extract it, and run `install.sh` or `install.ps1`. See [README-install.md](README-install.md) for package details.
 
@@ -369,6 +391,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v3.7.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.7.0) | 2026-06 | Adds issue #70 Docker container install/update support with `/opt/hermes` and `/opt/data` defaults |
 | [v3.6.6](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.6) | 2026-06 | Fixes issues #67/#68 by preventing interrupt/slow-PATCH card + native double replies and by suggesting the real Hermes `Project:` path from `hermes -V` |
 | [v3.6.5](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.5) | 2026-06 | Fixes issues #64/#65 with Feishu thread `message_id` normalization and DeepSeek completed-only final-answer backfill |
 | [v3.6.4](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.6.4) | 2026-06 | Fixes issues #61/#62 with Feishu thread card replies and cron `deliver: "feishu:oc_xxx"` card routing |

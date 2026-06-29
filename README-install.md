@@ -43,6 +43,20 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 | `HFC_SKIP_START` | `0` | Set to `1` to install hook without starting sidecar. |
 | `HFC_NO_PROMPT` | `0` | Set to `1` for non-interactive installs. |
 
+## Docker Containers
+
+Use `install-docker.sh` inside an existing Hermes container. It defaults to
+`/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
+script selects Hermes venv Python and does not fall back to system Python unless
+`HFC_PYTHON` is set.
+
+```
+export FEISHU_APP_ID=cli_xxx
+export FEISHU_APP_SECRET=xxx
+export HFC_VERSION=v3.7.0
+bash install-docker.sh
+```
+
 ## One-Line Install
 
 macOS / Linux:
