@@ -1,0 +1,25 @@
+# Example only: this project does not publish an official Hermes Docker image.
+services:
+  hermes:
+    image: your-hermes-image:latest
+    container_name: hermes-feishu-card-example
+    working_dir: /opt/hermes
+    environment:
+      HERMES_DIR: /opt/hermes
+      HFC_CONFIG: /opt/data/config.yaml
+      HFC_ENV_FILE: /opt/data/.env
+      HFC_NO_PROMPT: "1"
+      HFC_SKIP_START: "1"
+      FEISHU_APP_ID: "${FEISHU_APP_ID}"
+      FEISHU_APP_SECRET: "${FEISHU_APP_SECRET}"
+      FEISHU_CONNECTION_MODE: "${FEISHU_CONNECTION_MODE:-websocket}"
+      FEISHU_HOME_CHANNEL: "${FEISHU_HOME_CHANNEL:-}"
+    volumes:
+      - hermes-runtime:/opt/hermes
+      - hermes-data:/opt/data
+      - ./install-docker.sh:/tmp/install-docker.sh:ro
+    command: ["bash", "/tmp/install-docker.sh"]
+
+volumes:
+  hermes-runtime:
+  hermes-data:

@@ -50,9 +50,9 @@ jobs:
             LICENSE
           )
 
-          cp install.sh "${COMMON_FILES[@]}" pkg/macos/
-          cp install.sh "${COMMON_FILES[@]}" pkg/linux/
-          cp install.ps1 "${COMMON_FILES[@]}" pkg/windows/
+          cp install.sh install-docker.sh docker-compose.example.yml "${COMMON_FILES[@]}" pkg/macos/
+          cp install.sh install-docker.sh docker-compose.example.yml "${COMMON_FILES[@]}" pkg/linux/
+          cp install.ps1 install-docker.sh docker-compose.example.yml "${COMMON_FILES[@]}" pkg/windows/
 
           (cd pkg/macos && tar -czf "../../dist/${NAME}-macos.tar.gz" .)
           (cd pkg/linux && tar -czf "../../dist/${NAME}-linux.tar.gz" .)

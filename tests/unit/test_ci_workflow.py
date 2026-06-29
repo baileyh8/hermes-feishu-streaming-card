@@ -32,3 +32,16 @@ def test_release_assets_workflow_supports_manual_package_dry_run():
     assert "tag:" in text
     assert "Build install packages" in text
     assert "gh release upload" in text
+    assert "install-docker.sh" in text
+    assert "docker-compose.example.yml" in text
+
+
+def test_docker_compose_example_documents_container_paths():
+    compose = (ROOT / "docker-compose.example.yml").read_text(encoding="utf-8")
+
+    assert "image: your-hermes-image:latest" in compose
+    assert "/opt/hermes" in compose
+    assert "/opt/data" in compose
+    assert "FEISHU_APP_ID" in compose
+    assert "FEISHU_APP_SECRET" in compose
+    assert "install-docker.sh" in compose
