@@ -175,6 +175,17 @@ exit 0
     return path
 
 
+def test_install_docker_sh_declares_container_defaults():
+    script_path = ROOT / "install-docker.sh"
+    script = script_path.read_text(encoding="utf-8")
+
+    assert 'HERMES_DIR="${HERMES_DIR:-/opt/hermes}"' in script
+    assert 'CONFIG_PATH="${HFC_CONFIG:-/opt/data/config.yaml}"' in script
+    assert 'ENV_FILE="${HFC_ENV_FILE:-/opt/data/.env}"' in script
+    assert 'NO_PROMPT="${HFC_NO_PROMPT:-1}"' in script
+    assert 'SKIP_START="${HFC_SKIP_START:-0}"' in script
+
+
 def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     hermes_dir = tmp_path / "opt" / "hermes"
     data_dir = tmp_path / "opt" / "data"
