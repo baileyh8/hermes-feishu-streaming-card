@@ -206,7 +206,7 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
             "HERMES_DIR": str(hermes_dir),
             "HFC_CONFIG": str(data_dir / "config.yaml"),
             "HFC_ENV_FILE": str(env_file),
-            "HFC_VERSION": "main",
+            "HFC_VERSION": "v3.7.0",
             "HFC_SKIP_START": "1",
         }
     )
@@ -227,7 +227,7 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     assert result.returncode == 0, result.stderr + result.stdout
     log = (tmp_path / "python.log").read_text(encoding="utf-8")
     assert str(runtime_python) in result.stdout
-    assert "-m pip install --upgrade git+https://github.com/baileyh8/hermes-feishu-streaming-card.git" in log
+    assert "-m pip install --upgrade git+https://github.com/baileyh8/hermes-feishu-streaming-card.git@v3.7.0" in log
     doctor_cmd = f"hermes_feishu_card.cli doctor --config {data_dir / 'config.yaml'} --hermes-dir {hermes_dir} --explain"
     setup_cmd = f"hermes_feishu_card.cli setup --hermes-dir {hermes_dir} --config {data_dir / 'config.yaml'} --yes --skip-start"
     assert doctor_cmd in log
@@ -240,6 +240,29 @@ def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
     data_dir = tmp_path / "opt" / "data"
     (hermes_dir / "gateway").mkdir(parents=True)
     (hermes_dir / "gateway" / "run.py").write_text("# gateway\\n", encoding="utf-8")
+    system_bin = tmp_path / "system-bin"
+    system_bin.mkdir()
+    system_python = system_bin / "python"
+    system_python3 = system_bin / "python3"
+    marker = tmp_path / "system-python.log"
+    system_python.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "{marker}"
+exit 2
+""",
+        encoding="utf-8",
+    )
+    system_python3.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "{marker}"
+exit 2
+""",
+        encoding="utf-8",
+    )
+    system_python.chmod(system_python.stat().st_mode | stat.S_IXUSR)
+    system_python3.chmod(system_python3.stat().st_mode | stat.S_IXUSR)
     data_dir.mkdir(parents=True)
     env = os.environ.copy()
     env.update(
@@ -252,8 +275,9 @@ def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
             "HFC_VERSION": "main",
         }
     )
-    env.pop("HFC_PYTHON", None)
     env.pop("PYTHON", None)
+    env.pop("HFC_PYTHON", None)
+    env["PATH"] = f"{system_bin}:{env['PATH']}"
 
     result = subprocess.run(
         ["bash", "install-docker.sh"],
@@ -265,6 +289,7 @@ def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
     )
 
     assert result.returncode != 0
+    assert not marker.exists()
     assert "Hermes venv Python was not found" in result.stderr
     assert "HFC_PYTHON" in result.stderr
 
