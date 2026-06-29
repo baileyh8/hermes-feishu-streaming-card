@@ -35,17 +35,7 @@ resolve_version() {
     printf '%s\n' "$VERSION"
     return
   fi
-  if have curl; then
-    local tag
-    tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-      | head -n 1 || true)"
-    if [ -n "$tag" ]; then
-      printf '%s\n' "$tag"
-      return
-    fi
-  fi
-  printf 'main\n'
+  printf 'latest\n'
 }
 
 load_env_file() {
@@ -121,11 +111,15 @@ install_package() {
   local tag
   tag="$(resolve_version)"
   local spec="git+https://github.com/$REPO.git"
-  if [ -n "$tag" ] && [ "$tag" != "main" ]; then
+  if [ -n "$tag" ] && [ "$tag" != "latest" ]; then
     spec="$spec@$tag"
   fi
   export HFC_INSTALL_SPEC="$spec"
-  log "installing $REPO@$tag into $python_bin"
+  if [ "$tag" = "latest" ]; then
+    log "installing $REPO (latest branch) into $python_bin"
+  else
+    log "installing $REPO@$tag into $python_bin"
+  fi
   "$python_bin" -m pip install --upgrade "$spec"
 }
 

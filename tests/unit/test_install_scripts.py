@@ -254,6 +254,53 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     assert not system_python_marker.exists()
 
 
+def test_install_docker_sh_uses_latest_without_pin(tmp_path):
+    hermes_dir = tmp_path / "opt" / "hermes"
+    data_dir = tmp_path / "opt" / "data"
+    (hermes_dir / "gateway").mkdir(parents=True)
+    (hermes_dir / "gateway" / "run.py").write_text("# gateway\n", encoding="utf-8")
+    env_file = data_dir / ".env"
+    data_dir.mkdir(parents=True)
+    env_file.write_text(
+        "FEISHU_APP_ID=cli_docker\nFEISHU_APP_SECRET=docker_secret\n",
+        encoding="utf-8",
+    )
+    runtime_python = make_fake_docker_python(hermes_dir / "venv" / "bin" / "python")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+            "HERMES_DIR": str(hermes_dir),
+            "HFC_CONFIG": str(data_dir / "config.yaml"),
+            "HFC_ENV_FILE": str(env_file),
+            "HFC_VERSION": "latest",
+            "HFC_SKIP_START": "1",
+            "PYTHON": str(runtime_python),
+        }
+    )
+    env.pop("HFC_PYTHON", None)
+    env.pop("FEISHU_APP_ID", None)
+    env.pop("FEISHU_APP_SECRET", None)
+
+    result = subprocess.run(
+        ["bash", "install-docker.sh"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    log = (tmp_path / "python.log").read_text(encoding="utf-8")
+    spec = "git+https://github.com/baileyh8/hermes-feishu-streaming-card.git"
+    assert f"-m pip install --upgrade {spec}" in log
+    assert f"{spec}@" not in log
+    assert "@v" not in log
+    assert "@main" not in log
+
+
 def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
     hermes_dir = tmp_path / "opt" / "hermes"
     data_dir = tmp_path / "opt" / "data"

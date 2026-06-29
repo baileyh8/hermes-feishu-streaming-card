@@ -33,3 +33,15 @@
 
 ## Notes
 - 未改动 `tests/unit/test_install_scripts.py`，因为当前实现已覆盖其断言目标。
+
+## Follow-up Update (Task 2 Review Fix)
+- 已修复 reviewer 指出的问题：`install-docker.sh` 在 `HFC_VERSION=latest` 时不再请求 GitHub releases，也不再拼接 `@tag`。
+- 新规则改为：
+  - `latest` => `git+https://github.com/baileyh8/hermes-feishu-streaming-card.git`
+  - 非 `latest` => 按 `@${VERSION}` 拼装（包含 `main`, `v3.7.0` 等）
+- 已补充回归测试：`tests/unit/test_install_scripts.py::test_install_docker_sh_uses_latest_without_pin`，使用 fake Hermes venv python，断言 `pip install` spec 无 tag。
+- 已执行测试命令：
+  ```bash
+  .venv/bin/python -m pytest tests/unit/test_install_scripts.py -q
+  ```
+- `v3.7.0` 场景测试继续保留对 `@v3.7.0` 的断言，行为未变。
