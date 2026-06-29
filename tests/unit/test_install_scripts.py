@@ -228,8 +228,11 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     log = (tmp_path / "python.log").read_text(encoding="utf-8")
     assert str(runtime_python) in result.stdout
     assert "-m pip install --upgrade git+https://github.com/baileyh8/hermes-feishu-streaming-card.git" in log
-    assert f"hermes_feishu_card.cli doctor --config {data_dir / 'config.yaml'} --hermes-dir {hermes_dir} --explain" in log
-    assert f"hermes_feishu_card.cli setup --hermes-dir {hermes_dir} --config {data_dir / 'config.yaml'} --yes --skip-start" in log
+    doctor_cmd = f"hermes_feishu_card.cli doctor --config {data_dir / 'config.yaml'} --hermes-dir {hermes_dir} --explain"
+    setup_cmd = f"hermes_feishu_card.cli setup --hermes-dir {hermes_dir} --config {data_dir / 'config.yaml'} --yes --skip-start"
+    assert doctor_cmd in log
+    assert setup_cmd in log
+    assert log.index(doctor_cmd) < log.index(setup_cmd)
 
 
 def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
@@ -250,6 +253,7 @@ def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):
         }
     )
     env.pop("HFC_PYTHON", None)
+    env.pop("PYTHON", None)
 
     result = subprocess.run(
         ["bash", "install-docker.sh"],
