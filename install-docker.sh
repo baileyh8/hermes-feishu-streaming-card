@@ -18,10 +18,6 @@ fail() {
   exit 1
 }
 
-have() {
-  command -v "$1" >/dev/null 2>&1
-}
-
 expand_path() {
   case "$1" in
     "~") printf '%s\n' "$HOME" ;;
@@ -70,7 +66,9 @@ detect_python() {
   fi
   local candidates=(
     "$HERMES_DIR/venv/bin/python"
+    "$HERMES_DIR/venv/bin/python3"
     "$HERMES_DIR/.venv/bin/python"
+    "$HERMES_DIR/.venv/bin/python3"
     "$HERMES_DIR/gateway/.venv/bin/python"
     "$HERMES_DIR/gateway/venv/bin/python"
   )

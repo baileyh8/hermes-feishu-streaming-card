@@ -45,3 +45,21 @@
   .venv/bin/python -m pytest tests/unit/test_install_scripts.py -q
   ```
 - `v3.7.0` 场景测试继续保留对 `@v3.7.0` 的断言，行为未变。
+
+## Follow-up Update (Task 2 Review Finding #2)
+- 已修复 reviewer 指出的重要问题：`install-docker.sh` 的 `detect_python` 只使用 `python` 而未覆盖 Hermes venv 场景中的 `python3`。  
+- 已补齐候选项顺序如下：
+  - `$HERMES_DIR/venv/bin/python`
+  - `$HERMES_DIR/venv/bin/python3`
+  - `$HERMES_DIR/.venv/bin/python`
+  - `$HERMES_DIR/.venv/bin/python3`
+  - 保留 gateway 变体：`$HERMES_DIR/gateway/.venv/bin/python`、`$HERMES_DIR/gateway/venv/bin/python`
+- 已删除脚本中未使用的 `have()` 死代码函数。
+- 新增测试：`tests/unit/test_install_scripts.py::test_install_docker_sh_prefers_hermes_venv_python3`  
+  - 场景为 Hermes 下仅存在 `venv/bin/python3`，不提供 `venv/bin/python`；
+  - 同时注入 `PYTHON` 与 `PATH` 级别的系统 python 哨兵（`fake-system`）；
+  - 断言脚本成功运行并未调用系统 python 哨兵（系统日志文件不存在）。
+- 已执行测试命令并通过：
+  ```bash
+  .venv/bin/python -m pytest tests/unit/test_install_scripts.py -q
+  ```
