@@ -634,6 +634,7 @@ def test_docs_describe_e2e_visual_preview_materials():
 
 def test_docs_describe_release_readiness_boundaries():
     release_readiness = read_doc("docs/release-readiness.md")
+    english_readiness = read_doc("docs/release-readiness.en.md")
     docs = "\n".join(
         [
             read_doc("README.md"),
@@ -665,3 +666,12 @@ def test_docs_describe_release_readiness_boundaries():
     assert "真实飞书应用" in docs
     assert "App Secret" in docs
     assert "GitHub Actions" in docs
+
+    assert "[English](release-readiness.en.md)" in english_readiness
+    assert "3.7.0" in english_readiness
+    assert "V3.6.6" in english_readiness
+    assert "issue #70" in english_readiness
+    assert "install-docker.sh" in english_readiness
+    assert "docker-compose.example.yml" in english_readiness
+    assert "/opt/hermes" in english_readiness
+    assert "/opt/data/config.yaml" in english_readiness

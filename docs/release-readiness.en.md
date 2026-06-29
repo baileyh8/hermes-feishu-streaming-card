@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.7.0`. This release keeps the sidecar-only mainline and builds on V3.6.5 streaming terminal stability by fixing issues #67/#68; it also adds Docker container install/update support for issue #70 with `install-docker.sh`, `docker-compose.example.yml`, and defaults for `/opt/hermes`, `/opt/data`.
+Current package version: `3.7.0`. This release keeps the sidecar-only mainline and builds on V3.6.6 streaming terminal stability by fixing issues #67/#68; it also adds Docker container install/update support for issue #70 with `install-docker.sh`, `docker-compose.example.yml`, and defaults for `/opt/hermes`, `/opt/data`.
 
 ## Ready
 
