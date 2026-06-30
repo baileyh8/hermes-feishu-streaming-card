@@ -11,6 +11,7 @@ from aiohttp import web
 
 from .bots import RouteResult
 from .events import EventValidationError, SidecarEvent
+from .flush import FlushController
 from .metrics import SidecarMetrics
 from .render import render_card
 from .session import CardSession
@@ -22,18 +23,16 @@ CARD_SUMMARIES_KEY = web.AppKey("card_summaries", dict)
 INTERACTION_RESULTS_KEY = web.AppKey("interaction_results", dict)
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
-UPDATE_TASKS_KEY = web.AppKey("update_tasks", dict)
-PENDING_UPDATE_REQUESTS_KEY = web.AppKey("pending_update_requests", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
 PROCESS_TOKEN_KEY = web.AppKey("process_token", str)
 METRICS_KEY = web.AppKey("metrics", SidecarMetrics)
-LAST_UPDATE_AT_KEY = web.AppKey("last_update_at", dict)
 MESSAGE_LOCKS_KEY = web.AppKey("message_locks", dict)
 FOOTER_FIELDS_KEY = web.AppKey("footer_fields", Any)
 CARD_TITLE_KEY = web.AppKey("card_title", str)
 BASE_CARD_CONFIG_KEY = web.AppKey("base_card_config", dict)
+FLUSH_CONTROLLERS_KEY = web.AppKey("flush_controllers", dict)
 UPDATE_MAX_ATTEMPTS = 3
 UPDATE_MIN_INTERVAL_SECONDS = 0.2
 TERMINAL_EVENTS = {"message.completed", "message.failed"}
@@ -58,13 +57,11 @@ def create_app(
     app[INTERACTION_RESULTS_KEY] = {}
     app[MESSAGE_BOT_IDS_KEY] = {}
     app[SESSION_CARD_CONFIGS_KEY] = {}
-    app[UPDATE_TASKS_KEY] = {}
-    app[PENDING_UPDATE_REQUESTS_KEY] = {}
     app[BOT_ROUTER_KEY] = bot_router
     app[PROCESS_TOKEN_KEY] = process_token
     app[METRICS_KEY] = SidecarMetrics()
-    app[LAST_UPDATE_AT_KEY] = {}
     app[MESSAGE_LOCKS_KEY] = {}
+    app[FLUSH_CONTROLLERS_KEY] = {}
     app[DIAGNOSTICS_KEY] = {
         "last_update_error": "",
         "last_route_error": "",
@@ -280,9 +277,6 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     sessions: Dict[str, CardSession] = request.app[SESSIONS_KEY]
     feishu_message_ids: Dict[str, str] = request.app[FEISHU_MESSAGE_IDS_KEY]
     message_bot_ids: Dict[str, str] = request.app[MESSAGE_BOT_IDS_KEY]
-    last_update_at: Dict[str, float] = request.app[LAST_UPDATE_AT_KEY]
-    update_tasks: Dict[str, asyncio.Task] = request.app[UPDATE_TASKS_KEY]
-    pending_update_requests: Dict[str, bool] = request.app[PENDING_UPDATE_REQUESTS_KEY]
     _record_profile_diagnostics(request.app, event)
     _record_attachment_diagnostics(request.app, event)
     session = sessions.get(_session_key(event))
@@ -466,61 +460,37 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
         if event.event in TERMINAL_EVENTS:
             _store_card_summary(request.app, event, session, feishu_message_id)
         session_key = _session_key(event)
-        previous_task = update_tasks.get(session_key)
         is_terminal = event.event in TERMINAL_EVENTS
-        has_pending_update = previous_task is not None and not previous_task.done()
-        should_update = _should_update_card(last_update_at, event)
-        if should_update and has_pending_update and not is_terminal:
-            pending_update_requests[session_key] = True
-            should_update = False
-        if should_update:
-            if is_terminal:
-                pending_update_requests.pop(session_key, None)
-            # 锁内立即标记，防止后续事件在API完成前重复触发更新
-            last_update_at[session_key] = time.monotonic()
-            card = _render_session_card(request, session)
-            bot_id = message_bot_ids.get(_session_key(event))
+        controller = _flush_controller_for_session(request.app, session_key)
+        bot_id = message_bot_ids.get(session_key)
 
-            async def _do_update():
-                if is_terminal:
-                    delay = _update_delay_seconds(last_update_at, event)
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-                updated = await _update_card_for_app(request.app, feishu_message_id, card, bot_id)
-                if not updated and is_terminal:
-                    await _retry_terminal_update(request.app, feishu_message_id, card, bot_id)
+        async def _render_and_update() -> bool:
+            latest_session = sessions.get(session_key)
+            if latest_session is None:
+                return False
+            latest_card = _render_session_card(request, latest_session)
+            updated = await _update_card_for_app(
+                request.app,
+                feishu_message_id,
+                latest_card,
+                bot_id,
+            )
+            if not updated and is_terminal:
+                await _retry_terminal_update(
+                    request.app,
+                    feishu_message_id,
+                    latest_card,
+                    bot_id,
+                )
+            return updated
 
-            async def _queued_update():
-                if previous_task is not None:
-                    try:
-                        await previous_task
-                    except Exception:
-                        logger.exception("previous Feishu card update task failed")
-                try:
-                    await _do_update()
-                    while (
-                        not is_terminal
-                        and update_tasks.get(session_key) is current_task
-                        and pending_update_requests.pop(session_key, None) is not None
-                    ):
-                        latest_session = sessions.get(session_key)
-                        if latest_session is None or latest_session.status in {"completed", "failed"}:
-                            break
-                        last_update_at[session_key] = time.monotonic()
-                        latest_card = _render_session_card(request, latest_session)
-                        await _update_card_for_app(
-                            request.app,
-                            feishu_message_id,
-                            latest_card,
-                            bot_id,
-                        )
-                finally:
-                    if update_tasks.get(session_key) is current_task:
-                        update_tasks.pop(session_key, None)
-
-            current_task = asyncio.create_task(_queued_update())
-            update_tasks[session_key] = current_task
-            post_lock_task = current_task
+        if is_terminal:
+            await controller.drain(_final_drain_timeout_seconds(request.app, session_key))
+            current_task = controller.schedule(_render_and_update, terminal=True)
+            controller.close()
+        else:
+            current_task = controller.schedule(_render_and_update, terminal=False)
+        post_lock_task = current_task
     if applied:
         metrics.events_applied += 1
     else:
@@ -669,6 +639,14 @@ def _safe_positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return number if number > 0 else default
+
+
+def _safe_non_negative_int(value: Any, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 0 else default
 
 
 def _safe_bool(value: Any, default: bool) -> bool:
@@ -839,6 +817,36 @@ async def _retry_terminal_update(
         await asyncio.sleep(delay)
         if await _update_card_for_app(app, message_id, card, bot_id):
             return
+
+
+def _flush_controller_for_session(
+    app: web.Application, session_key: str
+) -> FlushController:
+    controllers: Dict[str, FlushController] = app[FLUSH_CONTROLLERS_KEY]
+    controller = controllers.get(session_key)
+    if controller is not None:
+        return controller
+    card_config = app[SESSION_CARD_CONFIGS_KEY].get(session_key, app[BASE_CARD_CONFIG_KEY])
+    default_interval_ms = max(0, int(UPDATE_MIN_INTERVAL_SECONDS * 1000))
+    interval_ms = _safe_non_negative_int(
+        card_config.get("flush_interval_ms"),
+        default_interval_ms,
+    )
+    controller = FlushController(
+        interval_seconds=interval_ms / 1000.0,
+        metrics=app[METRICS_KEY],
+    )
+    controllers[session_key] = controller
+    return controller
+
+
+def _final_drain_timeout_seconds(app: web.Application, session_key: str) -> float:
+    card_config = app[SESSION_CARD_CONFIGS_KEY].get(session_key, app[BASE_CARD_CONFIG_KEY])
+    timeout_ms = _safe_non_negative_int(
+        card_config.get("final_drain_timeout_ms"),
+        900,
+    )
+    return timeout_ms / 1000.0
 
 
 def _resolve_route(request: web.Request, event: SidecarEvent) -> RouteResult | None:
@@ -1078,22 +1086,3 @@ def _would_apply(session: CardSession, event: SidecarEvent) -> bool:
         and session.status not in {"completed", "failed"}
     )
 
-
-def _should_update_card(last_update_at: Dict[str, float], event: SidecarEvent) -> bool:
-    if event.event in TERMINAL_EVENTS:
-        return True
-    if event.event in {"interaction.completed", "interaction.failed"}:
-        return True
-    previous = last_update_at.get(_session_key(event))
-    if previous is None:
-        return True
-    return time.monotonic() - previous >= UPDATE_MIN_INTERVAL_SECONDS
-
-
-def _update_delay_seconds(last_update_at: Dict[str, float], event: SidecarEvent) -> float:
-    if event.event not in TERMINAL_EVENTS:
-        return 0.0
-    previous = last_update_at.get(_session_key(event))
-    if previous is None:
-        return 0.0
-    return max(0.0, UPDATE_MIN_INTERVAL_SECONDS - (time.monotonic() - previous))
