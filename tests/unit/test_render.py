@@ -491,6 +491,109 @@ def test_render_timeline_folds_old_entries_before_answer():
     assert "tool_0" not in content
 
 
+def test_render_timeline_redacts_sensitive_tool_detail():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="tool.updated",
+            conversation_id="chat-1",
+            message_id="msg-1",
+            chat_id="oc_abc",
+            platform="feishu",
+            sequence=1,
+            created_at=0.0,
+            data={
+                "tool_id": "tool-1",
+                "name": "lark_send",
+                "status": "completed",
+                "detail": (
+                    "FEISHU_APP_SECRET=abc123 "
+                    "token=secret-token "
+                    "chat_id=oc_secret"
+                ),
+            },
+        )
+    )
+
+    card = render_card(session)
+    timeline = next(item for item in card["body"]["elements"] if item.get("element_id") == "auxiliary_timeline")
+    content = str(timeline)
+
+    assert "FEISHU_APP_SECRET=abc123" not in content
+    assert "token=secret-token" not in content
+    assert "chat_id=oc_secret" not in content
+    assert "lark_send" in content
+
+
+def test_render_thinking_without_answer_uses_placeholder_in_main_content():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="thinking.delta",
+            conversation_id="chat-1",
+            message_id="msg-1",
+            chat_id="oc_abc",
+            platform="feishu",
+            sequence=1,
+            created_at=0.0,
+            data={"text": "这是推理文本，只该在 timeline。"},
+        )
+    )
+
+    card = render_card(session)
+    main = next(item for item in card["body"]["elements"] if item.get("element_id") == "main_content")
+    timeline = next(item for item in card["body"]["elements"] if item.get("element_id") == "auxiliary_timeline")
+
+    assert "正在思考" in main["content"]
+    assert "这是推理文本，只该在 timeline。" not in main["content"]
+    assert "这是推理文本，只该在 timeline。" in str(timeline)
+
+
+def test_render_tool_summary_keeps_tool_names_when_reasoning_hidden():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="thinking.delta",
+            conversation_id="chat-1",
+            message_id="msg-1",
+            chat_id="oc_abc",
+            platform="feishu",
+            sequence=1,
+            created_at=0.0,
+            data={"text": "隐藏的思考"},
+        )
+    )
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="tool.updated",
+            conversation_id="chat-1",
+            message_id="msg-1",
+            chat_id="oc_abc",
+            platform="feishu",
+            sequence=2,
+            created_at=0.0,
+            data={"tool_id": "tool-1", "name": "search", "status": "running"},
+        )
+    )
+
+    card = render_card(session, show_reasoning=False)
+    tool_summary = next(item for item in card["body"]["elements"] if item.get("element_id") == "tool_summary")
+
+    assert "工具调用 1 次" in tool_summary["content"]
+    assert "`search`: running" in tool_summary["content"]
+    assert "auxiliary_timeline" not in str(card)
+
+
 def test_render_can_hide_reasoning_timeline_when_configured():
     from hermes_feishu_card.events import SidecarEvent
 

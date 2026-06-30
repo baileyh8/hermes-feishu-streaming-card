@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict
 
 from .session import CardSession
@@ -17,6 +18,20 @@ MAIN_CONTENT_CHUNK_CHARS = 2400
 DEFAULT_TITLE = "Hermes Agent"
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_REDACTABLE_TOOL_DETAIL_KEYS = (
+    "tenant_access_token",
+    "app_secret",
+    "chat_id",
+    "open_id",
+    "password",
+    "token",
+    "secret",
+)
+_TOOL_DETAIL_REDACTION_RE = re.compile(
+    r"(?i)\b([A-Za-z0-9_]*(?:"
+    + "|".join(re.escape(key) for key in _REDACTABLE_TOOL_DETAIL_KEYS)
+    + r")[A-Za-z0-9_]*)\b(\s*[:=]\s*)([^\s,;&]+)"
+)
 
 def _spinner_text(label: str = "生成中") -> str:
     frame = _SPINNER_FRAMES[int(_time.time() * 8) % len(_SPINNER_FRAMES)]
@@ -36,9 +51,15 @@ def render_card(
     status = _render_status(session)
     primary_text = normalize_stream_text(session.answer_text)
     if not primary_text:
-        fallback_text = normalize_stream_text(session.visible_main_text)
-        primary_text = fallback_text or ("正在思考..." if session.status == "thinking" else "")
-    tool_summary = _render_tool_summary(session)
+        has_reasoning_timeline = bool(
+            getattr(session, "timeline", None)
+            and any(item.kind == "reasoning" for item in session.timeline.snapshot())
+        )
+        if session.status == "thinking" and has_reasoning_timeline:
+            primary_text = "正在思考..."
+        else:
+            primary_text = normalize_stream_text(session.visible_main_text)
+    tool_summary = _render_tool_summary(session, timeline_visible=show_reasoning)
     attachment_summary = _render_attachment_summary(session)
     footer = _render_footer(session, footer_fields)
     header_title = title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
@@ -220,10 +241,10 @@ def _button_type(style: str) -> str:
     return "default"
 
 
-def _render_tool_summary(session: CardSession) -> str:
+def _render_tool_summary(session: CardSession, *, timeline_visible: bool) -> str:
     if not session.tools:
         return "工具调用 0 次"
-    if getattr(session, "timeline", None) and session.timeline.snapshot():
+    if timeline_visible and getattr(session, "timeline", None) and session.timeline.snapshot():
         return f"工具调用 {session.tool_count} 次"
     lines = [f"工具调用 {session.tool_count} 次"]
     for tool in session.tools.values():
@@ -256,7 +277,7 @@ def _render_timeline_elements(
             if content:
                 lines.append(content)
         elif item.kind == "tool":
-            detail = _limit_text(item.detail, max_tool_result_chars)
+            detail = _limit_text(_redact_tool_detail(item.detail), max_tool_result_chars)
             lines.append(f"- `{item.title}`: {item.status}")
             if detail:
                 lines.append(f"  - {detail}")
@@ -379,3 +400,9 @@ def _limit_text(text: str, limit: int) -> str:
     if limit <= 0 or len(text) <= limit:
         return text
     return text[: max(0, limit - 18)].rstrip() + "\n> 内容已折叠"
+
+
+def _redact_tool_detail(text: str) -> str:
+    if not text:
+        return text
+    return _TOOL_DETAIL_REDACTION_RE.sub(r"\1\2[REDACTED]", text)
