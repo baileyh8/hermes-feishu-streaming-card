@@ -140,9 +140,10 @@ def _card_parts(card: dict[str, Any]) -> dict[str, str]:
     tool_summary = _element_content(elements, "tool_summary")
     footer = _element_content(elements, "footer")
     timeline = _panel_content(elements, "auxiliary_timeline")
+    subtitle = card["header"].get("subtitle", {})
     return {
         "title": card["header"]["title"]["content"],
-        "subtitle": card["header"]["subtitle"]["content"],
+        "subtitle": str(subtitle.get("content", "")) if isinstance(subtitle, dict) else "",
         "main": main,
         "timeline": timeline,
         "tools": tool_summary,
@@ -193,7 +194,7 @@ def _panel_content(elements: list[dict[str, Any]], element_id: str) -> str:
         panel_elements = element.get("elements") or []
         if not panel_elements:
             return ""
-        return str(panel_elements[0].get("content", ""))
+        return "\n".join(str(item.get("content", "")) for item in panel_elements)
     return ""
 
 

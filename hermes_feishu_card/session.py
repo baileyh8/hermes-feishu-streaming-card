@@ -58,6 +58,8 @@ class CardSession:
     delivery_kind: str = "chat"
     reply_to_message_id: str = ""
     _tool_call_count: int = field(default=0)
+    _has_seen_tool_event: bool = False
+    _answer_archive_index: int | None = None
     timeline: CardTimeline = field(default_factory=CardTimeline)
     thinking_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
     answer_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
@@ -94,28 +96,30 @@ class CardSession:
             if mode == "replace":
                 normalized = normalize_stream_text(raw_text)
                 self.thinking_text = normalized
-                self.timeline.record_reasoning(normalized, replace=True)
             elif mode == "append_block":
                 text = normalize_stream_text(raw_text).strip()
                 if text:
                     if self.thinking_text:
                         self.thinking_text = self.thinking_text.rstrip() + "\n\n" + text
-                        self.timeline.record_reasoning("\n\n" + text)
                     else:
                         self.thinking_text = text
-                        self.timeline.record_reasoning(text)
             else:
                 delta = self.thinking_normalizer.feed(raw_text)
                 if delta:
                     self.thinking_text += delta
-                    self.timeline.record_reasoning(delta)
         elif event.event == "answer.delta":
-            self.timeline.record_answer_started()
-            self.answer_text += self.answer_normalizer.feed(str(event.data.get("text", "")))
+            delta = self.answer_normalizer.feed(str(event.data.get("text", "")))
+            if delta:
+                if self._answer_archive_index is not None:
+                    self._archive_current_answer_to_reasoning()
+                self.answer_text += delta
         elif event.event == "tool.updated":
             tool_id = event.data.get("tool_id")
             if not isinstance(tool_id, str) or not tool_id:
                 return True
+            if self.answer_text and self._answer_archive_index is None:
+                self._answer_archive_index = self.timeline.entry_count
+            self._has_seen_tool_event = True
             name = event.data.get("name")
             status = event.data.get("status")
             detail = event.data.get("detail")
@@ -144,9 +148,11 @@ class CardSession:
         elif event.event == "interaction.failed":
             self._fail_interaction(event.data)
         elif event.event == "message.completed":
+            completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
+            if completed_answer.strip():
+                completed_answer = self._prepare_completed_answer(completed_answer)
             self.timeline.complete()
             self.status = "completed"
-            completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
             if completed_answer.strip():
                 self.answer_text = completed_answer
             delivery_kind = event.data.get("delivery_kind")
@@ -173,11 +179,45 @@ class CardSession:
                     if isinstance(attachment, dict) and isinstance(attachment.get("name"), str)
                 ]
         elif event.event == "message.failed":
+            self._archive_current_answer_to_reasoning()
             self.timeline.complete()
             self.status = "failed"
             error = event.data.get("error")
             self.answer_text = error if isinstance(error, str) else "消息处理失败"
         return True
+
+    def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:
+        preface = normalize_stream_text(self.answer_text).strip()
+        if not preface:
+            return
+        final = normalize_stream_text(final_answer).strip()
+        if final and (final == preface or final.startswith(preface)):
+            return
+        self.answer_text = ""
+        self.answer_normalizer = StreamingTextNormalizer()
+        self.timeline.insert_completed_reasoning(preface, self._answer_archive_index)
+        self._answer_archive_index = None
+
+    def _prepare_completed_answer(self, completed_answer: str) -> str:
+        preface = normalize_stream_text(self.answer_text).strip()
+        final = normalize_stream_text(completed_answer).strip()
+        if not preface or final == preface:
+            return final
+
+        if self._answer_archive_index is not None:
+            self._archive_current_answer_to_reasoning()
+            return _strip_preface_prefix(final, preface)
+
+        if self._has_seen_tool_event and final.startswith(preface):
+            stripped = _strip_preface_prefix(final, preface)
+            if stripped != final:
+                self._archive_current_answer_to_reasoning()
+                return stripped
+
+        if self._has_seen_tool_event:
+            self._archive_current_answer_to_reasoning()
+
+        return final
 
     def _complete_interaction(self, data: dict[str, Any]) -> None:
         interaction_id = str(data.get("interaction_id") or "").strip()
@@ -230,3 +270,14 @@ def _interaction_options(value: Any) -> list[InteractionOption]:
         style = str(item.get("style") or item.get("type") or "default").strip() or "default"
         options.append(InteractionOption(label=label, value=option_value, style=style))
     return options
+
+
+def _strip_preface_prefix(final: str, preface: str) -> str:
+    if not final.startswith(preface):
+        return final
+    tail = final[len(preface):].strip()
+    if not tail:
+        return final
+    if tail.startswith("---"):
+        tail = tail[3:].strip()
+    return tail or final

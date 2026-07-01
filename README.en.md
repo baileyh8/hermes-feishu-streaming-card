@@ -18,9 +18,12 @@ Hermes Feishu Streaming Card turns Hermes Agent Gateway replies in Feishu/Lark i
 
 It targets the real pain points of using Hermes inside Feishu: missing or out-of-order streaming text, long tables/code blocks rendered as raw Markdown, invisible tool progress, manual approval replies, sidecar troubleshooting, multi-bot/profile routing, and uncertain hook compatibility after Hermes upgrades.
 
-![V3.8.0 Feishu card with primary answer and reasoning/tool timeline](docs/assets/feishu-v38-card-timeline.png)
+<p align="center">
+  <img src="docs/assets/feishu-v382-timeline-collapsed.png" alt="V3.8.2 Feishu card collapsed timeline: final answer stays in the main body" width="48%">
+  <img src="docs/assets/feishu-v382-timeline-expanded.png" alt="V3.8.2 Feishu card expanded timeline: reasoning and tools use separate visual hierarchy" width="48%">
+</p>
 
-Since V3.8.0, the final answer stays in the primary content area while reasoning and tool progress move into a collapsible auxiliary timeline. The footer no longer repeats the same tool-call summary when that timeline is visible.
+Since V3.8.2, the final answer stays in the primary content area while pre-tool answer blocks follow a "show in main body -> archive when the next block arrives" rhythm. Reasoning and tools use different text sizes and visual weight inside the collapsible auxiliary timeline, and the footer no longer repeats the same tool-call summary.
 
 ![Real Feishu streaming card screenshot](docs/assets/feishu-weather-card.png)
 
@@ -43,6 +46,17 @@ Since V3.8.0, the final answer stays in the primary content area while reasoning
 | Long tables/code blocks render as raw Markdown | Markdown-aware table/code splitting with repeated headers and complete fences |
 | Multi-bot, group, and profile routing is hard to inspect | `bindings.chats`, profile-aware sessions, and `/health.routing` diagnostics |
 | Hook or sidecar failures are hard to debug | `doctor`, runtime import checks, `/health` metrics, fail-closed installer, restore/uninstall |
+
+## V3.8.2 Card Timeline Readability Patch
+
+V3.8.2 focuses on the real Feishu reading experience inside the auxiliary timeline. Natural-language pre-tool answer blocks stay in the main body until the next pre-tool answer or terminal event arrives, then move into "Reasoning and Tools"; terminal cards strip already archived intermediate prefaces so the primary content keeps only the final answer.
+
+- **Delayed pre-tool answer folding**: a pre-analysis block no longer flashes away immediately; it is archived only when the next block or terminal state arrives.
+- **Cleaner terminal cards**: completed cards remove archived preface text when the final answer already contains it.
+- **Clearer timeline hierarchy**: reasoning entries use small primary text, while tool details use smaller, lighter quoted text so long commands do not dominate the answer.
+- **Raw thinking stays hidden**: low-level `thinking.delta` remains internal stream state; the timeline only shows user-readable pre-tool answer text.
+
+Full release notes: [docs/release-notes-v3.8.2.md](docs/release-notes-v3.8.2.md).
 
 ## V3.8.1 High-Frequency Streaming and In-Feishu Diagnostics Patch
 
@@ -186,7 +200,7 @@ Common environment variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Version to install, such as `v3.8.1`, `v3.6.6`, or `main` |
+| `HFC_VERSION` | `latest` | Version to install, such as `v3.8.2`, `v3.6.6`, or `main` |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent Gateway directory |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | sidecar config path |
 | `HFC_ENV_FILE` | `.env` next to `HFC_CONFIG` | Feishu credential file |
@@ -213,7 +227,7 @@ Example:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v3.8.1
+export HFC_VERSION=v3.8.2
 bash install-docker.sh
 ```
 
@@ -249,7 +263,7 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 
 ## Upgrading
 
-Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x/V3.7.x/V3.8.0 to V3.8.1 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed. V3.8.1 adds Gateway-side delta coalescing and read-only `/hfc` diagnostics, so run `doctor --explain` once after upgrading and send `/hfc status` in Feishu to verify sidecar state.
+Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x/V3.7.x/V3.8.0/V3.8.1 to V3.8.2 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed. V3.8.2 keeps V3.8.1 Gateway-side delta coalescing and read-only `/hfc` diagnostics, then improves card timeline readability; run `doctor --explain` once after upgrading and send `/hfc status` in Feishu to verify sidecar state.
 
 ```bash
 # 1. Stop sidecar
@@ -257,7 +271,7 @@ python3 -m hermes_feishu_card.cli stop --config ~/.hermes_feishu_card/config.yam
 
 # 2. Update code
 cd /path/to/hermes-feishu-streaming-card
-git checkout v3.8.1 && pip install -e ".[test]" --upgrade
+git checkout v3.8.2 && pip install -e ".[test]" --upgrade
 
 # 3. Diagnose Hermes hook strategy and anchors
 python3 -m hermes_feishu_card.cli doctor --config ~/.hermes_feishu_card/config.yaml --hermes-dir ~/.hermes/hermes-agent
@@ -426,6 +440,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v3.8.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.8.2) | 2026-07 | Card timeline readability patch with delayed pre-tool answer archival, terminal body de-duplication, separate reasoning/tool hierarchy, and fresh collapsed/expanded screenshots |
 | [v3.8.1](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.8.1) | 2026-07 | Fixes issue #74 with Gateway-side high-frequency delta coalescing, terminal pre-flush, read-only `/hfc` diagnostics, and hashed diagnostic context |
 | [v3.8.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.8.0) | 2026-07 | Separates the primary answer from the auxiliary timeline, removes duplicate tool summaries, drains terminal updates, fixes runtime import diagnostics, and updates Docker examples |
 | [v3.7.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.7.0) | 2026-06 | Adds issue #70 Docker container install/update support with `/opt/hermes` and `/opt/data` defaults |

@@ -27,6 +27,11 @@ coalesced inside the Hermes Gateway process before reaching the sidecar. The
 same release adds read-only `/hfc help`, `/hfc status`, `/hfc doctor`, and
 `/hfc monitor` cards for Feishu-side diagnostics.
 
+From V3.8.2, pre-tool answer blocks stay in the primary card body until the
+next pre-tool answer or terminal event arrives, then move into the auxiliary
+timeline. Completed cards strip already archived intermediate prefaces, and the
+timeline renders reasoning and tool details with separate compact hierarchy.
+
 ## macOS / Linux
 
 ```bash
@@ -43,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.8.1`, `v3.6.6`, or `main`. |
+| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.8.2`, `v3.6.6`, or `main`. |
 | `HFC_REPO` | `baileyh8/hermes-feishu-streaming-card` | GitHub repository to install from. |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent root directory. |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | Sidecar config path. |
@@ -63,7 +68,7 @@ script selects Hermes venv Python and does not fall back to system Python unless
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v3.8.1
+export HFC_VERSION=v3.8.2
 bash install-docker.sh
 ```
 

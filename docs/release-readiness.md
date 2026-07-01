@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.8.1`。这一版延续 sidecar-only 主线，在 V3.8.0 卡片体验升级基础上修复 issue #74 的高频 delta 堵塞场景，并增加飞书内 `/hfc` 只读诊断命令。
+当前包版本为 `3.8.2`。这一版延续 sidecar-only 主线，在 V3.8.0 卡片体验升级和 V3.8.1 高频 delta 合并基础上，修复 pre-tool answer 的归档节奏、完成态正文去重，并优化“思考与工具”折叠区的阅读层级。
 
 ## 已具备
 
@@ -21,9 +21,11 @@
 - Markdown 长表格/长代码块超过 `MAIN_CONTENT_CHUNK_CHARS` 后按完整结构重复切分，避免 raw markdown。
 - thinking/interim assistant 使用 `append_block` 完整块追加，避免 delta 累积导致漏字或截断。
 - 同一 message id 的 runtime event 发送、sidecar 更新和终态 PATCH 均有排序/合并保护。
-- Gateway runtime 会在 Hermes 进程内合并高频 `thinking.delta` / `answer.delta`，降低 stream-reader 线程压力。
+- Gateway runtime 会在 Hermes 进程内合并高频 `thinking.delta` / `answer.delta`，覆盖 V3.8.1 的 issue #74，降低 stream-reader 线程压力。
 - terminal event 前会 flush 同一消息 pending delta，避免最终卡片缺少尾部内容。
 - 飞书内 `/hfc help/status/doctor/monitor` 提供只读诊断卡片，且只展示 hash 后的上下文 id。
+- pre-tool answer 会先显示在正文区，并在下一段 answer 或终态到来时归档进辅助 timeline；终态卡片会剥离已归档的中间说明。
+- 辅助 timeline 中思考条目和工具详情使用不同字号和灰度层级，raw `thinking.delta` 不进入用户可见 timeline。
 - terminal 事件会快速 ACK Hermes，慢 Feishu PATCH 在后台完成，避免中断或更新堆积后触发重复原生答复。
 - `load_config()` 会读取 config 同目录 `.env`，真实环境变量仍保持最高优先级。
 - `install.sh` 白名单读取 `.env` 中的飞书/sidecar 变量，不会执行带空格路径等无关配置。

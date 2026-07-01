@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V3.8.2 — 2026-07-01
+
+See also: [docs/release-notes-v3.8.2.md](docs/release-notes-v3.8.2.md)
+
+### Fixed
+- Pre-tool `answer.delta` blocks now stay in the primary card body while tools run, and are archived into the auxiliary timeline only when the next answer block or terminal answer arrives.
+- Terminal cards strip archived intermediate-answer prefixes from completed answers, keeping the final response clean in the primary content area.
+- Raw `thinking.delta` remains internal stream state instead of leaking into the main content area or auxiliary timeline.
+
+### Changed
+- Auxiliary timeline rendering now separates reasoning and tool entries into compact elements: reasoning uses `small`, tools use `x-small` quoted markdown, with lighter visual hierarchy for long command details.
+- README screenshots now use the latest V3.8.2 collapsed and expanded real Feishu card examples.
+- E2E preview generation now reads all timeline panel elements after per-entry rendering.
+
+### Tests
+- Added regression coverage for delayed pre-tool answer folding, terminal prefix stripping, compact timeline hierarchy, and updated server/render/preview expectations.
+
 ## V3.8.1 — 2026-07-01
 
 See also: [docs/release-notes-v3.8.1.md](docs/release-notes-v3.8.1.md)

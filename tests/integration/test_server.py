@@ -416,10 +416,10 @@ async def test_card_config_controls_timeline_rendering():
         await test_client.post(
             "/events",
             json=event_payload(
-                "thinking.delta", 1, {"text": "第一段很长很长很长很长很长"}
+                "answer.delta", 1, {"text": "第一段很长很长很长很长很长"}
             ),
         )
-        await wait_for_card_update(feishu_client, "正在思考...")
+        await wait_for_card_update(feishu_client, "生成中")
         await _REAL_ASYNCIO_SLEEP(0.25)
         await test_client.post(
             "/events",
@@ -435,6 +435,11 @@ async def test_card_config_controls_timeline_rendering():
             ),
         )
         await wait_for_card_update(feishu_client, "read_file")
+        await test_client.post(
+            "/events",
+            json=event_payload("message.completed", 3, {"answer": "最终回答"}),
+        )
+        await wait_for_card_update(feishu_client, "最终回答")
     finally:
         await test_client.close()
 
@@ -446,7 +451,8 @@ async def test_card_config_controls_timeline_rendering():
     )
     assert timeline["expanded"] is True
     assert "已折叠 1 条早期思考/工具记录" in str(timeline)
-    assert "内容已折叠" in str(timeline)
+    assert "工具详情过长，已截断" in str(timeline)
+    assert "内容已折叠" not in str(timeline)
 
 
 @pytest.mark.parametrize(
@@ -480,9 +486,22 @@ async def test_card_config_string_booleans_control_timeline_rendering(
         await test_client.post("/events", json=event_payload("message.started", 0))
         await test_client.post(
             "/events",
-            json=event_payload("thinking.delta", 1, {"text": thought_text}),
+            json=event_payload("answer.delta", 1, {"text": thought_text}),
         )
-        await wait_for_card_update(feishu_client, "正在思考...")
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "tool.updated",
+                2,
+                {"tool_id": "config-tool", "name": "config_tool", "status": "completed"},
+            ),
+        )
+        await wait_for_card_update(feishu_client, "config_tool")
+        await test_client.post(
+            "/events",
+            json=event_payload("message.completed", 3, {"answer": "最终回答"}),
+        )
+        await wait_for_card_update(feishu_client, "最终回答")
     finally:
         await test_client.close()
 
@@ -834,7 +853,8 @@ async def test_replayed_started_with_higher_sequence_does_not_block_later_delta(
     assert await thinking.json() == {"ok": True, "applied": True}
     assert len(feishu_client.sent) == 1
     assert len(feishu_client.updated) == 1
-    assert "后续增量" in str(feishu_client.updated[0][1])
+    assert "后续增量" not in str(feishu_client.updated[0][1])
+    assert "生成中" in str(feishu_client.updated[0][1])
 
 
 async def test_delta_after_completed_does_not_update_again(client):
@@ -915,7 +935,7 @@ async def test_parallel_message_sessions_update_their_own_feishu_cards(client):
         updates_by_message.setdefault(feishu_message_id, []).append(str(card))
     assert set(updates_by_message) == {"feishu-message-1", "feishu-message-2"}
     assert any("第一条完成" in card for card in updates_by_message["feishu-message-1"])
-    assert any("`search`: running" in card for card in updates_by_message["feishu-message-2"])
+    assert any("`search` · running" in card for card in updates_by_message["feishu-message-2"])
 
 
 async def test_streaming_deltas_are_throttled_but_terminal_event_updates(client):

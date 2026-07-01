@@ -203,8 +203,7 @@ def test_split_think_tags_do_not_leak_across_chunks():
     assert session.apply(event("thinking.delta", 4, {"text": "nk>结束"}))
     assert session.thinking_text == "先分析结束"
     reasoning_entries = [item for item in session.timeline.snapshot() if item.kind == "reasoning"]
-    assert len(reasoning_entries) == 1
-    assert reasoning_entries[0].content == "先分析结束"
+    assert reasoning_entries == []
     assert session.timeline.snapshot()[0].kind == "tool"
 
     assert session.apply(event("answer.delta", 5, {"text": "<thi"}))
@@ -277,6 +276,132 @@ def test_tool_count_increments_for_same_tool_id():
     assert len(session.tools) == 1  # tools 字典仍去重
 
 
+def test_timeline_preserves_repeated_completed_tool_calls_with_same_id():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    for index in range(3):
+        assert session.apply(
+            event(
+                "tool.updated",
+                index,
+                {
+                    "tool_id": "execute_code",
+                    "name": "execute_code",
+                    "status": "completed",
+                    "detail": f"第 {index + 1} 次执行",
+                },
+            )
+        )
+
+    entries = [item for item in session.timeline.snapshot() if item.kind == "tool"]
+
+    assert session.tool_count == 3
+    assert len(entries) == 3
+    assert [item.detail for item in entries] == ["第 1 次执行", "第 2 次执行", "第 3 次执行"]
+
+
+def test_timeline_updates_running_tool_until_terminal_status():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "read",
+                "name": "read_file",
+                "status": "running",
+                "detail": "开始读取",
+            },
+        )
+    )
+    assert session.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "read",
+                "name": "read_file",
+                "status": "completed",
+                "detail": "读取完成",
+            },
+        )
+    )
+
+    entries = [item for item in session.timeline.snapshot() if item.kind == "tool"]
+
+    assert len(entries) == 1
+    assert entries[0].status == "completed"
+    assert entries[0].detail == "读取完成"
+
+
+def test_session_keeps_current_answer_visible_until_next_answer_block():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(event("answer.delta", 1, {"text": "好的，我先做分析再动手。"}))
+    assert session.answer_text == "好的，我先做分析再动手。"
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "terminal",
+                "name": "terminal",
+                "status": "running",
+                "detail": "gh release view",
+            },
+        )
+    )
+
+    entries = session.timeline.snapshot()
+
+    assert session.answer_text == "好的，我先做分析再动手。"
+    assert [(item.kind, item.title, item.status) for item in entries] == [
+        ("tool", "terminal", "running"),
+    ]
+
+    assert session.apply(event("answer.delta", 3, {"text": "我再补一轮验证。"}))
+    assert session.answer_text == "我再补一轮验证。"
+    entries = session.timeline.snapshot()
+    assert [(item.kind, item.title, item.status) for item in entries] == [
+        ("reasoning", "思考 1", "completed"),
+        ("tool", "terminal", "running"),
+    ]
+    assert entries[0].content == "好的，我先做分析再动手。"
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            4,
+            {
+                "tool_id": "readme",
+                "name": "read_file",
+                "status": "completed",
+                "detail": "README.md",
+            },
+        )
+    )
+
+    entries = session.timeline.snapshot()
+    assert session.answer_text == "我再补一轮验证。"
+    assert [(item.kind, item.title, item.status) for item in entries] == [
+        ("reasoning", "思考 1", "completed"),
+        ("tool", "terminal", "running"),
+        ("tool", "read_file", "completed"),
+    ]
+
+    assert session.apply(event("message.completed", 5, {"answer": "最终答案。"}))
+    entries = session.timeline.snapshot()
+    assert session.answer_text == "最终答案。"
+    assert [(item.kind, item.title, item.status) for item in entries] == [
+        ("reasoning", "思考 1", "completed"),
+        ("tool", "terminal", "running"),
+        ("reasoning", "思考 2", "completed"),
+        ("tool", "read_file", "completed"),
+    ]
+    assert entries[2].content == "我再补一轮验证。"
+
+
 def test_tool_count_increments_for_different_tool_ids():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     for i, tid in enumerate(["a", "b", "c"]):
@@ -286,10 +411,10 @@ def test_tool_count_increments_for_different_tool_ids():
     assert len(session.tools) == 3
 
 
-def test_session_timeline_records_reasoning_tool_answer_order():
+def test_session_timeline_records_pre_tool_preface_tool_answer_order():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
 
-    assert session.apply(event("thinking.delta", 1, {"text": "先看约束。"}))
+    assert session.apply(event("answer.delta", 1, {"text": "先看约束。"}))
     assert session.apply(event("tool.updated", 2, {"tool_id": "read", "name": "read_file", "status": "running", "detail": "README.md"}))
     assert session.apply(event("tool.updated", 3, {"tool_id": "read", "name": "read_file", "status": "completed", "detail": "README.md"}))
     assert session.apply(event("answer.delta", 4, {"text": "最终回答开始"}))
@@ -301,38 +426,82 @@ def test_session_timeline_records_reasoning_tool_answer_order():
     ]
     assert entries[0].content == "先看约束。"
     assert entries[1].detail == "README.md"
+    assert session.answer_text == "最终回答开始"
 
 
-def test_session_timeline_appends_reasoning_blocks_without_losing_text():
+def test_session_archives_last_preface_on_completion_when_final_answer_arrives():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(event("answer.delta", 1, {"text": "先验证版本。"}))
+    assert session.apply(event("tool.updated", 2, {"tool_id": "gh", "name": "terminal", "status": "completed"}))
+    assert session.apply(event("answer.delta", 3, {"text": "还差 README，我继续查。"}))
+
+    assert session.apply(event("message.completed", 4, {"answer": "最终答案：V3.8.1 变化如下。"}))
+
+    entries = session.timeline.snapshot()
+    assert session.status == "completed"
+    assert session.answer_text == "最终答案：V3.8.1 变化如下。"
+    assert [(item.kind, item.title, item.status) for item in entries] == [
+        ("reasoning", "思考 1", "completed"),
+        ("tool", "terminal", "completed"),
+        ("reasoning", "思考 2", "completed"),
+    ]
+    assert entries[0].content == "先验证版本。"
+    assert entries[2].content == "还差 README，我继续查。"
+
+
+def test_session_strips_archived_preface_prefix_from_completed_answer():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(event("tool.updated", 1, {"tool_id": "gh", "name": "terminal", "status": "completed"}))
+    assert session.apply(event("answer.delta", 2, {"text": "3. 补查结果\nREADME 和 diff 都查完了。"}))
+
+    assert session.apply(
+        event(
+            "message.completed",
+            3,
+            {
+                "answer": (
+                    "3. 补查结果\nREADME 和 diff 都查完了。\n\n"
+                    "---\n\n"
+                    "最终总结：v3.7.0 到 v3.8.1 主要变化如下。"
+                )
+            },
+        )
+    )
+
+    entries = session.timeline.snapshot()
+    assert session.answer_text == "最终总结：v3.7.0 到 v3.8.1 主要变化如下。"
+    assert entries[-1].kind == "reasoning"
+    assert entries[-1].content == "3. 补查结果\nREADME 和 diff 都查完了。"
+
+
+def test_session_raw_thinking_blocks_do_not_enter_timeline():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
 
     assert session.apply(event("thinking.delta", 1, {"text": "第一句", "mode": "append_block"}))
     assert session.apply(event("thinking.delta", 2, {"text": "第二句", "mode": "append_block"}))
 
     entries = session.timeline.snapshot()
-    assert len(entries) == 1
-    assert entries[0].kind == "reasoning"
-    assert entries[0].content == "第一句\n\n第二句"
+    assert entries == []
     assert session.thinking_text == "第一句\n\n第二句"
 
 
-def test_session_timeline_replace_mode_replaces_open_reasoning_without_duplication():
+def test_session_raw_thinking_replace_mode_stays_internal():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
 
     assert session.apply(event("thinking.delta", 1, {"text": "我先看"}))
     assert session.apply(event("thinking.delta", 2, {"text": "我先看看今天的变更", "mode": "replace"}))
 
     entries = session.timeline.snapshot()
-    assert len(entries) == 1
-    assert entries[0].content == "我先看看今天的变更"
+    assert entries == []
     assert session.thinking_text == "我先看看今天的变更"
 
 
 def test_session_timeline_folded_count_reports_hidden_old_entries():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     for index in range(5):
-        assert session.apply(event("thinking.delta", index * 2 + 1, {"text": f"思考{index}"}))
-        assert session.apply(event("tool.updated", index * 2 + 2, {"tool_id": f"tool-{index}", "name": f"tool_{index}", "status": "completed"}))
+        assert session.apply(event("tool.updated", index, {"tool_id": f"tool-{index}", "name": f"tool_{index}", "status": "completed"}))
 
-    assert session.timeline.folded_count(max_items=3) == 7
-    assert [item.title for item in session.timeline.snapshot(max_items=3)] == ["tool_3", "思考 5", "tool_4"]
+    assert session.timeline.folded_count(max_items=3) == 2
+    assert [item.title for item in session.timeline.snapshot(max_items=3)] == ["tool_2", "tool_3", "tool_4"]

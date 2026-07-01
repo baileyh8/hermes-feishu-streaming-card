@@ -17,7 +17,6 @@ DEFAULT_FOOTER_FIELDS = (
     "context",
 )
 MAIN_CONTENT_CHUNK_CHARS = 2400
-AUXILIARY_TIMELINE_MAX_CHARS = 280
 DEFAULT_TITLE = "Hermes Agent"
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -49,8 +48,12 @@ _TOOL_DETAIL_QUOTED_REDACTION_RE = re.compile(
 _TOOL_DETAIL_REDACTED = "[REDACTED]"
 
 def _spinner_text(label: str = "生成中") -> str:
+    return f"{_spinner_frame()} {label}"
+
+
+def _spinner_frame() -> str:
     frame = _SPINNER_FRAMES[int(_time.time() * 8) % len(_SPINNER_FRAMES)]
-    return f"{frame} {label}"
+    return frame
 
 def render_card(
     session: CardSession,
@@ -66,12 +69,8 @@ def render_card(
     status = _render_status(session)
     primary_text = normalize_stream_text(session.answer_text)
     if not primary_text:
-        has_reasoning_timeline = bool(
-            getattr(session, "timeline", None)
-            and any(item.kind == "reasoning" for item in session.timeline.snapshot())
-        )
-        if session.status == "thinking" and has_reasoning_timeline:
-            primary_text = "正在思考..."
+        if session.status == "thinking":
+            primary_text = _spinner_frame()
         else:
             primary_text = normalize_stream_text(session.visible_main_text)
     attachment_summary = _render_attachment_summary(session)
@@ -107,17 +106,20 @@ def render_card(
             }
         )
     elements.append({"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"})
+    header = {
+        "template": status["template"],
+        "title": {"tag": "plain_text", "content": header_title},
+    }
+    if status["subtitle"]:
+        header["subtitle"] = {"tag": "plain_text", "content": status["subtitle"]}
+
     return {
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": status["subtitle"]},
+            "summary": {"content": status.get("summary", status["subtitle"])},
         },
-        "header": {
-            "template": status["template"],
-            "title": {"tag": "plain_text", "content": header_title},
-            "subtitle": {"tag": "plain_text", "content": status["subtitle"]},
-        },
+        "header": header,
         "body": {
             "elements": elements
         },
@@ -131,7 +133,9 @@ def _render_status(session: CardSession) -> Dict[str, str]:
         return {"subtitle": "处理失败", "template": "red"}
     if session.active_interaction is not None and session.active_interaction.status == "pending":
         return {"subtitle": "等待选择", "template": "orange"}
-    return {"subtitle": "思考中", "template": "indigo"}
+    if normalize_stream_text(session.answer_text).strip():
+        return {"subtitle": "", "summary": "生成中", "template": "blue"}
+    return {"subtitle": "", "summary": "思考中", "template": "indigo"}
 
 
 def _render_main_content_elements(main_text: str) -> list[Dict[str, Any]]:
@@ -277,30 +281,55 @@ def _render_timeline_elements(
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
-    entries = session.timeline.snapshot(max_items=max_items)
-    folded = session.timeline.folded_count(max_items=max_items)
+    all_entries = session.timeline.snapshot()
+    entries = _select_timeline_entries(all_entries, max_items=max_items)
+    folded = max(0, len(all_entries) - len(entries))
     if not entries and not folded:
         return []
-    lines: list[str] = []
+    panel_elements: list[Dict[str, Any]] = []
     if folded:
-        lines.append(f"> 已折叠 {folded} 条早期思考/工具记录")
-        lines.append("")
-    for item in entries:
+        panel_elements.extend(
+            _timeline_markdown_elements(
+                f"> 已折叠 {folded} 条早期思考/工具记录",
+                "auxiliary_timeline_folded",
+                text_size="x-small",
+            )
+        )
+    for index, item in enumerate(entries):
         if item.kind == "reasoning":
-            content = _limit_text(item.content, max_reasoning_chars)
-            lines.append(f"**{item.title}** · {item.status}")
+            content = _limit_text(
+                item.content,
+                max_reasoning_chars,
+                overflow_label="思考内容过长，已截断",
+            )
+            lines = [f"**{item.title}** · {item.status}"]
             if content:
                 lines.append(content)
+            panel_elements.extend(
+                _timeline_markdown_elements(
+                    "\n".join(lines),
+                    f"auxiliary_timeline_reasoningentry_{index}",
+                    text_size="small",
+                )
+            )
         elif item.kind == "tool":
-            detail = _limit_text(_redact_tool_detail(item.detail), max_tool_result_chars)
-            lines.append(f"- `{item.title}`: {item.status}")
+            detail = _limit_text(
+                _redact_tool_detail(item.detail),
+                max_tool_result_chars,
+                overflow_label="工具详情过长，已截断",
+            )
+            lines = [f"`{item.title}` · {item.status}"]
             if detail:
-                lines.append(f"  - {detail}")
-        lines.append("")
-    panel_content = "\n".join(lines).strip()
-    if not panel_content:
+                lines.append(detail)
+            panel_elements.extend(
+                _timeline_markdown_elements(
+                    _quote_markdown("\n".join(lines)),
+                    f"auxiliary_timeline_toolentry_{index}",
+                    text_size="x-small",
+                )
+            )
+    if not panel_elements:
         return []
-    panel_content = _limit_text(panel_content, AUXILIARY_TIMELINE_MAX_CHARS)
     return [
         {
             "tag": "collapsible_panel",
@@ -315,15 +344,58 @@ def _render_timeline_elements(
             },
             "border": {"color": "grey", "corner_radius": "5px"},
             "padding": "8px 8px 8px 8px",
-            "elements": [
-                {
-                    "tag": "markdown",
-                    "element_id": "auxiliary_timeline_content",
-                    "content": panel_content,
-                }
-            ],
+            "elements": panel_elements,
         }
     ]
+
+
+def _timeline_markdown_elements(
+    content: str, element_id_prefix: str, *, text_size: str
+) -> list[Dict[str, Any]]:
+    return [
+        {
+            "tag": "markdown",
+            "element_id": element_id_prefix
+            if index == 0
+            else f"{element_id_prefix}_{index}",
+            "content": chunk,
+            "text_size": text_size,
+        }
+        for index, chunk in enumerate(
+            split_markdown_blocks(content, MAIN_CONTENT_CHUNK_CHARS)
+        )
+        if chunk.strip()
+    ]
+
+
+def _quote_markdown(content: str) -> str:
+    return "\n".join(f"> {line}" if line else ">" for line in content.splitlines())
+
+
+def _select_timeline_entries(entries: list[Any], *, max_items: int) -> list[Any]:
+    if max_items <= 0 or len(entries) <= max_items:
+        return list(entries)
+
+    selected_indexes = list(range(len(entries) - max_items, len(entries)))
+    if max_items <= 1:
+        return [entries[index] for index in selected_indexes]
+    if any(entries[index].kind == "reasoning" for index in selected_indexes):
+        return [entries[index] for index in selected_indexes]
+
+    latest_reasoning_index = next(
+        (
+            index
+            for index in range(len(entries) - 1, -1, -1)
+            if entries[index].kind == "reasoning"
+        ),
+        None,
+    )
+    if latest_reasoning_index is None:
+        return [entries[index] for index in selected_indexes]
+
+    selected_indexes = [latest_reasoning_index] + selected_indexes[1:]
+    selected_indexes = sorted(dict.fromkeys(selected_indexes))
+    return [entries[index] for index in selected_indexes]
 
 
 def _render_attachment_summary(session: CardSession) -> str:
@@ -412,10 +484,11 @@ def _format_scaled(value: int, factor: int, suffix: str) -> str:
     return f"{scaled:.1f}".rstrip("0").rstrip(".") + suffix
 
 
-def _limit_text(text: str, limit: int) -> str:
+def _limit_text(text: str, limit: int, *, overflow_label: str = "内容已折叠") -> str:
     if limit <= 0 or len(text) <= limit:
         return text
-    return text[: max(0, limit - 18)].rstrip() + "\n> 内容已折叠"
+    suffix = f"\n> {overflow_label}"
+    return text[: max(0, limit - len(suffix))].rstrip() + suffix
 
 
 def _redact_tool_detail(text: str) -> str:

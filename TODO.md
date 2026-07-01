@@ -2,7 +2,7 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## 下一版计划：V3.8.0 / V3.8.1 / V3.8.2
+## V3.8 系列路线：V3.8.0 / V3.8.1 / V3.8.2
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
@@ -22,7 +22,15 @@
 - [x] 安全清理：`/messages/{message_id}/summary` 返回中的 `chat_id` / Feishu `message_id` 改为 hash。
 - [x] patcher 兼容 V3.8.0 及更早无命令 hook block 的升级和卸载。
 
-### V3.8.2：维护体系与扩展面（待办）
+### V3.8.2：卡片 timeline 阅读体验补丁（已完成）
+
+- [x] pre-tool answer 先停留在正文区，下一段 answer 或终态到来时再归档进“思考与工具”。
+- [x] 完成态正文剥离已归档的中间说明，只保留最终答案。
+- [x] raw `thinking.delta` 继续隐藏，不混入正文区或用户可见 timeline。
+- [x] 折叠区中思考和工具使用不同字号与灰度层级，工具详情更紧凑。
+- [x] README 增加 V3.8.2 折叠态和展开态真实截图。
+
+### V3.8.x 后续维护与扩展面（待办）
 
 - [ ] 卡片内提供“继续”“重试”“取消”等写操作入口，需要单独做权限、幂等和误触发设计。
 - [ ] 工具调用详情支持查看参数摘要、耗时、失败原因。

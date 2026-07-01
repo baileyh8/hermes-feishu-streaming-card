@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+TERMINAL_TOOL_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+
 
 @dataclass
 class TimelineEntry:
@@ -19,6 +21,10 @@ class CardTimeline:
     _open_reasoning_index: int | None = None
     _reasoning_count: int = 0
     _tool_entry_by_id: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def entry_count(self) -> int:
+        return len(self._entries)
 
     def record_reasoning(self, text: str, replace: bool = False) -> None:
         if not text and not replace:
@@ -42,6 +48,23 @@ class CardTimeline:
             return
         self._entries[self._open_reasoning_index].content += text
 
+    def insert_completed_reasoning(self, text: str, index: int | None = None) -> None:
+        if not text:
+            return
+        self._finish_open_reasoning()
+        self._reasoning_count += 1
+        insert_at = len(self._entries) if index is None else max(0, min(index, len(self._entries)))
+        self._entries.insert(
+            insert_at,
+            TimelineEntry(
+                kind="reasoning",
+                title=f"思考 {self._reasoning_count}",
+                status="completed",
+                content=text,
+            ),
+        )
+        self._reindex_tools()
+
     def record_answer_started(self) -> None:
         self._finish_open_reasoning()
 
@@ -53,10 +76,11 @@ class CardTimeline:
         normalized_status = status or "running"
         if tool_id in self._tool_entry_by_id:
             entry = self._entries[self._tool_entry_by_id[tool_id]]
-            entry.title = title
-            entry.status = normalized_status
-            entry.detail = detail or entry.detail
-            return
+            if str(entry.status or "").lower() not in TERMINAL_TOOL_STATUSES:
+                entry.title = title
+                entry.status = normalized_status
+                entry.detail = detail or entry.detail
+                return
         self._entries.append(
             TimelineEntry(
                 kind="tool",
@@ -86,3 +110,10 @@ class CardTimeline:
             return
         self._entries[self._open_reasoning_index].status = "completed"
         self._open_reasoning_index = None
+
+    def _reindex_tools(self) -> None:
+        self._tool_entry_by_id = {
+            entry.tool_id: index
+            for index, entry in enumerate(self._entries)
+            if entry.kind == "tool" and entry.tool_id
+        }
