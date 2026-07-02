@@ -149,6 +149,85 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _find_gateway_python(hermes_dir: str | Path) -> Path | None:
+    """Find the Python executable used by the Hermes Gateway.
+
+    The Gateway may run in its own virtual environment.  Check common
+    locations relative to `hermes_dir`.  Returns None when no venv
+    Python is found or the discovered path is NOT a real venv Python
+    (i.e. it points back to a system Python that already inherits
+    user site-packages, making extra installation unnecessary).
+    """
+    hermes_root = Path(hermes_dir).expanduser()
+    candidates = [
+        hermes_root / "venv" / "bin" / "python3",
+        hermes_root / ".venv" / "bin" / "python3",
+    ]
+    for candidate in candidates:
+        try:
+            cp = subprocess.run(
+                [str(candidate), "-c", "import sys; print(sys.prefix)"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if cp.returncode != 0:
+                continue
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            continue
+
+        prefix = cp.stdout.strip()
+        # A separate venv is one whose prefix differs from ours.
+        # We install there regardless of whether user site-packages
+        # are enabled — the user-level pip install may target a
+        # different Python (e.g. Homebrew or Anaconda) whose user
+        # site directory is not the same as the Gateway venv's.
+        if prefix and prefix != sys.prefix:
+            return candidate
+    return None
+
+
+def _install_to_gateway_venv(hermes_dir: str | Path) -> bool:
+    """Install hermes-feishu-streaming-card into the Gateway venv.
+
+    Returns True when a separate Gateway venv was detected and the
+    package was successfully installed (or was already present).
+    Returns False when no separate Gateway venv was found — in that
+    case the user-level install is already sufficient.
+    """
+    gateway_python = _find_gateway_python(hermes_dir)
+    if gateway_python is None:
+        return False
+
+    # Determine the package source: prefer the installed editable
+    # location, fall back to the running package's path.
+    try:
+        import hermes_feishu_card as _pkg
+        pkg_path = str(Path(_pkg.__file__).resolve().parent.parent)
+    except Exception:
+        return False
+
+    try:
+        cp = subprocess.run(
+            [str(gateway_python), "-m", "pip", "install",
+             "--quiet", "-e", pkg_path],
+            capture_output=True, text=True, timeout=60,
+        )
+        if cp.returncode != 0:
+            print(
+                f"warning: failed to install hook package to "
+                f"Gateway venv ({gateway_python}): {cp.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return False
+        print(f"installed hook package to Gateway venv: {gateway_python}")
+        return True
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        print(
+            f"warning: could not install to Gateway venv: {exc}",
+            file=sys.stderr,
+        )
+        return False
+
+
 def _run_setup(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser()
     try:
@@ -177,6 +256,8 @@ def _run_setup(args: argparse.Namespace) -> int:
     print("doctor: ok")
     print(_format_hermes_detection(detection))
     _print_hermes_streaming_guidance(Path(args.hermes_dir))
+
+    _install_to_gateway_venv(args.hermes_dir)
 
     if args.repair:
         repair_code = _run_repair(
