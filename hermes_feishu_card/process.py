@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,12 @@ import urllib.request
 DEFAULT_STATE_DIR = Path.home() / ".hermes_feishu_card"
 PIDFILE_NAME = "sidecar.pid"
 LOGFILE_NAME = "sidecar.log"
+
+
+def process_token_hash(token: str | None) -> str:
+    if not isinstance(token, str) or not token:
+        return ""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def status_sidecar(config: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -68,7 +75,7 @@ def start_sidecar(config_path: str | Path, config: dict[str, dict[str, Any]]) ->
             clear_pid()
             return f"failed: process exited with {process.returncode}"
         health = fetch_health(config)
-        if health is not None and health.get("process_token") == token:
+        if health is not None and health.get("process_token_hash") == process_token_hash(token):
             return "started"
         time.sleep(0.1)
 
@@ -91,7 +98,10 @@ def stop_sidecar(config: dict[str, dict[str, Any]]) -> str:
             return "failed: pidfile identity mismatch"
         clear_pid()
         return "not running"
-    if health.get("process_token") != record["token"] or health.get("process_pid") != pid:
+    if (
+        health.get("process_token_hash") != process_token_hash(record["token"])
+        or health.get("process_pid") != pid
+    ):
         return "failed: pidfile identity mismatch"
 
     if pid_is_running(pid):

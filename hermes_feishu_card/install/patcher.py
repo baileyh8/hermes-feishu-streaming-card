@@ -19,6 +19,10 @@ APPROVAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_APPROVAL_PATCH_BEGIN"
 APPROVAL_PATCH_END = "# HERMES_FEISHU_CARD_APPROVAL_PATCH_END"
 CRON_PATCH_BEGIN = "# HERMES_FEISHU_CARD_CRON_PATCH_BEGIN"
 CRON_PATCH_END = "# HERMES_FEISHU_CARD_CRON_PATCH_END"
+SLASH_CONFIRM_PATCH_BEGIN = "# HERMES_FEISHU_CARD_SLASH_CONFIRM_PATCH_BEGIN"
+SLASH_CONFIRM_PATCH_END = "# HERMES_FEISHU_CARD_SLASH_CONFIRM_PATCH_END"
+COMMAND_CARD_PATCH_BEGIN = "# HERMES_FEISHU_CARD_COMMAND_CARD_PATCH_BEGIN"
+COMMAND_CARD_PATCH_END = "# HERMES_FEISHU_CARD_COMMAND_CARD_PATCH_END"
 
 _HANDLER_NAME = "_handle_message_with_agent"
 _CRON_DELIVER_NAME = "_deliver_result"
@@ -35,6 +39,8 @@ def apply_patch(content: str, strategy: str = "legacy_gateway_run") -> str:
     content = _apply_queued_complete_patch(content)
     if strategy == "gateway_run_013_plus":
         content = _apply_cron_patch(content)
+        content = _apply_command_card_adapter_patch(content)
+        content = _apply_slash_confirm_patch(content)
     content = _apply_callback_patch(
         content,
         callback_name="progress_callback",
@@ -197,9 +203,96 @@ def _apply_queued_complete_patch(content: str) -> str:
     return content
 
 
+def _apply_slash_confirm_patch(content: str) -> str:
+    owned_block = _find_simple_marker_block(
+        content,
+        SLASH_CONFIRM_PATCH_BEGIN,
+        SLASH_CONFIRM_PATCH_END,
+        "slash confirm patch markers",
+    )
+    if owned_block is not None:
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_slash_confirm_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
+
+    tree = _parse_content(content)
+    func = _find_async_function(tree, "_request_slash_confirm")
+    if func is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    start = max(func.lineno - 1, 0)
+    end = getattr(func, "end_lineno", None)
+    if end is None:
+        end = len(lines)
+    anchor = "_slash_confirm_mod.register(session_key, confirm_id, command, handler)"
+    for index in range(start, min(end, len(lines))):
+        if _strip_line_ending(lines[index]).strip() != anchor:
+            continue
+        indent = _leading_whitespace(_strip_line_ending(lines[index]))
+        newline = _line_ending(lines[index]) or _detect_newline(content)
+        hook = _render_slash_confirm_hook_block(indent, newline)
+        return "".join(lines[: index + 1] + hook + lines[index + 1 :])
+    return content
+
+
+def _apply_command_card_adapter_patch(content: str) -> str:
+    owned_block = _find_simple_marker_block(
+        content,
+        COMMAND_CARD_PATCH_BEGIN,
+        COMMAND_CARD_PATCH_END,
+        "command card patch markers",
+    )
+    if owned_block is not None:
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_command_card_adapter_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
+
+    tree = _parse_content(content)
+    func = _find_async_function(tree, "_handle_message")
+    if func is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    start = max(func.lineno - 1, 0)
+    end = getattr(func, "end_lineno", None)
+    if end is None:
+        end = len(lines)
+    for index in range(start, min(end, len(lines))):
+        if _strip_line_ending(lines[index]).strip() != "source = event.source":
+            continue
+        indent = _leading_whitespace(_strip_line_ending(lines[index]))
+        newline = _line_ending(lines[index]) or _detect_newline(content)
+        hook = _render_command_card_adapter_hook_block(indent, newline)
+        return "".join(lines[: index + 1] + hook + lines[index + 1 :])
+    return content
+
+
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
     content = _remove_cron_patch(content)
+    content = _remove_simple_owned_patch(
+        content,
+        COMMAND_CARD_PATCH_BEGIN,
+        COMMAND_CARD_PATCH_END,
+        _render_command_card_adapter_hook_block,
+        "command card patch markers",
+    )
+    content = _remove_simple_owned_patch(
+        content,
+        SLASH_CONFIRM_PATCH_BEGIN,
+        SLASH_CONFIRM_PATCH_END,
+        _render_slash_confirm_hook_block,
+        "slash confirm patch markers",
+    )
     content = _remove_simple_owned_patch(
         content,
         TOOL_PATCH_BEGIN,
@@ -282,6 +375,8 @@ def remove_patch_lenient(content: str) -> str:
         (THINKING_DELTA_PATCH_BEGIN, THINKING_DELTA_PATCH_END),
         (CLARIFY_PATCH_BEGIN, CLARIFY_PATCH_END),
         (APPROVAL_PATCH_BEGIN, APPROVAL_PATCH_END),
+        (COMMAND_CARD_PATCH_BEGIN, COMMAND_CARD_PATCH_END),
+        (SLASH_CONFIRM_PATCH_BEGIN, SLASH_CONFIRM_PATCH_END),
         (QUEUED_COMPLETE_PATCH_BEGIN, QUEUED_COMPLETE_PATCH_END),
     ):
         owned_block = _find_simple_marker_block(
@@ -596,10 +691,22 @@ def _find_owned_block(content: str):
     gateway_013_plus = _render_hook_block(
         indent, newline, strategy="gateway_run_013_plus"
     )
+    legacy_without_commands = _render_hook_block_without_commands(
+        indent, newline, strategy="legacy_gateway_run"
+    )
+    gateway_013_plus_without_commands = _render_hook_block_without_commands(
+        indent, newline, strategy="gateway_run_013_plus"
+    )
     placeholder = _render_placeholder_hook_block(indent, newline)
     legacy_silent = _with_silent_exception_handler(legacy, indent, newline)
     gateway_013_plus_silent = _with_silent_exception_handler(
         gateway_013_plus, indent, newline
+    )
+    legacy_without_commands_silent = _with_silent_exception_handler(
+        legacy_without_commands, indent, newline
+    )
+    gateway_013_plus_without_commands_silent = _with_silent_exception_handler(
+        gateway_013_plus_without_commands, indent, newline
     )
     placeholder_silent = _with_silent_exception_handler(placeholder, indent, newline)
     actual = lines[begin_index : end_index + 1]
@@ -607,9 +714,13 @@ def _find_owned_block(content: str):
     if actual not in (
         legacy,
         gateway_013_plus,
+        legacy_without_commands,
+        gateway_013_plus_without_commands,
         placeholder,
         legacy_silent,
         gateway_013_plus_silent,
+        legacy_without_commands_silent,
+        gateway_013_plus_without_commands_silent,
         placeholder_silent,
     ):
         raise ValueError("corrupt patch markers")
@@ -625,7 +736,13 @@ def _find_owned_block(content: str):
     first_body_index, _body_indent = handler_body
     expected_begin_index = (
         first_body_index - 2
-        if actual in (gateway_013_plus, gateway_013_plus_silent)
+        if actual
+        in (
+            gateway_013_plus,
+            gateway_013_plus_silent,
+            gateway_013_plus_without_commands,
+            gateway_013_plus_without_commands_silent,
+        )
         else first_body_index - 1
     )
     if begin_index != expected_begin_index:
@@ -788,6 +905,20 @@ def _find_direct_run_agent_node(tree, name: str):
     return None
 
 
+def _find_async_function(tree, name: str):
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == name:
+            return node
+
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, ast.AsyncFunctionDef) and child.name == name:
+                    return child
+
+    return None
+
+
 def _is_run_agent(node, name: str = "_run_agent") -> bool:
     return isinstance(node, ast.AsyncFunctionDef) and node.name == name
 
@@ -812,8 +943,11 @@ def _find_simple_owned_patch(
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = renderer(indent, newline)
+    expected_blocks = [expected]
+    if renderer is _render_command_card_adapter_hook_block:
+        expected_blocks.append(_render_legacy_command_card_adapter_hook_block(indent, newline))
     actual = lines[begin_index : end_index + 1]
-    if actual != expected:
+    if actual not in expected_blocks:
         raise ValueError(f"corrupt {error_label}")
     return begin_index, end_index
 
@@ -886,7 +1020,9 @@ def _with_silent_exception_handler(block: list[str], indent: str, newline: str):
     return result
 
 
-def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gateway_run"):
+def _render_hook_block_without_commands(
+    indent: str, newline: str, strategy: str = "legacy_gateway_run"
+):
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     block = [
@@ -917,6 +1053,57 @@ def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gatewa
                     f"{inner_indent}from hermes_feishu_card.hook_runtime "
                     f"import emit_from_hermes_locals as _hfc_emit{newline}"
                 ),
+                f"{inner_indent}_hfc_emit(locals()){newline}",
+            ]
+        )
+    block.extend(_render_hook_exception_handler(indent, newline))
+    block.append(f"{indent}{PATCH_END}{newline}")
+    return block
+
+
+def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gateway_run"):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    block = [
+        f"{indent}{PATCH_BEGIN}{newline}",
+    ]
+    if strategy == "gateway_run_013_plus":
+        block.extend(
+            [
+                f"{indent}# HERMES_FEISHU_CARD_STRATEGY gateway_run_013_plus{newline}",
+                f"{indent}try:{newline}",
+                (
+                    f"{inner_indent}from hermes_feishu_card.hook_runtime "
+                    f"import emit_from_hermes_locals as _hfc_emit{newline}"
+                ),
+                (
+                    f"{inner_indent}from hermes_feishu_card.hook_runtime "
+                    f"import handle_hfc_command_from_hermes_locals as _hfc_handle_command{newline}"
+                ),
+                f"{inner_indent}_hfc_started_message_id = None{newline}",
+                f"{inner_indent}try:{newline}",
+                f"{deeper_indent}_hfc_started_message_id = self._reply_anchor_for_event(event){newline}",
+                f"{inner_indent}except Exception:{newline}",
+                f"{deeper_indent}_hfc_started_message_id = getattr(event, \"message_id\", None){newline}",
+                f"{inner_indent}if _hfc_handle_command({{**locals(), \"message_id\": _hfc_started_message_id}}):{newline}",
+                f"{deeper_indent}return None{newline}",
+                f"{inner_indent}_hfc_emit({{**locals(), \"message_id\": _hfc_started_message_id}}){newline}",
+            ]
+        )
+    else:
+        block.extend(
+            [
+                f"{indent}try:{newline}",
+                (
+                    f"{inner_indent}from hermes_feishu_card.hook_runtime "
+                    f"import emit_from_hermes_locals as _hfc_emit{newline}"
+                ),
+                (
+                    f"{inner_indent}from hermes_feishu_card.hook_runtime "
+                    f"import handle_hfc_command_from_hermes_locals as _hfc_handle_command{newline}"
+                ),
+                f"{inner_indent}if _hfc_handle_command(locals()):{newline}",
+                f"{deeper_indent}return None{newline}",
                 f"{inner_indent}_hfc_emit(locals()){newline}",
             ]
         )
@@ -1224,6 +1411,88 @@ def _render_approval_hook_block(indent: str, newline: str):
         f"{deeper_indent}    return{newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{APPROVAL_PATCH_END}{newline}",
+    ]
+
+
+def _render_slash_confirm_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    return [
+        f"{indent}{SLASH_CONFIRM_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import request_slash_confirm_from_hermes_locals_async as _hfc_request_slash_confirm{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import complete_command_card_from_hermes_locals_async as _hfc_complete_command_card{newline}"
+        ),
+        f"{inner_indent}from hashlib import sha256 as _hfc_sha256{newline}",
+        f"{inner_indent}_hfc_slash_reply_to = None{newline}",
+        f"{inner_indent}try:{newline}",
+        f"{deeper_indent}_hfc_slash_reply_to = self._reply_anchor_for_event(event){newline}",
+        f"{inner_indent}except Exception:{newline}",
+        f"{deeper_indent}_hfc_slash_reply_to = getattr(event, \"message_id\", None){newline}",
+        (
+            f"{inner_indent}_hfc_slash_interaction_seed = "
+            f"(str(session_key) + \":\" + str(confirm_id)).encode(\"utf-8\")"
+            f"{newline}"
+        ),
+        (
+            f"{inner_indent}_hfc_slash_interaction_id = \"slash_\" "
+            f"+ _hfc_sha256(_hfc_slash_interaction_seed).hexdigest()[:16]{newline}"
+        ),
+        f"{inner_indent}_hfc_slash_choice = await _hfc_request_slash_confirm({{{newline}",
+        f"{inner_indent}    **locals(),{newline}",
+        f"{inner_indent}    \"source\": source,{newline}",
+        f"{inner_indent}    \"chat_id\": getattr(source, \"chat_id\", \"\"),{newline}",
+        f"{inner_indent}    \"conversation_id\": session_key,{newline}",
+        f"{inner_indent}    \"message_id\": _hfc_slash_reply_to,{newline}",
+        f"{inner_indent}    \"reply_to_message_id\": _hfc_slash_reply_to,{newline}",
+        f"{inner_indent}}}, command=command, title=title, message=message, interaction_id=_hfc_slash_interaction_id){newline}",
+        f"{inner_indent}if _hfc_slash_choice in {{\"once\", \"always\", \"cancel\"}}:{newline}",
+        f"{deeper_indent}_hfc_slash_result = await handler(_hfc_slash_choice){newline}",
+        f"{deeper_indent}if await _hfc_complete_command_card({{{newline}",
+        f"{deeper_indent}    \"source\": source,{newline}",
+        f"{deeper_indent}    \"chat_id\": getattr(source, \"chat_id\", \"\"),{newline}",
+        f"{deeper_indent}    \"conversation_id\": session_key,{newline}",
+        f"{deeper_indent}    \"message_id\": _hfc_slash_reply_to,{newline}",
+        f"{deeper_indent}}}, answer=_hfc_slash_result):{newline}",
+        f"{deeper_indent}    return None{newline}",
+        f"{deeper_indent}return _hfc_slash_result{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{SLASH_CONFIRM_PATCH_END}{newline}",
+    ]
+
+
+def _render_command_card_adapter_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}{COMMAND_CARD_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import install_feishu_command_card_adapter_methods as _hfc_install_command_cards{newline}"
+        ),
+        f"{inner_indent}_hfc_install_command_cards(self, event=event){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{COMMAND_CARD_PATCH_END}{newline}",
+    ]
+
+
+def _render_legacy_command_card_adapter_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}{COMMAND_CARD_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import install_feishu_command_card_adapter_methods as _hfc_install_command_cards{newline}"
+        ),
+        f"{inner_indent}_hfc_install_command_cards(self){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{COMMAND_CARD_PATCH_END}{newline}",
     ]
 
 

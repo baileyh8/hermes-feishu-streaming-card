@@ -632,6 +632,7 @@ def _check_runtime_hook_import(runtime_python: Path) -> dict[str, Any]:
         "import hermes_feishu_card.hook_runtime as hook_runtime; "
         "print(getattr(hook_runtime, '__file__', ''))"
     )
+    cwd = _hermes_runtime_cwd(runtime_python)
     try:
         result = subprocess.run(
             [str(runtime_python), "-c", code],
@@ -639,6 +640,7 @@ def _check_runtime_hook_import(runtime_python: Path) -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=8,
+            cwd=str(cwd) if cwd is not None else None,
         )
     except subprocess.TimeoutExpired:
         return {
@@ -673,6 +675,14 @@ def _check_runtime_hook_import(runtime_python: Path) -> dict[str, Any]:
         "python": str(runtime_python),
         "message": f"Hermes runtime cannot import hook_runtime: {detail}",
     }
+
+
+def _hermes_runtime_cwd(runtime_python: Path) -> Path | None:
+    try:
+        root = runtime_python.resolve().parents[2]
+    except (OSError, IndexError):
+        return None
+    return root if root.exists() else None
 
 
 def _ensure_hermes_runtime_package(detection: HermesDetection) -> None:

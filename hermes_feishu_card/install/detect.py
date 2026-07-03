@@ -103,14 +103,6 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     if version_error is not None:
         return result(False, version_error)
 
-    parsed_version = _parse_version(version)
-    if parsed_version is None:
-        return result(False, "Hermes VERSION missing, unknown, or invalid")
-    hook_strategy = _select_hook_strategy(version)
-    minimum_version = _parse_version(MIN_SUPPORTED_VERSION)
-    if hook_strategy == "legacy_gateway_run" and minimum_version is not None and parsed_version < minimum_version:
-        return result(False, f"Hermes version must be at least {MIN_SUPPORTED_VERSION}")
-
     contents, run_py_error = _read_text(run_py, "gateway/run.py")
     if run_py_error is not None:
         return result(False, run_py_error)
@@ -139,10 +131,25 @@ def detect_hermes(root: str | Path) -> HermesDetection:
         return result(
             False,
             capability_error,
-            hook_strategy=hook_strategy,
             compatibility=compatibility,
             capabilities=capabilities,
         )
+
+    parsed_version = _parse_version(version)
+    if parsed_version is None:
+        if version != "unknown":
+            return result(False, "Hermes VERSION missing, unknown, or invalid")
+        version_source = "gateway anchors"
+        hook_strategy = _select_hook_strategy_from_capabilities(capabilities)
+    else:
+        hook_strategy = _select_hook_strategy(version)
+        minimum_version = _parse_version(MIN_SUPPORTED_VERSION)
+        if (
+            hook_strategy == "legacy_gateway_run"
+            and minimum_version is not None
+            and parsed_version < minimum_version
+        ):
+            return result(False, f"Hermes version must be at least {MIN_SUPPORTED_VERSION}")
 
     return result(
         True,
@@ -247,6 +254,21 @@ def _select_hook_strategy(version: str) -> str:
     if parsed is None:
         return ""
     if (parsed[0] == 0 and parsed >= (0, 13, 0)) or parsed >= (2026, 5, 0):
+        return "gateway_run_013_plus"
+    return "legacy_gateway_run"
+
+
+def _select_hook_strategy_from_capabilities(capabilities: dict[str, bool]) -> str:
+    modern_anchors = (
+        "run_agent",
+        "tool_callback",
+        "answer_delta_callback",
+        "thinking_delta_callback",
+        "cron_delivery",
+        "reply_context",
+        "attachment_delivery",
+    )
+    if any(capabilities.get(name, False) for name in modern_anchors):
         return "gateway_run_013_plus"
     return "legacy_gateway_run"
 

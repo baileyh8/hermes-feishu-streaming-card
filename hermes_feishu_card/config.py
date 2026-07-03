@@ -22,9 +22,16 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     "card": {
         "max_wait_ms": 800,
         "max_chars": 240,
+        "flush_interval_ms": 200,
+        "final_drain_timeout_ms": 900,
         "title": "Hermes Agent",
         "interaction_mode": "auto",
+        "show_reasoning": True,
         "timeline_position": "top",
+        "timeline_expanded": False,
+        "max_timeline_items": 12,
+        "max_reasoning_chars": 1200,
+        "max_tool_result_chars": 600,
         "footer_fields": [
             "duration",
             "model",

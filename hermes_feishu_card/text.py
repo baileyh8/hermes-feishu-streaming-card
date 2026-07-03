@@ -11,6 +11,7 @@ TABLE_SEPARATOR_RE = re.compile(
     re.MULTILINE,
 )
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
+LIST_BOUNDARY_RE = re.compile(r"\n(?:[-*]|\d+\.) ")
 
 
 def normalize_stream_text(text: str) -> str:
@@ -239,7 +240,11 @@ def _split_table_block(block: str, max_block_size: int) -> list[str]:
             if current:
                 chunks.append(header + current)
                 current = ""
-            chunks.extend(header + piece for piece in _split_plain_block(row, row_limit))
+            split_rows = _split_oversized_table_row(row, row_limit)
+            if split_rows is None:
+                chunks.extend(header + piece for piece in _split_plain_block(row, row_limit))
+            else:
+                chunks.extend(header + piece for piece in split_rows)
             continue
         current += row
     if current or not chunks:
@@ -247,17 +252,104 @@ def _split_table_block(block: str, max_block_size: int) -> list[str]:
     return chunks
 
 
+def _split_oversized_table_row(row: str, max_row_size: int) -> list[str] | None:
+    row_text = row.rstrip("\n")
+    cells = _parse_markdown_row(row_text)
+    if not cells:
+        return None
+    split_index = max(range(len(cells)), key=lambda index: len(cells[index]))
+    first_template = list(cells)
+    first_template[split_index] = ""
+    continuation_template = ["" for _ in cells]
+    continuation_template[split_index] = ""
+    first_capacity = max_row_size - len(_format_markdown_row(first_template))
+    continuation_capacity = max_row_size - len(_format_markdown_row(continuation_template))
+    if first_capacity <= 0 or continuation_capacity <= 0:
+        return None
+
+    parts: list[str] = []
+    remaining = cells[split_index]
+    first_row = True
+    while remaining:
+        capacity = first_capacity if first_row else continuation_capacity
+        piece, remaining = _take_plain_piece(remaining, capacity)
+        row_cells = list(cells) if first_row else ["" for _ in cells]
+        row_cells[split_index] = piece.strip()
+        parts.append(_format_markdown_row(row_cells))
+        first_row = False
+    return parts or None
+
+
+def _parse_markdown_row(row: str) -> list[str] | None:
+    stripped = row.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    inner = stripped[1:-1]
+    return [cell.strip() for cell in inner.split("|")]
+
+
+def _format_markdown_row(cells: list[str], trailing_newline: bool = True) -> str:
+    row = "| " + " | ".join(cell.strip() for cell in cells) + " |"
+    if trailing_newline:
+        row += "\n"
+    return row
+
+
+def _take_plain_piece(text: str, max_size: int) -> tuple[str, str]:
+    if len(text) <= max_size:
+        return text, ""
+    split_at = _safe_plain_split_index(text, max_size)
+    piece = text[:split_at].rstrip()
+    remaining = text[split_at:].lstrip()
+    if not piece:
+        piece = text[:max_size]
+        remaining = text[max_size:]
+    return piece, remaining
+
+
 def _split_plain_block(block: str, max_block_size: int) -> list[str]:
     chunks: list[str] = []
     remaining = block
     while len(remaining) > max_block_size:
-        split_at = remaining.rfind(" ", 0, max_block_size + 1)
-        newline_at = remaining.rfind("\n", 0, max_block_size + 1)
-        split_at = max(split_at, newline_at)
-        if split_at <= 0:
-            split_at = max_block_size
+        split_at = _safe_plain_split_index(remaining, max_block_size)
         chunks.append(remaining[:split_at])
         remaining = remaining[split_at:]
     if remaining:
         chunks.append(remaining)
     return chunks
+
+
+def _safe_plain_split_index(text: str, max_block_size: int) -> int:
+    window = text[: max_block_size + 1]
+    candidate_groups = (
+        sorted({match.start() + 1 for match in LIST_BOUNDARY_RE.finditer(window)}, reverse=True),
+        [_separator_split_index(window, "\n")],
+        [_separator_split_index(window, " ")],
+    )
+    for candidates in candidate_groups:
+        for split_at in candidates:
+            if split_at <= 0:
+                continue
+            safe_split = _adjust_split_for_inline_code(window, split_at)
+            if safe_split > 0:
+                return safe_split
+    return max_block_size
+
+
+def _separator_split_index(text: str, separator: str) -> int:
+    index = text.rfind(separator)
+    if index <= 0:
+        return 0
+    return index + len(separator)
+
+
+def _adjust_split_for_inline_code(text: str, split_at: int) -> int:
+    prefix = text[:split_at]
+    if prefix.count("`") % 2 == 0:
+        return split_at
+    before_code = text.rfind("`", 0, split_at)
+    while before_code > 0:
+        if text[:before_code].count("`") % 2 == 0:
+            return before_code
+        before_code = text.rfind("`", 0, before_code)
+    return 0

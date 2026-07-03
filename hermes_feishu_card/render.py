@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ast
+import json
+import re
+import time as _time
 from typing import Any, Dict
 
 from .session import CardSession
 from .text import normalize_stream_text, split_markdown_blocks
-import time as _time
 
 DEFAULT_FOOTER_FIELDS = (
     "duration",
@@ -17,24 +20,77 @@ MAIN_CONTENT_CHUNK_CHARS = 2400
 DEFAULT_TITLE = "Hermes Agent"
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_REDACTABLE_TOOL_DETAIL_KEYS = (
+    "tenant_access_token",
+    "app_secret",
+    "chat_id",
+    "open_id",
+    "message_id",
+    "password",
+    "token",
+    "secret",
+)
+_TOOL_DETAIL_KEY_PATTERN = (
+    r"[A-Za-z0-9_]*(?:"
+    + "|".join(re.escape(key) for key in _REDACTABLE_TOOL_DETAIL_KEYS)
+    + r")[A-Za-z0-9_]*"
+)
+_TOOL_DETAIL_REDACTION_RE = re.compile(
+    r"(?i)([\"']?"
+    + _TOOL_DETAIL_KEY_PATTERN
+    + r"[\"']?\s*[:=]\s*)([^\s,;&}\]]+)"
+)
+_TOOL_DETAIL_QUOTED_REDACTION_RE = re.compile(
+    r"(?is)([\"']?"
+    + _TOOL_DETAIL_KEY_PATTERN
+    + r"[\"']?\s*[:=]\s*)([\"'])(.*?)(\2)"
+)
+_TOOL_DETAIL_REDACTED = "[REDACTED]"
 
 def _spinner_text(label: str = "生成中") -> str:
+    return f"{_spinner_frame()} {label}"
+
+
+def _spinner_frame() -> str:
     frame = _SPINNER_FRAMES[int(_time.time() * 8) % len(_SPINNER_FRAMES)]
-    return f"{frame} {label}"
+    return frame
 
 def render_card(
     session: CardSession,
     footer_fields: list[str] | tuple[str, ...] | None = None,
     title: str = DEFAULT_TITLE,
     interaction_mode: str = "callback",
+    show_reasoning: bool = True,
+    timeline_position: str = "top",
+    timeline_expanded: bool = False,
+    max_timeline_items: int = 12,
+    max_reasoning_chars: int = 1200,
+    max_tool_result_chars: int = 600,
 ) -> Dict[str, Any]:
     status = _render_status(session)
-    main_text = normalize_stream_text(session.visible_main_text) or ("正在思考..." if session.status == "thinking" else "")
-    tool_summary = _render_tool_summary(session)
+    primary_text = normalize_stream_text(session.answer_text)
+    if not primary_text:
+        if session.status == "thinking":
+            primary_text = _spinner_frame()
+        else:
+            primary_text = normalize_stream_text(session.visible_main_text)
     attachment_summary = _render_attachment_summary(session)
     footer = _render_footer(session, footer_fields)
     header_title = title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
-    elements = _render_main_content_elements(main_text)
+    # Timeline (thinking & tools) position is configurable: "top" (default) or "bottom"
+    elements: list[Dict[str, Any]] = []
+    timeline_elements: list[Dict[str, Any]] = []
+    if show_reasoning:
+        timeline_elements = _render_timeline_elements(
+            session,
+            expanded=timeline_expanded,
+            max_items=max_timeline_items,
+            max_reasoning_chars=max_reasoning_chars,
+            max_tool_result_chars=max_tool_result_chars,
+        )
+        if str(timeline_position or "").strip().lower() != "bottom":
+            elements.extend(timeline_elements)
+    elements.extend(_render_main_content_elements(primary_text))
     elements.extend(_render_interaction_elements(session, interaction_mode=interaction_mode))
     if attachment_summary:
         elements.append(
@@ -44,24 +100,33 @@ def render_card(
                 "content": attachment_summary,
             }
         )
-    elements.extend(
-        [
-            {"tag": "hr", "element_id": "main_divider"},
-            {"tag": "markdown", "element_id": "tool_summary", "content": tool_summary},
-            {"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"},
-        ]
-    )
+    elements.append({"tag": "hr", "element_id": "main_divider"})
+    if not timeline_elements:
+        elements.append(
+            {
+                "tag": "markdown",
+                "element_id": "tool_summary",
+                "content": _render_tool_summary(session),
+            }
+        )
+    # Append timeline at the bottom when configured
+    if show_reasoning and str(timeline_position or "").strip().lower() == "bottom":
+        elements.extend(timeline_elements)
+    elements.append({"tag": "markdown", "element_id": "footer", "content": footer, "text_size": "x-small"})
+    header = {
+        "template": status["template"],
+        "title": {"tag": "plain_text", "content": header_title},
+    }
+    if status["subtitle"]:
+        header["subtitle"] = {"tag": "plain_text", "content": status["subtitle"]}
+
     return {
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": status["subtitle"]},
+            "summary": {"content": status.get("summary", status["subtitle"])},
         },
-        "header": {
-            "template": status["template"],
-            "title": {"tag": "plain_text", "content": header_title},
-            "subtitle": {"tag": "plain_text", "content": status["subtitle"]},
-        },
+        "header": header,
         "body": {
             "elements": elements
         },
@@ -75,7 +140,9 @@ def _render_status(session: CardSession) -> Dict[str, str]:
         return {"subtitle": "处理失败", "template": "red"}
     if session.active_interaction is not None and session.active_interaction.status == "pending":
         return {"subtitle": "等待选择", "template": "orange"}
-    return {"subtitle": "思考中", "template": "indigo"}
+    if normalize_stream_text(session.answer_text).strip():
+        return {"subtitle": "", "summary": "生成中", "template": "blue"}
+    return {"subtitle": "", "summary": "思考中", "template": "indigo"}
 
 
 def _render_main_content_elements(main_text: str) -> list[Dict[str, Any]]:
@@ -211,6 +278,133 @@ def _render_tool_summary(session: CardSession) -> str:
     return "\n".join(lines)
 
 
+def _render_timeline_elements(
+    session: CardSession,
+    *,
+    expanded: bool,
+    max_items: int,
+    max_reasoning_chars: int,
+    max_tool_result_chars: int,
+) -> list[Dict[str, Any]]:
+    if not getattr(session, "timeline", None):
+        return []
+    all_entries = session.timeline.snapshot()
+    entries = _select_timeline_entries(all_entries, max_items=max_items)
+    folded = max(0, len(all_entries) - len(entries))
+    if not entries and not folded:
+        return []
+    panel_elements: list[Dict[str, Any]] = []
+    if folded:
+        panel_elements.extend(
+            _timeline_markdown_elements(
+                f"> 已折叠 {folded} 条早期思考/工具记录",
+                "auxiliary_timeline_folded",
+                text_size="x-small",
+            )
+        )
+    for index, item in enumerate(entries):
+        if item.kind == "reasoning":
+            content = _limit_text(
+                item.content,
+                max_reasoning_chars,
+                overflow_label="思考内容过长，已截断",
+            )
+            lines = [f"**{item.title}** · {item.status}"]
+            if content:
+                lines.append(content)
+            panel_elements.extend(
+                _timeline_markdown_elements(
+                    "\n".join(lines),
+                    f"auxiliary_timeline_reasoningentry_{index}",
+                    text_size="small",
+                )
+            )
+        elif item.kind == "tool":
+            detail = _limit_text(
+                _redact_tool_detail(item.detail),
+                max_tool_result_chars,
+                overflow_label="工具详情过长，已截断",
+            )
+            lines = [f"`{item.title}` · {item.status}"]
+            if detail:
+                lines.append(detail)
+            panel_elements.extend(
+                _timeline_markdown_elements(
+                    _quote_markdown("\n".join(lines)),
+                    f"auxiliary_timeline_toolentry_{index}",
+                    text_size="x-small",
+                )
+            )
+    if not panel_elements:
+        return []
+    return [
+        {
+            "tag": "collapsible_panel",
+            "element_id": "auxiliary_timeline",
+            "expanded": expanded,
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"思考与工具 · {session.tool_count} 次工具调用",
+                },
+                "vertical_align": "center",
+            },
+            "border": {"color": "grey", "corner_radius": "5px"},
+            "padding": "8px 8px 8px 8px",
+            "elements": panel_elements,
+        }
+    ]
+
+
+def _timeline_markdown_elements(
+    content: str, element_id_prefix: str, *, text_size: str
+) -> list[Dict[str, Any]]:
+    return [
+        {
+            "tag": "markdown",
+            "element_id": element_id_prefix
+            if index == 0
+            else f"{element_id_prefix}_{index}",
+            "content": chunk,
+            "text_size": text_size,
+        }
+        for index, chunk in enumerate(
+            split_markdown_blocks(content, MAIN_CONTENT_CHUNK_CHARS)
+        )
+        if chunk.strip()
+    ]
+
+
+def _quote_markdown(content: str) -> str:
+    return "\n".join(f"> {line}" if line else ">" for line in content.splitlines())
+
+
+def _select_timeline_entries(entries: list[Any], *, max_items: int) -> list[Any]:
+    if max_items <= 0 or len(entries) <= max_items:
+        return list(entries)
+
+    selected_indexes = list(range(len(entries) - max_items, len(entries)))
+    if max_items <= 1:
+        return [entries[index] for index in selected_indexes]
+    if any(entries[index].kind == "reasoning" for index in selected_indexes):
+        return [entries[index] for index in selected_indexes]
+
+    latest_reasoning_index = next(
+        (
+            index
+            for index in range(len(entries) - 1, -1, -1)
+            if entries[index].kind == "reasoning"
+        ),
+        None,
+    )
+    if latest_reasoning_index is None:
+        return [entries[index] for index in selected_indexes]
+
+    selected_indexes = [latest_reasoning_index] + selected_indexes[1:]
+    selected_indexes = sorted(dict.fromkeys(selected_indexes))
+    return [entries[index] for index in selected_indexes]
+
+
 def _render_attachment_summary(session: CardSession) -> str:
     items = []
     for item in session.attachments:
@@ -295,3 +489,62 @@ def _format_scaled(value: int, factor: int, suffix: str) -> str:
     if scaled >= 100 or scaled.is_integer():
         return f"{int(round(scaled))}{suffix}"
     return f"{scaled:.1f}".rstrip("0").rstrip(".") + suffix
+
+
+def _limit_text(text: str, limit: int, *, overflow_label: str = "内容已折叠") -> str:
+    if limit <= 0 or len(text) <= limit:
+        return text
+    suffix = f"\n> {overflow_label}"
+    return text[: max(0, limit - len(suffix))].rstrip() + suffix
+
+
+def _redact_tool_detail(text: str) -> str:
+    if not text:
+        return text
+    structured = _parse_tool_detail(text)
+    if structured is not None:
+        return _dump_redacted_tool_detail(structured)
+    redacted = _TOOL_DETAIL_QUOTED_REDACTION_RE.sub(
+        lambda match: f"{match.group(1)}{match.group(2)}{_TOOL_DETAIL_REDACTED}{match.group(4)}",
+        text,
+    )
+    return _TOOL_DETAIL_REDACTION_RE.sub(r"\1[REDACTED]", redacted)
+
+
+def _parse_tool_detail(text: str) -> tuple[str, Any] | None:
+    try:
+        return ("json", _redact_tool_detail_value(json.loads(text)))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    try:
+        return ("python", _redact_tool_detail_value(ast.literal_eval(text)))
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _redact_tool_detail_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_tool_detail_key(str(key)):
+                redacted[key] = _TOOL_DETAIL_REDACTED
+            else:
+                redacted[key] = _redact_tool_detail_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_tool_detail_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_tool_detail_value(item) for item in value)
+    return value
+
+
+def _dump_redacted_tool_detail(parsed: tuple[str, Any]) -> str:
+    format_name, value = parsed
+    if format_name == "json":
+        return json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+    return repr(value)
+
+
+def _is_sensitive_tool_detail_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in _REDACTABLE_TOOL_DETAIL_KEYS)
