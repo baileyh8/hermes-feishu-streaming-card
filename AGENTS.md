@@ -1,75 +1,84 @@
-# Agents Guide — hermes-feishu-streaming-card
+# AGENTS.md — hermes-feishu-streaming-card
 
-## What this is
+## Project
 
-A **sidecar-only** plugin that adds Feishu streaming card messages to
-[Hermes Agent](https://github.com/NousResearch/hermes-agent).  Patches
-Hermes's `gateway/run.py` at install time and runs a separate HTTP sidecar.
+Sidecar-only plugin for Hermes Agent Gateway Feishu/Lark streaming cards.
 
-Active source: `hermes_feishu_card/`.  **`legacy/` is V2 archive — never edit.**
+- Active source: `hermes_feishu_card/`
+- Tests: `tests/`
+- Public maintainer wiki: `docs/wiki/`
+- V2 archive: `legacy/` — do not edit unless explicitly asked.
 
-## Development commands
+The Hermes process should keep only minimal hook logic. Feishu/Lark delivery,
+card state, rendering, diagnostics, installer behavior, and release assets live
+in this repository.
+
+## Hard Rules
+
+- Do not edit an installed Hermes `gateway/run.py` by hand. Only
+  `hermes_feishu_card/install/patcher.py` may patch Hermes.
+- Do not commit secrets: Feishu App Secret, tenant token, real chat id, local
+  `.env`, or screenshots with private/unredacted content.
+- Keep hook behavior fail-open for unknown/unsupported paths, but suppress
+  duplicate Feishu native gray text after this plugin has accepted a card path.
+- `legacy/` is not active runtime.
+- User-facing conversation with Bailey is Chinese. Code identifiers, filenames,
+  tool names, and protocol names stay in English.
+
+## Commands
 
 ```bash
-pip install -e ".[test]"               # from repo root
-python -m pytest -q                     # full suite (CI runs exactly this)
-python -m pytest tests/unit/test_config.py::test_load_defaults -q  # one test
+python -m pytest -q
+python -m pytest tests/unit/test_docs.py -q
+python -m pytest tests/unit/test_package_metadata.py -q
+python -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --explain
 ```
-No linter, typechecker, or formatter configured.  CI workflow = `pytest -q`.
 
-## Never edit Hermes directly
+No formatter, linter, or typechecker is configured. CI is pytest-based.
 
-The **patcher** (`install/patcher.py`) is the only code that touches
-`gateway/run.py`.  It uses AST parsing to find `_handle_message_with_agent`,
-inserts 5 marker-wrapped hook blocks, creates SHA256 manifests and backups.
-Corrupt markers → `ValueError("corrupt patch markers")`.  Changed files →
-refuses restore.
+## Change Routing
 
-## Hook runtime uses `locals()` — fragile
+Read `docs/wiki/maintenance-guide.md` before touching these hot areas:
 
-`hook_runtime.py` functions extract data from the caller's `locals()` dict.
-Field names in `build_event()` / `_event_data()` **must match Hermes variable
-names**: `source`, `event`, `response`, `agent_result`, `_response_time`,
-`event_message_id`, `_loop_for_step`, `_run_still_current`.  If Hermes
-renames these, the hook breaks silently.
+- `hermes_feishu_card/hook_runtime.py`
+- `hermes_feishu_card/server.py`
+- `hermes_feishu_card/install/patcher.py`
+- installer scripts, Docker install, release workflow
 
-## Sidecar is ephemeral
+Use these wiki pages for context:
 
-`CardSession` objects live in `request.app[SESSIONS_KEY]` (plain dict keyed
-by `_session_key(event)` in multi-profile mode, `message_id` otherwise).  No
-persistence.  Each session has its own `asyncio.Lock`.  Terminal events
-retry 3× with exponential backoff (1s, 2s, 4s).  Non-terminal update failures
-are silently ignored (next event retries).
+- `docs/wiki/README.md` — maintainer wiki entry
+- `docs/wiki/maintenance-guide.md` — hot files, risk boundaries, test matrix
+- `docs/wiki/event-flow.md` — Hermes event to Feishu card lifecycle
+- `docs/wiki/feishu-acceptance.md` — real Feishu/Lark smoke checklist
+- `docs/wiki/release-playbook.md` — release checklist
 
-## Message ID fallback — don't touch
+## Testing Expectations
 
-Hermes doesn't always provide `message_id`.  The system in
-`hook_runtime.py` (`_fallback_message_id`, `_ACTIVE_FALLBACK_MESSAGE_IDS`,
-`created_at_lifecycle_token`) handles dedup across parallel sessions.  Don't
-simplify it unless you fully understand the lifecycle race conditions.
+Run focused tests while developing, then full suite before release or broad
+claims.
 
-## Key constraints
+- Runtime/topic/notice changes:
+  `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_server.py -q`
+- Patcher/install changes:
+  `python -m pytest tests/unit/test_patcher.py tests/integration/test_cli_install.py -q`
+- Docs/version changes:
+  `python -m pytest tests/unit/test_docs.py tests/unit/test_package_metadata.py -q`
+- Release gate:
+  `python -m pytest -q && git diff --check`
 
-- Hermes ≥ `v2026.4.23` (checked by `detect_hermes()`)
-- `gateway/run.py` must not be a symlink
-- `UPDATE_MIN_INTERVAL_SECONDS = 0.5` in `server.py`
-- Tenant token cached for `expire - 60` seconds
-- `hermes_feishu_card` must be importable inside Hermes's Python environment
+## Release Checklist
 
-## 语言约定
+1. Bump `pyproject.toml` and `hermes_feishu_card/__init__.py`.
+2. Update `CHANGELOG.md`, `docs/release-notes-vX.Y.Z.md`, README files, and
+   affected docs/wiki pages.
+3. Run full tests and `git diff --check`.
+4. Commit, create annotated tag, push branch and tag.
+5. Ensure GitHub Release exists and release-assets workflow uploaded packages.
 
-思考输出用中文。字段名、变量名、函数名、专用名词、工具名保持英文。
+## Obsidian / LLM Wiki
 
-## Release checklist
+Project-public knowledge belongs in `docs/wiki/`.
 
-1. Bump version in `pyproject.toml` and `hermes_feishu_card/__init__.py`
-2. Update `CHANGELOG.md`, `README.md`, `README.en.md`, `config.yaml.example`, `TODO.md`
-3. `python -m pytest -q` → must be all green
-4. `git tag -a vX.Y.Z` AND `gh release create vX.Y.Z` — **both required**, not just tag
-5. GitHub Release notes from CHANGELOG with `## VX.Y.Z — YYYY-MM-DD`
-
-## Doc test warning
-
-`tests/unit/test_docs.py` uses **exact string matching** (including `。`).  If
-you change `TODO.md`, verify every string the tests assert on still exists.
-Otherwise 5 doc tests fail and you'll waste time hunting Chinese punctuation.
+When adding durable project knowledge, update both the repo wiki and Bailey's
+Obsidian LLM Wiki mirror if it should be reusable across future Codex sessions.
