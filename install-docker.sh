@@ -101,6 +101,7 @@ require_credentials() {
 
 install_package() {
   local python_bin="$1"
+  export PIP_ROOT_USER_ACTION="${PIP_ROOT_USER_ACTION:-ignore}"
   "$python_bin" -m pip --version >/dev/null 2>&1 || "$python_bin" -m ensurepip --upgrade >/dev/null
   local tag
   tag="$(resolve_version)"
@@ -114,7 +115,31 @@ install_package() {
   else
     log "installing $REPO@$tag into $python_bin"
   fi
-  "$python_bin" -m pip install --upgrade "$spec"
+  local pip_log
+  pip_log="$(mktemp)"
+  if "$python_bin" -m pip install --upgrade "$spec" >"$pip_log" 2>&1; then
+    cat "$pip_log"
+    rm -f "$pip_log"
+    return
+  fi
+  local pip_status
+  pip_status=$?
+  if grep -q "externally-managed-environment" "$pip_log"; then
+    log "Python environment is externally managed; retrying with --break-system-packages"
+    if "$python_bin" -m pip install --upgrade --break-system-packages "$spec" >"$pip_log" 2>&1; then
+      cat "$pip_log"
+      log "pip warning handled safely; package install completed"
+      rm -f "$pip_log"
+      return
+    fi
+    pip_status=$?
+    cat "$pip_log" >&2
+    rm -f "$pip_log"
+    return "$pip_status"
+  fi
+  cat "$pip_log" >&2
+  rm -f "$pip_log"
+  return "$pip_status"
 }
 
 run_doctor() {

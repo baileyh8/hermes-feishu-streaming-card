@@ -141,9 +141,74 @@ exit 0
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert "retrying with --break-system-packages" in result.stdout
+    assert "error: externally-managed-environment" not in (
+        result.stderr + result.stdout
+    )
+    assert "pip warning handled safely; package install completed" in result.stdout
     assert "--break-system-packages" in (tmp_path / "python.log").read_text(
         encoding="utf-8"
     )
+
+
+def test_install_sh_suppresses_pip_root_user_warning(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "FEISHU_APP_ID=cli_dotenv\nFEISHU_APP_SECRET=dotenv_secret\n",
+        encoding="utf-8",
+    )
+    fake_python = tmp_path / "python"
+    fake_python.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_PYTHON_LOG"
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "--version" ]; then
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  if [ "${PIP_ROOT_USER_ACTION:-}" != "ignore" ]; then
+    echo "WARNING: Running pip as the 'root' user can result in broken permissions" >&2
+  fi
+  echo "install ok"
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "hermes_feishu_card.cli" ]; then
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+            "HERMES_DIR": str(tmp_path / "hermes-agent"),
+            "HFC_CONFIG": str(tmp_path / "config.yaml"),
+            "HFC_ENV_FILE": str(env_file),
+            "HFC_NO_PROMPT": "1",
+            "HFC_SKIP_START": "1",
+            "HFC_VERSION": "main",
+            "PYTHON": str(fake_python),
+        }
+    )
+    env.pop("FEISHU_APP_ID", None)
+    env.pop("FEISHU_APP_SECRET", None)
+    env.pop("PIP_ROOT_USER_ACTION", None)
+
+    result = subprocess.run(
+        ["bash", "install.sh"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "install ok" in result.stdout
+    assert "Running pip as the 'root' user" not in result.stderr + result.stdout
 
 
 def make_fake_docker_python(path: Path) -> Path:
@@ -434,6 +499,79 @@ def test_install_docker_sh_uses_latest_without_pin(tmp_path):
     assert f"{spec}@" not in log
     assert "@v" not in log
     assert "@main" not in log
+
+
+def test_install_docker_sh_retries_externally_managed_python(tmp_path):
+    hermes_dir = tmp_path / "opt" / "hermes"
+    data_dir = tmp_path / "opt" / "data"
+    (hermes_dir / "gateway").mkdir(parents=True)
+    (hermes_dir / "gateway" / "run.py").write_text("# gateway\n", encoding="utf-8")
+    env_file = data_dir / ".env"
+    data_dir.mkdir(parents=True)
+    env_file.write_text(
+        "FEISHU_APP_ID=cli_docker\nFEISHU_APP_SECRET=docker_secret\n",
+        encoding="utf-8",
+    )
+    fake_python = hermes_dir / "venv" / "bin" / "python"
+    fake_python.parent.mkdir(parents=True, exist_ok=True)
+    fake_python.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_PYTHON_LOG"
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "--version" ]; then
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  if [ "${PIP_ROOT_USER_ACTION:-}" != "ignore" ]; then
+    echo "WARNING: Running pip as the 'root' user can result in broken permissions" >&2
+  fi
+  case "$*" in
+    *--break-system-packages*) echo "install ok"; exit 0 ;;
+    *) echo "error: externally-managed-environment" >&2; exit 1 ;;
+  esac
+fi
+if [ "$1" = "-m" ] && [ "$2" = "hermes_feishu_card.cli" ]; then
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(fake_python.stat().st_mode | stat.S_IXUSR)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+            "HERMES_DIR": str(hermes_dir),
+            "HFC_CONFIG": str(data_dir / "config.yaml"),
+            "HFC_ENV_FILE": str(env_file),
+            "HFC_VERSION": "main",
+            "HFC_SKIP_START": "1",
+        }
+    )
+    env.pop("FEISHU_APP_ID", None)
+    env.pop("FEISHU_APP_SECRET", None)
+    env.pop("PIP_ROOT_USER_ACTION", None)
+
+    result = subprocess.run(
+        ["bash", "install-docker.sh"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    combined = result.stderr + result.stdout
+    assert "retrying with --break-system-packages" in result.stdout
+    assert "error: externally-managed-environment" not in combined
+    assert "Running pip as the 'root' user" not in combined
+    assert "pip warning handled safely; package install completed" in result.stdout
+    assert "--break-system-packages" in (tmp_path / "python.log").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_install_docker_sh_fails_without_hermes_venv_python(tmp_path):

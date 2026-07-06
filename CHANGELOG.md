@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## Unreleased
+
+### Fixed
+- issue #79: `install.sh` and `install-docker.sh` now suppress pip's root-user warning by default and keep recoverable `externally-managed-environment` output from looking like a fatal install failure.
+- Docker installs now retry PEP 668 externally managed Python environments with `--break-system-packages`, matching the macOS/Linux installer behavior.
+
+### Tests
+- Added installer regression coverage for pip root-user warning suppression and Debian/Ubuntu externally managed Python retry output.
+
 ## V3.8.9 — 2026-07-04
 
 See also: [docs/release-notes-v3.8.9.md](docs/release-notes-v3.8.9.md)

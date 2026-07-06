@@ -126,6 +126,7 @@ prompt_credentials() {
 
 install_package() {
   have "$PYTHON_BIN" || fail "$PYTHON_BIN was not found. Install Python 3.9+ first."
+  export PIP_ROOT_USER_ACTION="${PIP_ROOT_USER_ACTION:-ignore}"
   "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 || "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null
   local tag
   tag="$(resolve_version)"
@@ -147,14 +148,22 @@ install_package() {
     rm -f "$pip_log"
     return
   fi
-  local pip_status=$?
-  cat "$pip_log" >&2
+  local pip_status
+  pip_status=$?
   if grep -q "externally-managed-environment" "$pip_log"; then
     log "Python environment is externally managed; retrying with --break-system-packages"
+    if "$PYTHON_BIN" -m pip "${pip_args[@]}" --break-system-packages "$spec" >"$pip_log" 2>&1; then
+      cat "$pip_log"
+      log "pip warning handled safely; package install completed"
+      rm -f "$pip_log"
+      return
+    fi
+    pip_status=$?
+    cat "$pip_log" >&2
     rm -f "$pip_log"
-    "$PYTHON_BIN" -m pip "${pip_args[@]}" --break-system-packages "$spec"
-    return
+    return "$pip_status"
   fi
+  cat "$pip_log" >&2
   rm -f "$pip_log"
   return "$pip_status"
 }

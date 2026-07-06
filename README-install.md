@@ -57,6 +57,12 @@ Hermes emits later stream events with a different internal `message_id`. Tool
 timeline updates and `system.notice` messages resolve through the original reply
 anchor instead of freezing the topic card or leaking duplicate gray messages.
 
+Current installers default `PIP_ROOT_USER_ACTION=ignore` so Debian/Ubuntu root
+installs do not print pip's root-user warning. If Python reports
+`externally-managed-environment`, `install.sh` and `install-docker.sh` retry with
+`--break-system-packages` and print a concise recovery message after the package
+install succeeds.
+
 ## macOS / Linux
 
 ```bash
