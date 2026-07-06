@@ -2953,10 +2953,15 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
         or os.environ.get("HERMES_CRON_AUTO_DELIVER_PLATFORM")
         or "feishu"
     ).strip().lower()
+    origin_chat_id = (
+        origin.get("chat_id")
+        if origin.get("platform") == "feishu"
+        else ""
+    )
     chat_id = str(
         resolved_chat_id
         or _deliver_chat_id(job.get("deliver"))
-        or origin.get("chat_id")
+        or origin_chat_id
         or os.environ.get("HERMES_CRON_AUTO_DELIVER_CHAT_ID")
         or ""
     ).strip()
