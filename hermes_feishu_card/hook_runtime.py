@@ -3216,6 +3216,12 @@ def _deliver_platform(value: Any) -> str:
         return ""
     if ":" in text:
         return text.split(":", 1)[0].strip()
+    # "origin"/"all"/"local" are delivery modes, not platform names.
+    # Without this guard they short-circuit the platform fallback chain
+    # in build_cron_event and cause every deliver=origin cron to
+    # silently lose card delivery.
+    if text in {"origin", "all", "local"}:
+        return ""
     return text
 
 
