@@ -194,6 +194,7 @@ async def test_installed_hook_forwards_streaming_tool_and_completion_events(
             "tokens": {"input_tokens": 7, "output_tokens": 11},
             "context": {"used_tokens": 0, "max_tokens": 0},
             "attachments": [],
+            "native_delivery": "allowed",
         }
     finally:
         await client.close()

@@ -322,7 +322,16 @@ def test_apply_patch_inserts_completion_hook_before_response_return():
         "_hfc_card_delivered = await _hfc_emit_async"
     )
     assert 'getattr(source.platform, "value", source.platform)' in patched
-    assert "if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments):" in patched
+    assert '_hfc_native_delivery = "allowed"' in patched
+    assert (
+        '_hfc_native_delivery = _hfc_completed_data.get("native_delivery", '
+        '"required" if _hfc_attachments else "allowed")'
+    ) in patched
+    assert (
+        "if _hfc_should_suppress("
+        "_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery"
+        "):"
+    ) in patched
     assert "        return None\n" in patched
     assert '"model": agent_result.get("model", ""),' in patched
     assert '"context": {' in patched
@@ -350,6 +359,10 @@ def test_apply_patch_suppresses_queued_followup_native_resend():
 
     assert patcher.QUEUED_COMPLETE_PATCH_BEGIN in patched
     assert "_hfc_card_delivered = await _hfc_emit_async" in patched
+    assert (
+        '_hfc_native_delivery = _hfc_completed_data.get("native_delivery", '
+        '"required" if _hfc_attachments else "allowed")'
+    ) in patched
     assert "_already_streamed = True" in patched
     assert patched.index(patcher.QUEUED_COMPLETE_PATCH_BEGIN) < patched.index(
         "    if first_response and not _already_streamed:\n"

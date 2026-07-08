@@ -30,6 +30,16 @@ LOCAL_FILE_RE = re.compile(
     r"(?<![:\w/])(/[^\s`]+\.(?:png|jpg|jpeg|webp|gif|pdf|txt|md|csv|xlsx|docx|mp3|wav|ogg|mp4|mov|webm))"
 )
 ATTACHMENT_TRAILING_PUNCTUATION = ",.;:)]}，。；：）】}"
+NATIVE_DELIVERY_ATTACHMENT_FIELDS = (
+    "files",
+    "file",
+    "media_files",
+    "media",
+    "images",
+    "image_files",
+    "audio_files",
+    "video_files",
+)
 
 SUPPORTED_RUNTIME_EVENTS = {
     "message.started",
@@ -2736,13 +2746,18 @@ def request_clarify_response_from_hermes_locals(
 
 
 def should_suppress_native_response(
-    platform: str, delivered: bool, attachments: Any = None
+    platform: str,
+    delivered: bool,
+    attachments: Any = None,
+    native_delivery: Any = None,
 ) -> bool:
     if not delivered:
         return False
     if str(platform or "").lower() != "feishu":
         return False
-    if attachments:
+    if str(native_delivery or "").strip().lower() == "required":
+        return False
+    if native_delivery is None and attachments:
         return False
     return True
 
@@ -3363,9 +3378,11 @@ def _event_data(
         return data
     if event_name == "message.completed":
         answer = _completion_answer(local_vars)
+        attachments = _extract_attachments(answer, local_vars)
         data.update({
             "answer": answer,
-            "attachments": _extract_attachments(answer, local_vars),
+            "attachments": attachments,
+            "native_delivery": _native_delivery_policy(answer, local_vars),
             "duration": _completion_duration(local_vars),
             "model": _completion_model(local_vars),
             "tokens": _completion_tokens(local_vars, answer),
@@ -3564,20 +3581,37 @@ def _extract_attachments(
     return attachments
 
 
+def _native_delivery_policy(
+    text: str, local_vars: dict[str, Any] | None = None
+) -> str:
+    if MEDIA_RE.search(text or "") or LOCAL_FILE_RE.search(text or ""):
+        return "required"
+    for candidate in _structured_native_delivery_candidates(local_vars or {}):
+        if _coerce_attachment(candidate) is not None:
+            return "required"
+    return "allowed"
+
+
 def _structured_attachment_candidates(local_vars: dict[str, Any]) -> list[Any]:
+    return _structured_candidates(
+        local_vars,
+        (
+            "attachments",
+            "attachment",
+            *NATIVE_DELIVERY_ATTACHMENT_FIELDS,
+        ),
+    )
+
+
+def _structured_native_delivery_candidates(local_vars: dict[str, Any]) -> list[Any]:
+    return _structured_candidates(local_vars, NATIVE_DELIVERY_ATTACHMENT_FIELDS)
+
+
+def _structured_candidates(
+    local_vars: dict[str, Any], names: tuple[str, ...]
+) -> list[Any]:
     candidates: list[Any] = []
-    for name in (
-        "attachments",
-        "attachment",
-        "files",
-        "file",
-        "media_files",
-        "media",
-        "images",
-        "image_files",
-        "audio_files",
-        "video_files",
-    ):
+    for name in names:
         value = local_vars.get(name)
         if value is None:
             continue

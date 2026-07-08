@@ -456,6 +456,7 @@ def test_build_completed_event_preserves_duration_and_tokens():
         "profile_source": "fallback_default",
         "answer": "最终答案",
         "attachments": [],
+        "native_delivery": "allowed",
         "duration": 2.75,
         "model": "MiniMax M2.7",
         "tokens": {"input_tokens": 12, "output_tokens": 34},
@@ -2231,6 +2232,32 @@ def test_completed_event_extracts_structured_attachment_fields():
     assert {"kind": "file", "name": "archive.zip", "summary": "archive.zip"} in attachments
 
 
+def test_completed_event_allows_card_only_for_generic_attachment_summaries():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_1",
+            "message_id": "m_1",
+            "answer": "已整理配色表，见卡片附件摘要。",
+            "attachments": [
+                {"name": "colors.csv", "summary": "colors.csv", "kind": "file"},
+                {"name": "styles.csv", "summary": "styles.csv", "kind": "file"},
+            ],
+        },
+    )
+
+    attachments = payload["data"]["attachments"]
+    assert {"kind": "file", "name": "colors.csv", "summary": "colors.csv"} in attachments
+    assert {"kind": "file", "name": "styles.csv", "summary": "styles.csv"} in attachments
+    assert payload["data"]["native_delivery"] == "allowed"
+    assert (
+        hook_runtime.should_suppress_native_response(
+            "feishu", True, attachments, payload["data"]["native_delivery"]
+        )
+        is True
+    )
+
+
 def test_completed_event_extracts_hermes_media_files_for_native_delivery_guard():
     payload = hook_runtime.build_event(
         "message.completed",
@@ -2248,8 +2275,11 @@ def test_completed_event_extracts_hermes_media_files_for_native_delivery_guard()
     attachments = payload["data"]["attachments"]
     assert {"kind": "video", "name": "demo.mp4", "summary": "demo.mp4"} in attachments
     assert {"kind": "image", "name": "cover.png", "summary": "cover.png"} in attachments
+    assert payload["data"]["native_delivery"] == "required"
     assert (
-        hook_runtime.should_suppress_native_response("feishu", True, attachments)
+        hook_runtime.should_suppress_native_response(
+            "feishu", True, attachments, payload["data"]["native_delivery"]
+        )
         is False
     )
 
@@ -2619,8 +2649,11 @@ def test_attachment_guard_uses_preview_before_terminal_emit_retires_fallback():
     assert attachments == [
         {"kind": "file", "name": "report.pdf", "summary": "report.pdf"}
     ]
+    assert preview["data"]["native_delivery"] == "required"
     assert (
-        hook_runtime.should_suppress_native_response("feishu", delivered, attachments)
+        hook_runtime.should_suppress_native_response(
+            "feishu", delivered, attachments, preview["data"]["native_delivery"]
+        )
         is False
     )
 
