@@ -649,8 +649,20 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
 
     if event.event == "message.started":
         if session is not None:
-            metrics.events_ignored += 1
-            return web.json_response({"ok": True, "applied": False}), None
+            if session.status in {"completed", "failed"}:
+                # Feishu topic (thread) groups reuse the same message_id across
+                # consecutive messages in the same thread, so a new turn's
+                # message.started collides with the previous, already-finished
+                # session for that key. Treat it as a fresh turn: discard the
+                # finished session and its delivery bookkeeping so the code below
+                # creates a new session and sends a NEW card (rather than
+                # ignoring the started event and losing the card entirely).
+                _reset_session_for_new_turn(request.app, session_key)
+                session = None
+            else:
+                metrics.events_ignored += 1
+                return web.json_response({"ok": True, "applied": False}), None
+    if event.event == "message.started" and session is None:
         session = CardSession(
             conversation_id=event.conversation_id,
             message_id=event.message_id,
@@ -1191,6 +1203,25 @@ async def _retry_terminal_update(
         await asyncio.sleep(delay)
         if await _update_card_for_app(app, message_id, card, bot_id):
             return
+
+
+def _reset_session_for_new_turn(app: web.Application, session_key: str) -> None:
+    """Discard a finished session and all its per-key bookkeeping.
+
+    Used when a Feishu topic (thread) group reuses the same message_id for a new
+    turn: the previous session for that key is already completed/failed, and we
+    must clear it (and its delivery/config/flush state) so the next
+    message.started sends a brand-new card instead of trying to update the old
+    one or ignoring the event.
+    """
+    app[SESSIONS_KEY].pop(session_key, None)
+    app[FEISHU_MESSAGE_IDS_KEY].pop(session_key, None)
+    app[MESSAGE_BOT_IDS_KEY].pop(session_key, None)
+    app[SESSION_CARD_CONFIGS_KEY].pop(session_key, None)
+    controllers: Dict[str, FlushController] = app[FLUSH_CONTROLLERS_KEY]
+    controller = controllers.pop(session_key, None)
+    if controller is not None:
+        controller.close()
 
 
 def _flush_controller_for_session(

@@ -741,6 +741,117 @@ async def test_topic_system_notice_with_reply_anchor_updates_existing_card(clien
     assert len(feishu_client.sent) == 1
 
 
+async def test_topic_second_message_reusing_message_id_sends_new_card(client):
+    """Feishu topic groups reuse the same message_id across turns. A second
+    message.started on the same (already-completed) key must send a NEW card,
+    not be ignored, so the second turn is not left card-less."""
+    test_client, feishu_client = client
+
+    # First turn: started -> answer -> completed on message_id om_topic_user.
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            {"reply_to_message_id": "om_topic_user"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "answer.delta",
+            1,
+            {"reply_to_message_id": "om_topic_user", "text": "first answer"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    completed = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            2,
+            {"reply_to_message_id": "om_topic_user"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    assert completed.status == 200
+    assert len(feishu_client.sent) == 1
+
+    # Second turn in the SAME thread reuses the SAME message_id.
+    started2 = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            {"reply_to_message_id": "om_topic_user"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    assert started2.status == 200
+    assert await started2.json() == {"ok": True, "applied": True}
+    # A brand-new card must be sent for the second turn.
+    assert len(feishu_client.sent) == 2
+
+    # And the second turn's content must render on the new card.
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "answer.delta",
+            1,
+            {"reply_to_message_id": "om_topic_user", "text": "second answer"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    _mid, card = await wait_for_card_update(feishu_client, "second answer")
+    assert "second answer" in str(card)
+
+
+async def test_topic_second_message_started_while_active_is_ignored(client):
+    """A duplicate message.started while the session is still streaming must
+    still be ignored (no spurious second card)."""
+    test_client, feishu_client = client
+
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            {"reply_to_message_id": "om_topic_user"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    assert len(feishu_client.sent) == 1
+
+    # Session still active (no completed) -> a second started is a duplicate.
+    dup = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            {"reply_to_message_id": "om_topic_user"},
+            conversation_id="omt_topic",
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+        ),
+    )
+    assert dup.status == 200
+    assert await dup.json() == {"ok": True, "applied": False}
+    assert len(feishu_client.sent) == 1
+
+
 async def test_interaction_request_renders_buttons_and_callback_resolves(client):
     test_client, feishu_client = client
 
