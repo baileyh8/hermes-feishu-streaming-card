@@ -1642,7 +1642,8 @@ def _render_cron_hook_block(indent: str, newline: str):
             f"import emit_cron_delivery as _hfc_emit_cron{newline}"
         ),
         f"{inner_indent}_hfc_cron_metadata = {{\"delivery_kind\": \"cron\"}}{newline}",
-        f"{inner_indent}# event_name=\"message.completed\"{newline}",
+        f"{inner_indent}# Pre-resolve targets so build_cron_event can discover feishu chat_id{newline}",
+        f"{inner_indent}job[\"_hfc_resolved_targets\"] = _resolve_delivery_targets(job){newline}",
         f"{inner_indent}if _hfc_emit_cron(locals()):{newline}",
         f"{_child_indent(inner_indent)}return None{newline}",
         *_render_hook_exception_handler(indent, newline),

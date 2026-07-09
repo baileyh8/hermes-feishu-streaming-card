@@ -2548,6 +2548,143 @@ def test_build_cron_event_returns_none_for_non_feishu_or_missing_chat(monkeypatc
     )
 
 
+def test_build_cron_event_deliver_origin_resolves_via_origin():
+    """deliver="origin" should resolve through origin, not short-circuit."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-origin",
+                "deliver": "origin",
+                "origin": {"platform": "feishu", "chat_id": "oc_from_origin"},
+            },
+            "content": "定时结果",
+        }
+    )
+
+    assert payload is not None
+    assert payload["platform"] == "feishu"
+    assert payload["chat_id"] == "oc_from_origin"
+    assert payload["data"]["answer"] == "定时结果"
+
+
+def test_build_cron_event_deliver_all_resolves_via_origin():
+    """deliver="all" should resolve through origin when no resolved targets."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-all",
+                "deliver": "all",
+                "origin": {"platform": "feishu", "chat_id": "oc_from_all"},
+            },
+            "content": "all deliver result",
+        }
+    )
+
+    assert payload is not None
+    assert payload["platform"] == "feishu"
+    assert payload["chat_id"] == "oc_from_all"
+
+
+def test_build_cron_event_deliver_origin_all_comma_resolves_via_origin():
+    """deliver="origin,all" should resolve through origin."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-combo",
+                "deliver": "origin,all",
+                "origin": {"platform": "feishu", "chat_id": "oc_combo"},
+            },
+            "content": "combo result",
+        }
+    )
+
+    assert payload is not None
+    assert payload["platform"] == "feishu"
+    assert payload["chat_id"] == "oc_combo"
+
+
+def test_build_cron_event_deliver_origin_with_resolved_targets():
+    """deliver="origin" with explicit resolved targets should prefer targets."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-resolved",
+                "deliver": "origin",
+                "origin": {"platform": "feishu", "chat_id": "oc_origin"},
+                "_hfc_resolved_targets": [
+                    {"platform": "feishu", "chat_id": "oc_resolved"}
+                ],
+            },
+            "content": "resolved result",
+        }
+    )
+
+    assert payload is not None
+    assert payload["platform"] == "feishu"
+    assert payload["chat_id"] == "oc_resolved"
+
+
+def test_build_cron_event_deliver_local_returns_none():
+    """deliver="local" should return None (no delivery)."""
+    assert (
+        hook_runtime.build_cron_event(
+            {
+                "job": {
+                    "id": "job-local",
+                    "deliver": "local",
+                    "origin": {"platform": "feishu", "chat_id": "oc_local"},
+                },
+                "content": "local result",
+            }
+        )
+        is None
+    )
+
+
+def test_build_cron_event_mixed_intent_and_platform():
+    """deliver="origin,feishu:oc_explicit" keeps the real platform."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-mixed",
+                "deliver": "origin,feishu:oc_explicit",
+                "origin": {"platform": "discord", "chat_id": "dc_123"},
+            },
+            "content": "mixed result",
+        }
+    )
+
+    assert payload is not None
+    assert payload["platform"] == "feishu"
+    assert payload["chat_id"] == "oc_explicit"
+
+
+def test_is_routing_intent():
+    assert hook_runtime._is_routing_intent("origin") is True
+    assert hook_runtime._is_routing_intent("all") is True
+    # "local" is NOT a routing intent — it's a delivery target
+    assert hook_runtime._is_routing_intent("local") is False
+    assert hook_runtime._is_routing_intent("origin,all") is True
+    assert hook_runtime._is_routing_intent("all,origin") is True
+    assert hook_runtime._is_routing_intent("feishu") is False
+    assert hook_runtime._is_routing_intent("feishu:oc_123") is False
+    assert hook_runtime._is_routing_intent("") is False
+    # Mixed combo with a real platform should NOT be a routing intent
+    assert hook_runtime._is_routing_intent("origin,feishu:oc_123") is False
+
+
+def test_extract_real_platform():
+    assert hook_runtime._extract_real_platform("origin") == ""
+    assert hook_runtime._extract_real_platform("all") == ""
+    assert hook_runtime._extract_real_platform("local") == "local"
+    assert hook_runtime._extract_real_platform("feishu") == "feishu"
+    assert hook_runtime._extract_real_platform("feishu:oc_123") == "feishu"
+    assert hook_runtime._extract_real_platform("origin,feishu:oc_123") == "feishu"
+    assert hook_runtime._extract_real_platform("origin,all") == ""
+    assert hook_runtime._extract_real_platform("") == ""
+    assert hook_runtime._extract_real_platform(None) == ""
+
+
 def test_build_completed_event_uses_agent_result_token_fallbacks():
     payload = hook_runtime.build_event(
         "message.completed",

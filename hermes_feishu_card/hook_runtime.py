@@ -3209,7 +3209,15 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
         origin = {}
     resolved_targets = _resolved_cron_targets(local_vars, job)
     resolved_chat_id = _resolved_target_chat_id(resolved_targets, "feishu")
-    deliver_platform = _deliver_platform(job.get("deliver"))
+    # Routing-intent tokens ("origin", "all") and comma-separated
+    # combinations are not real platform names.  When _deliver_platform()
+    # returns one of these, the platform chain short-circuits and never
+    # reaches origin.get("platform") — causing every deliver=origin or
+    # deliver=all cron job to silently fall back to plain-text delivery.
+    # Extract the first real platform name, skipping routing intents.
+    # "local" is NOT a routing intent — it means "no delivery" and will
+    # cause the platform check below to fail naturally.
+    deliver_platform = _extract_real_platform(job.get("deliver"))
     platform = str(
         deliver_platform
         or _first_target_platform(resolved_targets)
@@ -3217,10 +3225,15 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
         or os.environ.get("HERMES_CRON_AUTO_DELIVER_PLATFORM")
         or "feishu"
     ).strip().lower()
+    origin_chat_id = (
+        origin.get("chat_id")
+        if origin.get("platform") == "feishu"
+        else ""
+    )
     chat_id = str(
         resolved_chat_id
         or _deliver_chat_id(job.get("deliver"))
-        or origin.get("chat_id")
+        or origin_chat_id
         or os.environ.get("HERMES_CRON_AUTO_DELIVER_CHAT_ID")
         or ""
     ).strip()
@@ -3297,6 +3310,70 @@ def _resolved_cron_targets(
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+_ROUTING_INTENT_TOKENS = frozenset({"origin", "all"})
+
+
+def _is_routing_intent(platform: str) -> bool:
+    """Return True if *platform* is a routing-intent token, not a real platform.
+
+    Routing intents (``origin``, ``all``) and comma-separated combinations
+    like ``origin,all`` must be resolved by the scheduler before they map to
+    a concrete platform name.  The hook runs before that resolution, so it
+    should skip them and let the platform chain fall through to
+    ``resolved_targets`` or ``origin``.
+
+    ``local`` is intentionally excluded — it is a delivery target (meaning
+    "no delivery"), not a routing intent that needs resolution.
+    """
+    if not platform:
+        return False
+    # Single token: "origin", "all"
+    if platform in _ROUTING_INTENT_TOKENS:
+        return True
+    # Comma-separated: "origin,all", "all,telegram:123", etc.
+    # If every part (after stripping) is a routing-intent token, treat the
+    # whole thing as a routing intent.  Mixed combos like "origin,feishu:123"
+    # contain a real platform and should NOT be skipped — the caller should
+    # extract the real platform part.
+    if "," in platform:
+        parts = [p.strip() for p in platform.split(",") if p.strip()]
+        if parts and all(p in _ROUTING_INTENT_TOKENS for p in parts):
+            return True
+    return False
+
+
+def _extract_real_platform(deliver: Any) -> str:
+    """Extract the first real platform name from a deliver value.
+
+    Handles comma-separated deliver strings (``"origin,feishu:chat_id"``)
+    by splitting on ``,`` and returning the first part whose platform is not
+    a routing intent.  Returns ``""`` when all parts are routing intents or
+    the value is empty.  ``"local"`` passes through as-is (it is not a
+    routing intent and will cause the platform check in ``build_cron_event``
+    to fail naturally).
+    """
+    if not deliver:
+        return ""
+    text = str(deliver).strip().lower()
+    if not text:
+        return ""
+    # Fast path: no comma — just use _deliver_platform directly.
+    if "," not in text:
+        platform = _deliver_platform(text)
+        if platform in _ROUTING_INTENT_TOKENS:
+            return ""
+        return platform
+    # Split by comma and find the first real platform part.
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        platform = _deliver_platform(part)
+        if platform and platform not in _ROUTING_INTENT_TOKENS:
+            return platform
+    return ""
 
 
 def _deliver_platform(value: Any) -> str:
