@@ -2020,6 +2020,23 @@ def _hfc_action_value_from_data(data: Any) -> dict[str, Any]:
     return value
 
 
+def _hfc_action_metadata(data: Any) -> dict[str, Any] | None:
+    """Best-effort extraction of message metadata from a card-action event.
+
+    Used when sending a follow-up card so Feishu threading/metadata stays
+    consistent. Returns None if not available (callers must accept None).
+    """
+    event = getattr(data, "event", None)
+    if event is None:
+        return None
+    meta = getattr(event, "message", None)
+    if isinstance(meta, dict):
+        return meta.get("metadata")
+    meta = getattr(event, "metadata", None)
+    if isinstance(meta, dict):
+        return meta
+    return None
+
 def _hfc_action_chat_id(data: Any) -> str:
     event = getattr(data, "event", None)
     context = getattr(event, "context", None)
@@ -2477,16 +2494,32 @@ def _hfc_switch_model_background_task(adapter: Any, data: Any, action_value: dic
         if not hasattr(adapter, "_feishu_send_with_retry"):
             _hfc_warn("background model switch: adapter has no _feishu_send_with_retry")
             return
+        metadata = _hfc_action_metadata(data)
         try:
             await adapter._feishu_send_with_retry(
                 chat_id=chat_id,
                 msg_type="interactive",
                 payload=json.dumps(card, ensure_ascii=False),
                 reply_to=message_id or None,
+                metadata=metadata,
             )
             _hfc_info("background model switch: result card sent")
         except Exception as exc:
-            _hfc_warn(f"background model switch: result card send failed: {exc.__class__.__name__}: {exc}")
+            _hfc_warn(f"background model switch: direct send failed: {exc.__class__.__name__}: {exc}")
+            # Fallback: reuse the well-tested native command result card sender
+            # (it passes metadata correctly and handles reply threading).
+            try:
+                await _hfc_send_native_command_result_card(
+                    adapter,
+                    chat_id=chat_id,
+                    content=str(card.get("elements", [{}])[0].get("content", "") or ""),
+                    reply_to=message_id or None,
+                    metadata=metadata,
+                    context={"command": "model"},
+                )
+                _hfc_info("background model switch: result card sent (fallback)")
+            except Exception as exc2:
+                _hfc_warn(f"background model switch: fallback send failed: {exc2.__class__.__name__}: {exc2}")
 
     loop = getattr(adapter, "_loop", None)
     submit = getattr(adapter, "_submit_on_loop", None)
