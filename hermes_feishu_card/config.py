@@ -47,10 +47,16 @@ def resolve_operations_hermes_root(
     explicit: str | Path | None = None,
     *,
     config_path: str | Path | None = None,
+    env_file: str | Path | None = None,
 ) -> Path:
     """Resolve the local Hermes source root without adding user configuration."""
     if explicit:
         return Path(explicit).expanduser()
+    if env_file is not None:
+        dotenv = _read_dotenv(Path(env_file).expanduser())
+        value = dotenv.get("HERMES_DIR", "").strip()
+        if value:
+            return Path(value).expanduser()
     if config_path is not None:
         dotenv = _read_dotenv(Path(config_path).expanduser().parent / ".env")
         value = dotenv.get("HERMES_DIR", "").strip()

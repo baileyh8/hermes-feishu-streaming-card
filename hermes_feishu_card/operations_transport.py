@@ -27,13 +27,11 @@ class TransportAuthenticationError(ValueError):
 def ensure_transport_root_secret(directory: str | Path | None = None) -> bytes:
     root = Path(directory).expanduser() if directory is not None else state_dir()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if not _is_windows():
-        root.chmod(0o700)
+    if not _valid_transport_root(root):
+        raise OSError("operations transport root is invalid")
     path = root / TRANSPORT_ROOT_SECRET_NAME
-    if path.exists():
-        if not _is_windows():
-            path.chmod(0o600)
-        secret = _read_secret_bytes(path)
+    if _path_lstat(path) is not None:
+        secret = _read_secret_bytes(root, path)
         if secret is None:
             raise OSError("operations transport root is invalid")
         return secret
@@ -50,8 +48,6 @@ def ensure_transport_root_secret(directory: str | Path | None = None) -> bytes:
             handle.write(secret)
             handle.flush()
             os.fsync(handle.fileno())
-        if not _is_windows():
-            temp_path.chmod(0o600)
         try:
             os.link(temp_path, path)
         except FileExistsError:
@@ -59,9 +55,7 @@ def ensure_transport_root_secret(directory: str | Path | None = None) -> bytes:
     finally:
         temp_path.unlink(missing_ok=True)
 
-    if not _is_windows():
-        path.chmod(0o600)
-    persisted = _read_secret_bytes(path)
+    persisted = _read_secret_bytes(root, path)
     if persisted is None:
         raise OSError("operations transport root could not be created")
     return persisted
@@ -70,25 +64,60 @@ def ensure_transport_root_secret(directory: str | Path | None = None) -> bytes:
 def read_transport_root_secret(directory: str | Path | None = None) -> bytes | None:
     root = Path(directory).expanduser() if directory is not None else state_dir()
     path = root / TRANSPORT_ROOT_SECRET_NAME
+    return _read_secret_bytes(root, path)
+
+
+def _read_secret_bytes(root: Path, path: Path) -> bytes | None:
+    if not _valid_transport_root(root):
+        return None
+    path_stat = _path_lstat(path)
+    if path_stat is None or not stat.S_ISREG(path_stat.st_mode):
+        return None
+    if not _is_windows() and stat.S_IMODE(path_stat.st_mode) != 0o600:
+        return None
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        if root.is_symlink() or not root.is_dir() or path.is_symlink() or not path.is_file():
-            return None
-        if not _is_windows() and (
-            stat.S_IMODE(root.stat().st_mode) != 0o700
-            or stat.S_IMODE(path.stat().st_mode) != 0o600
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        opened_stat = os.fstat(descriptor)
+        current_stat = _path_lstat(path)
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or opened_stat.st_dev != path_stat.st_dev
+            or opened_stat.st_ino != path_stat.st_ino
+            or current_stat is None
+            or current_stat.st_dev != opened_stat.st_dev
+            or current_stat.st_ino != opened_stat.st_ino
+            or not _valid_transport_root(root)
         ):
             return None
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            secret = handle.read()
     except OSError:
         return None
-    return _read_secret_bytes(path)
-
-
-def _read_secret_bytes(path: Path) -> bytes | None:
-    try:
-        secret = path.read_bytes()
-    except OSError:
-        return None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     return secret if len(secret) == _ROOT_SECRET_BYTES else None
+
+
+def _valid_transport_root(root: Path) -> bool:
+    root_stat = _path_lstat(root)
+    if root_stat is None or not stat.S_ISDIR(root_stat.st_mode):
+        return False
+    return _is_windows() or stat.S_IMODE(root_stat.st_mode) == 0o700
+
+
+def _path_lstat(path: Path) -> os.stat_result | None:
+    try:
+        return os.lstat(path)
+    except OSError:
+        return None
 
 
 def _is_windows() -> bool:

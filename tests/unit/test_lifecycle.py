@@ -169,3 +169,22 @@ def test_cleanup_preserves_alias_reassigned_to_new_active_session():
 
     assert old_key not in app[server.SESSIONS_KEY]
     assert app[server.SESSION_ALIASES_KEY]["om_reply"] == new_key
+
+
+def test_cleanup_keeps_old_canonical_key_when_it_has_been_reassigned_as_alias():
+    app = server.create_app(object())
+    old_key = "om_old"
+    new_key = "om_new"
+    old = _session(status="completed")
+    old.updated_at = 100.0
+    new = _session()
+    new.answer_text = "active"
+    app[server.SESSIONS_KEY][old_key] = old
+    app[server.SESSIONS_KEY][new_key] = new
+    app[server.SESSION_ALIASES_KEY][old_key] = new_key
+
+    cleanup_runtime_state(app, now=3700.0)
+
+    assert old_key not in app[server.SESSIONS_KEY]
+    assert app[server.SESSION_ALIASES_KEY][old_key] == new_key
+    assert server._active_session_key(app, old_key) == new_key

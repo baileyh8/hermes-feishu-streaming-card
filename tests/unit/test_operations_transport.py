@@ -66,6 +66,48 @@ def test_windows_transport_uses_regular_secret_without_posix_mode_checks(monkeyp
     assert read_transport_root_secret(state_dir) == secret
 
 
+@pytest.mark.parametrize("windows", [False, True])
+def test_ensure_transport_root_secret_rejects_existing_root_or_secret_symlink(
+    monkeypatch, tmp_path, windows
+):
+    monkeypatch.setattr("hermes_feishu_card.operations_transport._is_windows", lambda: windows)
+    target_root = tmp_path / "target-root"
+    target_root.mkdir()
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(target_root, target_is_directory=True)
+
+    with pytest.raises(OSError, match="invalid"):
+        ensure_transport_root_secret(root_link)
+
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    secret_target = tmp_path / "secret-target"
+    secret_target.write_bytes(b"s" * 32)
+    (state_dir / "operations.transport.key").symlink_to(secret_target)
+
+    with pytest.raises(OSError, match="invalid"):
+        ensure_transport_root_secret(state_dir)
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_ensure_transport_root_secret_rejects_symlink_created_by_race_winner(
+    monkeypatch, tmp_path, windows
+):
+    monkeypatch.setattr("hermes_feishu_card.operations_transport._is_windows", lambda: windows)
+    state_dir = tmp_path / "state"
+    target = tmp_path / "race-target"
+    target.write_bytes(b"r" * 32)
+
+    def race_winner(_temp_path, destination):
+        destination.symlink_to(target)
+        raise FileExistsError
+
+    monkeypatch.setattr("hermes_feishu_card.operations_transport.os.link", race_winner)
+
+    with pytest.raises(OSError, match="created"):
+        ensure_transport_root_secret(state_dir)
+
+
 def test_command_proof_binds_body_scope_operator_and_rejects_replay():
     secret = b"r" * 32
     payload = command_payload()

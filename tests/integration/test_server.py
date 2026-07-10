@@ -171,6 +171,86 @@ def operations_report(
     )
 
 
+async def test_operations_callbacks_keep_full_recovery_fingerprint_internal(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    full_fingerprint = "a" * 64
+    report = DiagnosticReport(
+        status="warning",
+        created_at=100.0,
+        config={"path": "/private/config.yaml", "marker": "full-fingerprint"},
+        hermes={"root": "/private/hermes", "status": "supported"},
+        streaming={"status": "enabled"},
+        install_state={
+            "status": "incomplete",
+            "recovery_executable": True,
+            "recovery_fingerprint": full_fingerprint[:12],
+        },
+        routing={"profile_id": "default"},
+        runtime={},
+        findings=(
+            DiagnosticFinding(
+                code="owned_incomplete",
+                severity="warning",
+                message="Hook state needs repair.",
+            ),
+        ),
+        internal_recovery_fingerprint=full_fingerprint,
+    )
+    calls = []
+    monkeypatch.setattr(
+        sidecar_server,
+        "_build_operations_report_sync",
+        lambda *args, **kwargs: (report, SimpleNamespace(root=Path("/private/hermes"))),
+    )
+    monkeypatch.setattr(
+        sidecar_server,
+        "execute_recovery",
+        lambda *args: calls.append(args) or SimpleNamespace(status="repaired"),
+    )
+    app = create_app(feishu_client)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/commands",
+            json=signed_operations_command({
+                "command": "doctor",
+                "chat_id": "oc_private",
+                "message_id": "om_doctor",
+                "chat_type": "private",
+                "operator": "ou_owner",
+                "adapter_transport_secret": TRANSPORT_SECRET,
+            }),
+        )
+        await _wait_until(lambda: bool(feishu_client.sent))
+        card = feishu_client.sent[0][1]
+        details = await test_client.post(
+            "/card/actions",
+            json=operations_action_payload(
+                operations_button(card, "查看诊断"), chat_id="oc_private"
+            ),
+        )
+        details_body = await details.json()
+        repair = await test_client.post(
+            "/card/actions",
+            json=operations_action_payload(
+                operations_button(details_body["card"], "安全修复"),
+                chat_id="oc_private",
+            ),
+        )
+        confirm = operations_button((await repair.json())["card"], "确认修复")
+        completed = await test_client.post(
+            "/card/actions", json=operations_action_payload(confirm, chat_id="oc_private")
+        )
+        completed_body = await completed.json()
+    finally:
+        await test_client.close()
+
+    assert details_body["ok"] is True
+    assert completed_body["ok"] is True
+    assert calls == [(SimpleNamespace(root=Path("/private/hermes")), full_fingerprint)]
+
+
 def operations_button(card, label):
     for element in card["body"]["elements"]:
         for button in element.get("actions", []):

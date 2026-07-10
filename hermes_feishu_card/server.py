@@ -434,9 +434,7 @@ async def _operations_action(
             callback_chat_id=chat_id,
             callback_profile_id=record.profile_id,
             callback_report_fingerprint=report.fingerprint,
-            callback_recovery_fingerprint=str(
-                report.install_state.get("recovery_fingerprint") or ""
-            ),
+            callback_recovery_fingerprint=report.recovery_fingerprint,
         )
     except OperationRejected as exc:
         if str(exc) in {

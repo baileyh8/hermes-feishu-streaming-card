@@ -38,7 +38,12 @@ def status_sidecar(config: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def start_sidecar(config_path: str | Path, config: dict[str, dict[str, Any]]) -> str:
+def start_sidecar(
+    config_path: str | Path,
+    config: dict[str, dict[str, Any]],
+    *,
+    env_file: str | Path | None = None,
+) -> str:
     if fetch_health(config) is not None:
         return "already running"
 
@@ -46,16 +51,18 @@ def start_sidecar(config_path: str | Path, config: dict[str, dict[str, Any]]) ->
     token = secrets.token_hex(16)
     log_handle = log_path().open("ab")
     try:
+        command = [
+            sys.executable,
+            "-m",
+            "hermes_feishu_card.runner",
+            "--config",
+            str(config_path),
+        ]
+        if env_file is not None:
+            command.extend(("--env-file", str(env_file)))
+        command.extend(("--token", token))
         process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "hermes_feishu_card.runner",
-                "--config",
-                str(config_path),
-                "--token",
-                token,
-            ],
+            command,
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,

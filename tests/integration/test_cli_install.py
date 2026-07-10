@@ -318,6 +318,39 @@ profiles:
     assert "child-secret" not in captured.out
 
 
+def test_setup_starts_sidecar_with_selected_env_file(tmp_path, monkeypatch, capsys):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    env_path = tmp_path / "selected.env"
+    config_path.write_text(
+        "feishu:\n  app_id: setup-app\n  app_secret: setup-secret\n",
+        encoding="utf-8",
+    )
+    started = {}
+    monkeypatch.setattr(cli, "_run_install", lambda args: 0)
+    monkeypatch.setattr(
+        cli,
+        "start_sidecar",
+        lambda path, config, **kwargs: started.update(path=Path(path), kwargs=kwargs) or "started",
+    )
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda config: {"running": True, "pid": 123, "health": {"metrics": {}}},
+    )
+
+    exit_code = cli.main(
+        [
+            "setup", "--hermes-dir", str(hermes_dir), "--config", str(config_path),
+            "--env-file", str(env_path), "--yes",
+        ]
+    )
+
+    assert exit_code == 0, capsys.readouterr().err
+    assert started == {"path": config_path, "kwargs": {"env_file": env_path}}
+    assert f"HERMES_DIR={hermes_dir}" in env_path.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "event_url",
     [

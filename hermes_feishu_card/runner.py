@@ -205,6 +205,7 @@ def _is_local_sidecar_host(host: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-feishu-card-sidecar")
     parser.add_argument("--config", default="config.yaml.example")
+    parser.add_argument("--env-file")
     parser.add_argument("--token", default="")
     args = parser.parse_args(argv)
 
@@ -226,7 +227,8 @@ def main(argv: list[str] | None = None) -> int:
             bot_router=boundary.router,
             operations_config_path=args.config,
             operations_hermes_root=resolve_operations_hermes_root(
-                config_path=args.config
+                config_path=args.config,
+                env_file=args.env_file,
             ),
             operations_transport_root_secret=operations_transport_root_secret,
         ),

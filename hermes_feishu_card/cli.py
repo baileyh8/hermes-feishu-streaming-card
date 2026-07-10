@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 from ipaddress import ip_address
 import json
 import os
@@ -139,6 +140,8 @@ def _build_parser() -> argparse.ArgumentParser:
     for command in ("start", "stop", "status"):
         process_parser = subparsers.add_parser(command)
         process_parser.add_argument("--config", default="config.yaml.example")
+        if command == "start":
+            process_parser.add_argument("--env-file")
 
     smoke = subparsers.add_parser("smoke-feishu-card")
     smoke.add_argument("--config", default="config.yaml.example")
@@ -258,7 +261,15 @@ def _run_setup(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        start_result = start_sidecar(config_path, config)
+        default_env_path = config_path.parent / ".env"
+        if route_settings["env_path"] == default_env_path:
+            start_result = start_sidecar(config_path, config)
+        else:
+            start_result = start_sidecar(
+                config_path,
+                config,
+                env_file=route_settings["env_path"],
+            )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -352,7 +363,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
         if args.json_output:
             print(
                 json.dumps(
-                    _doctor_error_report(config_path, exc),
+                    _doctor_json_output_payload(_doctor_error_report(config_path, exc)),
                     ensure_ascii=False,
                     indent=2,
                     sort_keys=True,
@@ -414,7 +425,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
 
 def _doctor_json_output_payload(payload: dict[str, Any]) -> dict[str, Any]:
     output = _redact_doctor_json_paths(payload)
-    routing = payload.get("routing")
+    routing = output.get("routing")
     if not isinstance(routing, dict):
         return output
     output_routing = dict(routing)
@@ -451,7 +462,21 @@ def _redact_doctor_json_paths(value: Any, key: str = "") -> Any:
         }
     if isinstance(value, list):
         return [_redact_doctor_json_paths(item) for item in value]
+    if isinstance(value, str):
+        return _redact_absolute_paths_in_text(value)
     return value
+
+
+_DOCTOR_JSON_ABSOLUTE_PATH_RE = re.compile(r"(?<![A-Za-z0-9_.:/-])/(?:[^\s\"'<>]+)")
+
+
+def _redact_absolute_paths_in_text(value: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        path = match.group(0)
+        digest = hashlib.sha256(path.encode("utf-8")).hexdigest()[:12]
+        return f"[path:{digest}]"
+
+    return _DOCTOR_JSON_ABSOLUTE_PATH_RE.sub(replace, value)
 
 
 def _doctor_error_report(config_path: Path, exc: Exception) -> dict[str, Any]:

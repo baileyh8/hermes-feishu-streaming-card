@@ -209,6 +209,26 @@ def test_module_doctor_json_reports_skipped_hermes(tmp_path):
     assert isinstance(report["recommendations"], list)
 
 
+def test_module_doctor_json_redacts_paths_inside_error_and_recommendation_text(tmp_path, monkeypatch, capsys):
+    config_path = tmp_path / "private" / "bad.yaml"
+    config_path.parent.mkdir()
+    monkeypatch.setattr(
+        cli_module,
+        "load_config",
+        lambda _path: (_ for _ in ()).throw(ValueError(f"invalid config {config_path}")),
+    )
+
+    exit_code = main(["doctor", "--config", str(config_path), "--skip-hermes", "--json"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert str(config_path) not in captured.out
+    report = json.loads(captured.out)
+    assert report["config"]["path"] == "[redacted]"
+    assert "[path:" in report["config"]["error"]
+    assert "[path:" in report["recommendations"][0]["message"]
+
+
 def test_module_doctor_json_reports_supported_hermes_and_clean_install_state(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("server:\n  port: 9013\n", encoding="utf-8")

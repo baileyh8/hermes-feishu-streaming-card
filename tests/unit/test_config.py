@@ -83,6 +83,21 @@ def test_operations_hermes_root_prefers_explicit_then_config_env_file(monkeypatc
     )
 
 
+def test_operations_hermes_root_prefers_selected_env_file_over_config_and_process(
+    monkeypatch, tmp_path
+):
+    config_path = tmp_path / "config.yaml"
+    selected_env = tmp_path / "selected.env"
+    config_path.write_text("server: {}\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("HERMES_DIR=config-root\n", encoding="utf-8")
+    selected_env.write_text("HERMES_DIR=selected-root\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_DIR", "process-root")
+
+    assert resolve_operations_hermes_root(
+        config_path=config_path, env_file=selected_env
+    ) == Path("selected-root")
+
+
 def test_example_config_uses_current_sidecar_schema():
     config = load_config("config.yaml.example")
     raw = yaml.safe_load(Path("config.yaml.example").read_text(encoding="utf-8"))
