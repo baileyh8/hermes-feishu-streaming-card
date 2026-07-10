@@ -2143,6 +2143,16 @@ def _hfc_prepare_native_model_action(
 def _hfc_on_feishu_card_action_trigger(self: Any, data: Any) -> Any:
     action_value = _hfc_action_value_from_data(data)
     action = str(action_value.get("hfc_action") or "").strip()
+
+    # FIX-1: dedupe duplicate card-action deliveries (Feishu retries on
+    # callback timeout). A repeated delivery after the first resolve finds the
+    # picker/confirm state already popped and would otherwise return an empty
+    # ack -> Feishu shows "callback error". Reply success immediately so a
+    # retried click never triggers a false callback error.
+    if action in ("slash_confirm", "model_picker", "interaction.select"):
+        if _hfc_is_duplicate_card_action(self, data):
+            return _hfc_empty_feishu_callback_response(self)
+
     if action == "slash_confirm":
         return _hfc_handle_native_slash_action(self, data, action_value)
     if action == "model_picker":
@@ -2441,22 +2451,84 @@ async def _hfc_resolve_native_model_action_async(
     )
 
 
+def _hfc_switch_model_background_task(adapter: Any, data: Any, action_value: dict[str, Any], message_id: str) -> None:
+    """Run the real model switch off the callback path.
+
+    The synchronous card-action callback must return within Feishu's callback
+    timeout (a few seconds). The actual switch_model call can be much slower
+    (provider slow / network jitter), so we resolve the click instantly with a
+    "switching" card and perform the switch in the background.
+
+    After the switch finishes, we send a NEW interactive card message with the
+    result — we cannot *update* the original model_picker message because it was
+    not created with ``msg_type=interactive`` (Feishu returns code=230001
+    ``invalid msg_type`` when you try).
+    """
+    async def _run() -> None:
+        resolved = await _hfc_resolve_native_model_action_async(adapter, data, action_value)
+        if resolved is None:
+            _hfc_info("background model_picker ignored: unresolved")
+            return
+        card, _ = resolved
+        chat_id = _hfc_action_chat_id(data)
+        if not chat_id:
+            _hfc_warn("background model switch: cannot determine chat_id for result card")
+            return
+        if not hasattr(adapter, "_feishu_send_with_retry"):
+            _hfc_warn("background model switch: adapter has no _feishu_send_with_retry")
+            return
+        try:
+            await adapter._feishu_send_with_retry(
+                chat_id=chat_id,
+                msg_type="interactive",
+                payload=json.dumps(card, ensure_ascii=False),
+                reply_to=message_id or None,
+            )
+            _hfc_info("background model switch: result card sent")
+        except Exception as exc:
+            _hfc_warn(f"background model switch: result card send failed: {exc.__class__.__name__}: {exc}")
+
+    loop = getattr(adapter, "_loop", None)
+    submit = getattr(adapter, "_submit_on_loop", None)
+    if loop is not None and callable(submit):
+        try:
+            submitted = submit(loop, _run())
+            if not submitted:
+                _hfc_warn("background model switch schedule failed")
+            return
+        except Exception as exc:
+            _hfc_warn(f"background model switch schedule failed: {exc.__class__.__name__}: {exc}")
+
+
 def _hfc_handle_native_model_action(
     adapter: Any,
     data: Any,
     action_value: dict[str, Any],
 ) -> Any:
     _hfc_info("inline card action received: model_picker")
-    resolved = _hfc_resolve_native_model_action(adapter, data, action_value)
-    if resolved is None:
+    prepared = _hfc_prepare_native_model_action(adapter, data, action_value)
+    if prepared is None:
         _hfc_info("inline model_picker ignored: unresolved")
         return _hfc_empty_feishu_callback_response(adapter)
-    card, message_id = resolved
-    _hfc_info(f"inline model_picker resolved: message_id={message_id!r}")
-    return _hfc_raw_feishu_callback_response(
-        adapter,
-        card,
+
+    message_id = str(prepared["item"].get("message_id") or "")
+    # Parse the model choice properly — prepared["choice"] is a raw JSON string
+    # like '{"provider":"zai","model":"glm-5.2"}', not a "provider/model" path.
+    parsed = _parse_model_picker_choice(prepared["choice"])
+    if parsed is not None:
+        provider_slug, model_id = parsed
+    else:
+        provider_slug, model_id = "?", prepared["choice"]
+
+    # FIX-3: acknowledge the click immediately with a "switching" card and run
+    # the real (potentially slow) switch off the callback path.
+    switching_card = _hfc_command_result_card(
+        title="模型切换中",
+        content=f"正在切换到 `{provider_slug}/{model_id}` …",
+        template="blue",
     )
+    _hfc_switch_model_background_task(adapter, data, action_value, message_id)
+    return _hfc_raw_feishu_callback_response(adapter, switching_card)
 
 
 async def _hfc_update_native_command_card(adapter: Any, message_id: str, card: dict[str, Any]) -> bool:
