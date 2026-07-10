@@ -846,6 +846,32 @@ def test_begin_recheck_preserves_capacity_and_refuses_late_predecessor_diagnose(
     assert successor.report is previous.report
 
 
+def test_begin_recheck_rejects_legacy_predecessor_without_report_snapshot():
+    store = OperationStore(secret=b"store", now=lambda: 100.0, max_records=2)
+    previous = store.create(
+        group=False,
+        transport_secret=b"adapter-process-local-proof",
+        **operation_kwargs(),
+    )
+    inflight = store.create(group=False, **operation_kwargs())
+    inflight.state = "executing"
+    records_before = dict(store._records)
+    transport_before = dict(store._transport_secrets)
+
+    with pytest.raises(
+        OperationRejected, match="operation report snapshot unavailable"
+    ):
+        store.begin_recheck(
+            store.token(previous, "recheck"),
+            **_recheck_callback(store, previous),
+        )
+
+    assert store._records == records_before
+    assert store._transport_secrets == transport_before
+    assert len(store._records) == store._max_records
+    assert previous.successor_operation_id == ""
+
+
 def report(*, executable: bool = True) -> DiagnosticReport:
     return DiagnosticReport(
         status="warning",

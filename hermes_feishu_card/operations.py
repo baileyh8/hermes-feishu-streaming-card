@@ -305,6 +305,8 @@ class OperationStore:
                 if successor is not None:
                     return successor, False
             _next_operation_state(record.state, "recheck")
+            if record.report is None:
+                raise OperationRejected("operation report snapshot unavailable")
             transport_secret = self._transport_secrets.get(record.operation_id)
             if transport_secret is None:
                 raise OperationRejected("operation transport binding expired")
