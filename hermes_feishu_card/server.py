@@ -121,9 +121,20 @@ class _AfterEofJsonResponse(web.Response):
         self._after_eof = after_eof
 
     async def write_eof(self, data: bytes = b"") -> None:
-        await super().write_eof(data)
         after_eof = self._after_eof
         self._after_eof = None
+        try:
+            await super().write_eof(data)
+        except BaseException:
+            if callable(after_eof):
+                try:
+                    after_eof()
+                except Exception:
+                    logger.warning(
+                        "HFC after-EOF callback failed while response closed",
+                        exc_info=True,
+                    )
+            raise
         if callable(after_eof):
             after_eof()
 

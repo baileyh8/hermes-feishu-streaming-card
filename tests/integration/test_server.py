@@ -73,6 +73,46 @@ def signed_operations_command(payload):
     return signed
 
 
+async def test_after_eof_runs_once_after_connection_reset_and_preserves_eof_error(
+    monkeypatch,
+):
+    callbacks = []
+
+    async def failed_write_eof(self, data=b""):
+        raise ConnectionResetError("client disconnected")
+
+    def failed_after_eof():
+        callbacks.append(True)
+        raise RuntimeError("schedule failed")
+
+    monkeypatch.setattr(sidecar_server.web.Response, "write_eof", failed_write_eof)
+    response = sidecar_server._AfterEofJsonResponse({}, failed_after_eof)
+
+    with pytest.raises(ConnectionResetError, match="client disconnected"):
+        await response.write_eof()
+    with pytest.raises(ConnectionResetError, match="client disconnected"):
+        await response.write_eof()
+
+    assert callbacks == [True]
+
+
+async def test_after_eof_runs_once_on_successful_repeated_write_eof(monkeypatch):
+    callbacks = []
+    writes = []
+
+    async def successful_write_eof(self, data=b""):
+        writes.append(data)
+
+    monkeypatch.setattr(sidecar_server.web.Response, "write_eof", successful_write_eof)
+    response = sidecar_server._AfterEofJsonResponse({}, lambda: callbacks.append(True))
+
+    await response.write_eof()
+    await response.write_eof(b"again")
+
+    assert callbacks == [True]
+    assert writes == [b"", b"again"]
+
+
 class FakeFeishuClient:
     def __init__(self):
         self.sent = []
