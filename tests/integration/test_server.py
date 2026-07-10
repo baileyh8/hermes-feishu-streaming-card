@@ -6,19 +6,26 @@ from aiohttp.test_utils import TestClient, TestServer
 from hermes_feishu_card.bots import RouteResult
 from hermes_feishu_card import flush as flush_module
 from hermes_feishu_card import server as sidecar_server
+from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.flush import FlushController
 from hermes_feishu_card.lifecycle import (
     cleanup_closed_controller,
+    cleanup_orphan_message_lock,
     cleanup_runtime_state,
 )
 from hermes_feishu_card.session import CardSession, InteractionState
 from hermes_feishu_card.server import (
+    CARD_SUMMARIES_KEY,
+    CARD_SUMMARY_SESSION_KEYS_KEY,
     CLEANUP_TASK_KEY,
     DIAGNOSTICS_KEY,
     FEISHU_MESSAGE_IDS_KEY,
     FLUSH_CONTROLLERS_KEY,
+    INTERACTION_RESULTS_KEY,
+    INTERACTION_RESULT_SESSION_KEYS_KEY,
     MESSAGE_BOT_IDS_KEY,
     MESSAGE_LOCKS_KEY,
+    MESSAGE_LOCK_USERS_KEY,
     METRICS_KEY,
     RUNTIME_CLEANUP_INTERVAL_SECONDS,
     SESSION_ALIASES_KEY,
@@ -213,6 +220,13 @@ def test_cleanup_runtime_state_removes_related_state_and_counts_once():
     session = CardSession("oc_1", "om_terminal", "oc_1")
     session.status = "completed"
     session.updated_at = 100.0
+    session.answer_text = "final answer"
+    session.active_interaction = InteractionState(
+        interaction_id="approval-old",
+        kind="approval",
+        prompt="Old approval",
+        status="completed",
+    )
     controller = FlushController(interval_seconds=0.2, metrics=app[METRICS_KEY])
     controller.close()
     app[SESSIONS_KEY][session_key] = session
@@ -223,6 +237,26 @@ def test_cleanup_runtime_state_removes_related_state_and_counts_once():
     app[MESSAGE_BOT_IDS_KEY][session_key] = "profile:default"
     app[SESSION_CARD_CONFIGS_KEY][session_key] = {"title": "Card"}
     app[FLUSH_CONTROLLERS_KEY][session_key] = controller
+    sidecar_server._store_interaction_result(app, session)
+    session.active_interaction = InteractionState(
+        interaction_id="approval-latest",
+        kind="approval",
+        prompt="Latest approval",
+        status="completed",
+    )
+    sidecar_server._store_interaction_result(app, session)
+    sidecar_server._store_card_summary(
+        app,
+        SidecarEvent.from_dict(event_payload("message.completed", 1)),
+        session,
+        "om_card_previous_turn",
+    )
+    sidecar_server._store_card_summary(
+        app,
+        SidecarEvent.from_dict(event_payload("message.completed", 1)),
+        session,
+        "om_card",
+    )
 
     result = cleanup_runtime_state(app, now=3700.0)
 
@@ -240,6 +274,10 @@ def test_cleanup_runtime_state_removes_related_state_and_counts_once():
     ):
         assert session_key not in state
         assert alias_key not in state
+    assert app[CARD_SUMMARIES_KEY] == {}
+    assert app[CARD_SUMMARY_SESSION_KEYS_KEY] == {}
+    assert app[INTERACTION_RESULTS_KEY] == {}
+    assert app[INTERACTION_RESULT_SESSION_KEYS_KEY] == {}
     assert app[METRICS_KEY].sessions_collected == 1
     assert app[METRICS_KEY].zombie_sessions_collected == 0
     assert app[METRICS_KEY].flush_controllers_collected == 1
@@ -273,6 +311,21 @@ async def test_cleanup_runtime_state_keeps_active_interactions_and_inflight_alia
     )
     app[SESSION_ALIASES_KEY][inflight_alias] = inflight_key
     app[MESSAGE_LOCKS_KEY][inflight_alias] = alias_lock
+    sidecar_server._store_interaction_result(app, interaction)
+    inflight.answer_text = "in flight"
+    app[FEISHU_MESSAGE_IDS_KEY][inflight_key] = "om_inflight_card"
+    sidecar_server._store_card_summary(
+        app,
+        SidecarEvent.from_dict(
+            event_payload(
+                "message.failed",
+                1,
+                message_id=inflight_key,
+            )
+        ),
+        inflight,
+        "om_inflight_card",
+    )
 
     try:
         result = cleanup_runtime_state(app, now=5000.0)
@@ -281,6 +334,10 @@ async def test_cleanup_runtime_state_keeps_active_interactions_and_inflight_alia
 
     assert result.session_keys == ()
     assert set(app[SESSIONS_KEY]) == {interaction_key, inflight_key}
+    assert app[INTERACTION_RESULTS_KEY]["approval-1"]["status"] == "pending"
+    assert app[CARD_SUMMARIES_KEY]["om_inflight_card"]["summary"] == "in flight"
+    assert app[INTERACTION_RESULT_SESSION_KEYS_KEY]["approval-1"] == interaction_key
+    assert app[CARD_SUMMARY_SESSION_KEYS_KEY]["om_inflight_card"] == inflight_key
     assert app[METRICS_KEY].sessions_collected == 0
 
 
@@ -317,6 +374,23 @@ def test_closed_controller_cleanup_requires_same_instance():
     assert app[METRICS_KEY].flush_controllers_collected == 0
 
 
+def test_orphan_message_lock_cleanup_requires_same_instance_and_no_users():
+    app = create_app(FakeFeishuClient())
+    lock_key = "om_failed"
+    old = asyncio.Lock()
+    replacement = asyncio.Lock()
+    app[MESSAGE_LOCKS_KEY][lock_key] = replacement
+
+    assert not cleanup_orphan_message_lock(app, lock_key, old)
+    app[MESSAGE_LOCK_USERS_KEY][lock_key] = 1
+    assert not cleanup_orphan_message_lock(app, lock_key, replacement)
+    assert app[MESSAGE_LOCKS_KEY][lock_key] is replacement
+
+    app[MESSAGE_LOCK_USERS_KEY].pop(lock_key)
+    assert cleanup_orphan_message_lock(app, lock_key, replacement)
+    assert lock_key not in app[MESSAGE_LOCKS_KEY]
+
+
 async def test_terminal_update_removes_its_closed_controller(client):
     test_client, feishu_client = client
 
@@ -333,6 +407,47 @@ async def test_terminal_update_removes_its_closed_controller(client):
 
     assert "hermes-message-1" not in test_client.app[FLUSH_CONTROLLERS_KEY]
     assert test_client.app[METRICS_KEY].flush_controllers_collected == 1
+
+
+async def test_terminal_task_exception_still_removes_closed_controller_once(caplog):
+    app = create_app(FakeFeishuClient())
+    session_key = "om_terminal_error"
+    controller = FlushController(interval_seconds=0.2, metrics=app[METRICS_KEY])
+    controller.close()
+    app[FLUSH_CONTROLLERS_KEY][session_key] = controller
+
+    async def fail_update():
+        raise RuntimeError("terminal update failed")
+
+    task = asyncio.create_task(fail_update())
+    with pytest.raises(RuntimeError, match="terminal update failed"):
+        await task
+
+    sidecar_server._post_terminal_cleanup(app, session_key, controller, task)
+    sidecar_server._post_terminal_cleanup(app, session_key, controller, task)
+
+    assert session_key not in app[FLUSH_CONTROLLERS_KEY]
+    assert app[METRICS_KEY].flush_controllers_collected == 1
+    assert "terminal card update task failed" in caplog.text
+
+
+async def test_terminal_task_cancel_preserves_replacement_controller():
+    app = create_app(FakeFeishuClient())
+    session_key = "om_terminal_reused"
+    old = FlushController(interval_seconds=0.2, metrics=app[METRICS_KEY])
+    replacement = FlushController(interval_seconds=0.2, metrics=app[METRICS_KEY])
+    old.close()
+    app[FLUSH_CONTROLLERS_KEY][session_key] = replacement
+
+    task = asyncio.create_task(asyncio.sleep(60))
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    sidecar_server._post_terminal_cleanup(app, session_key, old, task)
+
+    assert app[FLUSH_CONTROLLERS_KEY][session_key] is replacement
+    assert app[METRICS_KEY].flush_controllers_collected == 0
 
 
 async def test_runtime_cleanup_starts_one_sixty_second_task_and_cancels_it(monkeypatch):
@@ -2029,6 +2144,40 @@ async def test_send_failure_returns_json_error_and_allows_started_retry(client):
     assert retried.status == 200
     assert await retried.json() == {"ok": True, "applied": True}
     assert len(feishu_client.sent) == 1
+
+
+@pytest.mark.parametrize("failure_kind", ["send", "route"])
+async def test_repeated_distinct_failed_messages_do_not_retain_locks(failure_kind):
+    if failure_kind == "send":
+        boundary = FakeFeishuClient()
+        boundary.fail_send = True
+        app = create_app(boundary)
+    else:
+        boundary = FakeFeishuClientFactory()
+
+        def fail_route(event):
+            raise RuntimeError("route unavailable")
+
+        app = create_app(boundary, bot_router=fail_route)
+
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        for index in range(12):
+            response = await test_client.post(
+                "/events",
+                json=event_payload(
+                    "message.started",
+                    0,
+                    message_id=f"om_failed_{index}",
+                ),
+            )
+            assert response.status == 502
+
+        assert app[SESSIONS_KEY] == {}
+        assert app[MESSAGE_LOCKS_KEY] == {}
+    finally:
+        await test_client.close()
 
 
 async def test_started_routes_card_to_bound_bot_client():

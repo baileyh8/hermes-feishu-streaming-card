@@ -62,6 +62,7 @@ def cleanup_runtime_state(app: Any, now: float) -> CleanupResult:
     sessions = app[server.SESSIONS_KEY]
     aliases = app[server.SESSION_ALIASES_KEY]
     message_locks = app[server.MESSAGE_LOCKS_KEY]
+    lock_users = app[server.MESSAGE_LOCK_USERS_KEY]
     controllers = app[server.FLUSH_CONTROLLERS_KEY]
     collected_keys: list[str] = []
     reasons: list[str] = []
@@ -77,7 +78,8 @@ def cleanup_runtime_state(app: Any, now: float) -> CleanupResult:
         controller = controllers.get(session_key)
         controller_closed, controller_active = _controller_state(controller)
         has_inflight_send = controller_active or any(
-            _lock_is_locked(message_locks.get(key)) for key in related_keys
+            _lock_is_locked(message_locks.get(key)) or lock_users.get(key, 0) > 0
+            for key in related_keys
         )
         reason = session_cleanup_reason(
             session,
@@ -96,6 +98,17 @@ def cleanup_runtime_state(app: Any, now: float) -> CleanupResult:
         aliases.pop(session_key, None)
         for key in related_keys:
             message_locks.pop(key, None)
+            lock_users.pop(key, None)
+        summary_owners = app[server.CARD_SUMMARY_SESSION_KEYS_KEY]
+        for feishu_message_id, owner_key in tuple(summary_owners.items()):
+            if owner_key == session_key:
+                app[server.CARD_SUMMARIES_KEY].pop(feishu_message_id, None)
+                summary_owners.pop(feishu_message_id, None)
+        interaction_owners = app[server.INTERACTION_RESULT_SESSION_KEYS_KEY]
+        for interaction_id, owner_key in tuple(interaction_owners.items()):
+            if owner_key == session_key:
+                app[server.INTERACTION_RESULTS_KEY].pop(interaction_id, None)
+                interaction_owners.pop(interaction_id, None)
         app[server.FEISHU_MESSAGE_IDS_KEY].pop(session_key, None)
         app[server.MESSAGE_BOT_IDS_KEY].pop(session_key, None)
         app[server.SESSION_CARD_CONFIGS_KEY].pop(session_key, None)
@@ -118,11 +131,38 @@ def cleanup_runtime_state(app: Any, now: float) -> CleanupResult:
         if cleanup_closed_controller(app, session_key, controller, now=now):
             controllers_collected += 1
 
+    for lock_key, lock in tuple(message_locks.items()):
+        cleanup_orphan_message_lock(app, lock_key, lock)
+
     return CleanupResult(
         session_keys=tuple(collected_keys),
         reasons=tuple(reasons),
         controllers_collected=controllers_collected,
     )
+
+
+def cleanup_orphan_message_lock(app: Any, lock_key: str, lock: Any) -> bool:
+    from . import server
+
+    message_locks = app[server.MESSAGE_LOCKS_KEY]
+    if message_locks.get(lock_key) is not lock:
+        return False
+    if _lock_is_locked(lock) or app[server.MESSAGE_LOCK_USERS_KEY].get(lock_key, 0) > 0:
+        return False
+
+    canonical_key = app[server.SESSION_ALIASES_KEY].get(lock_key, lock_key)
+    sessions = app[server.SESSIONS_KEY]
+    if lock_key in sessions or canonical_key in sessions:
+        return False
+    for controller_key in {lock_key, canonical_key}:
+        controller = app[server.FLUSH_CONTROLLERS_KEY].get(controller_key)
+        if controller is not None and _controller_state(controller)[1]:
+            return False
+
+    if message_locks.get(lock_key) is not lock:
+        return False
+    message_locks.pop(lock_key, None)
+    return True
 
 
 def cleanup_closed_controller(

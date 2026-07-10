@@ -15,7 +15,11 @@ from aiohttp import web
 from .bots import RouteResult
 from .events import EventValidationError, SidecarEvent
 from .flush import FlushController
-from .lifecycle import cleanup_closed_controller, cleanup_runtime_state
+from .lifecycle import (
+    cleanup_closed_controller,
+    cleanup_orphan_message_lock,
+    cleanup_runtime_state,
+)
 from .metrics import SidecarMetrics
 from .render import render_card
 from .session import CardSession
@@ -25,7 +29,11 @@ SESSIONS_KEY = web.AppKey("sessions", dict)
 FEISHU_MESSAGE_IDS_KEY = web.AppKey("feishu_message_ids", dict)
 SESSION_ALIASES_KEY = web.AppKey("session_aliases", dict)
 CARD_SUMMARIES_KEY = web.AppKey("card_summaries", dict)
+CARD_SUMMARY_SESSION_KEYS_KEY = web.AppKey("card_summary_session_keys", dict)
 INTERACTION_RESULTS_KEY = web.AppKey("interaction_results", dict)
+INTERACTION_RESULT_SESSION_KEYS_KEY = web.AppKey(
+    "interaction_result_session_keys", dict
+)
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
@@ -34,6 +42,7 @@ PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
 PROCESS_TOKEN_KEY = web.AppKey("process_token", str)
 METRICS_KEY = web.AppKey("metrics", SidecarMetrics)
 MESSAGE_LOCKS_KEY = web.AppKey("message_locks", dict)
+MESSAGE_LOCK_USERS_KEY = web.AppKey("message_lock_users", dict)
 FOOTER_FIELDS_KEY = web.AppKey("footer_fields", Any)
 CARD_TITLE_KEY = web.AppKey("card_title", str)
 BASE_CARD_CONFIG_KEY = web.AppKey("base_card_config", dict)
@@ -71,13 +80,16 @@ def create_app(
     app[SESSION_ALIASES_KEY] = {}
     # TODO: replace this short-lived in-process index with bounded shared storage.
     app[CARD_SUMMARIES_KEY] = {}
+    app[CARD_SUMMARY_SESSION_KEYS_KEY] = {}
     app[INTERACTION_RESULTS_KEY] = {}
+    app[INTERACTION_RESULT_SESSION_KEYS_KEY] = {}
     app[MESSAGE_BOT_IDS_KEY] = {}
     app[SESSION_CARD_CONFIGS_KEY] = {}
     app[BOT_ROUTER_KEY] = bot_router
     app[PROCESS_TOKEN_KEY] = process_token
     app[METRICS_KEY] = SidecarMetrics()
     app[MESSAGE_LOCKS_KEY] = {}
+    app[MESSAGE_LOCK_USERS_KEY] = {}
     app[FLUSH_CONTROLLERS_KEY] = {}
     app[DIAGNOSTICS_KEY] = {
         "last_update_error": "",
@@ -353,9 +365,20 @@ async def _events(request: web.Request) -> web.Response:
 
     metrics.events_received += 1
     message_locks: Dict[str, asyncio.Lock] = request.app[MESSAGE_LOCKS_KEY]
-    lock = message_locks.setdefault(_session_key(event), asyncio.Lock())
-    async with lock:
-        response, post_lock_task = await _apply_event_locked(request, event)
+    lock_users: Dict[str, int] = request.app[MESSAGE_LOCK_USERS_KEY]
+    lock_key = _session_key(event)
+    lock = message_locks.setdefault(lock_key, asyncio.Lock())
+    lock_users[lock_key] = lock_users.get(lock_key, 0) + 1
+    try:
+        async with lock:
+            response, post_lock_task = await _apply_event_locked(request, event)
+    finally:
+        remaining_users = lock_users.get(lock_key, 1) - 1
+        if remaining_users > 0:
+            lock_users[lock_key] = remaining_users
+        else:
+            lock_users.pop(lock_key, None)
+            cleanup_orphan_message_lock(request.app, lock_key, lock)
     if post_lock_task is not None and _should_await_card_update(event):
         await post_lock_task
     if event.event in TERMINAL_EVENTS and post_lock_task is None:
@@ -900,18 +923,18 @@ def _post_terminal_cleanup(
     controller: FlushController,
     task: asyncio.Task[None],
 ) -> None:
-    if task.cancelled():
-        return
     try:
+        if task.cancelled():
+            return
         error = task.exception()
+        if error is not None:
+            logger.warning("terminal card update task failed", exc_info=error)
     except asyncio.CancelledError:
         return
-    if error is not None:
-        logger.warning("terminal card update task failed", exc_info=error)
-        return
-    now = time.time()
-    cleanup_closed_controller(app, session_key, controller, now=now)
-    cleanup_runtime_state(app, now)
+    finally:
+        now = time.time()
+        cleanup_closed_controller(app, session_key, controller, now=now)
+        cleanup_runtime_state(app, now)
 
 
 def _store_interaction_result(app: web.Application, session: CardSession) -> None:
@@ -924,6 +947,9 @@ def _store_interaction_result(app: web.Application, session: CardSession) -> Non
         "choice": interaction.choice,
         "choice_label": interaction.choice_label,
     }
+    app[INTERACTION_RESULT_SESSION_KEYS_KEY][interaction.interaction_id] = (
+        _session_key_for_session(app, session)
+    )
 
 
 def _extract_action_value(payload: dict[str, Any]) -> dict[str, Any]:
@@ -996,6 +1022,9 @@ def _store_card_summary(
         "message_id_hash": _diagnostic_id_hash(feishu_message_id),
         "source_message_id_hash": _diagnostic_id_hash(event.message_id),
     }
+    app[CARD_SUMMARY_SESSION_KEYS_KEY][feishu_message_id] = (
+        _session_key_for_session(app, session)
+    )
 
 
 def _record_profile_diagnostics(app: web.Application, event: SidecarEvent) -> None:
