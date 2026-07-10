@@ -1217,6 +1217,58 @@ async def test_cron_completed_event_sends_completed_card_without_started(client)
     assert metrics["cron_cards_sent"] == 1
 
 
+async def test_cron_completed_event_with_thread_id_sends_card_to_thread(client):
+    """Cron event with thread_id should pass thread_id to send_card."""
+    test_client, feishu_client = client
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            0,
+            {"answer": "Cron in thread", "delivery_kind": "cron"},
+            message_id="cron_thread_1",
+            chat_id="oc_topic_group",
+            thread_id="omt_target_thread",
+            conversation_id="omt_target_thread",
+        ),
+    )
+
+    assert response.status == 200
+    assert await response.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    # FakeFeishuClient.send_card stores (chat_id, card, thread_id, reply_to_message_id)
+    chat_id, card, thread_id, reply_to = feishu_client.sent[0]
+    assert chat_id == "oc_topic_group"
+    assert thread_id == "omt_target_thread"
+    assert "Cron in thread" in str(card)
+
+
+async def test_cron_completed_event_without_thread_id_sends_card_to_chat(client):
+    """Cron event without thread_id should send card to chat_id directly."""
+    test_client, feishu_client = client
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            0,
+            {"answer": "Cron no thread", "delivery_kind": "cron"},
+            message_id="cron_no_thread_1",
+            chat_id="oc_dm_chat",
+            thread_id="",
+            conversation_id="cron_no_thread_1",
+        ),
+    )
+
+    assert response.status == 200
+    assert await response.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    chat_id, card, thread_id, reply_to = feishu_client.sent[0]
+    assert chat_id == "oc_dm_chat"
+    assert thread_id is None  # _thread_id_for_event returns None for non-omt_ ids
+
+
 async def test_duplicate_started_does_not_send_again(client):
     test_client, feishu_client = client
 

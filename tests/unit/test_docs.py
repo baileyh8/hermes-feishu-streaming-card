@@ -27,6 +27,7 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "PR #76" in readme
     assert "PR #87" in readme
     assert "PR #88" in readme
+    assert "PR #91" in readme
     assert "PR #77" in readme
     assert "colinaaa" in readme
     assert "zayn-0101" in readme
@@ -461,6 +462,7 @@ def test_english_readme_and_docs_are_linked():
     assert "PR #76" in english_readme
     assert "PR #87" in english_readme
     assert "PR #88" in english_readme
+    assert "PR #91" in english_readme
     assert "PR #77" in english_readme
     assert "colinaaa" in english_readme
     assert "zayn-0101" in english_readme

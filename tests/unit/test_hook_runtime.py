@@ -2692,6 +2692,276 @@ def test_build_cron_event_mixed_intent_and_platform():
     assert payload["chat_id"] == "oc_explicit"
 
 
+# --- build_cron_event thread_id tests (issue #90) ---
+
+
+def test_build_cron_event_carries_thread_id_from_origin():
+    """thread_id from job origin should propagate to the cron event payload."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-thread",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_topic_group",
+                    "thread_id": "omt_abc123",
+                },
+            },
+            "content": "cron output in thread",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == "omt_abc123"
+    assert payload["chat_id"] == "oc_topic_group"
+    # conversation_id should use thread_id when available
+    assert payload["conversation_id"] == "omt_abc123"
+
+
+def test_build_cron_event_carries_thread_id_from_resolved_targets():
+    """thread_id from resolved delivery targets should propagate."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-resolved-thread",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                },
+                "_hfc_resolved_targets": [
+                    {
+                        "platform": "feishu",
+                        "chat_id": "oc_group",
+                        "thread_id": "omt_from_target",
+                    }
+                ],
+            },
+            "content": "resolved target thread",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == "omt_from_target"
+    assert payload["chat_id"] == "oc_group"
+    assert payload["conversation_id"] == "omt_from_target"
+
+
+def test_build_cron_event_resolved_target_thread_takes_priority_over_origin():
+    """Resolved target thread_id should take priority over origin thread_id."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-priority",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                    "thread_id": "omt_origin_thread",
+                },
+                "_hfc_resolved_targets": [
+                    {
+                        "platform": "feishu",
+                        "chat_id": "oc_group",
+                        "thread_id": "omt_resolved_thread",
+                    }
+                ],
+            },
+            "content": "priority test",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == "omt_resolved_thread"
+
+
+def test_build_cron_event_no_thread_id_without_origin_thread():
+    """When origin has no thread_id, event should have empty thread_id."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-no-thread",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_dm_group",
+                },
+            },
+            "content": "no thread",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == ""
+    assert payload["chat_id"] == "oc_dm_group"
+    # conversation_id falls back to job id when no thread_id
+    assert payload["conversation_id"] == "job-no-thread"
+
+
+def test_build_cron_event_thread_id_from_env_var(monkeypatch):
+    """HERMES_CRON_AUTO_DELIVER_THREAD_ID env var should be used as fallback."""
+    monkeypatch.setenv("HERMES_CRON_AUTO_DELIVER_THREAD_ID", "omt_env_thread")
+
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-env-thread",
+                "deliver": "feishu:oc_group",
+                "origin": {},
+            },
+            "content": "env thread test",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == "omt_env_thread"
+    assert payload["conversation_id"] == "omt_env_thread"
+
+
+def test_build_cron_event_origin_thread_takes_priority_over_env(monkeypatch):
+    """Origin thread_id should take priority over env var."""
+    monkeypatch.setenv("HERMES_CRON_AUTO_DELIVER_THREAD_ID", "omt_env")
+
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-origin-vs-env",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                    "thread_id": "omt_origin",
+                },
+            },
+            "content": "origin beats env",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == "omt_origin"
+
+
+def test_build_cron_event_non_feishu_thread_in_resolved_targets():
+    """Non-feishu platform targets should not contribute thread_id to feishu event."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-non-feishu-thread",
+                "deliver": "feishu:oc_group",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                },
+                "_hfc_resolved_targets": [
+                    {
+                        "platform": "telegram",
+                        "chat_id": "-1001234",
+                        "thread_id": "12345",
+                    },
+                    {
+                        "platform": "feishu",
+                        "chat_id": "oc_group",
+                    },
+                ],
+            },
+            "content": "multi-platform",
+        }
+    )
+
+    assert payload is not None
+    # Telegram thread_id should NOT leak into feishu event
+    assert payload["thread_id"] == ""
+
+
+def test_build_cron_event_non_feishu_origin_thread_does_not_leak():
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-telegram-origin-thread",
+                "deliver": "feishu:oc_group",
+                "origin": {
+                    "platform": "telegram",
+                    "chat_id": "-1001234",
+                    "thread_id": "12345",
+                },
+            },
+            "content": "deliver to feishu",
+        }
+    )
+
+    assert payload is not None
+    assert payload["chat_id"] == "oc_group"
+    assert payload["thread_id"] == ""
+    assert payload["conversation_id"] == "job-telegram-origin-thread"
+
+
+def test_build_cron_event_om_prefix_thread_id():
+    """thread_id with om_ prefix (older format) should also work."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-om-thread",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                    "thread_id": "om_older_format_123",
+                },
+            },
+            "content": "om prefix test",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == "om_older_format_123"
+    assert payload["conversation_id"] == "om_older_format_123"
+
+
+def test_build_cron_event_empty_thread_id_in_origin():
+    """Empty string thread_id in origin should result in empty thread_id."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-empty-thread",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                    "thread_id": "",
+                },
+            },
+            "content": "empty thread",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == ""
+    assert payload["conversation_id"] == "job-empty-thread"
+
+
+def test_build_cron_event_none_thread_id_in_origin():
+    """None thread_id in origin should result in empty thread_id."""
+    payload = hook_runtime.build_cron_event(
+        {
+            "job": {
+                "id": "job-none-thread",
+                "deliver": "origin",
+                "origin": {
+                    "platform": "feishu",
+                    "chat_id": "oc_group",
+                    "thread_id": None,
+                },
+            },
+            "content": "none thread",
+        }
+    )
+
+    assert payload is not None
+    assert payload["thread_id"] == ""
+    assert payload["conversation_id"] == "job-none-thread"
+
+
 def test_is_routing_intent():
     assert hook_runtime._is_routing_intent("origin") is True
     assert hook_runtime._is_routing_intent("all") is True

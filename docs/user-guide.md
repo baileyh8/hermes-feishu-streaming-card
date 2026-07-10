@@ -744,6 +744,7 @@ python3 -m pytest -q
 - [fengs2021](https://github.com/fengs2021) — [PR #17](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/17) 锁架构优化与更新间隔改进（V3.3.0）
 - [colinaaa](https://github.com/colinaaa) — [PR #87](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/87) WebSocket `interaction.select` clarify/approval 卡片交互支持（V3.8.14）
 - [colinaaa](https://github.com/colinaaa) — [PR #88](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/88) 话题群 `message_id` 复用下第二轮消息新卡片修复（V3.8.16）
+- [colinaaa](https://github.com/colinaaa) — [PR #91](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/91) cron 结果回到飞书话题群原线程的 `thread_id` 路由修复（待发布）
 - [zayn-0101](https://github.com/zayn-0101) — [PR #77](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/77) cron `deliver=origin/all` 路由意图卡片投递修复（V3.8.17）
 
 ## 安全说明
