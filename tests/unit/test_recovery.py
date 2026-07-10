@@ -150,8 +150,24 @@ def test_classify_evidence_treats_any_marker_validation_error_as_corrupt(
     assert classification.executable is True
 
 
-def test_plan_recovery_allows_verified_stale_unpatched_state(installed_state):
-    detection, original, _patched, _manifest_path = installed_state
+def test_plan_recovery_preserves_verified_stale_unpatched_state_without_cron(
+    installed_state,
+):
+    detection, original, _patched, manifest_path = installed_state
+    assert detection.cron_py is not None
+    detection.cron_py.unlink()
+    detection.cron_py.with_name("scheduler.py.hermes_feishu_card.bak").unlink()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for key in (
+        "cron_py",
+        "cron_patched_sha256",
+        "cron_backup",
+        "cron_backup_sha256",
+    ):
+        manifest.pop(key)
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+    )
     detection.run_py.write_text(original, encoding="utf-8")
 
     plan = plan_recovery(detection)
@@ -159,6 +175,66 @@ def test_plan_recovery_allows_verified_stale_unpatched_state(installed_state):
     assert plan.state == "stale_unpatched"
     assert plan.executable is True
     assert plan.actions == ("clear_stale_install_state",)
+
+
+def test_plan_recovery_restores_installed_cron_before_clearing_gateway_stale_state(
+    installed_state,
+):
+    detection, original, _patched, _manifest_path = installed_state
+    detection.run_py.write_text(original, encoding="utf-8")
+
+    plan = plan_recovery(detection)
+
+    assert plan.state == "stale_unpatched"
+    assert plan.executable is True
+    assert plan.actions == (
+        "restore_verified_cron_backup",
+        "clear_stale_install_state",
+    )
+
+
+def test_plan_recovery_restores_corrupt_cron_before_clearing_gateway_stale_state(
+    installed_state,
+):
+    detection, original, _patched, manifest_path = installed_state
+    detection.run_py.write_text(original, encoding="utf-8")
+    assert detection.cron_py is not None
+    cron_patched = detection.cron_py.read_text(encoding="utf-8")
+    corrupt = cron_patched.replace(f"{CRON_PATCH_END}\n", "")
+    detection.cron_py.write_text(corrupt, encoding="utf-8")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["cron_patched_sha256"] = sha256(corrupt.encode("utf-8")).hexdigest()
+    manifest_path.write_text(
+        json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    plan = plan_recovery(detection)
+
+    assert plan.state == "corrupt_owned"
+    assert plan.executable is True
+    assert plan.actions == (
+        "restore_verified_cron_backup",
+        "clear_stale_install_state",
+    )
+
+
+def test_plan_recovery_refuses_gateway_stale_state_with_cron_hash_mismatch(
+    installed_state,
+):
+    detection, original, _patched, _manifest_path = installed_state
+    detection.run_py.write_text(original, encoding="utf-8")
+    assert detection.cron_py is not None
+    detection.cron_py.write_text(
+        detection.cron_py.read_text(encoding="utf-8") + "USER_EDIT = True\n",
+        encoding="utf-8",
+    )
+
+    plan = plan_recovery(detection)
+
+    assert plan.state == "owned_incomplete"
+    assert plan.executable is False
+    assert plan.actions == ()
+    assert any(item.code == "cron_current_hash_mismatch" for item in plan.findings)
 
 
 def test_plan_recovery_allows_rebuilding_a_missing_backup(installed_state):

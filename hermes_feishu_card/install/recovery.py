@@ -606,17 +606,35 @@ def _merge_classifications(
     else:
         state = "clean"
 
-    actions = tuple(dict.fromkeys(gateway.actions + cron.actions))
+    actions, actions_safe = _merge_actions(gateway, cron)
     findings = gateway.findings + cron.findings
     healthy = {"clean", "installed"}
     executable = bool(
         state not in healthy
+        and actions_safe
         and gateway.state != "refused"
         and cron.state != "refused"
         and (gateway.state in healthy or gateway.executable)
         and (cron.state in healthy or cron.executable)
     )
     return _classification(state, executable, actions, findings, parts)
+
+
+def _merge_actions(
+    gateway: RecoveryClassification,
+    cron: RecoveryClassification,
+) -> Tuple[Tuple[str, ...], bool]:
+    clear_action = "clear_stale_install_state"
+    if clear_action not in gateway.actions:
+        return tuple(dict.fromkeys(gateway.actions + cron.actions)), True
+
+    if cron.state in {"clean", "stale_unpatched"}:
+        return (clear_action,), True
+    if cron.state == "installed" or (
+        cron.state == "corrupt_owned" and cron.executable
+    ):
+        return ("restore_verified_cron_backup", clear_action), True
+    return (), False
 
 
 def _check_manifest(
