@@ -1,1 +1,1 @@
-"""Utility scripts for installer and management"""\n
+"""Utility scripts for installer and management"""

@@ -462,13 +462,14 @@ def _render_footer(
     except (TypeError, ValueError):
         duration = 0.0
     model = session.model if isinstance(session.model, str) and session.model.strip() else "Unknown"
+    model_label = _colored_model_label(model)
     context = session.context if isinstance(session.context, dict) else {}
     used_context = _safe_int(context.get("used_tokens"))
     max_context = _safe_int(context.get("max_tokens"))
     context_percent = round(used_context / max_context * 100) if max_context > 0 else 0
     values = {
         "duration": _format_duration(duration),
-        "model": model,
+        "model": model_label,
         "input_tokens": f"↑{_format_count(input_tokens)}",
         "output_tokens": f"↓{_format_count(output_tokens)}",
         "context": (
@@ -483,6 +484,32 @@ def _render_footer(
         if value:
             selected.append(value)
     return " · ".join(selected) if selected else values["duration"]
+
+
+MODEL_COLOR_MAP: list[tuple[str, str]] = [
+    ("glm-", "green"),
+    ("deepseek-", "indigo"),
+    ("deepseek/", "indigo"),
+    ("kimi/", "purple"),
+    ("kimi-", "purple"),
+    ("claude-", "orange"),
+    ("gpt-", "blue"),
+    ("o1", "blue"),
+    ("o3", "blue"),
+    ("moonshot-", "purple"),
+    ("hy3", "teal"),
+    ("tencent/", "teal"),
+    ("hunyuan", "teal"),
+]
+
+
+def _colored_model_label(model: str) -> str:
+    """Wrap model name in Feishu <font color=...> tag based on prefix match."""
+    model_lower = model.lower()
+    for prefix, color in MODEL_COLOR_MAP:
+        if model_lower.startswith(prefix):
+            return f'<font color="{color}">{model}</font>'
+    return model
 
 
 def _safe_int(value: Any) -> int:
