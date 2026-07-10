@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from dataclasses import FrozenInstanceError, replace
 from hashlib import sha256
@@ -8,6 +9,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,6 +98,15 @@ def _corrupt_gateway_completion(installed_state):
     return detection, corrupt, manifest_path
 
 
+def _wait_for_path(path, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {path}")
+
+
 def test_execute_recovery_replans_and_refuses_stale_fingerprint(installed_state):
     detection, _corrupt, _manifest_path = _corrupt_gateway_completion(
         installed_state
@@ -167,10 +179,19 @@ def test_execute_recovery_subprocesses_are_exactly_once(installed_state):
         installed_state
     )
     expected = plan_recovery(detection).fingerprint
+    ready_paths = [detection.root / f"ready-{index}" for index in range(2)]
+    start_path = detection.root / "start"
     script = """
 from hermes_feishu_card.install.detect import detect_hermes
 from hermes_feishu_card.install.recovery import RecoveryRefused, execute_recovery
+from pathlib import Path
 import sys
+import time
+ready = Path(sys.argv[3])
+start = Path(sys.argv[4])
+ready.write_text("ready", encoding="utf-8")
+while not start.exists():
+    time.sleep(0.01)
 try:
     print(execute_recovery(detect_hermes(sys.argv[1]), sys.argv[2]).status)
 except RecoveryRefused as exc:
@@ -178,13 +199,24 @@ except RecoveryRefused as exc:
 """
     processes = [
         subprocess.Popen(
-            [sys.executable, "-c", script, str(detection.root), expected],
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(detection.root),
+                expected,
+                str(ready_path),
+                str(start_path),
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        for _ in range(2)
+        for ready_path in ready_paths
     ]
+    for ready_path in ready_paths:
+        _wait_for_path(ready_path)
+    start_path.write_text("start", encoding="utf-8")
     outcomes = []
     for process in processes:
         stdout, stderr = process.communicate(timeout=10)
@@ -193,6 +225,155 @@ except RecoveryRefused as exc:
 
     assert sorted(outcomes) == ["recovery evidence changed; rerun diagnosis", "repaired"]
     assert len(list(detection.run_py.parent.glob("run.py.hfc-corrupt-*"))) == 1
+
+
+def test_root_lock_has_deterministic_cross_process_contention_timeout(tmp_path):
+    root = tmp_path / "hermes"
+    root.mkdir()
+    held_path = tmp_path / "held"
+    release_path = tmp_path / "release"
+    holder_script = """
+from hermes_feishu_card.install.recovery import _root_lock
+from pathlib import Path
+import sys
+import time
+root, held, release = map(Path, sys.argv[1:])
+with _root_lock(root):
+    held.write_text("held", encoding="utf-8")
+    while not release.exists():
+        time.sleep(0.01)
+"""
+    contender_script = """
+from hermes_feishu_card.install import recovery
+from pathlib import Path
+import sys
+import time
+recovery._LOCK_TIMEOUT_SECONDS = float(sys.argv[2])
+started = time.monotonic()
+try:
+    with recovery._root_lock(Path(sys.argv[1])):
+        print("unexpectedly acquired")
+except recovery.RecoveryRefused as exc:
+    print(f"{exc}|{time.monotonic() - started:.3f}")
+"""
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            holder_script,
+            str(root),
+            str(held_path),
+            str(release_path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_path(held_path)
+        contender = subprocess.run(
+            [sys.executable, "-c", contender_script, str(root), "0.2"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        assert contender.returncode == 0, contender.stderr
+        message, elapsed_text = contender.stdout.strip().split("|")
+        assert message == "timed out waiting for recovery lock"
+        assert 0.15 <= float(elapsed_text) < 1.0
+    finally:
+        release_path.write_text("release", encoding="utf-8")
+        stdout, stderr = holder.communicate(timeout=3)
+        assert holder.returncode == 0, stdout + stderr
+
+
+def test_root_lock_uses_one_deadline_for_local_and_os_waits(tmp_path, monkeypatch):
+    root = tmp_path / "hermes"
+    root.mkdir()
+    clock = [100.0]
+
+    class DelayedProcessLock:
+        def __init__(self):
+            self.timeouts = []
+            self.released = False
+
+        def acquire(self, timeout):
+            self.timeouts.append(timeout)
+            clock[0] += 0.75
+            return True
+
+        def release(self):
+            self.released = True
+
+    process_lock = DelayedProcessLock()
+    root_key = str(root.resolve())
+    monkeypatch.setitem(recovery._PROCESS_LOCKS, root_key, process_lock)
+    monkeypatch.setattr(recovery, "_LOCK_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(recovery.time, "monotonic", lambda: clock[0])
+    os_deadlines = []
+
+    def exhaust_os_budget(_handle, deadline):
+        os_deadlines.append(deadline)
+        clock[0] = deadline
+        raise RecoveryRefused("timed out waiting for recovery lock")
+
+    monkeypatch.setattr(recovery, "_acquire_os_lock", exhaust_os_budget)
+
+    with pytest.raises(RecoveryRefused, match="timed out waiting"):
+        with recovery._root_lock(root):
+            pass
+
+    assert process_lock.timeouts == [1.0]
+    assert process_lock.released is True
+    assert os_deadlines == [101.0]
+    assert clock[0] == 101.0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX errno semantics")
+def test_root_lock_propagates_permanent_posix_lock_error(tmp_path, monkeypatch):
+    root = tmp_path / "hermes"
+    root.mkdir()
+    calls = []
+
+    import fcntl
+
+    def fail_permanently(_descriptor, operation):
+        calls.append(operation)
+        raise OSError(errno.EBADF, "bad lock descriptor")
+
+    monkeypatch.setattr(recovery, "_LOCK_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(fcntl, "flock", fail_permanently)
+
+    with pytest.raises(OSError) as exc_info:
+        with recovery._root_lock(root):
+            pass
+
+    assert exc_info.value.errno == errno.EBADF
+    assert len(calls) == 1
+
+
+def test_acquire_os_lock_retries_windows_contention(monkeypatch, tmp_path):
+    calls = []
+    sleeps = []
+
+    def locking(_descriptor, mode, length):
+        calls.append((mode, length))
+        if len(calls) == 1:
+            raise OSError(errno.EACCES, "lock busy")
+
+    fake_msvcrt = SimpleNamespace(LK_NBLCK=7, locking=locking)
+    monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+    monkeypatch.setattr(recovery.os, "name", "nt")
+    monkeypatch.setattr(recovery.time, "sleep", sleeps.append)
+    lock_path = tmp_path / "lock"
+
+    with lock_path.open("w+b") as handle:
+        recovery._acquire_os_lock(handle, time.monotonic() + 1.0)
+
+    assert calls == [(7, 1), (7, 1)]
+    assert sleeps == [0.05]
+    assert lock_path.read_bytes() == b"\0"
 
 
 def test_execute_recovery_rolls_back_when_atomic_replace_fails(
@@ -331,6 +512,58 @@ def test_execute_recovery_clears_verified_stale_state_in_plan_order(
     assert not gateway_backup.exists()
     assert not cron_backup.exists()
     assert not manifest_path.exists()
+
+
+def test_execute_recovery_commits_cron_restore_before_deleting_evidence_and_rolls_back(
+    installed_state, monkeypatch
+):
+    detection, original, _patched, manifest_path = installed_state
+    assert detection.cron_py is not None
+    gateway_backup = detection.run_py.with_name(
+        "run.py.hermes_feishu_card.bak"
+    )
+    cron_backup = detection.cron_py.with_name(
+        "scheduler.py.hermes_feishu_card.bak"
+    )
+    before = {
+        detection.run_py: original,
+        detection.cron_py: detection.cron_py.read_text(encoding="utf-8"),
+        gateway_backup: gateway_backup.read_text(encoding="utf-8"),
+        cron_backup: cron_backup.read_text(encoding="utf-8"),
+        manifest_path: manifest_path.read_text(encoding="utf-8"),
+    }
+    detection.run_py.write_text(original, encoding="utf-8")
+    operations = []
+    tracked_deletions = {gateway_backup, cron_backup, manifest_path}
+    real_atomic_replace = recovery._atomic_replace
+    real_unlink = Path.unlink
+
+    def record_replace(staged, target):
+        if target == detection.cron_py:
+            operations.append(("replace", target.name))
+        return real_atomic_replace(staged, target)
+
+    def record_unlink(path, *args, **kwargs):
+        if path in tracked_deletions:
+            operations.append(("unlink", path.name))
+            if path == manifest_path:
+                raise OSError("injected evidence deletion failure")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(recovery, "_atomic_replace", record_replace)
+    monkeypatch.setattr(Path, "unlink", record_unlink)
+
+    with pytest.raises(OSError, match="injected evidence deletion failure"):
+        execute_recovery(detection)
+
+    assert operations == [
+        ("replace", "scheduler.py"),
+        ("unlink", "run.py.hermes_feishu_card.bak"),
+        ("unlink", "scheduler.py.hermes_feishu_card.bak"),
+        ("unlink", ".hermes_feishu_card_manifest"),
+    ]
+    for path, contents in before.items():
+        assert path.read_text(encoding="utf-8") == contents
 
 
 def test_execute_recovery_refuses_already_repaired_state(installed_state):
