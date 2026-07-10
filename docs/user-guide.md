@@ -384,6 +384,20 @@ irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main
 python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --config ~/.hermes/config.yaml --yes
 ```
 
+本地脚本、Docker 脚本和 PowerShell 安装器支持同一组显式参数：`--config`、`--env-file`、`--version`、`--profile-id`、`--event-url`、`--no-repair`；PowerShell 使用对应的 `-Config`、`-EnvFile`、`-Version`、`-ProfileId`、`-EventUrl`、`-NoRepair`。旧的一行安装命令无需修改。参数解析优先级固定为：显式参数 > 进程环境变量 > 选中的 `.env` > 脚本默认值。
+
+```bash
+bash install.sh \
+  --config ~/.hermes/config.yaml \
+  --env-file ~/.hermes/.env \
+  --version latest \
+  --profile-id child \
+  --event-url http://127.0.0.1:8765/events \
+  --no-repair
+```
+
+`setup` 只会原子更新 selected `.env` 中的 `HERMES_FEISHU_CARD_PROFILE_ID` 和 `HERMES_FEISHU_CARD_EVENT_URL`，其他注释、顺序和未知 key 保持不变。event URL 必须是无凭据、query 和 fragment 的 HTTP(S) `/events` endpoint；host 可使用 loopback、`host.docker.internal` 或单标签 Docker Compose service 名称。
+
 安装完成后可以检查 sidecar 状态：
 
 ```bash
@@ -427,7 +441,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
 export HFC_VERSION=v3.8.18
-bash install-docker.sh
+bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
 `docker-compose.example.yml` 只是适配示例，不是官方镜像。它展示 `/opt/hermes`、`/opt/data` 挂载和非交互安装方式。
@@ -448,6 +462,16 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 ```
 
 `setup` 是整合安装器：自动生成配置、检查 Hermes 版本和代码 anchor、把插件安装到 Hermes Gateway 实际运行的 venv Python、安装 hook、启动 sidecar 并做健康检查。它支持 `v2026.4.23` 起的旧版 Hermes，也支持 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x 与 `v2026.5.16+` / `v2026.6.19+` / `v2026.7.1+` 新版 anchor；Hermes `VERSION` 可带或不带 `v` 前缀，也可从 `Hermes Agent v0.18.2 (...)` 这类描述型版本中提取数字版本。V3.8.6 起，Docker/source-stripped 环境缺少 `VERSION` 和 `.git` 时也可用 `gateway/run.py` anchor 兜底识别；当前版本在 `VERSION` 可读但不可解析时，也会在 anchors 可验证后继续安装。
+
+多 profile 安装后可只读检查 route chain；输出只包含 identity source、profile、event endpoint、config profile、bot 和 fallback reason，不包含 App Secret、token 或 URL credentials：
+
+```bash
+python3 -m hermes_feishu_card.cli doctor \
+  --config ~/.hermes/config.yaml \
+  --hermes-dir ~/.hermes/hermes-agent \
+  --profile-id child \
+  --explain
+```
 
 如果你使用 Hermes 默认目录，也可以把凭据放在 `~/.hermes/.env`：
 

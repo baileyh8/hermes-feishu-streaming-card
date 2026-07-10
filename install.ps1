@@ -1,12 +1,23 @@
+param(
+  [string]$Config = $env:HFC_CONFIG,
+  [string]$EnvFile = $env:HFC_ENV_FILE,
+  [string]$Version = $env:HFC_VERSION,
+  [string]$ProfileId = $env:HERMES_FEISHU_CARD_PROFILE_ID,
+  [string]$EventUrl = $env:HERMES_FEISHU_CARD_EVENT_URL,
+  [switch]$NoRepair
+)
+
 $ErrorActionPreference = "Stop"
 
 $Repo = if ($env:HFC_REPO) { $env:HFC_REPO } else { "baileyh8/hermes-feishu-streaming-card" }
-$Version = if ($env:HFC_VERSION) { $env:HFC_VERSION } else { "latest" }
 $HermesDir = if ($env:HERMES_DIR) { $env:HERMES_DIR } else { Join-Path $HOME ".hermes/hermes-agent" }
-$ConfigPath = if ($env:HFC_CONFIG) { $env:HFC_CONFIG } else { Join-Path $HOME ".hermes/config.yaml" }
-$EnvFile = if ($env:HFC_ENV_FILE) { $env:HFC_ENV_FILE } else { Join-Path (Split-Path -Parent $ConfigPath) ".env" }
 $PythonBin = if ($env:PYTHON) { $env:PYTHON } else { "python" }
 $PipUserFlag = if ($env:HFC_PIP_USER) { $env:HFC_PIP_USER } else { "--user" }
+
+if (!$EnvFile) {
+    $initialConfig = if ($Config) { $Config } else { Join-Path $HOME ".hermes/config.yaml" }
+    $EnvFile = Join-Path (Split-Path -Parent $initialConfig) ".env"
+}
 
 function Write-HfcLog {
     param([string]$Message)
@@ -34,11 +45,25 @@ function Resolve-HfcVersion {
     return "main"
 }
 
-function Load-HfcEnvFile {
+function Read-HfcEnvFile {
+    $values = @{}
     if (!(Test-Path $EnvFile)) {
-        return
+        return $values
     }
     Write-HfcLog "loading credentials from $EnvFile"
+    $allowed = @(
+        "FEISHU_APP_ID",
+        "FEISHU_APP_SECRET",
+        "FEISHU_CONNECTION_MODE",
+        "FEISHU_HOME_CHANNEL",
+        "HERMES_FEISHU_CARD_HOST",
+        "HERMES_FEISHU_CARD_PORT",
+        "HERMES_FEISHU_CARD_PROFILE_ID",
+        "HERMES_FEISHU_CARD_EVENT_URL",
+        "HFC_CONFIG",
+        "HFC_VERSION",
+        "HFC_NO_REPAIR"
+    )
     Get-Content $EnvFile | ForEach-Object {
         $line = $_.Trim()
         if (!$line -or $line.StartsWith("#") -or !$line.Contains("=")) {
@@ -47,10 +72,11 @@ function Load-HfcEnvFile {
         $parts = $line.Split("=", 2)
         $key = $parts[0].Trim()
         $value = $parts[1].Trim().Trim('"').Trim("'")
-        if ($key) {
-            [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        if ($key -in $allowed) {
+            $values[$key] = $value
         }
     }
+    return $values
 }
 
 function Set-HfcEnvValue {
@@ -140,16 +166,69 @@ function Invoke-HfcSetup {
         "-m", "hermes_feishu_card.cli", "setup",
         "--hermes-dir", $HermesDir,
         "--config", $ConfigPath,
+        "--env-file", $EnvFile,
+        "--profile-id", $ProfileId,
+        "--event-url", $EventUrl,
         "--yes"
     )
     if ($env:HFC_SKIP_START -eq "1") {
         $args += "--skip-start"
     }
+    if ($NoRepairValue -eq "1") {
+        $args += "--no-repair"
+    }
     Write-HfcLog "running setup"
     & $PythonBin @args
 }
 
-Load-HfcEnvFile
+$envValues = Read-HfcEnvFile
+if (!$Config -and $envValues.ContainsKey("HFC_CONFIG")) {
+    $Config = $envValues["HFC_CONFIG"]
+}
+if (!$Version -and $envValues.ContainsKey("HFC_VERSION")) {
+    $Version = $envValues["HFC_VERSION"]
+}
+if (!$ProfileId -and $envValues.ContainsKey("HERMES_FEISHU_CARD_PROFILE_ID")) {
+    $ProfileId = $envValues["HERMES_FEISHU_CARD_PROFILE_ID"]
+}
+if (!$EventUrl -and $envValues.ContainsKey("HERMES_FEISHU_CARD_EVENT_URL")) {
+    $EventUrl = $envValues["HERMES_FEISHU_CARD_EVENT_URL"]
+}
+$NoRepairValue = if ($NoRepair.IsPresent) {
+    "1"
+} elseif ($env:HFC_NO_REPAIR) {
+    $env:HFC_NO_REPAIR
+} elseif ($envValues.ContainsKey("HFC_NO_REPAIR")) {
+    $envValues["HFC_NO_REPAIR"]
+} else {
+    "0"
+}
+
+$Config = if ($Config) { $Config } else { Join-Path $HOME ".hermes/config.yaml" }
+$ConfigPath = $Config
+$Version = if ($Version) { $Version } else { "latest" }
+$ProfileId = if ($ProfileId) { $ProfileId } else { "default" }
+$EventUrl = if ($EventUrl) { $EventUrl } else { "http://127.0.0.1:8765/events" }
+
+foreach ($key in @(
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
+    "FEISHU_CONNECTION_MODE",
+    "FEISHU_HOME_CHANNEL",
+    "HERMES_FEISHU_CARD_HOST",
+    "HERMES_FEISHU_CARD_PORT"
+)) {
+    if (!(Get-Item "Env:$key" -ErrorAction SilentlyContinue) -and $envValues.ContainsKey($key)) {
+        [Environment]::SetEnvironmentVariable($key, $envValues[$key], "Process")
+    }
+}
+[Environment]::SetEnvironmentVariable("HFC_CONFIG", $ConfigPath, "Process")
+[Environment]::SetEnvironmentVariable("HFC_ENV_FILE", $EnvFile, "Process")
+[Environment]::SetEnvironmentVariable("HFC_VERSION", $Version, "Process")
+[Environment]::SetEnvironmentVariable("HERMES_FEISHU_CARD_PROFILE_ID", $ProfileId, "Process")
+[Environment]::SetEnvironmentVariable("HERMES_FEISHU_CARD_EVENT_URL", $EventUrl, "Process")
+[Environment]::SetEnvironmentVariable("HFC_NO_REPAIR", $NoRepairValue, "Process")
+
 Ensure-HfcCredentials
 Install-HfcPackage
 Invoke-HfcSetup

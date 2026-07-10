@@ -2,10 +2,13 @@
 set -euo pipefail
 
 REPO="${HFC_REPO:-baileyh8/hermes-feishu-streaming-card}"
-VERSION="${HFC_VERSION:-latest}"
+VERSION="${HFC_VERSION:-}"
 HERMES_DIR="${HERMES_DIR:-$HOME/.hermes/hermes-agent}"
-CONFIG_PATH="${HFC_CONFIG:-$HOME/.hermes/config.yaml}"
-ENV_FILE="${HFC_ENV_FILE:-$(dirname "$CONFIG_PATH")/.env}"
+CONFIG_PATH="${HFC_CONFIG:-}"
+ENV_FILE="${HFC_ENV_FILE:-}"
+PROFILE_ID="${HERMES_FEISHU_CARD_PROFILE_ID:-}"
+EVENT_URL="${HERMES_FEISHU_CARD_EVENT_URL:-}"
+NO_REPAIR="${HFC_NO_REPAIR:-}"
 PYTHON_BIN="${PYTHON:-python3}"
 PIP_USER_FLAG="${HFC_PIP_USER:---user}"
 
@@ -20,6 +23,29 @@ fail() {
 
 have() {
   command -v "$1" >/dev/null 2>&1
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --config|--env-file|--version|--profile-id|--event-url)
+        [ "$#" -ge 2 ] || fail "$1 requires a value"
+        case "$1" in
+          --config) CONFIG_PATH="$2" ;;
+          --env-file) ENV_FILE="$2" ;;
+          --version) VERSION="$2" ;;
+          --profile-id) PROFILE_ID="$2" ;;
+          --event-url) EVENT_URL="$2" ;;
+        esac
+        shift 2
+        ;;
+      --no-repair)
+        NO_REPAIR="1"
+        shift
+        ;;
+      *) fail "unknown argument: $1" ;;
+    esac
+  done
 }
 
 expand_path() {
@@ -61,7 +87,7 @@ load_env_file() {
       export\ *) line="${line#export }" ;;
     esac
     case "$line" in
-      FEISHU_APP_ID=*|FEISHU_APP_SECRET=*|FEISHU_CONNECTION_MODE=*|FEISHU_HOME_CHANNEL=*|HERMES_FEISHU_CARD_HOST=*|HERMES_FEISHU_CARD_PORT=*)
+      FEISHU_APP_ID=*|FEISHU_APP_SECRET=*|FEISHU_CONNECTION_MODE=*|FEISHU_HOME_CHANNEL=*|HERMES_FEISHU_CARD_HOST=*|HERMES_FEISHU_CARD_PORT=*|HERMES_FEISHU_CARD_PROFILE_ID=*|HERMES_FEISHU_CARD_EVENT_URL=*|HFC_CONFIG=*|HFC_VERSION=*|HFC_NO_REPAIR=*)
         local key="${line%%=*}"
         local value="${line#*=}"
         value="${value#"${value%%[![:space:]]*}"}"
@@ -70,7 +96,18 @@ load_env_file() {
           \"*\") value="${value#\"}"; value="${value%\"}" ;;
           \'*\') value="${value#\'}"; value="${value%\'}" ;;
         esac
-        export "$key=$value"
+        case "$key" in
+          HFC_CONFIG) [ -n "$CONFIG_PATH" ] || CONFIG_PATH="$value" ;;
+          HFC_VERSION) [ -n "$VERSION" ] || VERSION="$value" ;;
+          HFC_NO_REPAIR) [ -n "$NO_REPAIR" ] || NO_REPAIR="$value" ;;
+          HERMES_FEISHU_CARD_PROFILE_ID) [ -n "$PROFILE_ID" ] || PROFILE_ID="$value" ;;
+          HERMES_FEISHU_CARD_EVENT_URL) [ -n "$EVENT_URL" ] || EVENT_URL="$value" ;;
+          *)
+            if [ -z "${!key:-}" ]; then
+              export "$key=$value"
+            fi
+            ;;
+        esac
         ;;
     esac
   done < "$ENV_FILE"
@@ -173,21 +210,44 @@ run_setup() {
     -m hermes_feishu_card.cli setup
     --hermes-dir "$HERMES_DIR"
     --config "$CONFIG_PATH"
+    --env-file "$ENV_FILE"
+    --profile-id "$PROFILE_ID"
+    --event-url "$EVENT_URL"
     --yes
   )
   if [ "${HFC_SKIP_START:-0}" = "1" ]; then
     setup_args+=(--skip-start)
+  fi
+  if [ "$NO_REPAIR" = "1" ]; then
+    setup_args+=(--no-repair)
   fi
   log "running setup"
   "$PYTHON_BIN" "${setup_args[@]}"
 }
 
 main() {
+  parse_args "$@"
+  if [ -z "$ENV_FILE" ]; then
+    local initial_config="${CONFIG_PATH:-$HOME/.hermes/config.yaml}"
+    ENV_FILE="$(dirname "$initial_config")/.env"
+  fi
+  ENV_FILE="$(expand_path "$ENV_FILE")"
+  load_env_file
+
+  VERSION="${VERSION:-latest}"
+  CONFIG_PATH="${CONFIG_PATH:-$HOME/.hermes/config.yaml}"
+  PROFILE_ID="${PROFILE_ID:-default}"
+  EVENT_URL="${EVENT_URL:-http://127.0.0.1:8765/events}"
+  NO_REPAIR="${NO_REPAIR:-0}"
   HERMES_DIR="$(expand_path "$HERMES_DIR")"
   CONFIG_PATH="$(expand_path "$CONFIG_PATH")"
-  ENV_FILE="$(expand_path "$ENV_FILE")"
 
-  load_env_file
+  export HFC_CONFIG="$CONFIG_PATH"
+  export HFC_ENV_FILE="$ENV_FILE"
+  export HFC_VERSION="$VERSION"
+  export HERMES_FEISHU_CARD_PROFILE_ID="$PROFILE_ID"
+  export HERMES_FEISHU_CARD_EVENT_URL="$EVENT_URL"
+  export HFC_NO_REPAIR="$NO_REPAIR"
   prompt_credentials
   install_package
   run_setup

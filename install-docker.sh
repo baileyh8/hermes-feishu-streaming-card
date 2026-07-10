@@ -2,10 +2,13 @@
 set -euo pipefail
 
 REPO="${HFC_REPO:-baileyh8/hermes-feishu-streaming-card}"
-VERSION="${HFC_VERSION:-latest}"
+VERSION="${HFC_VERSION:-}"
 HERMES_DIR="${HERMES_DIR:-/opt/hermes}"
-CONFIG_PATH="${HFC_CONFIG:-/opt/data/config.yaml}"
-ENV_FILE="${HFC_ENV_FILE:-/opt/data/.env}"
+CONFIG_PATH="${HFC_CONFIG:-}"
+ENV_FILE="${HFC_ENV_FILE:-}"
+PROFILE_ID="${HERMES_FEISHU_CARD_PROFILE_ID:-}"
+EVENT_URL="${HERMES_FEISHU_CARD_EVENT_URL:-}"
+NO_REPAIR="${HFC_NO_REPAIR:-}"
 NO_PROMPT="${HFC_NO_PROMPT:-1}"
 SKIP_START="${HFC_SKIP_START:-0}"
 
@@ -16,6 +19,29 @@ log() {
 fail() {
   printf '[hermes-feishu-card:docker] error: %s\n' "$*" >&2
   exit 1
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --config|--env-file|--version|--profile-id|--event-url)
+        [ "$#" -ge 2 ] || fail "$1 requires a value"
+        case "$1" in
+          --config) CONFIG_PATH="$2" ;;
+          --env-file) ENV_FILE="$2" ;;
+          --version) VERSION="$2" ;;
+          --profile-id) PROFILE_ID="$2" ;;
+          --event-url) EVENT_URL="$2" ;;
+        esac
+        shift 2
+        ;;
+      --no-repair)
+        NO_REPAIR="1"
+        shift
+        ;;
+      *) fail "unknown argument: $1" ;;
+    esac
+  done
 }
 
 expand_path() {
@@ -43,7 +69,7 @@ load_env_file() {
       export\ *) entry="${entry#export }" ;;
     esac
     case "$entry" in
-      FEISHU_APP_ID=*|FEISHU_APP_SECRET=*|FEISHU_CONNECTION_MODE=*|FEISHU_HOME_CHANNEL=*|HERMES_FEISHU_CARD_HOST=*|HERMES_FEISHU_CARD_PORT=*)
+      FEISHU_APP_ID=*|FEISHU_APP_SECRET=*|FEISHU_CONNECTION_MODE=*|FEISHU_HOME_CHANNEL=*|HERMES_FEISHU_CARD_HOST=*|HERMES_FEISHU_CARD_PORT=*|HERMES_FEISHU_CARD_PROFILE_ID=*|HERMES_FEISHU_CARD_EVENT_URL=*|HFC_CONFIG=*|HFC_VERSION=*|HFC_NO_REPAIR=*)
         key="${entry%%=*}"
         value="${entry#*=}"
         value="${value#"${value%%[![:space:]]*}"}"
@@ -52,7 +78,18 @@ load_env_file() {
           \"*\") value="${value#\"}"; value="${value%\"}" ;;
           \'*\') value="${value#\'}"; value="${value%\'}" ;;
         esac
-        export "$key=$value"
+        case "$key" in
+          HFC_CONFIG) [ -n "$CONFIG_PATH" ] || CONFIG_PATH="$value" ;;
+          HFC_VERSION) [ -n "$VERSION" ] || VERSION="$value" ;;
+          HFC_NO_REPAIR) [ -n "$NO_REPAIR" ] || NO_REPAIR="$value" ;;
+          HERMES_FEISHU_CARD_PROFILE_ID) [ -n "$PROFILE_ID" ] || PROFILE_ID="$value" ;;
+          HERMES_FEISHU_CARD_EVENT_URL) [ -n "$EVENT_URL" ] || EVENT_URL="$value" ;;
+          *)
+            if [ -z "${!key:-}" ]; then
+              export "$key=$value"
+            fi
+            ;;
+        esac
         ;;
     esac
   done < "$ENV_FILE"
@@ -148,6 +185,7 @@ run_doctor() {
   "$python_bin" -m hermes_feishu_card.cli doctor \
     --config "$CONFIG_PATH" \
     --hermes-dir "$HERMES_DIR" \
+    --profile-id "$PROFILE_ID" \
     --explain
 }
 
@@ -157,22 +195,43 @@ run_setup() {
     -m hermes_feishu_card.cli setup
     --hermes-dir "$HERMES_DIR"
     --config "$CONFIG_PATH"
+    --env-file "$ENV_FILE"
+    --profile-id "$PROFILE_ID"
+    --event-url "$EVENT_URL"
     --yes
   )
   if [ "$SKIP_START" = "1" ]; then
     setup_args+=(--skip-start)
+  fi
+  if [ "$NO_REPAIR" = "1" ]; then
+    setup_args+=(--no-repair)
   fi
   log "running setup"
   "$python_bin" "${setup_args[@]}"
 }
 
 main() {
+  parse_args "$@"
+  ENV_FILE="${ENV_FILE:-/opt/data/.env}"
+  ENV_FILE="$(expand_path "$ENV_FILE")"
+  load_env_file
+
+  VERSION="${VERSION:-latest}"
+  CONFIG_PATH="${CONFIG_PATH:-/opt/data/config.yaml}"
+  PROFILE_ID="${PROFILE_ID:-default}"
+  EVENT_URL="${EVENT_URL:-http://127.0.0.1:8765/events}"
+  NO_REPAIR="${NO_REPAIR:-0}"
   HERMES_DIR="$(expand_path "$HERMES_DIR")"
   CONFIG_PATH="$(expand_path "$CONFIG_PATH")"
-  ENV_FILE="$(expand_path "$ENV_FILE")"
+
+  export HFC_CONFIG="$CONFIG_PATH"
+  export HFC_ENV_FILE="$ENV_FILE"
+  export HFC_VERSION="$VERSION"
+  export HERMES_FEISHU_CARD_PROFILE_ID="$PROFILE_ID"
+  export HERMES_FEISHU_CARD_EVENT_URL="$EVENT_URL"
+  export HFC_NO_REPAIR="$NO_REPAIR"
 
   validate_paths
-  load_env_file
   require_credentials
   local python_bin
   python_bin="$(detect_python)"

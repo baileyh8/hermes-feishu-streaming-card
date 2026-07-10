@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from ipaddress import ip_address
 import json
 import os
 import re
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 from pathlib import Path
 from typing import Any
@@ -15,7 +17,7 @@ from typing import Any
 import yaml
 
 from hermes_feishu_card.config import load_config
-from hermes_feishu_card.bots import BotRegistry
+from hermes_feishu_card.bots import BotRegistry, RoutingContext
 from hermes_feishu_card.diagnostics import (
     DiagnosticReport,
     build_diagnostic_report,
@@ -24,6 +26,7 @@ from hermes_feishu_card.diagnostics import (
 from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient, FeishuClientConfig
 from hermes_feishu_card.install.detect import HermesDetection, detect_hermes
+from hermes_feishu_card.install.envfile import read_hfc_env, update_hfc_env
 from hermes_feishu_card.install.manifest import file_sha256
 from hermes_feishu_card.install.recovery import (
     RecoveryRefused,
@@ -45,6 +48,9 @@ from hermes_feishu_card.session import CardSession
 
 BACKUP_SUFFIX = ".hermes_feishu_card.bak"
 MANIFEST_NAME = ".hermes_feishu_card_manifest"
+DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
+PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+COMPOSE_HOST_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,62}$")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,6 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--config", required=True)
     doctor.add_argument("--hermes-dir")
     doctor.add_argument("--skip-hermes", action="store_true")
+    doctor.add_argument("--profile-id")
     doctor_output = doctor.add_mutually_exclusive_group()
     doctor_output.add_argument("--json", action="store_true", dest="json_output")
     doctor_output.add_argument("--explain", action="store_true")
@@ -102,6 +109,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(Path.home() / ".hermes_feishu_card" / "config.yaml"),
         help="sidecar config path to create or reuse",
     )
+    setup.add_argument("--env-file")
+    setup.add_argument("--profile-id")
+    setup.add_argument("--event-url")
     setup.add_argument(
         "--skip-start",
         action="store_true",
@@ -170,6 +180,14 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run_setup(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser()
     try:
+        route_settings = _resolve_route_settings(args, config_path)
+        update_hfc_env(
+            route_settings["env_path"],
+            {
+                "HERMES_FEISHU_CARD_PROFILE_ID": route_settings["profile_id"],
+                "HERMES_FEISHU_CARD_EVENT_URL": route_settings["event_url"],
+            },
+        )
         created = _ensure_setup_config(config_path)
         config = load_config(config_path)
     except Exception as exc:
@@ -177,10 +195,29 @@ def _run_setup(args: argparse.Namespace) -> int:
         return 1
 
     print(f"config: {'created' if created else 'existing'} {config_path}")
-    if not _has_feishu_credentials(config):
+    detection = detect_hermes(args.hermes_dir)
+    diagnostic_args = argparse.Namespace(
+        hermes_dir=args.hermes_dir,
+        skip_hermes=False,
+        _profile_id=route_settings["profile_id"],
+        _profile_source=route_settings["profile_source"],
+        _event_url=route_settings["event_url"],
+    )
+    report = _build_doctor_report(config_path, config, diagnostic_args)
+    if isinstance(report, DiagnosticReport):
+        print(_format_route_chain(report))
+
+    profile_id = route_settings["profile_id"]
+    if not _profile_exists(config, profile_id):
+        print(
+            "error: profile_unknown: selected profile is not present in config",
+            file=sys.stderr,
+        )
+        return 1
+    if not _has_feishu_credentials(config, profile_id):
         print(
             (
-                "error: Feishu credentials are required before setup installs "
+                "error: profile_credentials_missing: Feishu credentials are required before setup installs "
                 "the Hermes hook. Set FEISHU_APP_ID and FEISHU_APP_SECRET, or "
                 f"fill feishu.app_id and feishu.app_secret in {config_path}."
             ),
@@ -188,7 +225,6 @@ def _run_setup(args: argparse.Namespace) -> int:
         )
         return 1
 
-    detection = detect_hermes(args.hermes_dir)
     if not detection.supported:
         print(_format_hermes_detection(detection), file=sys.stderr)
         return 1
@@ -241,8 +277,13 @@ def _run_setup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _has_feishu_credentials(config: dict[str, dict[str, object]]) -> bool:
-    feishu = config.get("feishu", {})
+def _has_feishu_credentials(
+    config: dict[str, Any], profile_id: str = ""
+) -> bool:
+    selected = _profile_config(config, profile_id)
+    feishu = selected.get("feishu", {})
+    if not isinstance(feishu, dict):
+        return False
     app_id = feishu.get("app_id", "")
     app_secret = feishu.get("app_secret", "")
     return bool(str(app_id).strip() and str(app_secret).strip())
@@ -299,6 +340,10 @@ card:
 def _run_doctor(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser()
     try:
+        route_settings = _resolve_route_settings(args, config_path)
+        args._profile_id = route_settings["profile_id"]
+        args._profile_source = route_settings["profile_source"]
+        args._event_url = route_settings["event_url"]
         config = load_config(config_path)
     except Exception as exc:
         if args.json_output:
@@ -331,7 +376,10 @@ def _run_doctor(args: argparse.Namespace) -> int:
             )
         else:
             if isinstance(report, DiagnosticReport):
-                print(format_diagnostic_text(report, explain=True))
+                print(
+                    f"{format_diagnostic_text(report, explain=True)}\n\n"
+                    f"{_format_route_chain(report)}"
+                )
             else:
                 print(_format_doctor_explanation(report))
         return _doctor_exit_code(payload)
@@ -411,7 +459,9 @@ def _build_doctor_report(
             "loaded": True,
             "server": {"host": host, "port": port},
             "feishu_credentials": (
-                "configured" if _has_feishu_credentials(config) else "missing"
+                "configured"
+                if _has_feishu_credentials(config, getattr(args, "_profile_id", ""))
+                else "missing"
             ),
             "profiles_enabled": _doctor_profile_count(config) > 0,
             "profile_count": _doctor_profile_count(config),
@@ -553,17 +603,181 @@ def _build_doctor_report(
 
     install_state = _diagnose_install_state(detection)
     recovery_plan = plan_recovery(detection)
+    profile_id = str(getattr(args, "_profile_id", "") or "")
+    route = _diagnostic_route(config, profile_id)
+    health: dict[str, object] = {
+        "streaming": streaming,
+        "runtime_import": runtime_import,
+        "install_state": install_state,
+    }
+    if route is not None:
+        health["routing"] = {"last_route": route}
     return build_diagnostic_report(
         config_path,
         config,
         detection,
         recovery_plan,
-        health={
-            "streaming": streaming,
-            "runtime_import": runtime_import,
-            "install_state": install_state,
-        },
+        health=health,
+        profile_id=profile_id,
+        profile_source=str(getattr(args, "_profile_source", "") or ""),
+        event_url=str(getattr(args, "_event_url", "") or ""),
     )
+
+
+def _resolve_route_settings(
+    args: argparse.Namespace, config_path: Path
+) -> dict[str, Any]:
+    explicit_env_path = getattr(args, "env_file", None)
+    raw_env_path = explicit_env_path or os.environ.get("HFC_ENV_FILE")
+    env_path = (
+        Path(raw_env_path).expanduser()
+        if raw_env_path
+        else config_path.parent / ".env"
+    )
+    env_values = read_hfc_env(env_path)
+    profile_id, profile_source = _resolve_route_value(
+        getattr(args, "profile_id", None),
+        "HERMES_FEISHU_CARD_PROFILE_ID",
+        env_values,
+        "default",
+        "fallback_default",
+    )
+    event_url, event_source = _resolve_route_value(
+        getattr(args, "event_url", None),
+        "HERMES_FEISHU_CARD_EVENT_URL",
+        env_values,
+        DEFAULT_EVENT_URL,
+        "default",
+    )
+    profile_id = _validate_profile_id(profile_id)
+    event_url = _validate_event_url(event_url)
+    return {
+        "env_path": env_path,
+        "profile_id": profile_id,
+        "profile_source": profile_source,
+        "event_url": event_url,
+        "event_source": event_source,
+    }
+
+
+def _resolve_route_value(
+    explicit: str | None,
+    env_key: str,
+    env_values: dict[str, str],
+    default: str,
+    default_source: str,
+) -> tuple[str, str]:
+    if explicit is not None:
+        return str(explicit), "argument"
+    process_value = os.environ.get(env_key)
+    if process_value is not None and process_value.strip():
+        return process_value, "env"
+    file_value = env_values.get(env_key)
+    if file_value is not None and file_value.strip():
+        return file_value, "env_file"
+    return default, default_source
+
+
+def _validate_profile_id(value: str) -> str:
+    profile_id = str(value).strip()
+    if not PROFILE_ID_PATTERN.fullmatch(profile_id):
+        raise ValueError("invalid profile id; use 1-64 letters, digits, '.', '_', or '-'")
+    return profile_id
+
+
+def _validate_event_url(value: str) -> str:
+    text = str(value).strip()
+    try:
+        parsed = urlsplit(text)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("invalid event URL") from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.endswith("/events")
+        or not _allowed_event_host(parsed.hostname)
+    ):
+        raise ValueError("invalid event URL")
+    host = parsed.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{port}" if port is not None else host
+    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path, "", ""))
+
+
+def _allowed_event_host(hostname: str) -> bool:
+    host = hostname.strip().lower()
+    if host in {"localhost", "host.docker.internal"}:
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return bool(COMPOSE_HOST_PATTERN.fullmatch(host))
+
+
+def _profile_exists(config: dict[str, Any], profile_id: str) -> bool:
+    profiles = config.get("profiles")
+    if isinstance(profiles, dict) and profiles:
+        return profile_id in profiles
+    return profile_id == "default"
+
+
+def _profile_config(config: dict[str, Any], profile_id: str) -> dict[str, Any]:
+    profiles = config.get("profiles")
+    if isinstance(profiles, dict) and profiles:
+        profile = profiles.get(profile_id)
+        if not isinstance(profile, dict):
+            return {}
+        selected = dict(config)
+        selected.update(profile)
+        selected["profiles"] = {}
+        return selected
+    return config
+
+
+def _diagnostic_route(
+    config: dict[str, Any], profile_id: str
+) -> dict[str, object] | None:
+    if not _profile_exists(config, profile_id):
+        return None
+    try:
+        registry = BotRegistry.from_config(_profile_config(config, profile_id))
+        route = registry.resolve(RoutingContext(chat_id="", profile_id=profile_id))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"bot_id": route.bot_id, "reason": route.reason}
+
+
+def _format_route_chain(report: DiagnosticReport) -> str:
+    routing = report.routing
+    profile_id = str(routing.get("profile_id") or "")
+    profile_exists = bool(routing.get("profile_exists"))
+    lines = [
+        "Route Chain",
+        f"- identity_source: {routing.get('profile_source') or 'unknown'}",
+        f"- profile_id: {profile_id or 'missing'}",
+        f"- event_endpoint: {routing.get('event_endpoint') or 'missing'}",
+        f"- config_profile: {profile_id if profile_exists else 'missing'}",
+        f"- bot_id: {routing.get('bot_id') or 'missing'}",
+        f"- route_reason: {routing.get('route_reason') or 'missing'}",
+    ]
+    route_codes = {
+        "profile_identity_missing",
+        "profile_unknown",
+        "profile_credentials_missing",
+        "event_endpoint_mismatch",
+        "bot_unknown",
+        "route_fallback",
+    }
+    findings = [finding.code for finding in report.findings if finding.code in route_codes]
+    if findings:
+        lines.append(f"- findings: {', '.join(findings)}")
+    return "\n".join(lines)
 
 
 def _doctor_profile_count(config: dict[str, Any]) -> int:

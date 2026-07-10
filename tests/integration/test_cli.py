@@ -15,6 +15,8 @@ FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
 CONFIG_ENV_VARS = {
     "HERMES_FEISHU_CARD_HOST",
     "HERMES_FEISHU_CARD_PORT",
+    "HERMES_FEISHU_CARD_PROFILE_ID",
+    "HERMES_FEISHU_CARD_EVENT_URL",
     "FEISHU_APP_ID",
     "FEISHU_APP_SECRET",
 }
@@ -325,6 +327,83 @@ def test_module_doctor_explain_reports_summary_and_next_steps(tmp_path):
     assert "Runtime import:" in result.stdout
     assert "Install state: clean" in result.stdout
     assert "Next steps" in result.stdout
+
+
+@pytest.mark.parametrize("profile_id", ["default", "child"])
+def test_doctor_explain_reports_profile_route_without_credentials(
+    profile_id, tmp_path, monkeypatch, capsys
+):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """server:
+  host: 127.0.0.1
+  port: 8765
+profiles:
+  default:
+    feishu:
+      app_id: cli-default-app
+      app_secret: cli-default-secret
+  child:
+    feishu:
+      app_id: cli-child-app
+      app_secret: cli-child-secret
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(
+        "HERMES_FEISHU_CARD_EVENT_URL", "http://127.0.0.1:8765/events"
+    )
+
+    exit_code = main(
+        [
+            "doctor",
+            "--config",
+            str(config_path),
+            "--hermes-dir",
+            str(FIXTURE),
+            "--profile-id",
+            profile_id,
+            "--explain",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "Route Chain" in captured.out
+    assert "identity_source: argument" in captured.out
+    assert f"profile_id: {profile_id}" in captured.out
+    assert "event_endpoint: http://127.0.0.1:8765/events" in captured.out
+    assert f"config_profile: {profile_id}" in captured.out
+    assert "bot_id: default" in captured.out
+    assert "route_reason: bots.default" in captured.out
+    assert "cli-child-app" not in captured.out
+    assert "cli-child-secret" not in captured.out
+    assert "cli-default-secret" not in captured.out
+
+
+@pytest.mark.parametrize(
+    "profile_id",
+    ["../child", "child profile", "x" * 65],
+)
+def test_doctor_rejects_invalid_profile_id(profile_id, tmp_path, capsys):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 8765\n", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "doctor",
+            "--config",
+            str(config_path),
+            "--skip-hermes",
+            "--profile-id",
+            profile_id,
+            "--explain",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "invalid profile id" in captured.out + captured.err
 
 
 def test_module_doctor_explain_supports_hermes_015_without_v_prefix(tmp_path):

@@ -7,6 +7,8 @@ from argparse import Namespace
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from hermes_feishu_card import cli
 from hermes_feishu_card.install import patcher
 
@@ -233,6 +235,133 @@ def test_setup_creates_config_installs_hook_and_starts_sidecar(tmp_path, monkeyp
     assert "HERMES_FEISHU_CARD_PATCH_BEGIN" in run_py(hermes_dir).read_text(
         encoding="utf-8"
     )
+
+
+def test_setup_updates_selected_profile_env_and_reports_route_chain(
+    tmp_path, monkeypatch, capsys
+):
+    hermes_dir = copy_hermes(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    env_path = tmp_path / "selected.env"
+    config_path.write_text(
+        """server:
+  host: 127.0.0.1
+  port: 8765
+profiles:
+  default:
+    feishu:
+      app_id: default-app
+      app_secret: default-secret
+  child:
+    feishu:
+      app_id: child-app
+      app_secret: child-secret
+""",
+        encoding="utf-8",
+    )
+    env_path.write_text(
+        "# preserve me\n"
+        "UNKNOWN_KEY=keep\n"
+        "HERMES_FEISHU_CARD_PROFILE_ID=from-file\n"
+        "HERMES_FEISHU_CARD_EVENT_URL=http://127.0.0.1:9999/events\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_FEISHU_CARD_PROFILE_ID", "from-process")
+    monkeypatch.setenv(
+        "HERMES_FEISHU_CARD_EVENT_URL", "http://127.0.0.1:8888/events"
+    )
+    monkeypatch.setattr(cli, "_run_install", lambda args: 0)
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--env-file",
+            str(env_path),
+            "--profile-id",
+            "child",
+            "--event-url",
+            "http://127.0.0.1:8765/events",
+            "--yes",
+            "--skip-start",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert env_path.read_text(encoding="utf-8") == (
+        "# preserve me\n"
+        "UNKNOWN_KEY=keep\n"
+        "HERMES_FEISHU_CARD_PROFILE_ID=child\n"
+        "HERMES_FEISHU_CARD_EVENT_URL=http://127.0.0.1:8765/events\n"
+    )
+    assert "Route Chain" in captured.out
+    assert "profile_id: child" in captured.out
+    assert "event_endpoint: http://127.0.0.1:8765/events" in captured.out
+    assert "config_profile: child" in captured.out
+    assert "bot_id: default" in captured.out
+    assert "route_reason: bots.default" in captured.out
+    assert "child-secret" not in captured.out
+
+
+@pytest.mark.parametrize(
+    "event_url",
+    [
+        "ftp://127.0.0.1:8765/events",
+        "http://user:secret@127.0.0.1:8765/events",
+        "http://127.0.0.1:8765/events?token=secret",
+        "http://127.0.0.1:8765/events#fragment",
+        "http://example.com:8765/events",
+        "http://192.168.1.20:8765/events",
+        "http://127.0.0.1:8765/health",
+    ],
+)
+def test_setup_rejects_invalid_event_url_without_writing_env(
+    event_url, tmp_path, capsys
+):
+    env_path = tmp_path / ".env"
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(tmp_path / "hermes"),
+            "--config",
+            str(tmp_path / "config.yaml"),
+            "--env-file",
+            str(env_path),
+            "--profile-id",
+            "default",
+            "--event-url",
+            event_url,
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code != 0
+    assert "invalid event URL" in captured.err
+    assert not env_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("event_url", "normalized"),
+    [
+        ("http://localhost:8765/events", "http://localhost:8765/events"),
+        ("http://127.0.0.2:8765/events", "http://127.0.0.2:8765/events"),
+        ("http://[::1]:8765/events", "http://[::1]:8765/events"),
+        (
+            "https://host.docker.internal/events",
+            "https://host.docker.internal/events",
+        ),
+        ("http://hfc-sidecar:8765/api/events", "http://hfc-sidecar:8765/api/events"),
+    ],
+)
+def test_event_url_accepts_supported_sidecar_hosts(event_url, normalized):
+    assert cli._validate_event_url(event_url) == normalized
 
 
 def test_setup_warns_when_hermes_streaming_appears_disabled(

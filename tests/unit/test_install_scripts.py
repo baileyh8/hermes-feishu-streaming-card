@@ -343,8 +343,8 @@ def test_install_docker_sh_declares_container_defaults():
     script = script_path.read_text(encoding="utf-8")
 
     assert 'HERMES_DIR="${HERMES_DIR:-/opt/hermes}"' in script
-    assert 'CONFIG_PATH="${HFC_CONFIG:-/opt/data/config.yaml}"' in script
-    assert 'ENV_FILE="${HFC_ENV_FILE:-/opt/data/.env}"' in script
+    assert 'CONFIG_PATH="${CONFIG_PATH:-/opt/data/config.yaml}"' in script
+    assert 'ENV_FILE="${ENV_FILE:-/opt/data/.env}"' in script
     assert 'NO_PROMPT="${HFC_NO_PROMPT:-1}"' in script
     assert 'SKIP_START="${HFC_SKIP_START:-0}"' in script
 
@@ -395,8 +395,13 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     log = (tmp_path / "python.log").read_text(encoding="utf-8")
     assert str(runtime_python) in result.stdout
     assert "-m pip install --upgrade git+https://github.com/baileyh8/hermes-feishu-streaming-card.git@v3.7.0" in log
-    doctor_cmd = f"hermes_feishu_card.cli doctor --config {data_dir / 'config.yaml'} --hermes-dir {hermes_dir} --explain"
-    setup_cmd = f"hermes_feishu_card.cli setup --hermes-dir {hermes_dir} --config {data_dir / 'config.yaml'} --yes --skip-start"
+    doctor_cmd = f"hermes_feishu_card.cli doctor --config {data_dir / 'config.yaml'} --hermes-dir {hermes_dir} --profile-id default --explain"
+    setup_cmd = (
+        f"hermes_feishu_card.cli setup --hermes-dir {hermes_dir} "
+        f"--config {data_dir / 'config.yaml'} --env-file {env_file} "
+        "--profile-id default --event-url http://127.0.0.1:8765/events "
+        "--yes --skip-start"
+    )
     assert doctor_cmd in log
     assert setup_cmd in log
     assert log.index(doctor_cmd) < log.index(setup_cmd)
@@ -648,3 +653,172 @@ def test_install_docker_sh_fails_without_noninteractive_credentials(tmp_path):
     assert result.returncode != 0
     assert "FEISHU_APP_ID/FEISHU_APP_SECRET are missing" in result.stderr
     assert "/opt/data/.env" in result.stderr or str(data_dir / ".env") in result.stderr
+
+
+def make_argument_capture_python(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf 'normalized=%s|%s|%s|%s|%s|%s\n' \
+  "${HFC_CONFIG:-}" "${HFC_ENV_FILE:-}" "${HFC_VERSION:-}" \
+  "${HERMES_FEISHU_CARD_PROFILE_ID:-}" \
+  "${HERMES_FEISHU_CARD_EVENT_URL:-}" "${HFC_NO_REPAIR:-}" \
+  >> "$FAKE_PYTHON_LOG"
+printf 'args=%s\n' "$*" >> "$FAKE_PYTHON_LOG"
+exit 0
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+@pytest.mark.parametrize("script_name", ["install.sh", "install-docker.sh"])
+@pytest.mark.parametrize("source", ["args", "process", "env_file"])
+def test_installers_resolve_profile_arguments_with_shared_precedence(
+    script_name, source, tmp_path
+):
+    hermes_dir = tmp_path / "hermes"
+    (hermes_dir / "gateway").mkdir(parents=True)
+    (hermes_dir / "gateway" / "run.py").write_text("# gateway\n", encoding="utf-8")
+    runtime_python = make_argument_capture_python(
+        hermes_dir / "venv" / "bin" / "python"
+    )
+    selected_env = tmp_path / "selected.env"
+    injection_marker = tmp_path / "unknown-key-was-sourced"
+    selected_env.write_text(
+        "FEISHU_APP_ID=file-app\n"
+        "FEISHU_APP_SECRET=file-secret\n"
+        f"HFC_CONFIG={tmp_path / 'file-config.yaml'}\n"
+        "HFC_VERSION=v-file\n"
+        "HERMES_FEISHU_CARD_PROFILE_ID=file-profile\n"
+        "HERMES_FEISHU_CARD_EVENT_URL=http://file-sidecar:8765/events\n"
+        "HFC_NO_REPAIR=1\n"
+        f"UNKNOWN_KEY=$(touch {injection_marker})\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+            "HERMES_DIR": str(hermes_dir),
+            "HFC_ENV_FILE": str(selected_env),
+            "HFC_NO_PROMPT": "1",
+            "HFC_SKIP_START": "1",
+            "PYTHON": str(runtime_python),
+        }
+    )
+    for key in (
+        "HFC_CONFIG",
+        "HFC_VERSION",
+        "HERMES_FEISHU_CARD_PROFILE_ID",
+        "HERMES_FEISHU_CARD_EVENT_URL",
+        "HFC_NO_REPAIR",
+        "FEISHU_APP_ID",
+        "FEISHU_APP_SECRET",
+    ):
+        env.pop(key, None)
+
+    command = ["bash", script_name]
+    if source in {"args", "process"}:
+        env.update(
+            {
+                "HFC_CONFIG": str(tmp_path / "process-config.yaml"),
+                "HFC_VERSION": "v-process",
+                "HERMES_FEISHU_CARD_PROFILE_ID": "process-profile",
+                "HERMES_FEISHU_CARD_EVENT_URL": "http://process-sidecar:8765/events",
+                "HFC_NO_REPAIR": "0",
+            }
+        )
+    if source == "args":
+        command.extend(
+            [
+                "--config",
+                str(tmp_path / "argument-config.yaml"),
+                "--env-file",
+                str(selected_env),
+                "--version",
+                "v-argument",
+                "--profile-id",
+                "argument-profile",
+                "--event-url",
+                "http://argument-sidecar:8765/events",
+                "--no-repair",
+            ]
+        )
+
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert not injection_marker.exists()
+    log = (tmp_path / "python.log").read_text(encoding="utf-8")
+    if source == "args":
+        expected = (
+            str(tmp_path / "argument-config.yaml"),
+            "v-argument",
+            "argument-profile",
+            "http://argument-sidecar:8765/events",
+            "1",
+        )
+    elif source == "process":
+        expected = (
+            str(tmp_path / "process-config.yaml"),
+            "v-process",
+            "process-profile",
+            "http://process-sidecar:8765/events",
+            "0",
+        )
+    else:
+        expected = (
+            str(tmp_path / "file-config.yaml"),
+            "v-file",
+            "file-profile",
+            "http://file-sidecar:8765/events",
+            "1",
+        )
+    config, version, profile, event_url, no_repair = expected
+    assert (
+        f"normalized={config}|{selected_env}|{version}|{profile}|{event_url}|{no_repair}"
+        in log
+    )
+    assert f"-m pip install" in log
+    assert f"@{version}" in log
+    setup = (
+        "-m hermes_feishu_card.cli setup "
+        f"--hermes-dir {hermes_dir} --config {config} --env-file {selected_env} "
+        f"--profile-id {profile} --event-url {event_url} --yes --skip-start"
+    )
+    if no_repair == "1":
+        setup += " --no-repair"
+    assert f"args={setup}" in log
+
+
+def test_install_powershell_declares_and_forwards_profile_parameters():
+    script = (ROOT / "install.ps1").read_text(encoding="utf-8")
+
+    assert """param(
+  [string]$Config = $env:HFC_CONFIG,
+  [string]$EnvFile = $env:HFC_ENV_FILE,
+  [string]$Version = $env:HFC_VERSION,
+  [string]$ProfileId = $env:HERMES_FEISHU_CARD_PROFILE_ID,
+  [string]$EventUrl = $env:HERMES_FEISHU_CARD_EVENT_URL,
+  [switch]$NoRepair
+)""" in script
+    for argument in (
+        '"--config", $Config',
+        '"--env-file", $EnvFile',
+        '"--profile-id", $ProfileId',
+        '"--event-url", $EventUrl',
+    ):
+        assert argument in script
+    assert '$args += "--no-repair"' in script
+    assert "UNKNOWN_KEY" not in script

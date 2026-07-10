@@ -360,6 +360,20 @@ The installer installs or upgrades the package, reads or prompts for Feishu cred
 python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --config ~/.hermes/config.yaml --yes
 ```
 
+The local, Docker, and PowerShell installers expose the same settings: `--config`, `--env-file`, `--version`, `--profile-id`, `--event-url`, and `--no-repair`; PowerShell uses `-Config`, `-EnvFile`, `-Version`, `-ProfileId`, `-EventUrl`, and `-NoRepair`. Existing one-line invocations remain valid. Resolution order is always explicit arguments > process environment > selected `.env` > script defaults.
+
+```bash
+bash install.sh \
+  --config ~/.hermes/config.yaml \
+  --env-file ~/.hermes/.env \
+  --version latest \
+  --profile-id child \
+  --event-url http://127.0.0.1:8765/events \
+  --no-repair
+```
+
+`setup` atomically changes only `HERMES_FEISHU_CARD_PROFILE_ID` and `HERMES_FEISHU_CARD_EVENT_URL` in the selected `.env`; comments, ordering, and unknown keys are preserved. The event URL must be an HTTP(S) endpoint ending in `/events`, without credentials, query, or fragment. Loopback, `host.docker.internal`, and single-label Docker Compose service hosts are accepted.
+
 After installation:
 
 ```bash
@@ -398,7 +412,7 @@ Example:
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
 export HFC_VERSION=v3.8.18
-bash install-docker.sh
+bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
 GitHub Releases also include `hermes-feishu-card-<version>-macos.tar.gz`, `hermes-feishu-card-<version>-linux.tar.gz`, and `hermes-feishu-card-<version>-windows.zip`. Download one, extract it, and run `install.sh` or `install.ps1`. See [README-install.md](../README-install.md) for package details.
@@ -413,6 +427,16 @@ python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --ye
 ```
 
 `setup` generates config, validates Hermes (older Hermes from `v2026.4.23` through `v2026.4.x`, plus Hermes `0.13.0+`, `0.14.0`, `0.15.x`, `0.17.x`, `0.18.x` / `v2026.5.16+` / `v2026.6.19+` / `v2026.7.1+` anchors), installs the package into the Hermes Gateway runtime venv Python, installs the hook, starts the sidecar, and checks health — all in one pass. Hermes semantic `VERSION` values may include or omit the `v` prefix, and descriptive values such as `Hermes Agent v0.18.2 (...)` are parsed for the numeric version token. Since V3.8.6, Docker/source-stripped installs without `VERSION` or `.git` metadata can fall back to verified `gateway/run.py` anchors; current versions also fall back to anchors when readable `VERSION` metadata is unparseable.
+
+After a multi-profile setup, inspect the route chain without mutation. Output includes only the identity source, profile, event endpoint, config profile, bot, and fallback reason; it never renders App Secret, tokens, or URL credentials:
+
+```bash
+python3 -m hermes_feishu_card.cli doctor \
+  --config ~/.hermes/config.yaml \
+  --hermes-dir ~/.hermes/hermes-agent \
+  --profile-id child \
+  --explain
+```
 
 ## Core Features
 
