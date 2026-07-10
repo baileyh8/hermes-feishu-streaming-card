@@ -656,7 +656,7 @@ def render_operations_card(
     ]
     buttons = _operation_buttons(report, operation, store)
     if buttons:
-        elements.extend(buttons)
+        elements.extend(_operation_button_rows(buttons))
     elements.extend(
         [
             {"tag": "hr", "element_id": "operations_divider"},
@@ -755,6 +755,33 @@ def _operation_buttons(
         _operation_button(operation, action, label, style, store)
         for action, label, style in actions
     ]
+
+
+def _operation_button_rows(
+    buttons: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for row_index in range(0, len(buttons), 2):
+        pair = buttons[row_index : row_index + 2]
+        rows.append(
+            {
+                "tag": "column_set",
+                "element_id": f"operations_row_{row_index // 2}",
+                "flex_mode": "none",
+                "horizontal_spacing": "8px",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "weighted",
+                        "weight": 1,
+                        "vertical_align": "top",
+                        "elements": [button],
+                    }
+                    for button in pair
+                ],
+            }
+        )
+    return rows
 
 
 def _operation_button(

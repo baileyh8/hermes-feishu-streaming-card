@@ -743,11 +743,18 @@ def report(*, executable: bool = True) -> DiagnosticReport:
 
 
 def operation_buttons(card: dict[str, object]) -> list[dict[str, object]]:
-    return [
-        element
-        for element in card["body"]["elements"]
-        if element.get("tag") == "button"
-    ]
+    buttons: list[dict[str, object]] = []
+    for element in card["body"]["elements"]:
+        if element.get("tag") == "button":
+            buttons.append(element)
+        elif element.get("tag") == "column_set":
+            for column in element["columns"]:
+                buttons.extend(
+                    item
+                    for item in column["elements"]
+                    if item.get("tag") == "button"
+                )
+    return buttons
 
 
 def action_labels(card: dict[str, object]) -> list[str]:
@@ -768,14 +775,31 @@ def test_operations_card_places_actions_before_existing_divider_and_footer():
 
     assert ids == [
         "operations_summary",
-        "operations_details",
-        "operations_recheck",
-        "operations_repair",
-        "operations_dismiss",
+        "operations_row_0",
+        "operations_row_1",
         "operations_divider",
         "operations_footer",
     ]
     assert len(ids) == len(set(ids))
+    rows = [item for item in elements if item.get("tag") == "column_set"]
+    assert [row["element_id"] for row in rows] == [
+        "operations_row_0",
+        "operations_row_1",
+    ]
+    assert all(row["flex_mode"] == "none" for row in rows)
+    assert all(len(row["columns"]) == 2 for row in rows)
+    assert all(
+        column["width"] == "weighted" and column["weight"] == 1
+        for row in rows
+        for column in row["columns"]
+    )
+    assert [item.get("element_id") for item in elements][-2:] == [
+        "operations_divider",
+        "operations_footer",
+    ]
+    assert len([button["element_id"] for button in buttons]) == len(
+        {button["element_id"] for button in buttons}
+    )
     assert not any(element.get("tag") == "action" for element in elements)
     assert elements[-1]["content"] == "configured footer"
     assert action_labels(card) == ["查看诊断", "重新检测", "安全修复", "暂不处理"]
@@ -820,6 +844,30 @@ def test_operations_confirmation_buttons_are_primary_and_cancel_is_default():
     assert [button["text"]["content"] for button in buttons] == ["确认修复", "取消"]
     assert buttons[0]["type"] == "primary"
     assert buttons[1]["type"] == "default"
+    rows = [
+        item
+        for item in card["body"]["elements"]
+        if item.get("tag") == "column_set"
+    ]
+    assert len(rows) == 1
+    assert len(rows[0]["columns"]) == 2
+
+
+def test_operations_card_keeps_a_single_odd_button_in_the_left_column():
+    store = OperationStore(secret=b"test", now=lambda: 100.0)
+    operation = store.create(group=False, **operation_kwargs())
+    operation.state = "failed"
+
+    card = render_operations_card(report(), operation, "footer")
+    rows = [
+        item
+        for item in card["body"]["elements"]
+        if item.get("tag") == "column_set"
+    ]
+
+    assert len(rows) == 1
+    assert len(rows[0]["columns"]) == 1
+    assert rows[0]["columns"][0]["elements"][0]["element_id"] == "operations_recheck"
 
 
 def test_operations_card_can_show_restart_only_when_result_allows_it():
