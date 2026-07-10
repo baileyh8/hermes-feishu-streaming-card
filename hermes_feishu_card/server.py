@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from contextlib import suppress
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -84,6 +84,10 @@ OPERATIONS_DIAGNOSTIC_EXECUTOR_KEY = web.AppKey(
     "operations_diagnostic_executor", ThreadPoolExecutor
 )
 OPERATIONS_DIAGNOSTIC_FUTURES_KEY = web.AppKey("operations_diagnostic_futures", set)
+OPERATIONS_MUTATION_EXECUTOR_KEY = web.AppKey("operations_mutation_executor", ThreadPoolExecutor)
+OPERATIONS_MUTATION_FUTURES_KEY = web.AppKey("operations_mutation_futures", set)
+OPERATIONS_MUTATIONS_STOPPING_KEY = web.AppKey("operations_mutations_stopping", bool)
+OPERATIONS_PUBLISH_LOCKS_KEY = web.AppKey("operations_publish_locks", dict)
 FLUSH_CONTROLLERS_KEY = web.AppKey("flush_controllers", dict)
 CLEANUP_TASK_KEY = web.AppKey("cleanup_task", asyncio.Task)
 UPDATE_MAX_ATTEMPTS = 3
@@ -186,6 +190,12 @@ def create_app(
         thread_name_prefix="hfc-operations",
     )
     app[OPERATIONS_DIAGNOSTIC_FUTURES_KEY] = set()
+    app[OPERATIONS_MUTATION_EXECUTOR_KEY] = ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="hfc-operations-mutation"
+    )
+    app[OPERATIONS_MUTATION_FUTURES_KEY] = set()
+    app[OPERATIONS_MUTATIONS_STOPPING_KEY] = {"stopping": False}
+    app[OPERATIONS_PUBLISH_LOCKS_KEY] = {}
     operations_config = Path(
         operations_config_path
         or os.environ.get("HFC_CONFIG")
@@ -236,18 +246,19 @@ async def _stop_runtime_cleanup(app: web.Application) -> None:
 
 
 async def _stop_operations_diagnostics(app: web.Application) -> None:
+    app[OPERATIONS_MUTATIONS_STOPPING_KEY]["stopping"] = True
+    for future in app[OPERATIONS_MUTATION_FUTURES_KEY]:
+        future.cancel()
     tasks = list(app[OPERATIONS_DIAGNOSTIC_TASKS_KEY])
-    for task in tasks:
-        task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     app[OPERATIONS_DIAGNOSTIC_TASKS_KEY].clear()
     for future in app[OPERATIONS_DIAGNOSTIC_FUTURES_KEY]:
         future.cancel()
-    app[OPERATIONS_DIAGNOSTIC_EXECUTOR_KEY].shutdown(
-        wait=False, cancel_futures=True
-    )
+    app[OPERATIONS_DIAGNOSTIC_EXECUTOR_KEY].shutdown(wait=True, cancel_futures=True)
+    app[OPERATIONS_MUTATION_EXECUTOR_KEY].shutdown(wait=True, cancel_futures=True)
     app[OPERATIONS_DIAGNOSTIC_FUTURES_KEY].clear()
+    app[OPERATIONS_MUTATION_FUTURES_KEY].clear()
 
 
 async def _runtime_cleanup_loop(app: web.Application) -> None:
@@ -1136,6 +1147,16 @@ def _schedule_operations_restart(
     )
 
 
+async def _run_operations_mutation(app: web.Application, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    if app[OPERATIONS_MUTATIONS_STOPPING_KEY]["stopping"]:
+        raise OperationRejected("operations are stopping")
+    future: Future[Any] = app[OPERATIONS_MUTATION_EXECUTOR_KEY].submit(func, *args, **kwargs)
+    futures: set[Future[Any]] = app[OPERATIONS_MUTATION_FUTURES_KEY]
+    futures.add(future)
+    future.add_done_callback(futures.discard)
+    return await asyncio.shield(asyncio.wrap_future(future))
+
+
 async def _run_operations_recheck(
     app: web.Application, operation: OperationRecord
 ) -> None:
@@ -1227,8 +1248,8 @@ async def _run_operations_repair(
     metrics: SidecarMetrics = app[METRICS_KEY]
     metrics.recovery_attempts += 1
     try:
-        recovery_result = await asyncio.to_thread(
-            execute_recovery, detection, operation.recovery_fingerprint
+        recovery_result = await _run_operations_mutation(
+            app, execute_recovery, detection, operation.recovery_fingerprint
         )
     except asyncio.CancelledError:
         raise
@@ -1345,7 +1366,8 @@ async def _run_operations_restart(
 
     await asyncio.sleep(RESTART_CALLBACK_GRACE_SECONDS)
     try:
-        completed = await asyncio.to_thread(
+        completed = await _run_operations_mutation(
+            app,
             subprocess.run,
             [hermes_binary, "gateway", "restart"],
             cwd=detection.root,
@@ -1410,8 +1432,6 @@ async def _publish_operations_card(
     app: web.Application,
     report: DiagnosticReport,
     operation: OperationRecord,
-    *,
-    stale_republishes_remaining: int = MAX_STALE_OPERATIONS_REPUBLISHES,
 ) -> bool:
     delivery = app[OPERATIONS_DELIVERIES_KEY].get(operation.operation_id)
     if not isinstance(delivery, dict):
@@ -1419,44 +1439,42 @@ async def _publish_operations_card(
     message_id = str(delivery.get("message_id") or "")
     if not message_id:
         return False
-    generation = delivery.get("generation")
+    lock_key = (str(delivery.get("bot_id") or ""), message_id)
+    locks: dict[tuple[str, str], asyncio.Lock] = app[OPERATIONS_PUBLISH_LOCKS_KEY]
+    lock = locks.setdefault(lock_key, asyncio.Lock())
+    async with lock:
+        while True:
+            delivery = app[OPERATIONS_DELIVERIES_KEY].get(operation.operation_id)
+            if not isinstance(delivery, dict) or str(delivery.get("message_id") or "") != message_id:
+                return False
+            generation = delivery.get("generation")
 
-    def still_current() -> bool:
-        current = app[OPERATIONS_DELIVERIES_KEY].get(operation.operation_id)
-        return current is delivery and current.get("generation") == generation
+            def still_current() -> bool:
+                current = app[OPERATIONS_DELIVERIES_KEY].get(operation.operation_id)
+                return current is delivery and current.get("generation") == generation
 
-    updated = await _update_card_for_app(
-        app,
-        message_id,
-        _render_operations_for_app(app, report, operation),
-        delivery.get("bot_id"),
-        is_current=still_current,
-    )
-    if not still_current():
-        if stale_republishes_remaining > 0:
-            current = app[OPERATIONS_STORE_KEY].current_successor(
-                operation.operation_id
+            updated = await _update_card_for_app(
+                app, message_id, _render_operations_for_app(app, report, operation),
+                delivery.get("bot_id"), is_current=still_current,
             )
+            current = app[OPERATIONS_STORE_KEY].current_successor(operation.operation_id)
             if current is not None and current.operation_id != operation.operation_id:
-                current_delivery = app[OPERATIONS_DELIVERIES_KEY].get(
-                    current.operation_id
-                )
+                operation = current
+                report = _operation_report_snapshot(current)
+                continue
+            if not still_current():
+                latest = app[OPERATIONS_DELIVERIES_KEY].get(operation.operation_id)
                 if (
-                    isinstance(current_delivery, dict)
-                    and str(current_delivery.get("message_id") or "") == message_id
+                    isinstance(latest, dict)
+                    and str(latest.get("message_id") or "") == message_id
                 ):
-                    await _publish_operations_card(
-                        app,
-                        _operation_report_snapshot(current),
-                        current,
-                        stale_republishes_remaining=stale_republishes_remaining - 1,
-                    )
-        return False
-    if not updated:
-        result = dict(operation.result or {})
-        result["delivery_error"] = "card update unavailable"
-        operation.result = result
-    return updated
+                    continue
+                return False
+            if not updated:
+                result = dict(operation.result or {})
+                result["delivery_error"] = "card update unavailable"
+                operation.result = result
+            return updated
 
 
 def _restart_output_status(output: str) -> str:

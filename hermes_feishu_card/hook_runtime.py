@@ -614,6 +614,7 @@ def _remember_operation_transport(
     operation_id: str,
     secret: str | bytes,
     profile_id: str | None = None,
+    transport_lineage_id: str = "",
 ) -> None:
     operation_id = str(operation_id or "").strip()
     secret_bytes = secret.encode("utf-8") if isinstance(secret, str) else secret
@@ -628,11 +629,15 @@ def _remember_operation_transport(
             if isinstance(profile_id, str) and profile_id.strip()
             else existing[1] if existing is not None else "default"
         )
-        _OPERATION_TRANSPORT_SECRETS[operation_id] = (
+        context = (
             secret_bytes,
             trusted_profile_id,
             now + _OPERATION_TRANSPORT_SECRET_TTL_SECONDS,
         )
+        _OPERATION_TRANSPORT_SECRETS[operation_id] = context
+        lineage_id = str(transport_lineage_id or "").strip()
+        if lineage_id:
+            _OPERATION_TRANSPORT_SECRETS[lineage_id] = context
         while len(_OPERATION_TRANSPORT_SECRETS) > _OPERATION_TRANSPORT_SECRET_LIMIT:
             _OPERATION_TRANSPORT_SECRETS.pop(
                 next(iter(_OPERATION_TRANSPORT_SECRETS))
@@ -2322,6 +2327,7 @@ def _hfc_handle_operations_select_action(
     _hfc_info("inline card action received: operations.select")
     operation_action = str(action_value.get("operation_action") or "").strip()
     token = str(action_value.get("token") or "").strip()
+    transport_lineage_id = str(action_value.get("transport_lineage_id") or "").strip()
     profile_scope = str(action_value.get("profile_scope") or "").strip()
     chat_id = _hfc_action_chat_id(data)
     if not operation_action or not token or not chat_id:
@@ -2333,7 +2339,7 @@ def _hfc_handle_operations_select_action(
 
     open_id = _hfc_action_open_id(data)
     operation_id = _operation_id_from_token(token)
-    transport_context = _operation_transport_context(operation_id)
+    transport_context = _operation_transport_context(transport_lineage_id or operation_id)
     if transport_context is None:
         _hfc_info("operations.select rejected: authentication session expired")
         return _hfc_empty_feishu_callback_response(adapter)
@@ -2346,6 +2352,8 @@ def _hfc_handle_operations_select_action(
     }
     if profile_scope:
         forwarded_value["profile_scope"] = profile_scope
+    if transport_lineage_id:
+        forwarded_value["transport_lineage_id"] = transport_lineage_id
     sidecar_payload = {
         "adapter_transport_proof": {
             "timestamp": timestamp,
@@ -2385,7 +2393,12 @@ def _hfc_handle_operations_select_action(
     if isinstance(result, dict) and isinstance(result.get("card"), dict):
         successor_id = str(result.get("operation_id") or "").strip()
         if successor_id:
-            _remember_operation_transport(successor_id, transport_secret, profile_id)
+            _remember_operation_transport(
+                successor_id,
+                transport_secret,
+                profile_id,
+                transport_lineage_id or operation_id,
+            )
         return _hfc_raw_feishu_callback_response(adapter, result["card"])
     return _hfc_empty_feishu_callback_response(adapter)
 

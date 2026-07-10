@@ -544,12 +544,20 @@ async def test_ws_operations_recheck_returns_in_progress_card_and_keeps_successo
             if operation.state == "preparing"
         )
         await asyncio.wait_for(asyncio.to_thread(recheck_started.wait), timeout=1.0)
+        release_recheck.set()
+        await _wait_for(lambda: bool(feishu_client.updated))
+        patched_recheck = _operations_button(feishu_client.updated[-1][1], "重新检测")
+        patched_response = await _click_operations(
+            adapter, patched_recheck, chat_id="oc_private", operator="ou_owner"
+        )
     finally:
         release_recheck.set()
         await client.close()
 
     assert response.card.type == "raw"
     assert "正在重新检测" in str(response.card.data)
+    assert patched_response.card.type == "raw"
+    assert "正在重新检测" in str(patched_response.card.data)
     assert hook_runtime._operation_transport_context(successor_id) == (
         original_secret,
         "default",

@@ -1920,7 +1920,6 @@ async def test_stale_operations_publisher_republishes_the_current_delivery_owner
             app, current_report, current_operation
         )
     )
-    await _wait_until(lambda: len(feishu_client.updated) == 1)
     feishu_client.release_update.set()
     await asyncio.gather(old_publisher, current_publisher)
 

@@ -39,6 +39,7 @@ class OperationClaims:
 @dataclass
 class OperationRecord:
     operation_id: str
+    transport_lineage_id: str
     chat_id: str
     profile_id: str
     report_fingerprint: str
@@ -131,6 +132,7 @@ class OperationStore:
             self._reserve_capacity_locked()
             record = OperationRecord(
                 operation_id=operation_id,
+                transport_lineage_id=operation_id,
                 chat_id=chat_id,
                 profile_id=profile_id,
                 report_fingerprint="",
@@ -191,17 +193,23 @@ class OperationStore:
         ):
             raise ValueError("operation transport secret is invalid")
         with self._lock:
+            transport_lineage_id = ""
             if transport_source_operation_id:
                 transport_secret = self._transport_secrets.get(
                     transport_source_operation_id
                 )
                 if transport_secret is None:
                     raise OperationRejected("operation transport binding expired")
+                source = self._records.get(transport_source_operation_id) or self._recheck_predecessors.get(transport_source_operation_id)
+                transport_lineage_id = (
+                    source.transport_lineage_id if source is not None else transport_source_operation_id
+                )
             self._prune_locked()
             self._reserve_capacity_locked()
             operation_id = secrets.token_urlsafe(18)
             record = OperationRecord(
                 operation_id=operation_id,
+                transport_lineage_id=transport_lineage_id or operation_id,
                 chat_id=chat_id,
                 profile_id=profile_id,
                 report_fingerprint=report_fingerprint,
@@ -243,6 +251,7 @@ class OperationStore:
             self._reserve_capacity_locked()
             successor = OperationRecord(
                 operation_id=secrets.token_urlsafe(18),
+                transport_lineage_id=previous.transport_lineage_id or previous.operation_id,
                 chat_id=previous.chat_id,
                 profile_id=previous.profile_id,
                 report_fingerprint=report.fingerprint,
@@ -372,6 +381,7 @@ class OperationStore:
             self._prune_locked()
             successor = OperationRecord(
                 operation_id=secrets.token_urlsafe(18),
+                transport_lineage_id=record.transport_lineage_id or record.operation_id,
                 chat_id=record.chat_id,
                 profile_id=record.profile_id,
                 report_fingerprint=record.report_fingerprint,
@@ -433,6 +443,7 @@ class OperationStore:
                 self._reserve_capacity_locked(frozenset({record.operation_id}))
             successor = OperationRecord(
                 operation_id=secrets.token_urlsafe(18),
+                transport_lineage_id=record.transport_lineage_id or record.operation_id,
                 chat_id=record.chat_id,
                 profile_id=record.profile_id,
                 report_fingerprint=successor_report_fingerprint,
@@ -935,6 +946,8 @@ def _operation_button(
     if store is not None:
         value["token"] = store.token(operation, action)
         value["profile_scope"] = store.scope_fingerprint(operation)
+        if operation.transport_lineage_id:
+            value["transport_lineage_id"] = operation.transport_lineage_id
     return {
         "tag": "button",
         "element_id": f"operations_{action}",

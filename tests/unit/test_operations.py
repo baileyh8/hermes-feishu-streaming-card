@@ -16,6 +16,7 @@ from hermes_feishu_card.install.detect import detect_hermes
 from hermes_feishu_card.install.patcher import apply_patch
 from hermes_feishu_card.install.recovery import execute_recovery, plan_recovery
 from hermes_feishu_card.operations import (
+    _operation_buttons,
     OperationRejected,
     OperationStore,
     render_operations_card,
@@ -807,6 +808,7 @@ def test_begin_recheck_reuses_successor_and_inherits_transport_and_owner():
     assert repeated is successor
     assert successor.group is True
     assert successor.owner_open_id == "ou_owner"
+    assert successor.transport_lineage_id == previous.transport_lineage_id
     transport_fields = {
         "token": store.token(successor, "details"),
         "action": "details",
@@ -820,6 +822,27 @@ def test_begin_recheck_reuses_successor_and_inherits_transport_and_owner():
         proof=sign_transport_proof(transport_secret, **transport_fields),
         **transport_fields,
     ) is successor
+
+
+def test_operations_transport_lineage_is_stable_and_rendered_on_successors():
+    store = OperationStore(secret=b"store", now=lambda: 100.0)
+    previous = _prepared_diagnosed_operation(
+        store,
+        operation_id="operation-lineage",
+        diagnostic_report=report(),
+    )
+    preparing, _created = store.begin_recheck(
+        store.token(previous, "recheck"), **_recheck_callback(store, previous)
+    )
+    completed = store.create_successor(preparing.operation_id, report=report())
+
+    button = _operation_buttons(completed.report, completed, store)[0]
+    value = button["behaviors"][0]["value"]
+
+    assert previous.transport_lineage_id == "operation-lineage"
+    assert preparing.transport_lineage_id == "operation-lineage"
+    assert completed.transport_lineage_id == "operation-lineage"
+    assert value["transport_lineage_id"] == "operation-lineage"
 
 
 def test_begin_recheck_preserves_capacity_and_refuses_late_predecessor_diagnose():
@@ -1039,8 +1062,9 @@ def test_operations_card_places_actions_before_existing_divider_and_footer():
                 "value": {
                     "hfc_action": "operations.select",
                     "operation_action": action,
-                    "token": store.token(operation, action),
-                    "profile_scope": store.scope_fingerprint(operation),
+                        "token": store.token(operation, action),
+                        "profile_scope": store.scope_fingerprint(operation),
+                        "transport_lineage_id": operation.transport_lineage_id,
                 },
             }
         ]
