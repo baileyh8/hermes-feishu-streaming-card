@@ -16,6 +16,8 @@ from aiohttp.test_utils import TestClient, TestServer
 from hermes_feishu_card import hook_runtime
 from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.diagnostics import DiagnosticFinding, DiagnosticReport
+from hermes_feishu_card.server import create_app
+from hermes_feishu_card.operations_transport import ensure_transport_root_secret
 
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "hermes_v2026_4_23"
@@ -267,6 +269,191 @@ def _installed_action_adapter(*, allowed=True):
     return adapter
 
 
+class _OperationsFeishuClient:
+    def __init__(self):
+        self.sent = []
+        self.updated = []
+
+    async def send_card(
+        self, chat_id, card, thread_id=None, reply_to_message_id=None
+    ):
+        self.sent.append((chat_id, card, thread_id, reply_to_message_id))
+        return f"operations-message-{len(self.sent)}"
+
+    async def update_card_message(self, message_id, card):
+        self.updated.append((message_id, card))
+
+
+def _operations_report():
+    return DiagnosticReport(
+        status="warning",
+        created_at=100.0,
+        config={"loaded": True},
+        hermes={"status": "supported"},
+        streaming={"status": "enabled"},
+        install_state={
+            "status": "incomplete",
+            "recovery_executable": True,
+            "recovery_fingerprint": "recovery-integration",
+        },
+        routing={"profile_id": "default"},
+        runtime={},
+        findings=(
+            DiagnosticFinding(
+                code="owned_incomplete",
+                severity="warning",
+                message="Hook state needs repair.",
+            ),
+        ),
+    )
+
+
+def _operations_button(card, label):
+    for element in card["body"]["elements"]:
+        for button in element.get("actions", []):
+            if button["text"]["content"] == label:
+                return button["value"]
+    raise AssertionError(f"missing operations button: {label}")
+
+
+async def _wait_for_sent_card(client, count):
+    for _ in range(100):
+        if len(client.sent) >= count:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("operations card was not sent")
+
+
+async def _establish_operations_card(client, *, chat_id, chat_type, operator, index):
+    handled = await asyncio.to_thread(
+        hook_runtime.handle_hfc_command_from_hermes_locals,
+        {
+            "platform": "feishu",
+            "chat_id": chat_id,
+            "message_id": f"om_doctor_{index}",
+            "text": "/hfc doctor",
+            "chat_type": chat_type,
+            "operator_open_id": operator,
+        },
+    )
+    assert handled is True
+    await _wait_for_sent_card(client, index)
+    return client.sent[index - 1][1]
+
+
+async def _click_operations(adapter, value, *, chat_id, operator):
+    return await asyncio.to_thread(
+        adapter._on_card_action_trigger,
+        _card_action_data(value, open_id=operator, chat_id=chat_id),
+    )
+
+
+async def test_installed_ws_hook_uses_real_http_for_operator_and_auth_matrix(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setattr(hook_runtime, "CallBackCard", _CallbackCard, raising=False)
+    monkeypatch.setattr(
+        hook_runtime, "P2CardActionTriggerResponse", _CallbackResponse, raising=False
+    )
+    report = _operations_report()
+    detection = SimpleNamespace(root=Path("/private/hermes"))
+    recovery_calls = []
+    monkeypatch.setattr(
+        sidecar_server,
+        "_build_operations_report_sync",
+        lambda *args, **kwargs: (report, detection),
+    )
+    monkeypatch.setattr(
+        sidecar_server,
+        "execute_recovery",
+        lambda *args: recovery_calls.append(args) or SimpleNamespace(status="repaired"),
+    )
+    monkeypatch.setattr(sidecar_server.shutil, "which", lambda command: None)
+
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(state_dir))
+    root_secret = ensure_transport_root_secret(state_dir)
+    feishu_client = _OperationsFeishuClient()
+    app = create_app(
+        feishu_client,
+        operations_transport_root_secret=root_secret,
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    hook_runtime.reset_runtime_state()
+    monkeypatch.setenv(
+        "HERMES_FEISHU_CARD_EVENT_URL",
+        str(test_client.make_url("/events")),
+    )
+    monkeypatch.setenv("HERMES_FEISHU_CARD_PROFILE_ID", "work")
+    adapter = _installed_action_adapter()
+    try:
+        group_card = await _establish_operations_card(
+            feishu_client,
+            chat_id="oc_group",
+            chat_type="group",
+            operator="ou_owner",
+            index=1,
+        )
+        monkeypatch.setenv("HERMES_FEISHU_CARD_PROFILE_ID", "default")
+        repair = _operations_button(group_card, "安全修复")
+        operation_id = hook_runtime._operation_id_from_token(repair["token"])
+        authentic_secret = hook_runtime._transport_secret_for_token(repair["token"])
+        assert authentic_secret is not None
+
+        hook_runtime._remember_operation_transport(
+            operation_id, "forged-process-secret"
+        )
+        rejected_auth = await _click_operations(
+            adapter, repair, chat_id="oc_group", operator="ou_owner"
+        )
+        assert rejected_auth.card is None
+        hook_runtime._remember_operation_transport(operation_id, authentic_secret)
+
+        owner_response = await _click_operations(
+            adapter, repair, chat_id="oc_group", operator="ou_owner"
+        )
+        confirm = _operations_button(owner_response.card.data, "确认修复")
+        other_response = await _click_operations(
+            adapter, confirm, chat_id="oc_group", operator="ou_other"
+        )
+        assert _operations_button(other_response.card.data, "确认修复")
+        completed_group = await _click_operations(
+            adapter, confirm, chat_id="oc_group", operator="ou_owner"
+        )
+        assert "安全修复已完成" in str(completed_group.card.data)
+
+        private_card = await _establish_operations_card(
+            feishu_client,
+            chat_id="oc_private",
+            chat_type="private",
+            operator="ou_first",
+            index=2,
+        )
+        private_repair = _operations_button(private_card, "安全修复")
+        private_confirm_card = await _click_operations(
+            adapter, private_repair, chat_id="oc_private", operator="ou_first"
+        )
+        private_confirm = _operations_button(
+            private_confirm_card.card.data, "确认修复"
+        )
+        completed_private = await _click_operations(
+            adapter, private_confirm, chat_id="oc_private", operator="ou_second"
+        )
+        assert "安全修复已完成" in str(completed_private.card.data)
+
+        await adapter._handle_card_action_event(
+            _card_action_data(repair, open_id="ou_owner", chat_id="oc_group")
+        )
+    finally:
+        await test_client.close()
+
+    assert len(recovery_calls) == 2
+    assert adapter.native_actions == []
+    assert adapter.gray_messages == []
+
+
 @pytest.mark.parametrize(
     "operation_action",
     [
@@ -472,6 +659,7 @@ async def _wait_for(predicate, attempts=100):
 
 async def test_ws_hook_to_real_local_actions_enforces_transport_scope_ownership_expiry_once(
     monkeypatch,
+    tmp_path,
 ):
     report = _operations_report()
     detection = SimpleNamespace(root=Path("/private/hermes"))
@@ -493,7 +681,13 @@ async def test_ws_hook_to_real_local_actions_enforces_transport_scope_ownership_
         hook_runtime, "P2CardActionTriggerResponse", _CallbackResponse, raising=False
     )
     hook_runtime.reset_runtime_state()
-    app = sidecar_server.create_app(feishu_client)
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(state_dir))
+    root_secret = ensure_transport_root_secret(state_dir)
+    app = sidecar_server.create_app(
+        feishu_client,
+        operations_transport_root_secret=root_secret,
+    )
     client = TestClient(TestServer(app))
     await client.start_server()
     try:

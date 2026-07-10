@@ -34,6 +34,11 @@ from .operations import (
     OperationStore,
     render_operations_card,
 )
+from .operations_transport import (
+    CommandProofVerifier,
+    TransportAuthenticationError,
+    derive_operation_transport_secret,
+)
 from .render import render_card
 from .session import CardSession
 from .status import StatusConfig
@@ -66,6 +71,10 @@ OPERATIONS_STORE_KEY = web.AppKey("operations_store", OperationStore)
 OPERATIONS_CONFIG_PATH_KEY = web.AppKey("operations_config_path", Path)
 OPERATIONS_HERMES_ROOT_KEY = web.AppKey("operations_hermes_root", Path)
 OPERATIONS_DELIVERIES_KEY = web.AppKey("operations_deliveries", dict)
+OPERATIONS_COMMAND_AUTH_KEY = web.AppKey(
+    "operations_command_auth", CommandProofVerifier
+)
+OPERATIONS_TRANSPORT_ROOT_KEY = web.AppKey("operations_transport_root", bytes)
 FLUSH_CONTROLLERS_KEY = web.AppKey("flush_controllers", dict)
 CLEANUP_TASK_KEY = web.AppKey("cleanup_task", asyncio.Task)
 UPDATE_MAX_ATTEMPTS = 3
@@ -111,6 +120,7 @@ def create_app(
     bot_router: Any = None,
     operations_config_path: str | Path | None = None,
     operations_hermes_root: str | Path | None = None,
+    operations_transport_root_secret: bytes | None = None,
 ) -> web.Application:
     app = web.Application()
     card_config = card_config or {}
@@ -149,6 +159,14 @@ def create_app(
         operations_hermes_root
     )
     app[OPERATIONS_DELIVERIES_KEY] = {}
+    if (
+        isinstance(operations_transport_root_secret, bytes)
+        and len(operations_transport_root_secret) == 32
+    ):
+        app[OPERATIONS_TRANSPORT_ROOT_KEY] = operations_transport_root_secret
+        app[OPERATIONS_COMMAND_AUTH_KEY] = CommandProofVerifier(
+            operations_transport_root_secret
+        )
     footer_fields = card_config.get("footer_fields")
     app[FOOTER_FIELDS_KEY] = list(footer_fields) if isinstance(footer_fields, list) else None
     title = card_config.get("title")
@@ -354,7 +372,7 @@ async def _operations_action(
         timestamp = transport_proof.get("timestamp")
         if isinstance(timestamp, bool) or not isinstance(timestamp, int):
             raise OperationRejected("invalid transport proof")
-        store.verify_transport_proof(
+        authenticated_record = store.verify_transport_proof(
             proof=str(transport_proof.get("signature") or ""),
             token=token,
             action=action,
@@ -373,7 +391,7 @@ async def _operations_action(
         _claims, record = store.inspect(
             token,
             callback_chat_id=chat_id,
-            callback_profile_id=profile_id,
+            callback_profile_id=authenticated_record.profile_id,
             callback_profile_scope=profile_scope,
             allow_expired=True,
         )
@@ -385,6 +403,31 @@ async def _operations_action(
         profile_id=record.profile_id,
         profile_source="callback",
     )
+    if action == "recheck":
+        try:
+            transitioned, created = store.recheck_successor(
+                token,
+                callback_chat_id=chat_id,
+                callback_profile_id=record.profile_id,
+                callback_profile_scope=profile_scope,
+                callback_report_fingerprint=report.fingerprint,
+                callback_recovery_fingerprint=str(
+                    report.install_state.get("recovery_fingerprint") or ""
+                ),
+                successor_report_fingerprint=report.fingerprint,
+                successor_recovery_fingerprint=str(
+                    report.install_state.get("recovery_fingerprint") or ""
+                ),
+            )
+        except OperationRejected:
+            return _operations_response(
+                request.app, report, record, ok=False, toast="操作不可用"
+            )
+        if created:
+            _transfer_operation_delivery(
+                request.app, record.operation_id, transitioned.operation_id
+            )
+        return _operations_response(request.app, report, transitioned)
     try:
         transitioned = store.transition(
             token,
@@ -432,8 +475,6 @@ async def _operations_action(
             state="diagnosed",
             result={"show_details": True},
         )
-    elif action == "recheck":
-        transitioned = _successor_operation(request.app, record, report)
     elif action == "confirm_repair":
         return await _execute_repair_operation(
             request.app, report, detection, transitioned
@@ -474,6 +515,20 @@ async def _commands(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "payload must be an object"}, status=400)
 
     command = _normalize_hfc_command(payload.get("command"))
+    if command == "doctor":
+        verifier = request.app.get(OPERATIONS_COMMAND_AUTH_KEY)
+        if verifier is None:
+            return web.json_response(
+                {"ok": False, "error": "operations authentication unavailable"},
+                status=503,
+            )
+        try:
+            verifier.verify(payload)
+        except TransportAuthenticationError:
+            return web.json_response(
+                {"ok": False, "error": "command authentication rejected"},
+                status=403,
+            )
     chat_id = _safe_command_string(payload.get("chat_id"))
     message_id = _safe_command_string(payload.get("message_id"))
     reply_to_message_id = _safe_command_string(payload.get("reply_to_message_id"))
@@ -511,18 +566,6 @@ async def _commands(request: web.Request) -> web.Response:
     route = _resolve_route(request, event)
     operation_id = ""
     if command == "doctor":
-        transport_secret_value = payload.get("adapter_transport_secret")
-        if not isinstance(transport_secret_value, str):
-            return web.json_response(
-                {"ok": False, "error": "operation authentication required"},
-                status=400,
-            )
-        transport_secret = transport_secret_value.encode("utf-8")
-        if len(transport_secret) < 16 or len(transport_secret) > 256:
-            return web.json_response(
-                {"ok": False, "error": "operation authentication required"},
-                status=400,
-            )
         report, _detection = await _build_operations_report(
             request.app,
             profile_id=str(data.get("profile_id") or "default"),
@@ -536,7 +579,14 @@ async def _commands(request: web.Request) -> web.Response:
                 profile_id=str(data.get("profile_id") or "default"),
                 group=_is_group_chat(chat_type),
                 initiator_open_id=_safe_command_operator(payload.get("operator")),
-                transport_secret=transport_secret,
+            )
+            root_secret = request.app[OPERATIONS_TRANSPORT_ROOT_KEY]
+            request.app[OPERATIONS_STORE_KEY].bind_transport_secret(
+                operation.operation_id,
+                derive_operation_transport_secret(
+                    root_secret,
+                    operation.operation_id,
+                ),
             )
         except OperationRejected:
             return web.json_response(
@@ -722,11 +772,16 @@ def _successor_operation(
             state=state,
             result=result or {},
         )
-    delivery = app[OPERATIONS_DELIVERIES_KEY].get(previous.operation_id)
-    if isinstance(delivery, dict):
-        app[OPERATIONS_DELIVERIES_KEY].pop(previous.operation_id, None)
-        _store_operation_delivery(app, successor.operation_id, dict(delivery))
+    _transfer_operation_delivery(app, previous.operation_id, successor.operation_id)
     return successor
+
+
+def _transfer_operation_delivery(
+    app: web.Application, previous_operation_id: str, successor_operation_id: str
+) -> None:
+    delivery = app[OPERATIONS_DELIVERIES_KEY].pop(previous_operation_id, None)
+    if isinstance(delivery, dict):
+        _store_operation_delivery(app, successor_operation_id, dict(delivery))
 
 
 def _store_operation_delivery(

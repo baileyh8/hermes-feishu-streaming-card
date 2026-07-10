@@ -485,6 +485,50 @@ def test_transport_proof_binds_token_scope_operator_action_and_timestamp():
         store.verify_transport_proof(proof=proof, **fields)
 
 
+def test_callback_rejects_invalid_scope_even_when_profile_id_matches():
+    store = OperationStore(secret=b"store", now=lambda: 100.0)
+    operation = store.create(group=False, **operation_kwargs())
+
+    with pytest.raises(OperationRejected, match="scope mismatch"):
+        store.inspect(
+            store.token(operation, "details"),
+            callback_chat_id="oc_group",
+            callback_profile_id="default",
+            callback_profile_scope="forged-scope",
+        )
+
+
+def test_successor_inherits_transport_binding_when_store_is_at_capacity():
+    store = OperationStore(secret=b"store", now=lambda: 100.0, max_records=1)
+    transport_secret = b"adapter-process-local-proof"
+    previous = store.create(
+        group=False,
+        transport_secret=transport_secret,
+        **operation_kwargs(),
+    )
+
+    successor = store.create(
+        group=False,
+        transport_source_operation_id=previous.operation_id,
+        **operation_kwargs(),
+    )
+    token = store.token(successor, "details")
+    fields = {
+        "token": token,
+        "action": "details",
+        "callback_chat_id": "oc_group",
+        "callback_profile_id": "default",
+        "callback_profile_scope": store.scope_fingerprint(successor),
+        "operator_open_id": "ou_owner",
+        "timestamp": 100,
+    }
+
+    assert store.verify_transport_proof(
+        proof=sign_transport_proof(transport_secret, **fields),
+        **fields,
+    ) is successor
+
+
 def report(*, executable: bool = True) -> DiagnosticReport:
     return DiagnosticReport(
         status="warning",

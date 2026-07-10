@@ -48,6 +48,7 @@ class OperationRecord:
     state: str
     expires_at: float
     result: dict[str, object] | None = None
+    successor_operation_id: str = ""
 
 
 def _next_operation_state(state: str, action: str) -> str:
@@ -142,19 +143,33 @@ class OperationStore:
             record = self._records.get(operation_id)
             return record is not None and record.state in _INFLIGHT_STATES
 
+    def bind_transport_secret(self, operation_id: str, secret: bytes) -> None:
+        if not isinstance(secret, bytes) or len(secret) < 16:
+            raise ValueError("operation transport secret is invalid")
+        with self._lock:
+            if operation_id not in self._records:
+                raise OperationRejected("operation expired")
+            existing = self._transport_secrets.get(operation_id)
+            if existing is not None and not hmac.compare_digest(existing, secret):
+                raise OperationRejected("operation transport already bound")
+            self._transport_secrets[operation_id] = secret
+
     def _prune_locked(self) -> None:
         cutoff = self._now() - 300.0
         for operation_id, item in list(self._records.items()):
             if item.expires_at < cutoff and item.state not in _INFLIGHT_STATES:
                 self._remove_locked(operation_id)
 
-    def _reserve_capacity_locked(self) -> None:
+    def _reserve_capacity_locked(
+        self, protected_operation_ids: frozenset[str] = frozenset()
+    ) -> None:
         while len(self._records) >= self._max_records:
             candidate = next(
                 (
                     operation_id
                     for operation_id, record in self._records.items()
                     if record.state not in _INFLIGHT_STATES
+                    and operation_id not in protected_operation_ids
                 ),
                 None,
             )
@@ -163,6 +178,57 @@ class OperationStore:
                     "operation store overloaded: capacity exhausted"
                 )
             self._remove_locked(candidate)
+
+    def recheck_successor(
+        self,
+        token: str,
+        *,
+        callback_chat_id: str,
+        callback_profile_id: str,
+        callback_profile_scope: str,
+        callback_report_fingerprint: str,
+        callback_recovery_fingerprint: str,
+        successor_report_fingerprint: str,
+        successor_recovery_fingerprint: str,
+    ) -> tuple[OperationRecord, bool]:
+        with self._lock:
+            claims, record = self._verify_token_locked(token)
+            self._verify_callback_locked(
+                claims,
+                record,
+                callback_chat_id=callback_chat_id,
+                callback_profile_id=callback_profile_id,
+                callback_profile_scope=callback_profile_scope,
+                callback_report_fingerprint=callback_report_fingerprint,
+                callback_recovery_fingerprint=callback_recovery_fingerprint,
+            )
+            if claims.action != "recheck":
+                raise OperationRejected("operation action mismatch")
+            _next_operation_state(record.state, "recheck")
+            if record.successor_operation_id:
+                successor = self._records.get(record.successor_operation_id)
+                if successor is not None:
+                    return successor, False
+            transport_secret = self._transport_secrets.get(record.operation_id)
+            if transport_secret is None:
+                raise OperationRejected("operation transport binding expired")
+            self._prune_locked()
+            self._reserve_capacity_locked(frozenset({record.operation_id}))
+            successor = OperationRecord(
+                operation_id=secrets.token_urlsafe(18),
+                chat_id=record.chat_id,
+                profile_id=record.profile_id,
+                report_fingerprint=successor_report_fingerprint,
+                recovery_fingerprint=successor_recovery_fingerprint,
+                group=record.group,
+                owner_open_id=record.owner_open_id,
+                state="diagnosed",
+                expires_at=self._now() + 120.0,
+            )
+            self._records[successor.operation_id] = successor
+            self._transport_secrets[successor.operation_id] = transport_secret
+            record.successor_operation_id = successor.operation_id
+            return successor, True
 
     def _remove_locked(self, operation_id: str) -> None:
         self._records.pop(operation_id, None)
@@ -222,7 +288,7 @@ class OperationStore:
                 token=token,
                 action=action,
                 callback_chat_id=callback_chat_id,
-                callback_profile_id=callback_profile_id,
+                callback_profile_id=record.profile_id,
                 callback_profile_scope=callback_profile_scope,
                 operator_open_id=operator_open_id,
                 timestamp=timestamp,
@@ -387,12 +453,15 @@ class OperationStore:
         verify_expiry: bool = True,
     ) -> None:
         profile_matches = callback_profile_id == record.profile_id
-        if not callback_profile_id and callback_profile_scope:
-            profile_matches = hmac.compare_digest(
+        scope_matches = True
+        if callback_profile_scope:
+            scope_matches = hmac.compare_digest(
                 callback_profile_scope,
                 self.scope_fingerprint(record),
             )
-        if callback_chat_id != record.chat_id or not profile_matches:
+        if not callback_profile_id:
+            profile_matches = bool(callback_profile_scope) and scope_matches
+        if callback_chat_id != record.chat_id or not profile_matches or not scope_matches:
             raise OperationRejected("operation scope mismatch")
         if claims.report_fingerprint != record.report_fingerprint:
             raise OperationRejected("diagnosis changed")

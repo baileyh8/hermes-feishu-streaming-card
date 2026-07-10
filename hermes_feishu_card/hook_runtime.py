@@ -22,6 +22,11 @@ from urllib import parse
 from urllib import request
 
 from .operations import sign_transport_proof
+from .operations_transport import (
+    derive_operation_transport_secret,
+    read_transport_root_secret,
+    sign_command_transport_proof,
+)
 from .status import normalize_display_status
 
 logger = logging.getLogger(__name__)
@@ -109,7 +114,7 @@ _HFC_FEISHU_NOTICE_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
     default=None,
 )
 _HFC_COMMAND_RESULT_CARD_COMMANDS = {"new", "reset", "clear", "undo", "stop", "model"}
-_OPERATION_TRANSPORT_SECRETS: dict[str, tuple[bytes, float]] = {}
+_OPERATION_TRANSPORT_SECRETS: dict[str, tuple[bytes, str, float]] = {}
 _OPERATION_TRANSPORT_SECRETS_LOCK = threading.Lock()
 _OPERATION_TRANSPORT_SECRET_TTL_SECONDS = 600.0
 _OPERATION_TRANSPORT_SECRET_LIMIT = 256
@@ -576,8 +581,15 @@ def handle_hfc_command_from_hermes_locals(local_vars: dict[str, Any]) -> bool:
             "platform": "feishu",
         }
         if command == "doctor":
-            transport_secret = secrets.token_urlsafe(32)
-            payload["adapter_transport_secret"] = transport_secret
+            root_secret = read_transport_root_secret()
+            if root_secret is None:
+                return False
+            payload["adapter_command_proof"] = sign_command_transport_proof(
+                root_secret,
+                payload,
+                timestamp=int(time.time()),
+                nonce=secrets.token_urlsafe(18),
+            )
         url = f"{_summary_base_url(config.event_url)}/commands"
         if command != "doctor":
             return _post_json_sync(url, payload, config.timeout_seconds)
@@ -587,13 +599,21 @@ def handle_hfc_command_from_hermes_locals(local_vars: dict[str, Any]) -> bool:
         operation_id = str(result.get("operation_id") or "").strip()
         if not operation_id:
             return False
-        _remember_operation_transport(operation_id, transport_secret)
+        _remember_operation_transport(
+            operation_id,
+            derive_operation_transport_secret(root_secret, operation_id),
+            profile_id,
+        )
         return True
     except Exception:
         return False
 
 
-def _remember_operation_transport(operation_id: str, secret: str | bytes) -> None:
+def _remember_operation_transport(
+    operation_id: str,
+    secret: str | bytes,
+    profile_id: str | None = None,
+) -> None:
     operation_id = str(operation_id or "").strip()
     secret_bytes = secret.encode("utf-8") if isinstance(secret, str) else secret
     if not operation_id or not isinstance(secret_bytes, bytes) or len(secret_bytes) < 16:
@@ -601,8 +621,15 @@ def _remember_operation_transport(operation_id: str, secret: str | bytes) -> Non
     now = time.time()
     with _OPERATION_TRANSPORT_SECRETS_LOCK:
         _prune_operation_transport_secrets_locked(now)
+        existing = _OPERATION_TRANSPORT_SECRETS.get(operation_id)
+        trusted_profile_id = (
+            str(profile_id).strip()
+            if isinstance(profile_id, str) and profile_id.strip()
+            else existing[1] if existing is not None else "default"
+        )
         _OPERATION_TRANSPORT_SECRETS[operation_id] = (
             secret_bytes,
+            trusted_profile_id,
             now + _OPERATION_TRANSPORT_SECRET_TTL_SECONDS,
         )
         while len(_OPERATION_TRANSPORT_SECRETS) > _OPERATION_TRANSPORT_SECRET_LIMIT:
@@ -611,17 +638,18 @@ def _remember_operation_transport(operation_id: str, secret: str | bytes) -> Non
             )
 
 
-def _operation_transport_secret(operation_id: str) -> bytes | None:
+def _operation_transport_context(operation_id: str) -> tuple[bytes, str] | None:
     now = time.time()
     with _OPERATION_TRANSPORT_SECRETS_LOCK:
         _prune_operation_transport_secrets_locked(now)
         item = _OPERATION_TRANSPORT_SECRETS.get(operation_id)
-        return item[0] if item is not None else None
+        return (item[0], item[1]) if item is not None else None
 
 
 def _transport_secret_for_token(token: str) -> bytes | None:
     operation_id = _operation_id_from_token(token)
-    return _operation_transport_secret(operation_id) if operation_id else None
+    context = _operation_transport_context(operation_id) if operation_id else None
+    return context[0] if context is not None else None
 
 
 def _operation_id_from_token(token: str) -> str:
@@ -647,7 +675,7 @@ def _operation_id_from_token(token: str) -> str:
 
 
 def _prune_operation_transport_secrets_locked(now: float) -> None:
-    for operation_id, (_secret, expires_at) in list(
+    for operation_id, (_secret, _profile_id, expires_at) in list(
         _OPERATION_TRANSPORT_SECRETS.items()
     ):
         if expires_at <= now:
@@ -2302,12 +2330,13 @@ def _hfc_handle_operations_select_action(
         _hfc_info("operations.select rejected by Hermes admission")
         return _hfc_empty_feishu_callback_response(adapter)
 
-    profile_id, _profile_source = _profile_identity({}, None, None)
     open_id = _hfc_action_open_id(data)
-    transport_secret = _transport_secret_for_token(token)
-    if transport_secret is None:
+    operation_id = _operation_id_from_token(token)
+    transport_context = _operation_transport_context(operation_id)
+    if transport_context is None:
         _hfc_info("operations.select rejected: authentication session expired")
         return _hfc_empty_feishu_callback_response(adapter)
+    transport_secret, profile_id = transport_context
     timestamp = int(time.time())
     forwarded_value = {
         "hfc_action": "operations.select",
@@ -2351,7 +2380,7 @@ def _hfc_handle_operations_select_action(
     if isinstance(result, dict) and isinstance(result.get("card"), dict):
         successor_id = str(result.get("operation_id") or "").strip()
         if successor_id:
-            _remember_operation_transport(successor_id, transport_secret)
+            _remember_operation_transport(successor_id, transport_secret, profile_id)
         return _hfc_raw_feishu_callback_response(adapter, result["card"])
     return _hfc_empty_feishu_callback_response(adapter)
 

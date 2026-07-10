@@ -327,7 +327,13 @@ def test_handle_hfc_command_reads_gateway_event_text(monkeypatch):
 
 def test_handle_hfc_command_forwards_chat_type_and_operator(monkeypatch):
     posted = []
+    root_secret = b"r" * 32
     monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+    monkeypatch.setattr(
+        hook_runtime,
+        "read_transport_root_secret",
+        lambda: root_secret,
+    )
 
     class HfcEventObject:
         text = "/hfc doctor"
@@ -353,11 +359,11 @@ def test_handle_hfc_command_forwards_chat_type_and_operator(monkeypatch):
     assert handled is True
     assert posted[0]["chat_type"] == "group"
     assert posted[0]["operator"] == "ou_initiator"
-    secret = posted[0]["adapter_transport_secret"]
-    assert len(secret) >= 32
-    assert hook_runtime._transport_secret_for_token(_operation_token()) == secret.encode(
-        "utf-8"
-    )
+    assert "adapter_transport_secret" not in posted[0]
+    assert posted[0]["adapter_command_proof"]["signature"]
+    assert hook_runtime._transport_secret_for_token(
+        _operation_token()
+    ) == hook_runtime.derive_operation_transport_secret(root_secret, "operation-1")
 
 
 def test_handle_hfc_command_ignores_regular_messages(monkeypatch):
@@ -4526,7 +4532,9 @@ def test_operations_select_passes_admission_and_forwards_profile_context(monkeyp
 
     monkeypatch.setattr(hook_runtime, "_post_json_sync_response", fake_post)
     token = _operation_token()
-    hook_runtime._remember_operation_transport("operation-1", "process-local-secret")
+    hook_runtime._remember_operation_transport(
+        "operation-1", "process-local-secret", "work"
+    )
     adapter = DummyFeishuAdapter()
     data = SimpleNamespace(
         event=SimpleNamespace(

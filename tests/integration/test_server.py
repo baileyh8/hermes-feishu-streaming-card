@@ -1,5 +1,8 @@
 import asyncio
+import base64
+import json
 from pathlib import Path
+import secrets
 import threading
 from types import SimpleNamespace
 
@@ -17,7 +20,11 @@ from hermes_feishu_card.lifecycle import (
     cleanup_orphan_message_lock,
     cleanup_runtime_state,
 )
-from hermes_feishu_card.operations import sign_transport_proof
+from hermes_feishu_card.operations import OperationStore, sign_transport_proof
+from hermes_feishu_card.operations_transport import (
+    derive_operation_transport_secret,
+    sign_command_transport_proof,
+)
 from hermes_feishu_card.session import CardSession, InteractionState
 from hermes_feishu_card.server import (
     CARD_SUMMARIES_KEY,
@@ -36,12 +43,33 @@ from hermes_feishu_card.server import (
     SESSION_ALIASES_KEY,
     SESSION_CARD_CONFIGS_KEY,
     SESSIONS_KEY,
-    create_app,
+    create_app as _create_app,
 )
 
 
 _REAL_ASYNCIO_SLEEP = asyncio.sleep
 TRANSPORT_SECRET = "test-adapter-process-local-secret"
+TRANSPORT_ROOT_SECRET = b"r" * 32
+
+
+def create_app(*args, **kwargs):
+    kwargs.setdefault(
+        "operations_transport_root_secret",
+        TRANSPORT_ROOT_SECRET,
+    )
+    return _create_app(*args, **kwargs)
+
+
+def signed_operations_command(payload):
+    signed = dict(payload)
+    signed.pop("adapter_transport_secret", None)
+    signed["adapter_command_proof"] = sign_command_transport_proof(
+        TRANSPORT_ROOT_SECRET,
+        signed,
+        timestamp=int(sidecar_server.time.time()),
+        nonce=secrets.token_urlsafe(18),
+    )
+    return signed
 
 
 class FakeFeishuClient:
@@ -157,13 +185,22 @@ def operations_action_payload(
     context = {"open_chat_id": chat_id}
     if profile_id:
         context["profile_id"] = profile_id
+    proof_profile_id = profile_id or "default"
     timestamp = int(sidecar_server.time.time())
+    token = str(value.get("token") or "")
+    encoded = token.split(".", 1)[0]
+    claims = json.loads(
+        base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+    )
     proof = sign_transport_proof(
-        TRANSPORT_SECRET.encode("utf-8"),
-        token=str(value.get("token") or ""),
+        derive_operation_transport_secret(
+            TRANSPORT_ROOT_SECRET,
+            claims["operation_id"],
+        ),
+        token=token,
         action=str(value.get("operation_action") or ""),
         callback_chat_id=chat_id,
-        callback_profile_id=profile_id,
+        callback_profile_id=proof_profile_id,
         callback_profile_scope=str(value.get("profile_scope") or ""),
         operator_open_id=operator,
         timestamp=timestamp,
@@ -622,11 +659,11 @@ async def test_hfc_command_request_returns_before_slow_feishu_send():
     post_task = asyncio.create_task(
         test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "status",
                 "chat_id": "oc_secret_chat",
                 "message_id": "om_secret_message",
-            },
+            }),
         )
     )
     try:
@@ -678,12 +715,12 @@ async def test_hfc_status_group_unbound_shows_binding_hint_and_slash_guidance():
     try:
         response = await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "status",
                 "chat_id": "oc_group",
                 "message_id": "om_group_status",
                 "data": {"chat_type": "group"},
-            },
+            }),
         )
     finally:
         await test_client.close()
@@ -745,14 +782,14 @@ async def test_hfc_doctor_sends_group_owned_operations_card(monkeypatch):
     try:
         response = await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_group",
                 "message_id": "om_doctor",
                 "chat_type": "group",
                 "operator": "ou_initiator",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         card = feishu_client.sent[0][1]
@@ -804,14 +841,14 @@ async def test_http_operations_reject_forged_operator_without_valid_adapter_proo
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_group",
                 "message_id": "om_doctor",
                 "chat_type": "group",
                 "operator": "ou_owner",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         repair = operations_button(feishu_client.sent[0][1], "安全修复")
@@ -825,6 +862,96 @@ async def test_http_operations_reject_forged_operator_without_valid_adapter_proo
 
     assert response.status == 403
     assert body == {"ok": False, "error": "operation rejected"}
+
+
+async def test_doctor_rejects_caller_chosen_secret_and_forged_operator(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    report = operations_report()
+    monkeypatch.setattr(
+        sidecar_server,
+        "_build_operations_report_sync",
+        lambda *args, **kwargs: (
+            report,
+            SimpleNamespace(root=Path("/private/hermes")),
+        ),
+    )
+    app = create_app(
+        feishu_client,
+        operations_transport_root_secret=b"r" * 32,
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        response = await test_client.post(
+            "/commands",
+            json={
+                "command": "doctor",
+                "chat_id": "oc_victim",
+                "message_id": "om_forged",
+                "profile_id": "work",
+                "chat_type": "group",
+                "operator": "ou_victim",
+                "adapter_transport_secret": "attacker-chosen-secret",
+            },
+        )
+        body = await response.json()
+    finally:
+        await test_client.close()
+
+    assert response.status == 403
+    assert body == {"ok": False, "error": "command authentication rejected"}
+    assert feishu_client.sent == []
+
+
+async def test_hfc_doctor_returns_overload_without_evicting_inflight(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    report = operations_report()
+    monkeypatch.setattr(
+        sidecar_server,
+        "_build_operations_report_sync",
+        lambda *args, **kwargs: (
+            report,
+            SimpleNamespace(root=Path("/private/hermes")),
+        ),
+    )
+    app = create_app(feishu_client)
+    store = OperationStore(secret=b"store", max_records=1)
+    active = store.create(
+        chat_id="oc_active",
+        profile_id="default",
+        report_fingerprint="active-report",
+        recovery_fingerprint="active-recovery",
+        group=False,
+        transport_secret=TRANSPORT_SECRET.encode("utf-8"),
+    )
+    active.state = "executing"
+    app[sidecar_server.OPERATIONS_STORE_KEY] = store
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        response = await test_client.post(
+            "/commands",
+            json=signed_operations_command({
+                "command": "doctor",
+                "chat_id": "oc_new",
+                "message_id": "om_new",
+                "chat_type": "private",
+                "adapter_transport_secret": TRANSPORT_SECRET,
+            }),
+        )
+        body = await response.json()
+    finally:
+        await test_client.close()
+
+    assert response.status == 503
+    assert body == {"ok": False, "error": "operations overloaded"}
+    assert store.complete(
+        active.operation_id,
+        expected_state="executing",
+        state="repaired",
+        result={},
+    ).state == "repaired"
+    assert feishu_client.sent == []
 
 
 async def test_group_operations_first_claim_missing_identity_and_read_only_matrix(
@@ -851,13 +978,13 @@ async def test_group_operations_first_claim_missing_identity_and_read_only_matri
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_group",
                 "message_id": "om_doctor",
                 "chat_type": "group",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         card = feishu_client.sent[0][1]
@@ -900,6 +1027,59 @@ async def test_group_operations_first_claim_missing_identity_and_read_only_matri
     assert calls[0][1] == "recovery-a"
 
 
+async def test_concurrent_recheck_returns_one_successor_and_moves_delivery_once(
+    monkeypatch,
+):
+    feishu_client = FakeFeishuClient()
+    report = operations_report()
+    monkeypatch.setattr(
+        sidecar_server,
+        "_build_operations_report_sync",
+        lambda *args, **kwargs: (
+            report,
+            SimpleNamespace(root=Path("/private/hermes")),
+        ),
+    )
+    app = create_app(feishu_client)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/commands",
+            json=signed_operations_command({
+                "command": "doctor",
+                "chat_id": "oc_private",
+                "message_id": "om_doctor",
+                "chat_type": "private",
+                "adapter_transport_secret": TRANSPORT_SECRET,
+            }),
+        )
+        await _wait_until(lambda: bool(feishu_client.sent))
+        recheck = operations_button(feishu_client.sent[0][1], "重新检测")
+        original_id = next(iter(app[sidecar_server.OPERATIONS_DELIVERIES_KEY]))
+        payload = operations_action_payload(
+            recheck,
+            chat_id="oc_private",
+            operator="ou_owner",
+        )
+        responses = await asyncio.gather(
+            *[
+                test_client.post("/card/actions", json=payload)
+                for _ in range(8)
+            ]
+        )
+        bodies = [await response.json() for response in responses]
+    finally:
+        await test_client.close()
+
+    successor_ids = {body["operation_id"] for body in bodies}
+    deliveries = app[sidecar_server.OPERATIONS_DELIVERIES_KEY]
+    assert len(successor_ids) == 1
+    assert original_id not in deliveries
+    assert set(deliveries) == successor_ids
+    assert all(body["ok"] is True for body in bodies)
+
+
 async def test_private_repair_is_exactly_once_under_concurrent_confirmation(monkeypatch):
     feishu_client = FakeFeishuClient()
     report = operations_report()
@@ -924,14 +1104,14 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(monk
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_private",
                 "message_id": "om_doctor",
                 "chat_type": "private",
                 "operator": "ou_first",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         repair = operations_button(feishu_client.sent[0][1], "安全修复")
@@ -986,14 +1166,14 @@ async def test_changed_recovery_fingerprint_refuses_confirm_without_execution(mo
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_group",
                 "message_id": "om_doctor",
                 "chat_type": "group",
                 "operator": "ou_owner",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         repair = operations_button(feishu_client.sent[0][1], "安全修复")
@@ -1035,14 +1215,14 @@ async def test_http_operations_reject_tampered_and_profile_mismatched_tokens(
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_private",
                 "message_id": "om_doctor",
                 "profile_id": "default",
                 "chat_type": "private",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         details = operations_button(feishu_client.sent[0][1], "查看诊断")
@@ -1102,14 +1282,14 @@ async def test_http_operations_reject_unsigned_forged_operator(monkeypatch):
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_group",
                 "message_id": "om_doctor",
                 "chat_type": "group",
                 "operator": "ou_owner",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         repair = operations_button(feishu_client.sent[0][1], "安全修复")
@@ -1142,14 +1322,14 @@ async def test_http_stale_operation_renders_recheck_only_expired_card(monkeypatc
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_private",
                 "message_id": "om_doctor",
                 "profile_id": "default",
                 "chat_type": "private",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         card = feishu_client.sent[0][1]
@@ -1242,14 +1422,14 @@ async def test_confirmed_restart_returns_callback_before_sanitized_background_re
     try:
         await test_client.post(
             "/commands",
-            json={
+            json=signed_operations_command({
                 "command": "doctor",
                 "chat_id": "oc_private",
                 "message_id": "om_doctor",
                 "chat_type": "private",
                 "operator": "ou_first",
                 "adapter_transport_secret": TRANSPORT_SECRET,
-            },
+            }),
         )
         await _wait_until(lambda: bool(feishu_client.sent))
         repair = operations_button(feishu_client.sent[0][1], "安全修复")
