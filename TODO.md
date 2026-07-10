@@ -2,9 +2,19 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18
+## V3.8 / V3.9 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V3.9.0：运维与可靠性基础（已完成自动化与文档）
+
+- [x] 运维卡覆盖诊断、重新检测、两步安全修复和重启确认；私聊不比较操作者，群聊修复/重启仅允许发起者确认；卡片不可用时保留 CLI fallback。
+- [x] 运输认证零配置：secret 位于权限为私有的 sidecar state-dir transport root，不写入 config 或环境变量。
+- [x] profile setup、环境变量和 `status` route-chain 诊断完成；PR #84 / @Zanetach 提供 profile env/status routing 能力。
+- [x] 已知安全的 manifest/backup 状态支持自动 repair，可用 `--no-repair` 关闭；不可验证的用户编辑继续拒绝覆盖。
+- [x] lifecycle cleanup 与有界 metrics 覆盖 runtime state；Hermes/Docker 兼容由自动化回归覆盖。
+- [x] Task 7 release gate 证据：`1061 passed, 3 skipped`；普通卡片 footer/layout 不变。
+- [ ] 待真实验收：existing-container Docker、飞书私聊/群聊 repair 与 restart、群内换操作者拒绝、topic、cron、profile route mismatch。
 
 ### V3.8.0：卡片体验与流式稳定性（已完成）
 

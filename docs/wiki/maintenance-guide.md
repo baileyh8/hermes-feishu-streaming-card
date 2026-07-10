@@ -58,6 +58,20 @@
 - Hermes source-stripped Docker 目录缺少 `VERSION`，或版本 metadata 可读但格式不可解析时，只能在 gateway anchors 可验证时兜底。
 - 新 hook block 必须有 patcher 单测和 remove/restore 覆盖。
 
+### `hermes_feishu_card/install/recovery.py` and operations execution
+
+职责：
+
+- `plan_recovery(...)` 只根据当前 Hermes detection、manifest、backup 和 marker 证据生成可脱敏展示的 recovery plan。
+- `execute_recovery(...)` 在 mutation 前重新规划并比较 fingerprint，只执行可验证的修复；证据变化、用户编辑或无法确认的状态必须拒绝。
+- `server.py` 的 operations-card executor 只消费带确认的 plan，保留私聊/群聊 ownership 边界和 CLI fallback。
+
+高风险点：
+
+- 不把 recovery plan、state-dir transport secret、真实 chat id 或安装路径未经脱敏地放进 card、`/health` 或日志。
+- 自动 repair 只适用于 known-safe state；`--no-repair` 必须保持有效，用户编辑不能被覆盖。
+- 调整 planner/executor 时运行 `tests/unit/test_recovery.py`、`tests/unit/test_operations.py`、`tests/integration/test_server.py`；涉及安装器时再加 `tests/integration/test_cli_install.py`。
+
 ## 常见改动对应测试
 
 | 改动 | 先跑 | 发布前还要跑 |

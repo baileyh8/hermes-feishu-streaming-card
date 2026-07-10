@@ -37,6 +37,7 @@ Since V3.8.2, the final answer stays in the primary content area while pre-tool 
 - **Second topic turns keep card rendering**: Since V3.8.16, Feishu/Lark topic groups that reuse the same `message_id` create a fresh card for the second and later messages.
 - **Cron routing intents keep card delivery**: Since V3.8.17, cron `deliver: origin`, `deliver: all`, and `origin,all` resolve to Feishu targets and send cards.
 - **Cron topic threads stay consistent**: Since V3.8.18, cron jobs created from Feishu topic threads preserve `thread_id` and return cards to the originating thread; non-Feishu origin thread ids are ignored.
+- **Bounded operations recovery**: V3.9.0 operations cards provide diagnosis, recheck, two-step safe repair, and restart confirmation; private chats do not compare operators, group confirmation stays with the initiator, and the CLI remains the fallback. Normal streaming-card footer/layout is unchanged.
 - **Long content protection**: Markdown tables and fenced code blocks split on structure boundaries instead of raw character cuts.
 - **Richer tool details**: `tool.updated` can show argument summaries, duration, and failure reason while keeping long details compact.
 - **Multi-bot / multi-profile**: bot registry, chat bindings, profile-aware session keys, titles, and routing diagnostics.
@@ -59,6 +60,18 @@ Since V3.8.2, the final answer stays in the primary content area while pre-tool 
 | Long tables/code blocks render as raw Markdown | Markdown-aware table/code splitting with repeated headers and complete fences |
 | Multi-bot, group, and profile routing is hard to inspect | `bindings.chats`, safe `group_rules` diagnostics, profile-aware sessions, and `/health.routing` diagnostics |
 | Hook or sidecar failures are hard to debug | `doctor`, runtime import checks, `/health` metrics, fail-closed installer, restore/uninstall |
+
+## V3.9.0 Operations and Reliability Foundation
+
+V3.9.0 includes the profile env/status routing foundation from PR #84 by @Zanetach and presents diagnosis/recovery through optional operations cards; it is not a visual or footer change to ordinary conversation cards.
+
+- **Controlled recovery**: operations cards are limited to diagnosis, recheck, two-step safe repair, and Gateway restart confirmation. Private confirmations do not compare operators; group repair/restart must be confirmed by the initiator. When the card is unavailable, expires, or does not apply, use `doctor`, `repair`, `install`, `status`, and `start/stop` CLI commands.
+- **Zero-config transport root**: the sidecar state directory creates a private-permission transport secret automatically. It is not stored in config or environment variables and never appears in cards, `status`, or diagnostics.
+- **Profile routing diagnosis**: setup resolves explicit `--profile-id` / `--event-url` before process environment, selected env file, and defaults. `status`, `doctor`, and `/health` emit redacted route-chain/profile diagnostics for profile or endpoint mismatches.
+- **Safe repair and cleanup**: install/setup automatically repair only known-safe manifest/backup state; `--no-repair` opts out, while unverifiable user edits remain refused. Lifecycle cleanup bounds terminal runtime state and its hashed metrics/history.
+- **Compatibility and acceptance boundary**: Hermes/Docker automated regression covers argument and behavior boundaries. Existing-container Docker and real Feishu private/group repair/restart, topic, cron, and profile-mismatch validation remain pending acceptance, not verified claims.
+
+Full release notes: [docs/release-notes-v3.9.0.md](release-notes-v3.9.0.md).
 
 ## V3.8.18 Cron Topic-Thread Return Patch
 
@@ -593,6 +606,7 @@ Ensure Hermes `config.yaml` has `streaming.enabled: true` and `streaming.transpo
 | `doctor --config ... --hermes-dir ...` | Diagnostics: `version_source`, `version`, `minimum_supported_version`, `run_py_exists`, `hook_strategy`, `compatibility`, anchors, `reason`; supports `--explain` / `--json` |
 | `install --hermes-dir ... --yes` | Install hook into Hermes |
 | `repair --hermes-dir ... --yes` | Repair verifiable hook manifest/backup state without overwriting user edits |
+| `setup --repair ... --yes` / `--no-repair` | Automatically repair known-safe state, or explicitly opt out |
 | `restore --hermes-dir ... --yes` | Restore original Hermes files |
 | `uninstall --hermes-dir ... --yes` | Uninstall and restore |
 | `start --config ...` | Start sidecar |
@@ -637,6 +651,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v3.9.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.9.0) | 2026-07 | PR #84 / @Zanetach: profile env/status route chain, operations safe repair/restart, and CLI fallback; normal footer/layout is unchanged |
 | [v3.8.18](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.8.18) | 2026-07 | PR #91: cron cards preserve `thread_id` and return to the originating Feishu topic thread |
 | [v3.8.17](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.8.17) | 2026-07 | PR #77: cron `deliver=origin/all` routing intents resolve to Feishu targets and send cards |
 | [v3.8.16](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v3.8.16) | 2026-07 | issue #89 / PR #88: topic groups that reuse `message_id` send a fresh card for the second and later messages |
@@ -713,6 +728,7 @@ Thanks to these contributors for improving the project:
 - [colinaaa](https://github.com/colinaaa) — [PR #88](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/88) fresh cards for second turns when Feishu topic groups reuse `message_id` (V3.8.16)
 - [colinaaa](https://github.com/colinaaa) — [PR #91](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/91) cron `thread_id` routing back to the originating Feishu topic-group thread (V3.8.18)
 - [zayn-0101](https://github.com/zayn-0101) — [PR #77](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/77) cron `deliver=origin/all` routing-intent card delivery fix (V3.8.17)
+- [Zanetach](https://github.com/Zanetach) — [PR #84](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/84) profile environment and `status` route-chain routing foundation (V3.9.0)
 
 ## Security
 

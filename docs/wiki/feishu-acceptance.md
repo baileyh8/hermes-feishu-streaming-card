@@ -10,6 +10,18 @@
 - 飞书 bot 已在目标会话可用。
 - 不在仓库、issue 或日志中暴露 App Secret、tenant token、真实 chat id。
 
+## V3.9.0 运维卡（待验收）
+
+以下项目必须在真实飞书完成后才可标记通过；当前自动化证据不替代这些 smoke。
+
+- 私聊：`/hfc doctor` 打开运维卡，执行重新检测、两步安全修复、重启确认；确认普通流式卡 footer/layout 快照不变。
+- 群聊（group）：发起者能够完成 repair/restart；第二位操作者确认时被拒绝；再次由发起者确认后完成，并检查没有泄漏 chat id、token 或 transport secret。
+- topic：在话题内打开运维卡后，普通 topic 流仍更新原卡，运维卡不改写普通 footer/layout。
+- cron：cron 投递和普通定时完成卡不被运维操作阻断。
+- profile route mismatch：以 main/child profile 或错误 `HERMES_FEISHU_CARD_PROFILE_ID` / endpoint 配置复现 mismatch，确认 `status`/`doctor` 仅显示脱敏 route chain，并修正后恢复。
+
+真实验收状态：**待验收**。
+
 ## 普通会话
 
 提示词：
@@ -111,4 +123,3 @@ V3.8.9 notice suppress smoke: please run terminal command date, then reply exact
 ```
 
 截图入库前需要遮挡私人头像、姓名、chat id、群名和不适合公开的上下文。
-

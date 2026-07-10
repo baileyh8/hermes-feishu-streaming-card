@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## Unreleased
 
+## V3.9.0 — 2026-07-10
+
+See also: [docs/release-notes-v3.9.0.md](docs/release-notes-v3.9.0.md)
+
+### Added
+- Added the operations and reliability foundation: Feishu/Lark operations cards guide diagnosis, two-step safe repair, recheck, and Gateway restart while retaining CLI fallback when operations cards are unavailable.
+- Operations cards preserve ownership boundaries: private chats do not compare operators; group cards require the initiating operator for repair/restart confirmation. Transport authentication uses a zero-configuration secret rooted in the private sidecar state directory.
+- Added profile-aware setup, environment/status route-chain diagnostics, lifecycle cleanup metrics, automatic known-safe repair (with `--no-repair` opt-out), and Hermes/Docker compatibility coverage.
+
+### Credits
+- PR #84 by @Zanetach contributed the profile environment/status routing foundation used by this release.
+
+### Validation
+- Task 7 automated release gate: `1061 passed, 3 skipped`.
+- Existing-container Docker smoke and real Feishu private/group repair, restart, topic, cron, and profile-mismatch smoke remain pending acceptance.
+
 ## V3.8.18 — 2026-07-10
 
 See also: [docs/release-notes-v3.8.18.md](docs/release-notes-v3.8.18.md)

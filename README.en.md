@@ -27,6 +27,7 @@ It targets the real pain points of running Hermes inside Feishu: missing or out-
 - **In-card interactions**: approval and clarify choices render as buttons; standalone commands such as `/new`, `/reset`, `/undo`, and `/model` use native interactive cards.
 - **Consistent topic replies**: later topic stream events resolve by `reply_to_message_id` and keep updating the original card; system notices no longer spill out as duplicates.
 - **Clearer group diagnostics**: `/hfc status` explains group chat binding state, the suggested bind command, and slash-command behavior boundaries.
+- **Bounded operations cards**: `/hfc doctor` can present diagnosis, two-step safe repair, and restart confirmation; private chats do not compare operators, while group confirmations stay with the initiator. When operations cards are unavailable, use the CLI; normal streaming-card layout and footer are unchanged.
 - **Long content protection**: long Markdown tables and fenced code blocks split on structure boundaries instead of raw character cuts.
 - **Diagnostics and recovery**: `doctor`, `/hfc status`, `/health` metrics, runtime import checks, and safe repair/restore/uninstall cover common failures.
 
@@ -121,7 +122,7 @@ For an existing Hermes container:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v3.8.18
+export HFC_VERSION=v3.9.0
 bash install-docker.sh
 ```
 
@@ -144,6 +145,7 @@ Defaults:
 | `doctor --config ... --hermes-dir ... --explain` | Diagnose Hermes version, runtime import, hook strategy, anchors, and recommendations |
 | `install --hermes-dir ... --yes` | Install the plugin into Hermes runtime venv and patch Hermes |
 | `repair --hermes-dir ... --yes` | Repair verifiable hook manifest/backup state |
+| `setup --repair ... --yes` / `--no-repair` | Automatically repair known-safe state, or explicitly opt out |
 | `restore --hermes-dir ... --yes` | Restore the original Hermes file |
 | `start --config ...` / `status --config ...` / `stop --config ...` | Manage the sidecar process and `/health` checks |
 | `smoke-feishu-card --profile-id ... --chat-id ...` | Send a real Feishu card smoke test |
@@ -163,6 +165,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 
 | Version | Highlights |
 |---|---|
+| [v3.9.0](docs/release-notes-v3.9.0.md) | Operations/reliability foundation: profile env/status routing (PR #84, contributed by @Zanetach), safe repair/restart operations cards, and CLI fallback; normal footer/layout is unchanged |
 | [v3.8.18](docs/release-notes-v3.8.18.md) | Cron cards preserve `thread_id` and return to the originating Feishu topic thread (PR #91, contributed by @colinaaa) |
 | [v3.8.17](docs/release-notes-v3.8.17.md) | Cron `deliver=origin/all` routing intents resolve to Feishu targets and send cards |
 | [v3.8.16](docs/release-notes-v3.8.16.md) | Topic groups that reuse `message_id` now send a fresh card for the second and later messages |
@@ -217,6 +220,7 @@ This is a sidecar-only design: the Hermes hook stays fail-open, while Feishu del
 - [colinaaa](https://github.com/colinaaa) - [PR #88](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/88) fresh cards for second turns when Feishu topic groups reuse `message_id`
 - [colinaaa](https://github.com/colinaaa) - [PR #91](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/91) cron `thread_id` routing back to the originating Feishu topic-group thread
 - [zayn-0101](https://github.com/zayn-0101) - [PR #77](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/77) cron `deliver=origin/all` routing-intent card delivery fix
+- [Zanetach](https://github.com/Zanetach) - [PR #84](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/84) profile environment and `status` route-chain foundation (V3.9.0)
 
 ## Security
 

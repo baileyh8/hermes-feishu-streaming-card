@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current package version: `3.8.18`. This release keeps the sidecar-only mainline, preserves V3.8.2 timeline readability, V3.8.10 group diagnostics, the V3.8.11 `/hfc` command-claim fix, V3.8.12 attachment-summary duplicate reply suppression, V3.8.13 Hermes upgrade compatibility, V3.8.14 WebSocket interaction card actions, V3.8.15 input-attachment duplicate reply suppression, the V3.8.16 reused-topic-`message_id` card fix, and the V3.8.17 cron routing-intent fix, then fixes cron cards that could not return to their originating Feishu topic thread (PR #91, contributed by @colinaaa).
+Current package version: `3.9.0`. Building on the sidecar-only, V3.8.2 timeline, group diagnostics, topic/cron routing, Hermes compatibility, and WebSocket interaction work, this release adds an operations/reliability foundation: profile env/status route chains (PR #84, contributed by @Zanetach), bounded operations cards, safe repair, restart confirmation, and lifecycle cleanup. Normal streaming-card footer/layout is unchanged.
 
 ## Ready
 
@@ -57,6 +57,11 @@ Current package version: `3.8.18`. This release keeps the sidecar-only mainline,
 - Hermes key release matrix covers `v2026.4.23`, `v2026.5.7`, `v2026.5.16+`, `v2026.5.29`, `v2026.6.19+`, `v2026.7.1+`, `v2026.7.7.2`, `0.13.x`, `0.14.x`, `0.15.x`, `0.17.x`, `0.18.x`, semantic versions with or without a `v` prefix, and descriptive version metadata.
 - GitHub Actions Python 3.9 / 3.12 test matrix for PRs and pushes, plus Windows parser validation for `install.ps1`.
 - Release assets workflow packages macOS/Linux/Windows installers and checksums for tags.
+- V3.9.0 operations cards support diagnosis, recheck, two-step safe repair, and restart confirmation; private chats do not compare operators, while group repair/restart confirmation stays with the initiator. Use CLI fallback when the card is unavailable.
+- The state-dir transport root automatically creates a private-permission transport secret. No secret configuration is required, and diagnostics/cards never output it.
+- Setup resolves profile/event URL by explicit argument, process environment, selected env file, then default; `status`, `doctor`, and `/health` emit redacted route-chain/profile diagnostics.
+- Install/setup can automatically repair known-safe state; `--no-repair` opts out, and unverifiable user edits remain refused. Cleanup history and metrics are bounded and hashed.
+- Task 7 automated release gate: `1061 passed, 3 skipped`.
 
 ## Required Pre-release Checks
 
@@ -68,6 +73,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 ```
 
 Real Feishu integration must use local config or environment variables for `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Do not commit App Secret, tenant token, real chat_id, or sensitive screenshots. Public screenshots must be checked for secrets and private conversation content before being added to the repository.
+
+## V3.9.0 Manual Acceptance Pending
+
+- Existing-container Docker: fresh install, pinned upgrade, known-safe corrupt-marker auto-repair, user-edit refusal, main/child profile endpoint mapping, and final `doctor`. **Pending acceptance**.
+- Real Feishu: private/group repair/restart, changed-operator rejection in groups, recheck, normal footer snapshot, topic, cron, and profile route mismatch. **Pending acceptance**.
+
+After the approved tag, the release-assets workflow is expected to produce four assets (not created by this task): the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
 
 ## Current Boundaries
 

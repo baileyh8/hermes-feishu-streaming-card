@@ -421,7 +421,7 @@ def test_v3817_release_notes_are_linked():
 def test_todo_points_to_v38_public_plan_docs():
     todo = read_doc("TODO.md")
 
-    assert "## V3.8 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18" in todo
+    assert "## V3.8 / V3.9 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0" in todo
     assert "### V3.8.2：卡片 timeline 阅读体验补丁（已完成）" in todo
     assert "### V3.8.3：独立命令卡片（已完成）" in todo
     assert "### V3.8.4：Feishu WebSocket 命令卡片热修（已完成）" in todo
@@ -976,3 +976,42 @@ def test_docs_describe_release_readiness_boundaries():
     assert "0.18.x" in english_readiness
     assert "v2026.7.1+" in english_readiness
     assert "version_source: gateway anchors" in english_readiness
+
+
+def test_v390_documents_operations_reliability_release_gate():
+    readme = read_doc("README.md")
+    english_readme = read_doc("README.en.md")
+    install_doc = read_doc("README-install.md")
+    changelog = read_doc("CHANGELOG.md")
+    todo = read_doc("TODO.md")
+    guide = read_doc("docs/user-guide.md")
+    english_guide = read_doc("docs/user-guide.en.md")
+    readiness = read_doc("docs/release-readiness.md")
+    english_readiness = read_doc("docs/release-readiness.en.md")
+    acceptance = read_doc("docs/wiki/feishu-acceptance.md")
+    release_notes = read_doc("docs/release-notes-v3.9.0.md")
+
+    assert "V3.9.0" in changelog
+    assert "docs/release-notes-v3.9.0.md" in changelog
+    assert "PR #84" in release_notes
+    assert "@Zanetach" in release_notes
+    assert "安全修复" in readme
+    assert "profile" in install_doc.lower()
+    assert "group" in acceptance.lower()
+    for doc in (readme, english_readme, changelog, guide, english_guide, todo, release_notes):
+        assert "PR #84" in doc
+        assert "@Zanetach" in doc
+    assert "status" in "\n".join((readme, english_readme, guide, english_guide)).lower()
+    assert "footer" in "\n".join((readme, english_readme, guide, english_guide)).lower()
+    assert "4 个" in readiness
+    assert "four" in english_readiness.lower()
+    for asset in (
+        "hermes-feishu-card-v3.9.0-macos.tar.gz",
+        "hermes-feishu-card-v3.9.0-linux.tar.gz",
+        "hermes-feishu-card-v3.9.0-windows.zip",
+        "hermes-feishu-card-v3.9.0-checksums.txt",
+    ):
+        assert asset in release_notes
+    assert "1061 passed, 3 skipped" in readiness
+    assert "1061 passed, 3 skipped" in english_readiness
+    assert "V3.9.0" in todo and "[x]" in todo

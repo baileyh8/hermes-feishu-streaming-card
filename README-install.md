@@ -101,6 +101,20 @@ From V3.8.18, cron jobs created from Feishu topic-group threads preserve
 `thread_id` and return cards to the originating thread. Thread ids from
 non-Feishu origins are ignored.
 
+From V3.9.0, setup accepts explicit `--profile-id`, `--event-url`, and
+`--env-file` routing inputs. For profile and event URL, precedence is explicit
+argument, process environment, selected env file, then the safe default.
+`status` and `doctor` print the redacted route chain to diagnose profile/env
+mismatches. Install/setup automatically repair only known-safe hook state;
+pass `--no-repair` to opt out, and unverifiable user edits are never replaced.
+Feishu/Lark operations cards are an optional UI for diagnosis, recheck, safe
+repair, and restart: private chats do not compare operators, while group
+confirmation stays with the initiating operator. If the card is unavailable,
+use the corresponding CLI command. This does not alter normal card layout or
+footer behavior. PR #84 / @Zanetach contributed the profile env/status routing
+foundation. The transport root is created with private permissions in the
+sidecar state directory, so no secret needs to be configured.
+
 Current installers default `PIP_ROOT_USER_ACTION=ignore` so Debian/Ubuntu root
 installs do not print pip's root-user warning. If Python reports
 `externally-managed-environment`, `install.sh` and `install-docker.sh` retry with
@@ -123,7 +137,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 | Variable | Default | Description |
 |---|---|---|
-| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.8.18`, `v3.6.6`, or `main`. |
+| `HFC_VERSION` | `latest` | Git tag or branch to install, such as `v3.9.0`, `v3.8.18`, `v3.6.6`, or `main`. |
 | `HFC_REPO` | `baileyh8/hermes-feishu-streaming-card` | GitHub repository to install from. |
 | `HERMES_DIR` | `~/.hermes/hermes-agent` | Hermes Agent root directory. |
 | `HFC_CONFIG` | `~/.hermes/config.yaml` | Sidecar config path. |
@@ -143,7 +157,7 @@ script selects Hermes venv Python and does not fall back to system Python unless
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v3.8.18
+export HFC_VERSION=v3.9.0
 bash install-docker.sh
 ```
 
@@ -151,6 +165,10 @@ V3.8.6 also supports Docker/source-stripped Hermes roots that contain
 `gateway/run.py` but no top-level `VERSION` file or `.git` metadata. In that
 case `doctor --explain` reports `version_source: gateway anchors` and uses the
 verified Gateway code anchors to choose the hook strategy.
+
+Existing-container Docker smoke for V3.9.0 (fresh/pinned install, safe repair,
+user-edit refusal, main/child profile routing, and final `doctor`) is pending
+acceptance; this document does not claim it has been run.
 
 ## One-Line Install
 

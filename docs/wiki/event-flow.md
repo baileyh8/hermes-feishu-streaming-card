@@ -125,6 +125,18 @@ sidecar 负责：
 - 读取 `bindings.group_rules` 的 enabled/require_mention/计数用于安全诊断，不展示真实 chat/user id。
 - 说明群内 `/new`、`/model`、`/reset` 等 slash command 先经过 Hermes 准入，再进入独立命令卡片；`/update` 仍是 Hermes 后台升级命令。
 
+## 运维卡与恢复边界
+
+`/hfc doctor` 可以发出独立运维卡，用于查看诊断、重新检测、两步安全修复和 Gateway 重启确认；它不进入普通 Agent streaming card，也不改变普通卡的 layout 或 footer。
+
+- 私聊 repair/restart 允许后续确认者继续操作，不比较操作者。
+- 群聊 repair/restart 只有创建运维卡的发起者可以完成确认；其他操作者会被拒绝并保留重新检测路径。
+- command transport 使用 state-dir transport root 自动创建私有 secret；不从 config、env 或卡片 payload 暴露 secret。
+- 修复执行前重新校验 recovery plan。已知安全的 manifest/backup 状态可自动 repair；无法验证的用户编辑仍拒绝覆盖。卡片不可用、超时或未投递时，使用 CLI `doctor`、`repair`、`install`、`status` 和 `start/stop` fallback。
+- lifecycle cleanup 会回收终态 session、孤立锁和关闭 controller，并保留有界、hash 化的 cleanup history 和 metrics。
+
+profile 路由由 setup 的显式参数、进程环境变量、选定 env file、默认值依次决定；`status`、`doctor` 和 `/health` 只输出脱敏 route-chain/profile diagnostics，用于识别 profile 或 endpoint mismatch。PR #84 / @Zanetach 提供这一 profile env/status routing 基础。
+
 ## `/health` 观测指标
 
 排查时先看：
@@ -138,5 +150,7 @@ sidecar 负责：
 - `last_update_error`
 - `last_route_error`
 - `reply_index.entries`
+- `cleanup_history`
+- `cleanup_*` metrics
 
 如果 Feishu UI 出现灰色重复文本，同时 `/health` 显示卡片成功更新，应优先查 hook runtime 的 native fallback suppression。

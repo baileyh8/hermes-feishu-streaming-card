@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前包版本为 `3.8.18`。这一版延续 sidecar-only 主线，保留 V3.8.2 timeline 阅读体验、V3.8.10 群聊诊断、V3.8.11 `/hfc` 命令接管修复、V3.8.12 附件摘要重复 reply 抑制、V3.8.13 Hermes 升级兼容、V3.8.14 WebSocket interaction 按钮闭环、V3.8.15 输入附件重复 reply 抑制、V3.8.16 话题群复用 `message_id` 新卡修复、V3.8.17 cron 路由意图修复，并修复 cron 卡片无法回到飞书话题原线程的问题（PR #91，贡献者 @colinaaa）。
+当前包版本为 `3.9.0`。这一版在既有 sidecar-only、V3.8.2 timeline、群聊诊断、话题/cron 路由、Hermes 兼容和 WebSocket 交互基础上加入运维与可靠性基础：profile env/status route-chain（PR #84，贡献者 @Zanetach）、受控运维卡、安全 repair、restart 确认和 lifecycle cleanup。普通流式卡的 footer/layout 不变。
 
 ## 已具备
 
@@ -57,6 +57,11 @@
 - Hermes key release matrix 覆盖 `v2026.4.23`、`v2026.5.7`、`v2026.5.16+`、`v2026.5.29`、`v2026.6.19+`、`v2026.7.1+`、`v2026.7.7.2`、`0.13.x`、`0.14.x`、`0.15.x`、`0.17.x`、`0.18.x`，并覆盖语义版本带/不带 `v` 前缀和描述型版本 metadata。
 - GitHub Actions 会在 PR/push 上运行 Python 3.9/3.12 的测试矩阵，并在 Windows 上解析验证 `install.ps1`。
 - Release assets workflow 会为 tag 生成 macOS/Linux/Windows 安装包和 checksum。
+- V3.9.0 运维卡支持诊断、重新检测、两步安全修复和重启确认；私聊不比较操作者，群聊只允许发起者完成 repair/restart 确认。卡片不可用时使用 CLI fallback。
+- state-dir transport root 会自动创建权限私有的 transport secret，不需要配置 secret，也不在诊断或卡片中输出。
+- setup 的 profile/event URL 优先级为显式参数、进程环境、选定 env file、默认值；`status`、`doctor` 和 `/health` 输出脱敏 route chain/profile diagnostics。
+- install/setup 可自动修复已知安全状态，`--no-repair` 可关闭；无法验证的用户编辑继续拒绝覆盖。cleanup history 和 metrics 保持有界且 hash 化。
+- Task 7 自动化 release gate：`1061 passed, 3 skipped`。
 
 ## 发布前必须验证
 
@@ -68,6 +73,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 ```
 
 真实飞书联调只能使用本机配置或环境变量提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret、tenant token 或真实 chat_id 提交到仓库。公开演示截图入库前需要确认不包含敏感凭据和不可公开的会话内容。
+
+## V3.9.0 待人工验收
+
+- existing-container Docker：fresh install、pinned upgrade、已知安全 corrupt-marker auto-repair、用户编辑拒绝、main/child profile endpoint mapping、最终 `doctor`。**待验收**。
+- 真实飞书：private/group repair/restart、群内 changed-operator rejection、recheck、普通 footer snapshot、topic、cron、profile route mismatch。**待验收**。
+
+release-assets workflow 预计在获批 tag 后产生 4 个 assets（本任务不创建）：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。
 
 ## 当前边界
 
