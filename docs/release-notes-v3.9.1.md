@@ -1,5 +1,7 @@
 # Hermes Feishu Streaming Card V3.9.1
 
+Released on 2026-07-11. The `v3.9.1` tag triggers the release-assets workflow for the four packages listed below.
+
 V3.9.1 is a focused reliability hotfix. It closes the regressions reported in #82, #92, and #96, incorporates the useful parts of PR #93, PR #97, PR #98, and PR #52, and keeps the established streaming-card footer/layout unchanged.
 
 ## Fixed

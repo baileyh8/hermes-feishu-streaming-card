@@ -1104,6 +1104,11 @@ def test_v391_documents_reliability_hotfix_and_contributors():
     assert "source-stripped metadata" in release_notes
     assert "callback" in release_notes.lower()
     assert "footer/layout" in release_notes
+    assert "Released on 2026-07-11" in release_notes
+    assert "release-assets workflow" in release_notes
+    assert "（已发布）" in todo
+    assert "已于 2026-07-11 发布" in read_doc("docs/release-readiness.md")
+    assert "was released on 2026-07-11" in read_doc("docs/release-readiness.en.md")
 
     assert "### V3.9.1：可靠性热修" in todo
     assert "v3.9.1" in readme

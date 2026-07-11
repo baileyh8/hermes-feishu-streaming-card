@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前候选包版本为 `3.9.1`。它在 V3.9.0 运维与可靠性基础上修复完成答案截断、打断任务终态竞争、模型选择 callback 超时、loopback 代理干扰和可验证的 marker-only 安装损坏。V3.9.0 已于 2026-07-11 发布，并建立在 sidecar-only、V3.8.2 timeline、群聊诊断、话题/cron 路由和 WebSocket 交互基础上。普通流式卡的 footer/layout 不变。
+当前包版本为 `3.9.1`，已于 2026-07-11 发布。它在 V3.9.0 运维与可靠性基础上修复完成答案截断、打断任务终态竞争、模型选择 callback 超时、loopback 代理干扰和可验证的 marker-only 安装损坏。V3.9.0 同样已于 2026-07-11 发布，并建立在 sidecar-only、V3.8.2 timeline、群聊诊断、话题/cron 路由和 WebSocket 交互基础上。普通流式卡的 footer/layout 不变。
 
 ## 已具备
 

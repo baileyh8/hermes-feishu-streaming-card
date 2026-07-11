@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `3.9.1`. It builds on the V3.9.0 operations foundation and fixes completed-answer truncation, interrupted terminal-card ordering, model-picker callback timeouts, loopback proxy interference, and verified marker-only installer damage. V3.9.0 was released on 2026-07-11 and built on the sidecar-only runtime, V3.8.2 timeline, group diagnostics, topic/cron routing, and WebSocket interactions. Normal streaming-card footer/layout is unchanged.
+Current package version: `3.9.1`; it was released on 2026-07-11. It builds on the V3.9.0 operations foundation and fixes completed-answer truncation, interrupted terminal-card ordering, model-picker callback timeouts, loopback proxy interference, and verified marker-only installer damage. V3.9.0 was released on 2026-07-11 and built on the sidecar-only runtime, V3.8.2 timeline, group diagnostics, topic/cron routing, and WebSocket interactions. Normal streaming-card footer/layout is unchanged.
 
 ## Ready
 
