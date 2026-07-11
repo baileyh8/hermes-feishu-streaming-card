@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 from contextvars import ContextVar
 from dataclasses import dataclass
 from hashlib import sha256
@@ -1277,6 +1278,182 @@ def _model_picker_options(
     return options
 
 
+def _resume_picker_options(
+    sessions: Any,
+    *,
+    current_session_id: str = "",
+    max_options: int = 10,
+) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    if not isinstance(sessions, list):
+        return options
+    current = str(current_session_id or "").strip()
+    for row in sessions:
+        if not isinstance(row, dict):
+            continue
+        session_id = str(row.get("id") or "").strip()
+        title = str(row.get("title") or "").strip()
+        if not session_id or not title:
+            continue
+        preview = str(row.get("preview") or "").strip()[:40]
+        prefix = "当前 · " if session_id == current else ""
+        suffix = f" — {preview}" if preview else ""
+        label = f"{prefix}{title}{suffix}"[:80]
+        options.append({"label": label, "value": session_id})
+        if len(options) >= max_options:
+            break
+    return options
+
+
+def _hfc_resume_source_name(source: Any) -> str | None:
+    platform = getattr(source, "platform", None)
+    value = str(getattr(platform, "value", platform) or "").strip().lower()
+    return value or None
+
+
+def _hfc_resume_metadata(runner: Any, event: Any, source: Any) -> dict[str, Any]:
+    reply_anchor = _hfc_command_event_message_id(event)
+    get_reply_anchor = getattr(runner, "_reply_anchor_for_event", None)
+    if callable(get_reply_anchor):
+        try:
+            reply_anchor = str(get_reply_anchor(event) or reply_anchor).strip()
+        except Exception:
+            pass
+    get_metadata = getattr(runner, "_thread_metadata_for_source", None)
+    if callable(get_metadata):
+        try:
+            metadata = get_metadata(source, reply_anchor)
+            if isinstance(metadata, dict):
+                return dict(metadata)
+        except Exception:
+            pass
+    metadata: dict[str, Any] = {}
+    if reply_anchor:
+        metadata["reply_to_message_id"] = reply_anchor
+    thread_id = str(getattr(source, "thread_id", "") or "").strip()
+    if thread_id:
+        metadata["thread_id"] = thread_id
+    return metadata
+
+
+def _hfc_resume_operator_open_id(event: Any) -> str:
+    source = getattr(event, "source", None)
+    raw = getattr(event, "raw_message", None)
+    raw_event = getattr(raw, "event", None)
+    candidates = [
+        getattr(event, "sender_id", None),
+        getattr(source, "sender_id", None),
+        getattr(raw, "sender_id", None),
+        getattr(getattr(raw, "sender", None), "sender_id", None),
+        getattr(getattr(raw_event, "sender", None), "sender_id", None),
+    ]
+    for candidate in candidates:
+        open_id = str(getattr(candidate, "open_id", "") or "").strip()
+        if open_id:
+            return open_id
+    source_user_id = str(getattr(source, "user_id", "") or "").strip()
+    return source_user_id if source_user_id.startswith("ou_") else ""
+
+
+async def _hfc_try_resume_picker(
+    runner: Any,
+    event: Any,
+    original_handler: Any,
+) -> bool:
+    try:
+        source = getattr(event, "source", None)
+        if source is None or _platform_name({}, source) != "feishu":
+            return False
+        session_db = getattr(runner, "_session_db", None)
+        list_sessions = getattr(session_db, "list_sessions_rich", None)
+        if not callable(list_sessions):
+            return False
+        rows = await list_sessions(source=_hfc_resume_source_name(source), limit=10)
+        if not isinstance(rows, list):
+            return False
+        visible: list[dict[str, Any]] = []
+        row_visible = getattr(runner, "_resume_row_visible", None)
+        if not callable(row_visible):
+            return False
+        for row in rows:
+            if not isinstance(row, dict) or not str(row.get("title") or "").strip():
+                continue
+            if await row_visible(source, row, False):
+                visible.append(row)
+            if len(visible) >= 10:
+                break
+        if not visible:
+            return False
+
+        adapter = None
+        adapters = getattr(runner, "adapters", None)
+        if isinstance(adapters, dict):
+            for key, candidate in adapters.items():
+                if _is_feishu_adapter_key(key, candidate):
+                    adapter = candidate
+                    break
+        if adapter is None or not getattr(adapter, "_client", None):
+            return False
+        send_picker = getattr(adapter, "send_resume_picker", None)
+        if not callable(send_picker):
+            return False
+
+        current_session_id = ""
+        session_store = getattr(runner, "session_store", None)
+        get_current = getattr(session_store, "get_or_create_session", None)
+        if callable(get_current):
+            try:
+                current = get_current(source)
+                current_session_id = str(getattr(current, "session_id", "") or "")
+            except Exception:
+                pass
+        result = await send_picker(
+            chat_id=str(getattr(source, "chat_id", "") or ""),
+            sessions=visible,
+            current_session_id=current_session_id,
+            runner=runner,
+            event=event,
+            original_handler=original_handler,
+            metadata=_hfc_resume_metadata(runner, event, source),
+        )
+        return bool(getattr(result, "success", False))
+    except Exception as exc:
+        _hfc_warn(f"resume picker failed open: {exc.__class__.__name__}: {exc}")
+        return False
+
+
+async def _hfc_handle_resume_command_with_picker(runner: Any, event: Any) -> Any:
+    original = getattr(type(runner), "_hfc_original_handle_resume_command", None)
+    if not callable(original):
+        return None
+    try:
+        get_args = getattr(event, "get_command_args", None)
+        raw_args = str(get_args() or "").strip() if callable(get_args) else ""
+    except Exception:
+        raw_args = ""
+    if raw_args:
+        return await original(runner, event)
+    if await _hfc_try_resume_picker(runner, event, original):
+        return None
+    return await original(runner, event)
+
+
+def _hfc_install_resume_picker_handler(runner_type: type[Any]) -> bool:
+    current = runner_type.__dict__.get("_handle_resume_command")
+    if current is _hfc_handle_resume_command_with_picker:
+        setattr(runner_type, "_hfc_resume_picker_wrapped", True)
+        return True
+    if getattr(runner_type, "_hfc_resume_picker_wrapped", False):
+        return callable(getattr(runner_type, "_handle_resume_command", None))
+    original = current or getattr(runner_type, "_handle_resume_command", None)
+    if not callable(original):
+        return False
+    setattr(runner_type, "_hfc_original_handle_resume_command", original)
+    setattr(runner_type, "_handle_resume_command", _hfc_handle_resume_command_with_picker)
+    setattr(runner_type, "_hfc_resume_picker_wrapped", True)
+    return True
+
+
 def _parse_model_picker_choice(choice: str) -> tuple[str, str] | None:
     try:
         data = json.loads(choice)
@@ -2230,6 +2407,102 @@ async def _hfc_send_native_model_picker(
     return _send_result(True, message_id=message_id)
 
 
+async def _hfc_send_native_resume_picker(
+    self: Any,
+    *,
+    chat_id: str,
+    sessions: Any,
+    current_session_id: str = "",
+    runner: Any,
+    event: Any,
+    original_handler: Any,
+    metadata: dict[str, Any] | None = None,
+):
+    if not getattr(self, "_client", None) or not hasattr(
+        self, "_feishu_send_with_retry"
+    ):
+        return _send_result(False, error="native resume picker unavailable")
+    options = _resume_picker_options(
+        sessions,
+        current_session_id=current_session_id,
+        max_options=10,
+    )
+    if not options:
+        return _send_result(False, error="no resume options")
+    picker_id = "resume_" + sha256(
+        f"{chat_id}:{time.time()}:{secrets.token_hex(8)}".encode("utf-8")
+    ).hexdigest()[:16]
+    initial_option = next(
+        (
+            option["value"]
+            for option in options
+            if option["value"] == str(current_session_id or "")
+        ),
+        "",
+    )
+    card = {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"content": "恢复会话", "tag": "plain_text"},
+            "template": "blue",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "选择一个最近的命名会话。",
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    _hfc_select_static(
+                        placeholder="选择会话",
+                        value={
+                            "hfc_action": "resume_picker",
+                            "hfc_resume_picker_id": picker_id,
+                        },
+                        options=options,
+                        initial_option=initial_option,
+                    )
+                ],
+            },
+        ],
+    }
+    try:
+        response = await self._feishu_send_with_retry(
+            chat_id=chat_id,
+            msg_type="interactive",
+            payload=json.dumps(card, ensure_ascii=False),
+            reply_to=_metadata_reply_to(metadata) or None,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        return _send_result(False, error=str(exc))
+    success, message_id = _hfc_feishu_send_success(response)
+    if not success:
+        return _send_result(False, error="send_resume_picker failed")
+
+    source = getattr(event, "source", None)
+    state = getattr(self, "_hfc_resume_picker_state", None)
+    if not isinstance(state, dict):
+        state = {}
+        setattr(self, "_hfc_resume_picker_state", state)
+    state[picker_id] = {
+        "allowed_session_ids": {option["value"] for option in options},
+        "chat_id": str(chat_id or ""),
+        "chat_type": str(getattr(source, "chat_type", "") or "").lower(),
+        "operator_open_id": _hfc_resume_operator_open_id(event),
+        "message_id": message_id,
+        "runner": runner,
+        "event": event,
+        "original_handler": original_handler,
+        "expires_at": time.time() + 300,
+    }
+    _hfc_info(
+        f"send_resume_picker stored picker_id={picker_id!r} message_id={message_id!r}"
+    )
+    return _send_result(True, message_id=message_id)
+
+
 def _hfc_action_value_from_data(data: Any) -> dict[str, Any]:
     event = getattr(data, "event", None)
     action = getattr(event, "action", None)
@@ -2252,6 +2525,7 @@ def _hfc_action_value_from_data(data: Any) -> dict[str, Any]:
             "hfc_confirm_id",
             "hfc_choice",
             "hfc_model_picker_id",
+            "hfc_resume_picker_id",
         ):
             if key not in value and form_value.get(key):
                 value[key] = form_value.get(key)
@@ -2400,6 +2674,56 @@ def _hfc_prepare_native_model_action(
     }
 
 
+def _hfc_prepare_native_resume_action(
+    adapter: Any,
+    data: Any,
+    action_value: dict[str, Any],
+) -> dict[str, Any] | None:
+    loop = getattr(adapter, "_loop", None)
+    loop_accepts = getattr(adapter, "_loop_accepts_callbacks", None)
+    if callable(loop_accepts) and not loop_accepts(loop):
+        return None
+    if loop is None:
+        return None
+    picker_id = str(action_value.get("hfc_resume_picker_id") or "")
+    state = getattr(adapter, "_hfc_resume_picker_state", {})
+    if not picker_id or not isinstance(state, dict):
+        return None
+    item = state.get(picker_id)
+    if not isinstance(item, dict):
+        return None
+    if float(item.get("expires_at") or 0) <= time.time():
+        state.pop(picker_id, None)
+        return None
+    chat_id = _hfc_action_chat_id(data)
+    expected_chat_id = str(item.get("chat_id") or "")
+    if expected_chat_id and chat_id and expected_chat_id != chat_id:
+        return None
+    if not _hfc_card_operator_allowed(adapter, data, expected_chat_id or chat_id):
+        return None
+    chat_type = str(item.get("chat_type") or "").strip().lower()
+    initiating_operator = str(item.get("operator_open_id") or "").strip()
+    action_operator = _hfc_action_open_id(data)
+    if chat_type not in {"", "dm", "p2p", "private"}:
+        if not initiating_operator or action_operator != initiating_operator:
+            return None
+    choice = str(action_value.get("hfc_choice") or "").strip()
+    allowed = item.get("allowed_session_ids")
+    if not choice or not isinstance(allowed, (set, frozenset, list, tuple)):
+        return None
+    if choice not in {str(value) for value in allowed}:
+        return None
+    state.pop(picker_id, None)
+    return {
+        "loop": loop,
+        "picker_id": picker_id,
+        "item": item,
+        "choice": choice,
+        "chat_id": chat_id,
+        "expected_chat_id": expected_chat_id,
+    }
+
+
 def _hfc_on_feishu_card_action_trigger(self: Any, data: Any) -> Any:
     action_value = _hfc_action_value_from_data(data)
     action = str(action_value.get("hfc_action") or "").strip()
@@ -2409,7 +2733,12 @@ def _hfc_on_feishu_card_action_trigger(self: Any, data: Any) -> Any:
     # picker/confirm state already popped and would otherwise return an empty
     # ack -> Feishu shows "callback error". Reply success immediately so a
     # retried click never triggers a false callback error.
-    if action in ("slash_confirm", "model_picker", "interaction.select"):
+    if action in (
+        "slash_confirm",
+        "model_picker",
+        "resume_picker",
+        "interaction.select",
+    ):
         if _hfc_is_duplicate_card_action(self, data):
             return _hfc_empty_feishu_callback_response(self)
 
@@ -2417,6 +2746,8 @@ def _hfc_on_feishu_card_action_trigger(self: Any, data: Any) -> Any:
         return _hfc_handle_native_slash_action(self, data, action_value)
     if action == "model_picker":
         return _hfc_handle_native_model_action(self, data, action_value)
+    if action == "resume_picker":
+        return _hfc_handle_native_resume_action(self, data, action_value)
     if action == "interaction.select":
         return _hfc_handle_interaction_select_action(self, data, action_value)
     if action == "operations.select":
@@ -2936,6 +3267,116 @@ def _hfc_handle_native_model_action(
     return _hfc_raw_feishu_callback_response(adapter, switching_card)
 
 
+def _hfc_resume_result_card(result: Any) -> dict[str, Any]:
+    content = str(result or "会话已恢复。").strip()
+    template = _hfc_command_result_template(content)
+    title = "会话已恢复" if template == "green" else "会话恢复失败"
+    return _hfc_command_result_card(
+        title=title,
+        content=content,
+        template=template,
+    )
+
+
+def _hfc_resume_picker_background_task(
+    adapter: Any,
+    data: Any,
+    prepared: dict[str, Any],
+) -> None:
+    async def _run() -> None:
+        item = prepared["item"]
+        runner = item.get("runner")
+        original_handler = item.get("original_handler")
+        original_event = item.get("event")
+        if runner is None or not callable(original_handler) or original_event is None:
+            card = _hfc_command_result_card(
+                title="会话选择已失效",
+                content="请重新发送 `/resume`。",
+                template="red",
+            )
+        else:
+            try:
+                resume_event = copy.copy(original_event)
+                resume_event.text = f"/resume {prepared['choice']}"
+                result = await original_handler(runner, resume_event)
+                card = _hfc_resume_result_card(result)
+            except Exception as exc:
+                card = _hfc_command_result_card(
+                    title="会话恢复失败",
+                    content=f"请重新发送 `/resume`。\n\n{exc.__class__.__name__}: {exc}",
+                    template="red",
+                )
+
+        message_id = str(item.get("message_id") or "")
+        if message_id and await _hfc_update_native_command_card(
+            adapter, message_id, card
+        ):
+            _hfc_info("background resume: original card updated")
+            return
+        chat_id = prepared["expected_chat_id"] or prepared["chat_id"]
+        if not chat_id or not hasattr(adapter, "_feishu_send_with_retry"):
+            _hfc_warn("background resume: result card cannot be delivered")
+            return
+        try:
+            await adapter._feishu_send_with_retry(
+                chat_id=chat_id,
+                msg_type="interactive",
+                payload=json.dumps(card, ensure_ascii=False),
+                reply_to=message_id or None,
+                metadata=_hfc_action_metadata(data),
+            )
+            _hfc_info("background resume: fallback result card sent")
+        except Exception as exc:
+            _hfc_warn(
+                "background resume: fallback send failed: "
+                f"{exc.__class__.__name__}: {exc}"
+            )
+
+    loop = prepared["loop"]
+    submit = getattr(adapter, "_submit_on_loop", None)
+    if not callable(submit):
+        _hfc_warn("background resume schedule failed: submit helper unavailable")
+        return
+    coroutine = _run()
+    submitted = False
+    try:
+        submitted = bool(submit(loop, coroutine))
+        if not submitted:
+            _hfc_warn("background resume schedule failed")
+    except Exception as exc:
+        _hfc_warn(
+            f"background resume schedule failed: {exc.__class__.__name__}: {exc}"
+        )
+    finally:
+        if not submitted:
+            coroutine.close()
+
+
+def _hfc_handle_native_resume_action(
+    adapter: Any,
+    data: Any,
+    action_value: dict[str, Any],
+) -> Any:
+    _hfc_info("inline card action received: resume_picker")
+    prepared = _hfc_prepare_native_resume_action(adapter, data, action_value)
+    if prepared is None:
+        return _hfc_raw_feishu_callback_response(
+            adapter,
+            _hfc_command_result_card(
+                title="会话选择已失效",
+                content="请由原发起者重新发送 `/resume`。",
+                template="red",
+            ),
+        )
+    switching_card = _hfc_command_result_card(
+        title="会话恢复中",
+        content="正在恢复所选会话…",
+        template="blue",
+    )
+    _hfc_resume_picker_background_task(adapter, data, prepared)
+    return _hfc_raw_feishu_callback_response(adapter, switching_card)
+
+
 async def _hfc_update_native_command_card(adapter: Any, message_id: str, card: dict[str, Any]) -> bool:
     message_id = str(message_id or "").strip()
     if not message_id:
@@ -3013,6 +3454,15 @@ async def _hfc_handle_feishu_card_action_event(self: Any, data: Any) -> None:
             )
         else:
             _hfc_info("background model_picker ignored: unresolved")
+        return
+    if action == "resume_picker":
+        if _hfc_is_duplicate_card_action(self, data):
+            return
+        prepared = _hfc_prepare_native_resume_action(self, data, action_value)
+        if prepared is not None:
+            _hfc_resume_picker_background_task(self, data, prepared)
+        else:
+            _hfc_info("background resume_picker ignored: unresolved")
         return
     if action == "operations.select":
         _hfc_info("background operations.select claimed by HFC")
@@ -3130,6 +3580,7 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
             _HFC_FEISHU_NOTICE_CONTEXT.set(None)
             return False
         runner_type = type(runner)
+        _hfc_install_resume_picker_handler(runner_type)
         current_notice_delivery = runner_type.__dict__.get("_deliver_platform_notice")
         if current_notice_delivery is _hfc_deliver_platform_notice_with_card:
             setattr(runner_type, "_hfc_platform_notice_wrapped", True)
@@ -3181,6 +3632,20 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
                 setattr(adapter_type, "send_model_picker", _hfc_send_native_model_picker)
                 adapter_ready = True
             elif callable(existing_model_picker):
+                adapter_ready = True
+
+            existing_resume_picker = adapter_type.__dict__.get("send_resume_picker")
+            if (
+                existing_resume_picker is None
+                or getattr(existing_resume_picker, "__module__", "") == __name__
+            ):
+                setattr(
+                    adapter_type,
+                    "send_resume_picker",
+                    _hfc_send_native_resume_picker,
+                )
+                adapter_ready = True
+            elif callable(existing_resume_picker):
                 adapter_ready = True
 
             current_action_handler = adapter_type.__dict__.get("_on_card_action_trigger")
