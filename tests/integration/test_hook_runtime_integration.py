@@ -505,9 +505,15 @@ async def test_ws_operations_recheck_returns_in_progress_card_and_keeps_successo
     report = _operations_report()
     recheck_started = threading.Event()
     release_recheck = threading.Event()
+    report_builds = 0
+    report_builds_lock = threading.Lock()
 
     def blocked_report(*args, **kwargs):
-        if args[3] == "recheck":
+        nonlocal report_builds
+        with report_builds_lock:
+            report_builds += 1
+            is_recheck_build = report_builds == 2
+        if is_recheck_build:
             recheck_started.set()
             release_recheck.wait(2.0)
         return report, SimpleNamespace(root=Path("/private/hermes"))
