@@ -1976,7 +1976,6 @@ def test_bare_resume_uses_native_picker_and_preserves_topic_metadata():
         def _thread_metadata_for_source(self, source, reply_anchor):
             return {
                 "thread_id": source.thread_id,
-                "reply_to_message_id": reply_anchor,
             }
 
     adapter = DummyFeishuAdapter()
@@ -2029,6 +2028,78 @@ def test_bare_resume_uses_native_picker_and_preserves_topic_metadata():
         "session-target",
     }
     assert state["operator_open_id"] == "ou_initiator"
+
+
+def test_bare_resume_accepts_exact_topic_session_key_when_hermes_alt_id_check_fails():
+    class DummyFeishuAdapter:
+        name = "feishu"
+
+        def __init__(self):
+            self._client = object()
+            self.sent = None
+
+        async def _feishu_send_with_retry(self, **kwargs):
+            self.sent = kwargs
+            return SimpleNamespace(success=True, message_id="om_resume_card")
+
+    exact_key = "agent:main:feishu:group:oc_topic:om_topic_root"
+
+    class DummySessionDB:
+        async def list_sessions_rich(self, *, source, limit):
+            return [
+                {
+                    "id": "session-topic",
+                    "title": "Topic session",
+                    "session_key": exact_key,
+                },
+                {
+                    "id": "session-other-topic",
+                    "title": "Other topic",
+                    "session_key": "agent:main:feishu:group:oc_topic:om_other_root",
+                },
+            ]
+
+    class DummyRunner:
+        def __init__(self, adapter):
+            self.adapters = {"feishu": adapter}
+            self._session_db = DummySessionDB()
+            self.session_store = SimpleNamespace(
+                get_or_create_session=lambda source: SimpleNamespace(
+                    session_id="session-topic"
+                )
+            )
+
+        async def _handle_resume_command(self, event):
+            raise AssertionError("exact topic session should use the picker")
+
+        async def _resume_row_visible(self, source, row, allow_all):
+            return False
+
+        def _session_key_for_source(self, source):
+            return exact_key
+
+    adapter = DummyFeishuAdapter()
+    runner = DummyRunner(adapter)
+    event = SimpleNamespace(
+        text="/resume",
+        message_id="om_topic_command",
+        source=SimpleNamespace(
+            platform="feishu",
+            chat_id="oc_topic",
+            chat_type="group",
+            thread_id="om_topic_root",
+            user_id="ou_initiator",
+            user_id_alt="on_initiator",
+        ),
+        get_command_args=lambda: "",
+    )
+
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner, event=event)
+    assert asyncio.run(runner._handle_resume_command(event)) is None
+
+    card = json.loads(adapter.sent["payload"])
+    select = card["elements"][1]["actions"][0]
+    assert [option["value"] for option in select["options"]] == ["session-topic"]
 
 
 def test_resume_picker_fails_open_to_original_handler():
@@ -2555,6 +2626,57 @@ def test_model_picker_background_fallback_preserves_action_metadata():
     assert adapter.sent[0]["metadata"] == metadata
     assert adapter.sent[0]["reply_to"] == "om_picker"
     assert adapter.sent[0]["msg_type"] == "interactive"
+
+
+def test_native_command_card_update_uses_patch_without_msg_type(monkeypatch):
+    calls = []
+
+    class MessageAPI:
+        def patch(self, request):
+            calls.append(("patch", request))
+
+        def update(self, request):
+            calls.append(("update", request))
+
+    class DummyAdapter:
+        def __init__(self):
+            self._client = SimpleNamespace(
+                im=SimpleNamespace(v1=SimpleNamespace(message=MessageAPI()))
+            )
+
+        async def _run_blocking(self, func, request):
+            func(request)
+            return SimpleNamespace(success=lambda: True)
+
+        def _build_update_message_body(self, *, msg_type, content):
+            return SimpleNamespace(msg_type=msg_type, content=content)
+
+        def _build_update_message_request(self, message_id, request_body):
+            return SimpleNamespace(message_id=message_id, request_body=request_body)
+
+    monkeypatch.setattr(
+        hook_runtime,
+        "_hfc_build_patch_message_request",
+        lambda message_id, content: SimpleNamespace(
+            message_id=message_id,
+            request_body=SimpleNamespace(content=content),
+        ),
+        raising=False,
+    )
+
+    result = asyncio.run(
+        hook_runtime._hfc_update_native_command_card(
+            DummyAdapter(),
+            "om_card",
+            {"elements": [{"tag": "markdown", "content": "done"}]},
+        )
+    )
+
+    assert result is True
+    assert [name for name, _request in calls] == ["patch"]
+    request_body = calls[0][1].request_body
+    assert not hasattr(request_body, "msg_type")
+    assert json.loads(request_body.content)["elements"][0]["content"] == "done"
 
 
 def test_stale_feishu_card_action_handler_updates_native_model_picker(monkeypatch):

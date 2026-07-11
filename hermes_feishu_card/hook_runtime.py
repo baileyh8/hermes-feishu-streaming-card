@@ -1311,6 +1311,19 @@ def _hfc_resume_source_name(source: Any) -> str | None:
     return value or None
 
 
+def _hfc_resume_row_matches_session_key(runner: Any, source: Any, row: dict[str, Any]) -> bool:
+    """Accept Hermes rows that prove the exact current routing scope."""
+    row_key = str(row.get("session_key") or "").strip()
+    get_key = getattr(runner, "_session_key_for_source", None)
+    if not row_key or not callable(get_key):
+        return False
+    try:
+        source_key = str(get_key(source) or "").strip()
+    except Exception:
+        return False
+    return bool(source_key) and row_key == source_key
+
+
 def _hfc_resume_metadata(runner: Any, event: Any, source: Any) -> dict[str, Any]:
     reply_anchor = _hfc_command_event_message_id(event)
     get_reply_anchor = getattr(runner, "_reply_anchor_for_event", None)
@@ -1324,7 +1337,10 @@ def _hfc_resume_metadata(runner: Any, event: Any, source: Any) -> dict[str, Any]
         try:
             metadata = get_metadata(source, reply_anchor)
             if isinstance(metadata, dict):
-                return dict(metadata)
+                metadata = dict(metadata)
+                if reply_anchor:
+                    metadata.setdefault("reply_to_message_id", reply_anchor)
+                return metadata
         except Exception:
             pass
     metadata: dict[str, Any] = {}
@@ -1382,7 +1398,9 @@ async def _hfc_try_resume_picker(
         for row in rows:
             if not isinstance(row, dict) or not str(row.get("title") or "").strip():
                 continue
-            if await row_visible(source, row, False):
+            if await row_visible(source, row, False) or _hfc_resume_row_matches_session_key(
+                runner, source, row
+            ):
                 visible.append(row)
             if len(visible) >= 10:
                 break
@@ -2483,7 +2501,14 @@ async def _hfc_send_native_resume_picker(
         return _send_result(False, error=str(exc))
     success, message_id = _hfc_feishu_send_success(response)
     if not success:
-        return _send_result(False, error="send_resume_picker failed")
+        return _send_result(
+            False,
+            error=(
+                "send_resume_picker failed: "
+                f"code={getattr(response, 'code', 'unknown')} "
+                f"msg={str(getattr(response, 'msg', '') or '')}"
+            ),
+        )
 
     source = getattr(event, "source", None)
     state = getattr(self, "_hfc_resume_picker_state", None)
@@ -3381,6 +3406,24 @@ def _hfc_handle_native_resume_action(
     return _hfc_raw_feishu_callback_response(adapter, switching_card)
 
 
+def _hfc_build_patch_message_request(message_id: str, content: str) -> Any:
+    try:
+        from lark_oapi.api.im.v1 import (
+            PatchMessageRequest,
+            PatchMessageRequestBody,
+        )
+
+        request_body = PatchMessageRequestBody.builder().content(content).build()
+        return (
+            PatchMessageRequest.builder()
+            .message_id(message_id)
+            .request_body(request_body)
+            .build()
+        )
+    except Exception:
+        return None
+
+
 async def _hfc_update_native_command_card(adapter: Any, message_id: str, card: dict[str, Any]) -> bool:
     message_id = str(message_id or "").strip()
     if not message_id:
@@ -3391,18 +3434,27 @@ async def _hfc_update_native_command_card(adapter: Any, message_id: str, card: d
         _hfc_warn("native command card update skipped: Feishu client unavailable")
         return False
     try:
-        body_builder = getattr(adapter, "_build_update_message_body", None)
-        request_builder = getattr(adapter, "_build_update_message_request", None)
         run_blocking = getattr(adapter, "_run_blocking", None)
-        if not (callable(body_builder) and callable(request_builder) and callable(run_blocking)):
-            _hfc_warn("native command card update skipped: Feishu update helpers unavailable")
+        if not callable(run_blocking):
+            _hfc_warn("native command card update skipped: Feishu run helper unavailable")
             return False
-        request_body = body_builder(
-            msg_type="interactive",
-            content=json.dumps(card, ensure_ascii=False),
-        )
-        request = request_builder(message_id, request_body)
-        update_call = client.im.v1.message.update
+        content = json.dumps(card, ensure_ascii=False)
+        message_api = client.im.v1.message
+        patch_call = getattr(message_api, "patch", None)
+        request = _hfc_build_patch_message_request(message_id, content)
+        if callable(patch_call) and request is not None:
+            update_call = patch_call
+        else:
+            body_builder = getattr(adapter, "_build_update_message_body", None)
+            request_builder = getattr(adapter, "_build_update_message_request", None)
+            if not (callable(body_builder) and callable(request_builder)):
+                _hfc_warn(
+                    "native command card update skipped: Feishu patch/update helpers unavailable"
+                )
+                return False
+            request_body = body_builder(msg_type="interactive", content=content)
+            request = request_builder(message_id, request_body)
+            update_call = message_api.update
         _hfc_info(f"native command card update attempting: message_id={message_id!r}")
         response = await run_blocking(update_call, request)
         success = _hfc_update_response_success(response)
