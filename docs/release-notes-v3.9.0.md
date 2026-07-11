@@ -18,7 +18,7 @@ PR #84 by @Zanetach contributed card progress-status routing and `.env` allowlis
 
 ## Validation
 
-- Automated release gate: `1158 passed, 3 skipped`.
+- Automated release gate: `1164 passed, 3 skipped`.
 - Real Feishu private-chat acceptance passed on 2026-07-11: `/hfc doctor` without a gray native unknown-command reply, localized details, two consecutive rechecks including the background successor, same-card updates, sandboxed two-step safe repair, restart confirmation/cancel, and the normal streaming-card footer.
 - Pending real Feishu acceptance: actual card-triggered Gateway restart, group initiator repair/restart, changed-operator rejection, topic, cron, and profile route mismatch. These are not claimed as verified here.
 - Pending existing-container Docker smoke: fresh install, pinned upgrade, known-safe corrupt-marker auto-repair, refusal of user edits, main/child profile endpoint mapping, and final `doctor`.

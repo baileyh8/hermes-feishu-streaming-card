@@ -61,7 +61,7 @@
 - state-dir transport root 会自动创建权限私有的 transport secret，不需要配置 secret，也不在诊断或卡片中输出。
 - setup 的 profile/event URL 优先级为显式参数、进程环境、选定 env file、默认值；仅 `doctor` 输出完整脱敏 identity/profile/event endpoint route chain，`status` 摘要运行时路由/profile 事件，`/health` 报告实际 routing health 字段。
 - install/setup 可自动修复已知安全状态，`--no-repair` 可关闭；无法验证的用户编辑继续拒绝覆盖。cleanup history 和 metrics 保持有界且 hash 化。
-- 自动化 release gate：`1158 passed, 3 skipped`。
+- 自动化 release gate：`1164 passed, 3 skipped`。
 - 2026-07-11 真实飞书私聊通过：`/hfc doctor` 无灰色原生未知命令；中文摘要/详情、连续两次重新检测（含后台 successor）、同卡更新、sandbox 两步安全修复、重启确认/取消与普通流式完成卡 footer 均通过，sidecar 发送/更新零失败。
 
 ## 发布前必须验证

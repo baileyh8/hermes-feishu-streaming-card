@@ -13,7 +13,7 @@
 - [x] PR #84 / @Zanetach 随 V3.9.0 完成：卡片 progress-status 路由与 `.env` 白名单扩展的 profile 环境支持。
 - [x] 已知安全的 manifest/backup 状态支持自动 repair，可用 `--no-repair` 关闭；不可验证的用户编辑继续拒绝覆盖。
 - [x] lifecycle cleanup 与有界 metrics 覆盖 runtime state；Hermes/Docker 兼容由自动化回归覆盖。
-- [x] Release gate 证据：`1158 passed, 3 skipped`；普通卡片 footer/layout 不变。
+- [x] Release gate 证据：`1164 passed, 3 skipped`；普通卡片 footer/layout 不变。
 - [x] 2026-07-11 真实飞书私聊：`/hfc doctor` 无灰色未知命令，中文详情、连续两次 recheck（含后台 successor）、sandbox 两步安全修复、重启确认/取消和普通流式完成卡通过，发送/更新零失败。
 - [ ] 待真实验收：existing-container Docker、卡片实际执行 Gateway 重启、群聊发起者与换操作者拒绝、topic、cron、profile route mismatch。
 
