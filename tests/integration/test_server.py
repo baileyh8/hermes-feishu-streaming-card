@@ -1324,7 +1324,8 @@ async def test_hfc_doctor_timeout_includes_waiting_for_diagnostic_slot(monkeypat
     monkeypatch.setattr(sidecar_server, "OPERATIONS_DIAGNOSTIC_TIMEOUT_SECONDS", 0.02)
     app = create_app(feishu_client)
     semaphore = sidecar_server._operations_diagnostic_semaphore(app)
-    await semaphore.acquire()
+    for _ in range(sidecar_server.MAX_CONCURRENT_OPERATION_DIAGNOSTICS):
+        await semaphore.acquire()
     test_client = TestClient(TestServer(app))
     await test_client.start_server()
     try:
@@ -1345,7 +1346,8 @@ async def test_hfc_doctor_timeout_includes_waiting_for_diagnostic_slot(monkeypat
         await asyncio.wait_for(asyncio.shield(next(iter(tasks))), timeout=2.0)
         record = app[sidecar_server.OPERATIONS_STORE_KEY]._records[operation_id]
     finally:
-        semaphore.release()
+        for _ in range(sidecar_server.MAX_CONCURRENT_OPERATION_DIAGNOSTICS):
+            semaphore.release()
         await test_client.close()
 
     assert response.status == 200
