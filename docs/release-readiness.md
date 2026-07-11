@@ -61,7 +61,8 @@
 - state-dir transport root 会自动创建权限私有的 transport secret，不需要配置 secret，也不在诊断或卡片中输出。
 - setup 的 profile/event URL 优先级为显式参数、进程环境、选定 env file、默认值；仅 `doctor` 输出完整脱敏 identity/profile/event endpoint route chain，`status` 摘要运行时路由/profile 事件，`/health` 报告实际 routing health 字段。
 - install/setup 可自动修复已知安全状态，`--no-repair` 可关闭；无法验证的用户编辑继续拒绝覆盖。cleanup history 和 metrics 保持有界且 hash 化。
-- Task 7 自动化 release gate：`1061 passed, 3 skipped`。
+- 自动化 release gate：`1156 passed, 3 skipped`。
+- 2026-07-11 真实飞书私聊基线通过：`/hfc doctor` 无灰色原生未知命令；中文摘要/详情、连续两次重新检测（含后台 successor）、同卡更新与普通流式完成卡 footer 均通过，sidecar 发送/更新零失败。
 
 ## 发布前必须验证
 
@@ -74,10 +75,11 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 
 真实飞书联调只能使用本机配置或环境变量提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret、tenant token 或真实 chat_id 提交到仓库。公开演示截图入库前需要确认不包含敏感凭据和不可公开的会话内容。
 
-## V3.9.0 待人工验收
+## V3.9.0 人工验收进度
 
 - existing-container Docker：fresh install、pinned upgrade、已知安全 corrupt-marker auto-repair、用户编辑拒绝、main/child profile endpoint mapping、最终 `doctor`。**待验收**。
-- 真实飞书：private/group repair/restart、群内 changed-operator rejection、recheck、普通 footer snapshot、topic、cron、profile route mismatch。**待验收**。
+- 真实飞书私聊基线：`/hfc doctor`、中文详情、recheck、后台 successor 再次点击、同卡 PATCH、普通 footer snapshot。**已通过（2026-07-11）**。
+- 真实飞书剩余项：repair/restart、群内发起者与 changed-operator rejection、topic、cron、profile route mismatch。**待验收**。
 
 release-assets workflow 预计在获批 tag 后产生 4 个 assets（本任务不创建）：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。
 

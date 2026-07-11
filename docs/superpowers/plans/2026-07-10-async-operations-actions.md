@@ -78,8 +78,8 @@
 **Files:**
 - No repository files.
 
-- [ ] Restart the candidate sidecar and Gateway only when needed for updated hook code.
-- [ ] Send `/hfc doctor`; verify no gray Unknown command.
-- [ ] Click `重新检测`; verify no timeout toast, an immediate in-progress card, and one later same-card update.
+- [x] Restart the candidate sidecar and Gateway only when needed for updated hook code.
+- [x] Send `/hfc doctor`; verify no gray Unknown command.
+- [x] Click `重新检测`; verify no timeout toast, an immediate in-progress card, and one later same-card update.
 - [ ] Verify `安全修复` first-step confirmation remains immediate; do not execute mutation without explicit user confirmation.
-- [ ] Record private-chat acceptance and leave group same/different-operator smoke as a separate explicit gate when no safe test group is available.
+- [x] Record private-chat acceptance and leave group same/different-operator smoke as a separate explicit gate when no safe test group is available.

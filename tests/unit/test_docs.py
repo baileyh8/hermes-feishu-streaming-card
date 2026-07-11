@@ -1072,5 +1072,10 @@ def test_v390_documents_operations_reliability_release_gate():
     assert "Docker" in "\\n".join((release_notes, readiness, guide))
     assert "real Feishu" in "\\n".join((release_notes, english_readiness, english_guide))
     assert "Docker" in "\\n".join((release_notes, english_readiness, english_guide))
-    assert "1061 passed, 3 skipped" in readiness
-    assert "1061 passed, 3 skipped" in english_readiness
+    assert "1156 passed, 3 skipped" in readiness
+    assert "1156 passed, 3 skipped" in english_readiness
+    assert "已通过（2026-07-11）" in readiness
+    assert "Passed on 2026-07-11" in english_readiness
+    assert "部分通过" in acceptance
+    assert "repair/restart" in readiness
+    assert "Pending acceptance" in english_readiness

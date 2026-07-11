@@ -20,8 +20,9 @@ See also: [docs/release-notes-v3.9.0.md](docs/release-notes-v3.9.0.md)
 - PR #84 by @Zanetach contributed card progress-status routing and `.env` allowlist expansion for profile environment support.
 
 ### Validation
-- Task 7 automated release gate: `1061 passed, 3 skipped`.
-- Existing-container Docker smoke and real Feishu private/group repair, restart, topic, cron, and profile-mismatch smoke remain pending acceptance.
+- Automated release gate: `1156 passed, 3 skipped`.
+- Real Feishu private-chat baseline passed on 2026-07-11: `/hfc doctor` produced one operations card without a gray native unknown-command reply; details, two consecutive rechecks (including a background successor), same-card updates, and the normal streaming-card footer all passed with zero send/update failures.
+- Existing-container Docker smoke plus real Feishu repair/restart, group ownership, topic, cron, and profile-mismatch smoke remain pending acceptance.
 
 ## V3.8.18 — 2026-07-10
 
