@@ -61,8 +61,8 @@ Current package version: `3.9.0`; it is pending release and acceptance. Building
 - The state-dir transport root automatically creates a private-permission transport secret. No secret configuration is required, and diagnostics/cards never output it.
 - Setup resolves profile/event URL by explicit argument, process environment, selected env file, then default; only `doctor` shows the complete redacted identity/profile/event-endpoint route chain, `status` summarizes runtime routing/profile events, and `/health` reports actual routing-health fields.
 - Install/setup can automatically repair known-safe state; `--no-repair` opts out, and unverifiable user edits remain refused. Cleanup history and metrics are bounded and hashed.
-- Automated release gate: `1156 passed, 3 skipped`.
-- The real Feishu private-chat baseline passed on 2026-07-11: `/hfc doctor` produced no gray native unknown-command reply; localized summary/details, two consecutive rechecks (including the background successor), same-card updates, and the normal completed-card footer passed with zero sidecar send/update failures.
+- Automated release gate: `1158 passed, 3 skipped`.
+- Real Feishu private-chat acceptance passed on 2026-07-11: `/hfc doctor` produced no gray native unknown-command reply; localized summary/details, two consecutive rechecks (including the background successor), same-card updates, sandboxed two-step safe repair, restart confirmation/cancel, and the normal completed-card footer passed with zero sidecar send/update failures.
 
 ## Required Pre-release Checks
 
@@ -78,8 +78,8 @@ Real Feishu integration must use local config or environment variables for `FEIS
 ## V3.9.0 Manual Acceptance Progress
 
 - Existing-container Docker: fresh install, pinned upgrade, known-safe corrupt-marker auto-repair, user-edit refusal, main/child profile endpoint mapping, and final `doctor`. **Pending acceptance**.
-- Real Feishu private-chat baseline: `/hfc doctor`, localized details, recheck, a second click from the background successor, same-card PATCH, and the normal footer snapshot. **Passed on 2026-07-11**.
-- Remaining real Feishu gates: repair/restart, group initiator and changed-operator rejection, topic, cron, and profile route mismatch. **Pending acceptance**.
+- Real Feishu private chat: `/hfc doctor`, localized details, recheck, a second click from the background successor, same-card PATCH, sandboxed two-step safe repair, restart confirmation/cancel, and the normal footer snapshot. **Passed on 2026-07-11**.
+- Remaining real Feishu gates: actual card-triggered Gateway restart, group initiator and changed-operator rejection, topic, cron, and profile route mismatch. **Pending acceptance**.
 
 After the approved tag, the release-assets workflow is expected to produce four assets (not created by this task): the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
 

@@ -25,10 +25,11 @@
 - `/hfc doctor` 只生成一张运维卡，没有灰色原生未知命令。
 - 中文诊断摘要与详情可见，footer 保持不变。
 - 连续两次重新检测均快速返回，后台 successor 按钮仍可点击，最终 PATCH 同一张卡片。
+- 临时 Hermes sandbox 中两步安全修复成功；重启 Gateway 确认卡正常，并在最终执行前取消。
 - 普通流式卡从生成中到完成态保持一张卡，完成 footer/layout 不变，没有灰色重复答案。
 - 本轮 sidecar 发送与更新均成功，Gateway 日志没有新的 operations forward timeout。
 
-仍待真实验收：repair/restart、群聊发起者与换操作者拒绝、topic、cron、profile route mismatch。existing-container Docker 见 release-readiness 单独门禁。
+仍待真实验收：卡片实际执行 Gateway 重启、群聊发起者与换操作者拒绝、topic、cron、profile route mismatch。existing-container Docker 见 release-readiness 单独门禁。
 
 真实验收状态：**部分通过**。
 
