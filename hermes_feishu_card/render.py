@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import json
 import re
 import time as _time
@@ -19,6 +20,14 @@ DEFAULT_FOOTER_FIELDS = (
 )
 MAIN_CONTENT_CHUNK_CHARS = 2400
 DEFAULT_TITLE = "Hermes Agent"
+MODEL_COLOR_PREFIXES = (
+    (("gpt-", "o1", "o3"), "blue"),
+    (("claude-",), "orange"),
+    (("deepseek-", "deepseek/"), "indigo"),
+    (("kimi-", "kimi/", "moonshot-"), "purple"),
+    (("glm-",), "green"),
+    (("hy3", "tencent/", "hunyuan"), "teal"),
+)
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _REDACTABLE_TOOL_DETAIL_KEYS = (
@@ -473,7 +482,7 @@ def _render_footer(
     context_percent = round(used_context / max_context * 100) if max_context > 0 else 0
     values = {
         "duration": _format_duration(duration),
-        "model": model,
+        "model": _colored_model_label(model),
         "input_tokens": f"↑{_format_count(input_tokens)}",
         "output_tokens": f"↓{_format_count(output_tokens)}",
         "context": (
@@ -488,6 +497,16 @@ def _render_footer(
         if value:
             selected.append(value)
     return " · ".join(selected) if selected else values["duration"]
+
+
+def _colored_model_label(model: str) -> str:
+    text = str(model or "")
+    safe = html.escape(text, quote=True)
+    normalized = text.lower()
+    for prefixes, color in MODEL_COLOR_PREFIXES:
+        if normalized.startswith(prefixes):
+            return f'<font color="{color}">{safe}</font>'
+    return safe
 
 
 def _safe_int(value: Any) -> int:

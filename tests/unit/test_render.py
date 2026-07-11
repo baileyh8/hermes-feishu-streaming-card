@@ -1,6 +1,7 @@
-from hermes_feishu_card.render import _SPINNER_FRAMES, render_card
+from hermes_feishu_card.render import _SPINNER_FRAMES, _colored_model_label, render_card
 from hermes_feishu_card.session import CardSession, ToolState
 from hermes_feishu_card.status import StatusConfig
+import pytest
 import time
 
 
@@ -87,6 +88,68 @@ def test_v3818_normal_failed_card_keeps_element_order_and_footer():
         "footer",
     ]
     assert card["body"]["elements"][-1]["content"] == "已停止"
+
+
+@pytest.mark.parametrize(
+    ("model", "color"),
+    [
+        ("GPT-5.5", "blue"),
+        ("claude-opus-4", "orange"),
+        ("DeepSeek-V4", "indigo"),
+        ("KIMI-K2", "purple"),
+        ("GLM-5", "green"),
+        ("Tencent/hunyuan", "teal"),
+    ],
+)
+def test_model_footer_uses_sanitized_semantic_color(model, color):
+    assert _colored_model_label(model) == f'<font color="{color}">{model}</font>'
+
+
+def test_model_footer_escapes_unknown_and_malicious_model_names():
+    assert _colored_model_label("MiniMax M2.7") == "MiniMax M2.7"
+    escaped = _colored_model_label('<script>alert("x")</script>')
+    assert escaped == "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;"
+    assert "<script>" not in escaped
+
+
+def test_model_footer_color_preserves_layout_order_and_configured_fields():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.status = "completed"
+    session.answer_text = "最终答案"
+    session.duration = 3.0
+    session.model = "gpt-5.5"
+    session.tokens = {"output_tokens": 34}
+
+    card = render_card(session, footer_fields=["model", "duration", "output_tokens"])
+
+    assert [element["element_id"] for element in card["body"]["elements"]] == [
+        "main_content",
+        "main_divider",
+        "tool_summary",
+        "footer",
+    ]
+    assert card["body"]["elements"][-1] == {
+        "tag": "markdown",
+        "element_id": "footer",
+        "content": '<font color="blue">gpt-5.5</font> · 3s · ↓34',
+        "text_size": "x-small",
+    }
+
+
+def test_model_footer_color_does_not_change_non_completed_or_empty_fields():
+    thinking = CardSession(conversation_id="c", message_id="m1", chat_id="oc")
+    thinking.model = "gpt-5.5"
+    assert render_card(thinking)["body"]["elements"][-1]["content"].endswith("生成中")
+
+    failed = CardSession(conversation_id="c", message_id="m2", chat_id="oc")
+    failed.status = "failed"
+    failed.model = "gpt-5.5"
+    assert render_card(failed)["body"]["elements"][-1]["content"] == "已停止"
+
+    completed = CardSession(conversation_id="c", message_id="m3", chat_id="oc")
+    completed.status = "completed"
+    completed.model = "gpt-5.5"
+    assert render_card(completed, footer_fields=[])["body"]["elements"][-1]["content"] == "0s"
 
 
 def test_progress_handoff_changes_only_header_status_from_completed_card():
