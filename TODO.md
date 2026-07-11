@@ -6,7 +6,7 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V3.10.0：原生会话恢复与轻量视觉增强（待发布）
+### V3.10.0：原生会话恢复与轻量视觉增强（已发布）
 
 - [x] Issue #94 / @colinaaa：裸 `/resume` 使用原生 `select_static` 会话选择器，带参数命令保持 Hermes 原行为。
 - [x] 选择回调即时 ACK，后台复用 original Hermes resume handler；权限、continuation、agent release 和 override cleanup 不重复实现。
@@ -15,7 +15,7 @@
 - [x] V3.9.1 相关 issue/PR 与 2026-07-11 旧队列已完成证据化回复和关闭，仅 #94 留待 V3.10.0 发布收口。
 - [x] Python 3.9 / 3.12 release gate 均为 `1216 passed, 3 skipped`，`git diff --check` 通过。
 - [x] 真实 Feishu 私聊、群聊发起者和 topic 原线程 smoke 通过；换操作者拒绝因测试群仅一位真人，保留自动化回归证据。
-- [ ] 完成 tag、Release 与资产验证。
+- [x] `v3.10.0` tag、GitHub Release 与 macOS/Linux/Windows/checksums 四个资产验证通过。
 
 ### V3.9.1：可靠性热修（已发布）
 

@@ -103,6 +103,7 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Python 3.9 / 3.12 full automation: **passed (`1216 passed, 3 skipped`)**.
 - Real Feishu: private chat, group initiator, topic same-thread update, and footer passed; changed-operator rejection is covered by automation.
 - Verify macOS, Linux, Windows, and checksums assets after tagging.
+- `v3.10.0`: **released on 2026-07-11** with all four assets verified.
 
 The `v3.9.0` release-assets workflow publishes four assets: the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
 

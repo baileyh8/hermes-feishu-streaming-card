@@ -1,5 +1,7 @@
 # Hermes Feishu Streaming Card V3.10.0
 
+Released on 2026-07-11. The `release-assets` workflow completed successfully and published all four platform/checksum assets.
+
 V3.10.0 adds one focused interaction improvement and one restrained visual improvement: bare `/resume` becomes a native Feishu/Lark picker, and recognized model names gain sanitized semantic color in the existing footer. The normal streaming-card footer/layout and element order remain unchanged.
 
 ## Native `/resume` Picker (#94)
