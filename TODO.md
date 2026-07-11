@@ -13,8 +13,9 @@
 - [x] 私聊不额外比较操作者；群聊/topic 必须由发起者 `open_id` 点击，身份不可验证时 fail-open 到文本列表。
 - [x] PR #98 / @charles5g / jackmim：采用模型 footer 语义色创意，增加 HTML escape；footer/layout、字段顺序与字号不变。
 - [x] V3.9.1 相关 issue/PR 与 2026-07-11 旧队列已完成证据化回复和关闭，仅 #94 留待 V3.10.0 发布收口。
-- [x] Python 3.9 / 3.12 release gate 均为 `1214 passed, 3 skipped`，`git diff --check` 通过。
-- [ ] 完成真实 Feishu 私聊/群聊/topic smoke、tag、Release 与资产验证。
+- [x] Python 3.9 / 3.12 release gate 均为 `1216 passed, 3 skipped`，`git diff --check` 通过。
+- [x] 真实 Feishu 私聊、群聊发起者和 topic 原线程 smoke 通过；换操作者拒绝因测试群仅一位真人，保留自动化回归证据。
+- [ ] 完成 tag、Release 与资产验证。
 
 ### V3.9.1：可靠性热修（已发布）
 

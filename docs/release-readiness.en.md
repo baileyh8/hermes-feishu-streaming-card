@@ -86,7 +86,7 @@ Real Feishu integration must use local config or environment variables for `FEIS
 - Real Feishu private chat: `/hfc doctor`, localized details, recheck, a second click from the background successor, same-card PATCH, sandboxed two-step safe repair, card-triggered Gateway restart, and the normal footer snapshot. **Passed on 2026-07-11**.
 - Real Feishu cron: a no-agent one-shot result reached a normal completed card; sidecar event receive/apply/card-send metrics succeeded with no fallback. **Passed on 2026-07-11**.
 - Profile route mismatch: a temporary invalid `HERMES_FEISHU_CARD_PROFILE_ID` produced a redacted `profile_unknown` route chain, and removing the temporary environment restored the default profile without changing persistent config. **Passed on 2026-07-11**.
-- Remaining real Feishu gates: group initiator and changed-operator rejection, and topic. **Pending acceptance**.
+- V3.10.0 real Feishu `/resume`: private chat, group initiator, topic placement, and same-card PATCH passed; changed-operator rejection remains automation-backed because the test group had one human participant.
 
 Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a successful finite one-shot can print `Ran now: failed` because Hermes re-reads `last_status` after the completed job record has already been deleted. This does not indicate a card-delivery failure; the acceptance decision uses the matching Feishu card, sidecar metrics, and saved cron output. The plugin deliberately does not add another source patch for Hermes `tools/cronjob_tools.py` just to mask this upstream CLI issue.
 
@@ -99,9 +99,9 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 
 ## V3.10.0 Release Gates
 
-- Focused interaction/installer/render matrix: **passed (`414 passed`)**.
-- Python 3.9 / 3.12 full automation: **passed (`1214 passed, 3 skipped`)**.
-- Real Feishu: private open/switch/current/expired; group/topic initiator success, changed-operator rejection, same-thread update; no mobile footer overlap.
+- Focused interaction/installer/render matrix: **passed (`416 passed`)**.
+- Python 3.9 / 3.12 full automation: **passed (`1216 passed, 3 skipped`)**.
+- Real Feishu: private chat, group initiator, topic same-thread update, and footer passed; changed-operator rejection is covered by automation.
 - Verify macOS, Linux, Windows, and checksums assets after tagging.
 
 The `v3.9.0` release-assets workflow publishes four assets: the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.

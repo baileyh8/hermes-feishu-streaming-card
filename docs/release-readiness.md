@@ -86,7 +86,7 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - 真实飞书私聊：`/hfc doctor`、中文详情、recheck、后台 successor 再次点击、同卡 PATCH、sandbox 两步安全修复、卡片实际重启 Gateway、普通 footer snapshot。**已通过（2026-07-11）**。
 - 真实 Feishu cron：no-agent 一次性任务的结果正文已成功进入普通完成卡，sidecar 记录事件接收、应用和卡片发送均成功且无 fallback。**已通过（2026-07-11）**。
 - profile route mismatch：用临时错误 `HERMES_FEISHU_CARD_PROFILE_ID` 复现 `profile_unknown`，诊断只显示脱敏 route chain；移除临时环境后恢复默认 profile，未修改持久配置。**已通过（2026-07-11）**。
-- 真实飞书剩余项：群内发起者与 changed-operator rejection、topic。**待验收**。
+- V3.10.0 真实飞书 `/resume`：私聊、群聊发起者、topic 原线程选择与同卡 PATCH 已通过；changed-operator rejection 因测试群仅一位真人，保留自动化回归证据。
 
 验收时发现 Hermes 上游 `cron run` 对成功后自动删除的一次性任务仍可能显示 `Ran now: failed`：它在任务记录删除后再次读取 `last_status`，因此把缺失记录误判为失败。该提示不代表插件投递失败；本次以 Feishu 卡片、sidecar metrics 和保存的 cron 输出三方一致作为验收依据。插件不为此额外 patch Hermes `tools/cronjob_tools.py`，避免扩大安装修改面。
 
@@ -99,9 +99,9 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 
 ## V3.10.0 发布门禁
 
-- 聚焦 interaction/installer/render 矩阵：**已通过（`414 passed`）**。
-- Python 3.9 / 3.12 全量自动化：**已通过（`1214 passed, 3 skipped`）**。
-- 真实 Feishu：私聊 open/switch/current/expired；群聊与 topic 发起者成功、换人拒绝、原线程更新；footer 移动端不重叠。
+- 聚焦 interaction/installer/render 矩阵：**已通过（`416 passed`）**。
+- Python 3.9 / 3.12 全量自动化：**已通过（`1216 passed, 3 skipped`）**。
+- 真实 Feishu：私聊、群聊发起者、topic 原线程更新和 footer 已通过；换人拒绝由自动化覆盖。
 - tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
 
 `v3.9.0` tag 的 release-assets workflow 会发布 4 个 assets：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。

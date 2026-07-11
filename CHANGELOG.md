@@ -11,6 +11,7 @@ See also: [docs/release-notes-v3.10.0.md](docs/release-notes-v3.10.0.md)
 
 ### Added
 - Bare Feishu/Lark `/resume` now opens a native `select_static` picker for up to ten visible named sessions. Topic reply metadata is preserved, and unavailable/empty/unsupported paths fail open to Hermes' existing text list.
+- Topic pickers retain an explicit reply anchor when Hermes represents the topic with an `om_...` root id, preventing Feishu field-validation fallback to the native numbered list.
 - Selecting a session ACKs immediately, then invokes the original Hermes resume handler in the runner loop. This preserves ownership checks, continuation resolution, agent release, boundary cleanup, and model/reasoning override reset.
 - Completed-card model labels use escaped semantic color for recognized provider prefixes while preserving footer element order, fields, separators, and text size.
 

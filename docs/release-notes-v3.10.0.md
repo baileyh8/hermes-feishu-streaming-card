@@ -7,6 +7,7 @@ V3.10.0 adds one focused interaction improvement and one restrained visual impro
 - Bare `/resume` queries up to ten recent named sessions already visible under Hermes' `_resume_row_visible(...)` policy and sends one native `select_static` card.
 - Session values are opaque session ids. Labels include the title, at most the existing 40-character preview, and a current-session marker.
 - Topic reply metadata is preserved so the picker stays in the originating thread.
+- Topic replies always carry the command message as their reply anchor, including Hermes adapters that expose an `om_...` root message as `thread_id`; this avoids Feishu create-message field validation failures.
 - `/resume <number|title|session_id>` is unchanged.
 - Missing session DB, no named sessions, non-Feishu platforms, unavailable card runtime, unverifiable group ownership, and send failures all fail-open to the original Hermes text flow.
 
@@ -27,9 +28,9 @@ Private chats intentionally do not compare the callback operator with the initia
 
 ## Validation
 
-- Focused interaction/installer/render matrix: `414 passed` before release metadata changes.
-- Full release gate: `1214 passed, 3 skipped` on both Python 3.9 and Python 3.12, followed by `git diff --check`.
-- Real Feishu acceptance covers private selection/current/expired state plus group/topic initiating-user success and changed-operator rejection.
+- Focused interaction/installer/render matrix: `416 passed` before release metadata changes.
+- Full release gate: `1216 passed, 3 skipped` on both Python 3.9 and Python 3.12, followed by `git diff --check`.
+- Real Feishu acceptance passed for private selection/current state, group initiating-user selection, topic picker placement, and same-card PATCH. Changed-operator rejection remains automation-backed because the dedicated test group had one human participant.
 
 ## Release Assets
 
