@@ -6,7 +6,7 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V3.9.1：可靠性热修（待发布）
+### V3.9.1：可靠性热修（已发布）
 
 - [x] Issue #96 / PR #97 / @colinaaa：完成事件携带有效 suffix 时保留完整最终答案，同时保持原生重复 reply suppression。
 - [x] Issue #92 / PR #93 / @colinaaa：打断旧任务时先 drain 更新队列，再串行写入 abandoned 终态，迟到 PATCH 不再覆盖终态。
@@ -16,7 +16,8 @@
 - [x] source-stripped Hermes 的诊断文案明确显示 metadata 缺失，不伪造版本号。
 - [x] 普通流式卡 footer/layout 保持不变。
 - [x] Python 3.9 / 3.12 release gate 均为 `1198 passed, 3 skipped`，`git diff --check` 通过。
-- [ ] 完成 tag、GitHub Release、资产校验和 issue/PR 回复。
+- [x] v3.9.1 tag、GitHub Release 与四个 release assets 按发布流程完成。
+- [ ] 完成相关 issue/PR 的证据化回复与状态收口。
 
 ### V3.9.0：运维与可靠性基础（已完成自动化与文档）
 
