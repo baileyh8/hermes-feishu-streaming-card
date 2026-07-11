@@ -437,6 +437,34 @@ async def wait_for_card_update(feishu_client, expected_text, attempts=80):
     raise AssertionError(f"card update containing {expected_text!r} was not observed")
 
 
+async def test_new_turn_abandons_interrupted_session_in_same_conversation(client):
+    test_client, _feishu_client = client
+    first = {
+        "conversation_id": "conversation-interrupt",
+        "message_id": "message-interrupted",
+    }
+    second = {
+        "conversation_id": "conversation-interrupt",
+        "message_id": "message-follow-up",
+    }
+
+    await test_client.post(
+        "/events",
+        json=event_payload("message.started", 0, **first),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload("answer.delta", 1, {"text": "partial"}, **first),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload("answer.delta", 0, {"text": "follow-up"}, **second),
+    )
+
+    assert test_client.app[SESSIONS_KEY]["message-interrupted"].status == "completed"
+    assert test_client.app[SESSIONS_KEY]["message-follow-up"].status == "thinking"
+
+
 async def _wait_until(predicate, attempts=80):
     for _ in range(attempts):
         if predicate():
