@@ -1008,6 +1008,39 @@ def action_labels(card: dict[str, object]) -> list[str]:
     return [button["text"]["content"] for button in operation_buttons(card)]
 
 
+def test_operations_card_uses_static_safe_finding_copy_and_details_state():
+    safe_report = DiagnosticReport(
+        status="ok",
+        created_at=100.0,
+        config={}, hermes={}, streaming={},
+        install_state={"recovery_executable": True}, routing={}, runtime={},
+        findings=(
+            DiagnosticFinding("install_state_installed", "info", "TOKEN=/private/token"),
+            DiagnosticFinding("route_fallback", "info", "PATH=/private/route"),
+            DiagnosticFinding("future_code", "warning", "secret impact /private/key"),
+        ),
+    )
+    store = OperationStore(secret=b"test", now=lambda: 100.0)
+    operation = store.create(group=False, **operation_kwargs())
+
+    summary = render_operations_card(safe_report, operation, "footer", store=store)
+    operation.result = {"show_details": True}
+    details = render_operations_card(safe_report, operation, "footer", store=store)
+    summary_text = json.dumps(summary, ensure_ascii=False)
+    details_text = json.dumps(details, ensure_ascii=False)
+
+    assert "安装状态正常" in summary_text
+    assert "当前使用默认路由" in summary_text
+    assert "诊断详情" in details_text
+    assert "建议检查路由绑定" in details_text
+    assert "检测到需要检查的项目" in details_text
+    assert summary != details
+    assert "查看诊断" in action_labels(summary)
+    assert "查看诊断" not in action_labels(details)
+    for sensitive in ("TOKEN=", "/private/token", "/private/route", "/private/key", "secret impact"):
+        assert sensitive not in details_text
+
+
 def test_operations_card_places_actions_before_existing_divider_and_footer():
     store = OperationStore(secret=b"test", now=lambda: 100.0)
     operation = store.create(group=False, **operation_kwargs())

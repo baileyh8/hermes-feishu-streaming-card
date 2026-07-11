@@ -22,6 +22,25 @@ _MUTATION_ACTIONS = {
     "restart",
     "confirm_restart",
 }
+_FINDING_COPY = {
+    "hermes_unsupported": ("当前 Hermes 版本不受支持", "请使用受支持的 Hermes 版本后重新检测。"),
+    "hermes_compatibility_partial": ("Hermes 兼容性不完整", "建议检查兼容性配置后重新检测。"),
+    "runtime_import_failed": ("运行环境加载失败", "建议重新安装或检查运行环境。"),
+    "streaming_disabled": ("流式更新未启用", "建议启用流式更新配置。"),
+    "streaming_not_detected": ("未检测到流式配置", "建议检查流式更新配置。"),
+    "install_state_clean": ("尚未安装卡片钩子", "如需使用卡片，请完成安装。"),
+    "install_state_installed": ("安装状态正常", "当前安装状态已确认。"),
+    "install_state_changed": ("安装状态需要检查", "建议查看安装状态后再操作。"),
+    "install_state_incomplete": ("安装状态不完整", "建议先执行安全修复或重新检测。"),
+    "profile_identity_missing": ("未指定配置档案", "建议选择明确的配置档案。"),
+    "profile_unknown": ("配置档案不可用", "建议检查所选配置档案。"),
+    "profile_credentials_missing": ("配置档案凭据不完整", "建议补全对应配置后重新检测。"),
+    "event_endpoint_mismatch": ("事件地址不一致", "建议检查事件地址配置。"),
+    "bot_unknown": ("机器人配置不可用", "建议检查机器人绑定配置。"),
+    "route_fallback": ("当前使用默认路由", "建议检查路由绑定以获得稳定投递。"),
+    "operations_diagnosis_failed": ("诊断暂时不可用", "请稍后重新检测。"),
+}
+_UNKNOWN_FINDING_COPY = ("检测到需要检查的项目", "建议重新检测后再决定下一步。")
 
 
 class OperationRejected(ValueError):
@@ -818,7 +837,7 @@ def render_operations_card(
         "schema": "2.0",
         "config": {
             "update_multi": True,
-            "summary": {"content": "Hermes operations diagnostics"},
+            "summary": {"content": "运行诊断"},
         },
         "header": {
             "template": template,
@@ -849,17 +868,20 @@ def _operations_summary(report: DiagnosticReport, operation: OperationRecord) ->
         return f"{content}\n\n{message}" if message else content
 
     findings = report.to_dict(card_safe=True).get("findings")
-    lines = ["**诊断摘要**", f"\n- 状态：{_status_label(report.status)}"]
+    show_details = bool((operation.result or {}).get("show_details"))
+    lines = [
+        "**诊断详情**" if show_details else "**诊断摘要**",
+        f"\n- 状态：{_status_label(report.status)}",
+    ]
     if isinstance(findings, list):
         for finding in findings[:8]:
             if not isinstance(finding, dict):
                 continue
-            message = str(finding.get("message") or "").strip()
-            impact = str(finding.get("impact") or "").strip()
-            if message:
-                lines.append(f"- {message}")
-            if operation.result and operation.result.get("show_details") and impact:
-                lines.append(f"  - {impact}")
+            code = str(finding.get("code") or "")
+            summary, detail = _FINDING_COPY.get(code, _UNKNOWN_FINDING_COPY)
+            lines.append(f"- {summary}")
+            if show_details:
+                lines.append(f"  - 建议：{detail}")
     if len(lines) == 2:
         lines.append("- 未发现需要处理的问题。")
     return "\n".join(lines)
@@ -872,10 +894,9 @@ def _operation_buttons(
 ) -> list[dict[str, object]]:
     actions: list[tuple[str, str, str]]
     if operation.state == "diagnosed":
-        actions = [
-            ("details", "查看诊断", "default"),
-            ("recheck", "重新检测", "default"),
-        ]
+        actions = [("recheck", "重新检测", "default")]
+        if not bool((operation.result or {}).get("show_details")):
+            actions.insert(0, ("details", "查看诊断", "default"))
         if bool(report.install_state.get("recovery_executable")):
             actions.append(("repair", "安全修复", "default"))
         actions.append(("dismiss", "暂不处理", "default"))
