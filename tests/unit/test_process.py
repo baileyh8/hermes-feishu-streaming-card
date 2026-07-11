@@ -6,6 +6,17 @@ from types import SimpleNamespace
 from hermes_feishu_card import process
 
 
+class _HealthResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self) -> bytes:
+        return b'{"status":"healthy"}'
+
+
 def test_process_token_hash_is_stable_and_empty_safe():
     assert process.process_token_hash("") == ""
     assert process.process_token_hash(None) == ""
@@ -48,6 +59,31 @@ def test_start_sidecar_passes_selected_env_file_to_runner(monkeypatch, tmp_path)
             commands[0][-1],
         ]
     ]
+
+
+def test_fetch_health_bypasses_proxy_for_loopback(monkeypatch):
+    calls: list[tuple[str, float]] = []
+
+    class _NoProxyOpener:
+        def open(self, request, timeout):
+            calls.append((request.full_url, timeout))
+            return _HealthResponse()
+
+    monkeypatch.setattr(process, "_NO_PROXY_OPENER", _NoProxyOpener(), raising=False)
+    monkeypatch.setattr(
+        process.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("loopback health check used the system proxy path")
+        ),
+    )
+
+    health = process.fetch_health(
+        {"server": {"host": "127.0.0.1", "port": 8765}}
+    )
+
+    assert health == {"status": "healthy"}
+    assert calls == [("http://127.0.0.1:8765/health", 0.4)]
 
 
 def test_pid_is_running_uses_windows_process_probe(monkeypatch):

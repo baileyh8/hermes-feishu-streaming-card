@@ -11,12 +11,14 @@ import sys
 import time
 from typing import Any
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
 DEFAULT_STATE_DIR = Path.home() / ".hermes_feishu_card"
 PIDFILE_NAME = "sidecar.pid"
 LOGFILE_NAME = "sidecar.log"
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def process_token_hash(token: str | None) -> str:
@@ -119,15 +121,24 @@ def stop_sidecar(config: dict[str, dict[str, Any]]) -> str:
 
 def fetch_health(config: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
     server = config["server"]
-    url = f"http://{server['host']}:{server['port']}/health"
+    host = str(server["host"])
+    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    url = f"http://{url_host}:{server['port']}/health"
     try:
-        with urllib.request.urlopen(url, timeout=0.4) as response:
+        with _open_health_url(url, timeout=0.4) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
         return None
     if isinstance(payload, dict) and payload.get("status") == "healthy":
         return payload
     return None
+
+
+def _open_health_url(url: str, timeout: float):
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    if host in {"127.0.0.1", "localhost", "::1"}:
+        return _NO_PROXY_OPENER.open(urllib.request.Request(url), timeout=timeout)
+    return urllib.request.urlopen(url, timeout=timeout)
 
 
 def read_pid() -> int | None:
