@@ -79,7 +79,7 @@ OPERATIONS_COMMAND_AUTH_KEY = web.AppKey(
 OPERATIONS_TRANSPORT_ROOT_KEY = web.AppKey("operations_transport_root", bytes)
 OPERATIONS_DIAGNOSTIC_TASKS_KEY = web.AppKey("operations_diagnostic_tasks", set)
 OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY = web.AppKey(
-    "operations_diagnostic_semaphore", asyncio.Semaphore
+    "operations_diagnostic_semaphore", Any
 )
 OPERATIONS_DIAGNOSTIC_EXECUTOR_KEY = web.AppKey(
     "operations_diagnostic_executor", ThreadPoolExecutor
@@ -89,7 +89,7 @@ OPERATIONS_MUTATION_EXECUTOR_KEY = web.AppKey("operations_mutation_executor", Th
 OPERATIONS_MUTATION_FUTURES_KEY = web.AppKey("operations_mutation_futures", set)
 OPERATIONS_MUTATIONS_STOPPING_KEY = web.AppKey("operations_mutations_stopping", bool)
 OPERATIONS_PUBLISH_LOCKS_KEY = web.AppKey("operations_publish_locks", dict)
-OPERATIONS_PUBLISH_LOCKS_GUARD_KEY = web.AppKey("operations_publish_locks_guard", asyncio.Lock)
+OPERATIONS_PUBLISH_LOCKS_GUARD_KEY = web.AppKey("operations_publish_locks_guard", Any)
 FLUSH_CONTROLLERS_KEY = web.AppKey("flush_controllers", dict)
 CLEANUP_TASK_KEY = web.AppKey("cleanup_task", asyncio.Task)
 UPDATE_MAX_ATTEMPTS = 3
@@ -185,9 +185,7 @@ def create_app(
     app[BASE_CARD_CONFIG_KEY] = dict(card_config)
     app[OPERATIONS_STORE_KEY] = OperationStore(secret=secrets.token_bytes(32))
     app[OPERATIONS_DIAGNOSTIC_TASKS_KEY] = set()
-    app[OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY] = asyncio.Semaphore(
-        MAX_CONCURRENT_OPERATION_DIAGNOSTICS
-    )
+    app[OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY] = {"value": None}
     app[OPERATIONS_DIAGNOSTIC_EXECUTOR_KEY] = ThreadPoolExecutor(
         max_workers=MAX_CONCURRENT_OPERATION_DIAGNOSTICS,
         thread_name_prefix="hfc-operations",
@@ -199,7 +197,7 @@ def create_app(
     app[OPERATIONS_MUTATION_FUTURES_KEY] = set()
     app[OPERATIONS_MUTATIONS_STOPPING_KEY] = {"stopping": False}
     app[OPERATIONS_PUBLISH_LOCKS_KEY] = {}
-    app[OPERATIONS_PUBLISH_LOCKS_GUARD_KEY] = asyncio.Lock()
+    app[OPERATIONS_PUBLISH_LOCKS_GUARD_KEY] = {"value": None}
     operations_config = Path(
         operations_config_path
         or os.environ.get("HFC_CONFIG")
@@ -904,7 +902,7 @@ async def _build_operations_report(
     routing = app[ROUTING_DIAGNOSTICS_KEY]
     last_route = routing.get("last_route") if isinstance(routing, dict) else None
     health = {"routing": {"last_route": dict(last_route or {})}}
-    async with app[OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY]:
+    async with _operations_diagnostic_semaphore(app):
         if preparing_operation_id and not app[OPERATIONS_STORE_KEY].is_preparing(
             preparing_operation_id
         ):
@@ -924,6 +922,15 @@ async def _build_operations_report(
         futures.add(future)
         future.add_done_callback(futures.discard)
         return await asyncio.shield(future)
+
+
+def _operations_diagnostic_semaphore(app: web.Application) -> asyncio.Semaphore:
+    holder = app[OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY]
+    semaphore = holder["value"]
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_OPERATION_DIAGNOSTICS)
+        holder["value"] = semaphore
+    return semaphore
 
 
 async def _bounded_operations_report(
@@ -1486,7 +1493,7 @@ async def _publish_operations_card(
         return False
     lock_key = (str(delivery.get("bot_id") or ""), message_id)
     locks: dict[tuple[str, str], dict[str, Any]] = app[OPERATIONS_PUBLISH_LOCKS_KEY]
-    guard: asyncio.Lock = app[OPERATIONS_PUBLISH_LOCKS_GUARD_KEY]
+    guard = _operations_publish_locks_guard(app)
     async with guard:
         entry = locks.get(lock_key)
         if entry is None:
@@ -1532,6 +1539,15 @@ async def _publish_operations_card(
             entry["users"] -= 1
             if entry["users"] == 0 and locks.get(lock_key) is entry:
                 locks.pop(lock_key, None)
+
+
+def _operations_publish_locks_guard(app: web.Application) -> asyncio.Lock:
+    holder = app[OPERATIONS_PUBLISH_LOCKS_GUARD_KEY]
+    guard = holder["value"]
+    if guard is None:
+        guard = asyncio.Lock()
+        holder["value"] = guard
+    return guard
 
 
 def _restart_output_status(output: str) -> str:

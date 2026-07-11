@@ -19,14 +19,15 @@ See also: [docs/release-notes-v3.9.0.md](docs/release-notes-v3.9.0.md)
 ### Fixed
 - Operations-card WebSocket clicks now ACK Feishu immediately, then use a bounded background dispatcher with retry to forward authenticated actions to the sidecar. Slow local callbacks no longer surface Feishu's target-callback timeout toast.
 - Every authenticated operations response now PATCHes the original card through the sidecar delivery mapping. Transition-card publishing is independent from recheck/repair/restart execution, so a slow or failed Feishu PATCH cannot prevent an accepted operation from starting.
+- Restored verified Python 3.9 support for operations diagnostics: asynchronous semaphore and publish-lock state is now created only on first use inside the active event loop. The test suite no longer relies on Python 3.10-only `zip(strict=...)` behavior.
 
 ### Credits
 - PR #84 by @Zanetach contributed card progress-status routing and `.env` allowlist expansion for profile environment support.
 
 ### Validation
-- Automated release gate: `1171 passed, 3 skipped`.
+- Automated release gate: `1172 passed, 3 skipped` on both Python 3.9 and Python 3.12.
 - Real Feishu private-chat acceptance passed on 2026-07-11: `/hfc doctor` produced one operations card without a gray native unknown-command reply; details and two consecutive rechecks (including a background successor) ACKed in 156–201 ms without a callback-timeout toast and PATCHed the same card; sandboxed two-step safe repair, card-triggered Gateway restart, and the normal streaming-card footer also passed with zero send/update failures.
-- Existing-container Docker smoke plus group ownership, topic, cron, and profile-mismatch smoke remain pending acceptance.
+- Existing-container Docker smoke plus group ownership and topic smoke remain pending acceptance.
 
 ## V3.8.18 — 2026-07-10
 

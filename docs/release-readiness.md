@@ -62,7 +62,7 @@
 - setup 的 profile/event URL 优先级为显式参数、进程环境、选定 env file、默认值；仅 `doctor` 输出完整脱敏 identity/profile/event endpoint route chain，`status` 摘要运行时路由/profile 事件，`/health` 报告实际 routing health 字段。
 - install/setup 可自动修复已知安全状态，`--no-repair` 可关闭；无法验证的用户编辑继续拒绝覆盖。cleanup history 和 metrics 保持有界且 hash 化。
 - 运维按钮 WebSocket 回调会即时 ACK，认证动作进入有界后台队列并有限重试；所有认证后的状态统一由 sidecar PATCH 原卡，慢 PATCH 不阻塞 recheck/repair/restart。
-- 自动化 release gate：`1171 passed, 3 skipped`。
+- 自动化 release gate：Python 3.9 / 3.12 均为 `1172 passed, 3 skipped`；运维 semaphore/publish-lock 仅在活跃 event loop 内初始化，保持声明的 Python 3.9 支持。
 - 2026-07-11 真实飞书私聊通过：`/hfc doctor` 无灰色原生未知命令；中文摘要/详情、连续两次重新检测（含后台 successor）在 156–201 ms 内 ACK、无目标回调超时提示并更新同一卡；sandbox 两步安全修复、卡片实际重启 Gateway 与普通流式完成卡 footer 均通过，sidecar 发送/更新零失败。
 
 ## 发布前必须验证

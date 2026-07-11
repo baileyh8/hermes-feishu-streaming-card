@@ -14,7 +14,7 @@
 - [x] 已知安全的 manifest/backup 状态支持自动 repair，可用 `--no-repair` 关闭；不可验证的用户编辑继续拒绝覆盖。
 - [x] lifecycle cleanup 与有界 metrics 覆盖 runtime state；Hermes/Docker 兼容由自动化回归覆盖。
 - [x] 运维按钮 WebSocket 回调即时 ACK；认证动作通过有界后台队列重试转发，所有响应由 sidecar PATCH 原卡，慢 PATCH 不阻塞 recheck/repair/restart。
-- [x] Release gate 证据：`1171 passed, 3 skipped`；普通卡片 footer/layout 不变。
+- [x] Release gate 证据：Python 3.9 / 3.12 均为 `1172 passed, 3 skipped`；普通卡片 footer/layout 不变。
 - [x] 2026-07-11 真实飞书私聊：`/hfc doctor` 无灰色未知命令，中文详情、连续两次 recheck（含后台 successor）在 156–201 ms 内 ACK 且无回调超时提示；sandbox 两步安全修复、卡片实际重启 Gateway 和普通流式完成卡通过，发送/更新零失败。
 - [x] 2026-07-11 真实 Feishu cron：no-agent 一次性任务结果进入普通完成卡，sidecar 接收/应用/发送成功且无 fallback；Hermes `cron run` 的一次性任务删除后状态误报记为上游问题，不扩大插件 patch 面。
 - [x] 2026-07-11 profile route mismatch：临时错误 profile 被诊断为 `profile_unknown` 且 route chain 脱敏；移除临时环境后恢复默认 profile，持久配置未变。

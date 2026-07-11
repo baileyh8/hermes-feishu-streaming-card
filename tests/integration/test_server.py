@@ -6,6 +6,7 @@ import secrets
 import threading
 import time
 from types import SimpleNamespace
+import warnings
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -457,6 +458,23 @@ async def wait_for_metric(test_client, metric_name, expected_value, attempts=80)
     )
 
 
+def test_create_app_does_not_require_a_current_event_loop():
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            previous_loop = asyncio.get_event_loop()
+    except RuntimeError:
+        previous_loop = None
+    try:
+        asyncio.set_event_loop(None)
+        app = create_app(FakeFeishuClient())
+    finally:
+        asyncio.set_event_loop(previous_loop)
+
+    assert app[sidecar_server.OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY]["value"] is None
+    assert app[sidecar_server.OPERATIONS_PUBLISH_LOCKS_GUARD_KEY]["value"] is None
+
+
 async def test_health_reports_healthy_status_and_active_sessions(client):
     test_client, _ = client
 
@@ -519,8 +537,8 @@ def test_cleanup_runtime_state_removes_related_state_and_counts_once():
     controller.close()
     app[SESSIONS_KEY][session_key] = session
     app[SESSION_ALIASES_KEY][alias_key] = session_key
-    app[MESSAGE_LOCKS_KEY][session_key] = asyncio.Lock()
-    app[MESSAGE_LOCKS_KEY][alias_key] = asyncio.Lock()
+    app[MESSAGE_LOCKS_KEY][session_key] = SimpleNamespace(locked=lambda: False)
+    app[MESSAGE_LOCKS_KEY][alias_key] = SimpleNamespace(locked=lambda: False)
     app[FEISHU_MESSAGE_IDS_KEY][session_key] = "om_card"
     app[MESSAGE_BOT_IDS_KEY][session_key] = "profile:default"
     app[SESSION_CARD_CONFIGS_KEY][session_key] = {"title": "Card"}
@@ -723,8 +741,8 @@ def test_closed_controller_cleanup_requires_same_instance():
 def test_orphan_message_lock_cleanup_requires_same_instance_and_no_users():
     app = create_app(FakeFeishuClient())
     lock_key = "om_failed"
-    old = asyncio.Lock()
-    replacement = asyncio.Lock()
+    old = SimpleNamespace(locked=lambda: False)
+    replacement = SimpleNamespace(locked=lambda: False)
     app[MESSAGE_LOCKS_KEY][lock_key] = replacement
 
     assert not cleanup_orphan_message_lock(app, lock_key, old)
@@ -1305,7 +1323,7 @@ async def test_hfc_doctor_timeout_includes_waiting_for_diagnostic_slot(monkeypat
     feishu_client = FakeFeishuClient()
     monkeypatch.setattr(sidecar_server, "OPERATIONS_DIAGNOSTIC_TIMEOUT_SECONDS", 0.02)
     app = create_app(feishu_client)
-    semaphore = app[sidecar_server.OPERATIONS_DIAGNOSTIC_SEMAPHORE_KEY]
+    semaphore = sidecar_server._operations_diagnostic_semaphore(app)
     await semaphore.acquire()
     test_client = TestClient(TestServer(app))
     await test_client.start_server()
@@ -1322,13 +1340,9 @@ async def test_hfc_doctor_timeout_includes_waiting_for_diagnostic_slot(monkeypat
             ),
         )
         operation_id = (await response.json())["operation_id"]
-        await _wait_until(
-            lambda: app[sidecar_server.OPERATIONS_STORE_KEY]
-            ._records[operation_id]
-            .state
-            == "failed",
-            attempts=40,
-        )
+        tasks = app[sidecar_server.OPERATIONS_DIAGNOSTIC_TASKS_KEY]
+        await _wait_until(lambda: bool(tasks), attempts=200)
+        await asyncio.wait_for(asyncio.shield(next(iter(tasks))), timeout=2.0)
         record = app[sidecar_server.OPERATIONS_STORE_KEY]._records[operation_id]
     finally:
         semaphore.release()

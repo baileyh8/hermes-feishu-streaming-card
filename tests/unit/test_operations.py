@@ -1102,7 +1102,8 @@ def test_operations_card_places_actions_before_existing_divider_and_footer():
     assert all(button["size"] == "medium" for button in buttons)
     assert all(button["width"] == "default" for button in buttons)
     assert all("value" not in button for button in buttons)
-    for button, action in zip(buttons, actions, strict=True):
+    assert len(buttons) == len(actions)
+    for button, action in zip(buttons, actions):
         assert button["behaviors"] == [
             {
                 "type": "callback",
