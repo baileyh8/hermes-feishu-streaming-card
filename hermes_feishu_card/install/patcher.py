@@ -858,12 +858,14 @@ def _find_owned_complete_block(content: str):
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = _render_complete_hook_block(indent, newline)
+    v400 = _render_v400_complete_hook_block(indent, newline)
     legacy = _render_legacy_complete_hook_block(indent, newline)
     previous_async = _render_previous_async_complete_hook_block(indent, newline)
     previous_async_without_platform = (
         _render_previous_async_complete_hook_block_without_platform_guard(indent, newline)
     )
     expected_silent = _with_silent_exception_handler(expected, indent, newline)
+    v400_silent = _with_silent_exception_handler(v400, indent, newline)
     legacy_silent = _with_silent_exception_handler(legacy, indent, newline)
     previous_async_silent = _with_silent_exception_handler(
         previous_async, indent, newline
@@ -874,10 +876,12 @@ def _find_owned_complete_block(content: str):
     actual = lines[begin_index : end_index + 1]
     if actual not in (
         expected,
+        v400,
         legacy,
         previous_async,
         previous_async_without_platform,
         expected_silent,
+        v400_silent,
         legacy_silent,
         previous_async_silent,
         previous_async_without_platform_silent,
@@ -1221,6 +1225,10 @@ def _render_complete_hook_block(indent: str, newline: str):
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import should_suppress_native_response as _hfc_should_suppress{newline}"
         ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import native_media_only_response as _hfc_media_only{newline}"
+        ),
         f"{inner_indent}_hfc_completed_locals = {{{newline}",
         f"{deeper_indent}**locals(),{newline}",
         f"{deeper_indent}\"answer\": response,{newline}",
@@ -1244,10 +1252,22 @@ def _render_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}_hfc_native_delivery = _hfc_completed_data.get(\"native_delivery\", \"required\" if _hfc_attachments else \"allowed\"){newline}",
         f"{inner_indent}_hfc_card_delivered = await _hfc_emit_async(_hfc_completed_locals, event_name=\"message.completed\"){newline}",
         f"{inner_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
+        f"{inner_indent}if str(_hfc_platform).lower() == \"feishu\" and _hfc_card_delivered and _hfc_native_delivery == \"required\":{newline}",
+        f"{deeper_indent}response = _hfc_media_only(response){newline}",
         f"{inner_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery):{newline}",
         f"{deeper_indent}return None{newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
+    ]
+
+
+def _render_v400_complete_hook_block(indent: str, newline: str):
+    return [
+        line
+        for line in _render_complete_hook_block(indent, newline)
+        if "native_media_only_response as _hfc_media_only" not in line
+        and '_hfc_native_delivery == "required"' not in line
+        and "response = _hfc_media_only(response)" not in line
     ]
 
 
@@ -1268,6 +1288,10 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         (
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import should_suppress_native_response as _hfc_should_suppress{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import native_media_only_response as _hfc_media_only{newline}"
         ),
         f"{inner_indent}if first_response and not _already_streamed:{newline}",
         f"{deeper_indent}_hfc_completed_locals = {{{newline}",
@@ -1293,6 +1317,8 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}    _hfc_native_delivery = _hfc_completed_data.get(\"native_delivery\", \"required\" if _hfc_attachments else \"allowed\"){newline}",
         f"{deeper_indent}_hfc_card_delivered = await _hfc_emit_async(_hfc_completed_locals, event_name=\"message.completed\"){newline}",
         f"{deeper_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
+        f"{deeper_indent}if str(_hfc_platform).lower() == \"feishu\" and _hfc_card_delivered and _hfc_native_delivery == \"required\":{newline}",
+        f"{deeper_indent}    first_response = _hfc_media_only(first_response){newline}",
         f"{deeper_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery):{newline}",
         f"{deeper_indent}    _already_streamed = True{newline}",
         *_render_hook_exception_handler(indent, newline),

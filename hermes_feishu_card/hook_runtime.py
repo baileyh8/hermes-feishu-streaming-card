@@ -47,6 +47,7 @@ LOCAL_FILE_RE = re.compile(
     r"(?<![:\w/])(/[^\s`]+\.(?:png|jpg|jpeg|webp|gif|pdf|txt|md|csv|xlsx|docx|mp3|wav|ogg|mp4|mov|webm))"
 )
 ATTACHMENT_TRAILING_PUNCTUATION = ",.;:)]}，。；：）】}"
+NATIVE_DELIVERY_MARKERS = ("[[as_document]]", "[[audio_as_voice]]")
 NATIVE_DELIVERY_ATTACHMENT_FIELDS = (
     "files",
     "file",
@@ -4908,7 +4909,7 @@ def _event_data(
         answer = _completion_answer(local_vars)
         attachments = _extract_attachments(answer, local_vars)
         data.update({
-            "answer": answer,
+            "answer": _card_visible_answer(answer),
             "attachments": attachments,
             "native_delivery": _native_delivery_policy(answer, local_vars),
             "duration": _completion_duration(local_vars),
@@ -5107,6 +5108,54 @@ def _extract_attachments(
         seen.add(name)
         attachments.append({"kind": _attachment_kind(name), "name": name, "summary": name})
     return attachments
+
+
+def _card_visible_answer(text: str) -> str:
+    cleaned = str(text or "")
+    for marker in NATIVE_DELIVERY_MARKERS:
+        cleaned = cleaned.replace(marker, "")
+    cleaned = MEDIA_RE.sub("", cleaned)
+    cleaned = LOCAL_FILE_RE.sub("", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def native_media_only_response(response: Any) -> Any:
+    if not isinstance(response, str) or not response:
+        return response
+
+    delivery_parts: list[tuple[int, str]] = []
+    for marker in NATIVE_DELIVERY_MARKERS:
+        offset = response.find(marker)
+        if offset >= 0:
+            delivery_parts.append((offset, marker))
+
+    has_delivery_path = False
+    for match in MEDIA_RE.finditer(response):
+        path = match.group(1).rstrip(ATTACHMENT_TRAILING_PUNCTUATION)
+        if not path:
+            continue
+        has_delivery_path = True
+        delivery_parts.append((match.start(), f"MEDIA:{path}"))
+    for match in LOCAL_FILE_RE.finditer(response):
+        path = match.group(1).rstrip(ATTACHMENT_TRAILING_PUNCTUATION)
+        if not path:
+            continue
+        has_delivery_path = True
+        delivery_parts.append((match.start(), path))
+
+    if not has_delivery_path:
+        return response
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for _, part in sorted(delivery_parts, key=lambda item: item[0]):
+        if part in seen:
+            continue
+        seen.add(part)
+        ordered.append(part)
+    return "\n".join(ordered)
 
 
 def _native_delivery_policy(
