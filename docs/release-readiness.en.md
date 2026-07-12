@@ -103,7 +103,7 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Focused interaction/installer/render matrix: **passed (`416 passed`)**.
 - Python 3.9 / 3.12 full automation: **passed (`1216 passed, 3 skipped`)**.
 - Real Feishu: private chat, group initiator, topic same-thread update, and footer passed; changed-operator rejection is covered by automation.
-- Verify macOS, Linux, Windows, and checksums assets after tagging.
+- `v4.0.0`: **released on 2026-07-12**. The release-assets workflow succeeded; the macOS, Linux, Windows, and checksums assets were complete and checksum-verified; installation from the public tag reported version `4.0.0` and the CLI started successfully.
 - `v3.10.0`: **released on 2026-07-11** with all four assets verified.
 
 ## V4.0.0 Release Gates

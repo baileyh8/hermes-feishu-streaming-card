@@ -103,7 +103,7 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - 聚焦 interaction/installer/render 矩阵：**已通过（`416 passed`）**。
 - Python 3.9 / 3.12 全量自动化：**已通过（`1216 passed, 3 skipped`）**。
 - 真实 Feishu：私聊、群聊发起者、topic 原线程更新和 footer 已通过；换人拒绝由自动化覆盖。
-- tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
+- `v4.0.0`：**已发布（2026-07-12）**。release-assets workflow 成功；macOS、Linux、Windows 与 checksums 四个 assets 完整且 checksum 通过；从公开 tag 安装后版本为 `4.0.0`，CLI 可启动。
 - `v3.10.0`：**已发布（2026-07-11）**，四个 assets 验证通过。
 
 ## V4.0.0 发布门禁

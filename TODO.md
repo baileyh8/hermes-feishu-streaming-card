@@ -6,7 +6,7 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V4.0.0：实时双轨 Agent 卡片（候选）
+### V4.0.0：实时双轨 Agent 卡片（已发布）
 
 - [x] 运行态 Header title 保留用户配置名，subtitle 将 Hermes 工具名与最新非空 `tool.updated.detail` 整理为确定性动作摘要，工具间隙保留上一条。
 - [x] 正文显示公开 `thinking.delta` 阶段输出，`answer.delta` 开始后主回答优先。
@@ -14,7 +14,7 @@
 - [x] 运行、等待、失败 Footer 只显示状态，完成态显示最终统计。
 - [x] preview 单行化、长度限制和敏感参数脱敏；无 preview 时兼容旧布局。
 - [x] 真实飞书私聊/群聊、四状态截图与本地发布包 smoke 通过；`/model` Provider、返回、切换和同卡回写通过。
-- [ ] tag 后验证 V4.0.0 macOS、Linux、Windows 与 checksums 四个 Release assets。
+- [x] `v4.0.0` tag、GitHub Release、macOS/Linux/Windows/checksums 四个 assets 与公共 tag 安装验证通过。
 
 ### V3.10.0：原生会话恢复与轻量视觉增强（已发布）
 
