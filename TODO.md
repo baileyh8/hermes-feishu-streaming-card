@@ -2,9 +2,19 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V4.0.0：实时双轨 Agent 卡片（候选）
+
+- [x] 运行态 Header title 保留用户配置名，subtitle 将 Hermes 工具名与最新非空 `tool.updated.detail` 整理为确定性动作摘要，工具间隙保留上一条。
+- [x] 正文显示公开 `thinking.delta` 阶段输出，`answer.delta` 开始后主回答优先。
+- [x] 等待态问题进入 Header，交互完成恢复动作摘要；失败保留摘要；普通聊天完成态只保留飞书原生回复引用。
+- [x] 运行、等待、失败 Footer 只显示状态，完成态显示最终统计。
+- [x] preview 单行化、长度限制和敏感参数脱敏；无 preview 时兼容旧布局。
+- [x] 真实飞书私聊/群聊、四状态截图与本地发布包 smoke 通过；`/model` Provider、返回、切换和同卡回写通过。
+- [ ] tag 后验证 V4.0.0 macOS、Linux、Windows 与 checksums 四个 Release assets。
 
 ### V3.10.0：原生会话恢复与轻量视觉增强（已发布）
 

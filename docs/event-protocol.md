@@ -30,7 +30,7 @@ Hermes 最小 hook 向 sidecar 发送消息生命周期事件。第二阶段 hoo
 - `等待选择`
 - `已完成`
 
-`思考中` 阶段显示累积的 `thinking.delta` 内容，并在同一张卡片内实时更新工具调用次数。`interaction.requested` 到达后，卡片进入 `等待选择`。sidecar-owned 选择可通过 `/card/actions` 更新原卡片并写入选择结果；localhost/private sidecar 的 text fallback 会显示编号选项，并让 Hermes 原生文本交互接管后续选择。V3.8.5 起，`/new`、`/reset`、`/model` 等独立命令优先走 Feishu/Lark WebSocket 原生 card action，且直通执行结果也会保持卡片反馈。`message.completed` 后，卡片进入 `已完成`，最终答案替换思考内容；用户不需要在完成态继续看到完整思考轨迹。
+`思考中` 阶段显示累积的 `thinking.delta` 内容，并在同一张卡片内实时更新工具调用次数。`interaction.requested` 到达后，卡片进入 `等待选择`。默认 `auto` 模式通过 Hermes Feishu adapter 的 WebSocket 原生 card-action channel 接收按钮点击，再转发到 sidecar `/card/actions`，因此 localhost/private sidecar 不需要公网 callback URL；只有显式配置 `text` 时才显示编号选项并交还 Hermes 原生文本交互。V3.8.5 起，`/new`、`/reset`、`/model` 等独立命令也优先走同一条 Feishu/Lark WebSocket 原生 card action 路径，且直通执行结果保持卡片反馈。`message.completed` 后，卡片进入 `已完成`，最终答案替换思考内容；用户不需要在完成态继续看到完整思考轨迹。
 
 ## 内容安全
 

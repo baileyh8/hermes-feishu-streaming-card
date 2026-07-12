@@ -64,6 +64,23 @@ Since V3.8.2, the final answer stays in the primary content area while pre-tool 
 | Multi-bot, group, and profile routing is hard to inspect | `bindings.chats`, safe `group_rules` diagnostics, profile-aware sessions, and `/health.routing` diagnostics |
 | Hook or sidecar failures are hard to debug | `doctor`, runtime import checks, `/health` metrics, fail-closed installer, restore/uninstall |
 
+## V4.0.0 Live Dual-Stream Cards
+
+- The running Header title keeps the user-configured card name (`Hermes Agent` by default), while the subtitle derives concise searching, reading, editing, browsing, or terminal action summaries from the tool name and Hermes `progress_callback.preview`.
+- The body shows public `thinking.delta` interim output; `answer.delta` stays primary once the answer begins.
+- Waiting cards show the original interaction prompt and failed cards retain the last tool preview. Completed normal-chat cards use the native Feishu reply quote as their only Header instead of stacking the configured title above it.
+- Running, waiting, and failed Footers contain status only; completed normal-chat Footers show `已完成` followed by final statistics.
+- Missing previews fall back to the established title without requiring a new Hermes patch field.
+- `/model` uses the same Provider/model list as Hermes CLI and keeps Provider → Model, Back, Cancel, and final switching inside one command card instead of flattening every provider's models.
+
+| Running | Waiting for user |
+|---|---|
+| ![Real Feishu running state with the current tool action in the Header](assets/feishu-v4-runtime-running.png) | ![Real Feishu waiting state with native buttons in the same card](assets/feishu-v4-runtime-waiting.png) |
+| Failed | Completed |
+| ![Real Feishu failed state retaining the last tool preview](assets/feishu-v4-runtime-failed.png) | ![Real Feishu completed state with only the native reply Header and final result](assets/feishu-v4-runtime-completed.png) |
+
+See [V4.0.0 release notes](release-notes-v4.0.0.en.md) for details.
+
 ## V3.10.0 Native Session Recovery and Restrained Visual Polish
 
 Bare `/resume` lists recent named sessions already filtered by Hermes for the current user/origin and sends one `select_static` picker. A click ACKs immediately, then a copied `/resume <session_id>` event enters the original Hermes handler, preserving ownership, continuation, running-agent release, and model/reasoning override cleanup. Typed `/resume`, non-Feishu platforms, empty lists, card failures, and unverifiable group ownership all fail open.
@@ -309,7 +326,7 @@ Full release notes: [docs/release-notes-v3.6.4.md](release-notes-v3.6.4.md).
 
 V3.6.3 fixes issues #56-#59. For Hermes v0.17.0+ / `v2026.6.19+`, where the real streaming implementation can move into `_run_agent_inner`, the patcher now injects `tool.updated`, `answer.delta`, `thinking.delta`, clarify, and approval hooks into `_run_agent_inner` before falling back to `_run_agent`.
 
-localhost/private sidecars keep numbered text fallback for sidecar-owned choices, while V3.8.5 uses the Feishu/Lark WebSocket long-connection card-action path for native slash/model command cards. Those standalone commands do not require a public HTTP callback, and direct command execution results also stay in cards.
+localhost/private sidecars keep sidecar-owned choices as buttons through the Feishu/Lark WebSocket-native card-action path, so the default `card.interaction_mode: auto` needs no public HTTP callback. Numbered choices are retained only for explicit `card.interaction_mode: text`. Native slash/model command cards use the same path, and direct command execution results also stay in cards.
 
 This release also ignores non-Feishu platforms such as Telegram at runtime event construction, and correctly resolves Windows profile paths like `C:\Users\...\AppData\Local\hermes\profiles\thinking`.
 
@@ -441,7 +458,7 @@ Example:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v3.10.0
+export HFC_VERSION=v4.0.0
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -668,6 +685,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v4.0.0](release-notes-v4.0.0.en.md) | 2026-07-12 | Live tool-preview Header, public interim body stream, natural waiting/failed/completed transitions, and compatibility fallback |
 | [v3.10.0](release-notes-v3.10.0.md) | 2026-07-11 | Native bare `/resume` picker and safe semantic model-footer color; layout and Hermes' security path remain unchanged |
 | [v3.9.1](release-notes-v3.9.1.md) | 2026-07-11 | Reliability fixes for completed answers, interrupted terminal cards, model-picker callbacks, and marker-only installer recovery; normal footer/layout unchanged |
 | [v3.9.0](release-notes-v3.9.0.md) | 2026-07-11 | PR #84 / @Zanetach: card progress-status routing and `.env` allowlist expansion for profile environment support, operations safe repair/restart, and CLI fallback; normal streaming-card footer/layout remains unchanged |

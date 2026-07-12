@@ -90,7 +90,7 @@ class FeishuClient:
             thread_id=thread_id,
             reply_to_message_id=reply_to_message_id,
         )
-        if thread_id and reply_to_message_id:
+        if reply_to_message_id:
             body = await self._request_json(
                 "POST",
                 f"/im/v1/messages/{quote(reply_to_message_id, safe='')}/reply",
@@ -98,7 +98,7 @@ class FeishuClient:
                 json_body={
                     "msg_type": payload["msg_type"],
                     "content": payload["content"],
-                    "reply_in_thread": True,
+                    "reply_in_thread": bool(thread_id),
                 },
             )
         else:

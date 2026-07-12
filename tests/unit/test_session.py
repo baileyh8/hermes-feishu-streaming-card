@@ -34,6 +34,23 @@ def test_thinking_append_block_preserves_complete_interim_messages():
     assert session.thinking_text == "我先来讲今天的 AI。\n\n接着看第二个现象。"
 
 
+def test_started_message_uses_feishu_message_id_as_native_reply_anchor():
+    session = CardSession(
+        conversation_id="chat-1", message_id="om_user_message", chat_id="oc_abc"
+    )
+
+    assert session.apply(
+        event(
+            "message.started",
+            0,
+            {},
+            message_id="om_user_message",
+        )
+    )
+
+    assert session.reply_to_message_id == "om_user_message"
+
+
 def test_rejects_duplicate_and_stale_sequence():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 2, {"text": "新"}))
@@ -699,3 +716,226 @@ def test_session_timeline_folded_count_reports_hidden_old_entries():
 
     assert session.timeline.folded_count(max_items=3) == 2
     assert [item.title for item in session.timeline.snapshot(max_items=3)] == ["tool_2", "tool_3", "tool_4"]
+
+
+def test_tool_preview_replaces_header_without_touching_thinking_text():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "thinking.delta",
+            1,
+            {"text": "先分析接口。", "mode": "append_block"},
+        )
+    )
+    assert session.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "read-1",
+                "name": "read_file",
+                "status": "running",
+                "detail": "读取 weather_client.py",
+            },
+        )
+    )
+
+    assert session.latest_tool_preview == "正在读取：weather_client.py"
+    assert session.runtime_header_text == "正在读取：weather_client.py"
+    assert session.thinking_text == "先分析接口。"
+
+
+def test_empty_tool_preview_preserves_previous_header():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "read-1",
+                "name": "read_file",
+                "status": "running",
+                "detail": "读取 weather_client.py",
+            },
+        )
+    )
+    assert session.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "read-1",
+                "name": "read_file",
+                "status": "completed",
+                "detail": " \n ",
+            },
+        )
+    )
+
+    assert session.latest_tool_preview == "正在读取：weather_client.py"
+
+
+def test_interaction_temporarily_overrides_then_restores_preview():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "terminal",
+                "name": "terminal",
+                "status": "running",
+                "detail": "执行 pytest",
+            },
+        )
+    )
+    assert session.apply(
+        event(
+            "interaction.requested",
+            2,
+            {
+                "interaction_id": "approval-1",
+                "kind": "approval",
+                "prompt": "允许继续执行测试吗？",
+                "options": [{"label": "允许", "value": "yes"}],
+            },
+        )
+    )
+    assert session.runtime_header_text == "允许继续执行测试吗？"
+
+    assert session.apply(
+        event(
+            "interaction.completed",
+            3,
+            {
+                "interaction_id": "approval-1",
+                "choice": "yes",
+                "choice_label": "允许",
+            },
+        )
+    )
+    assert session.runtime_header_text == "正在执行终端：pytest"
+
+
+def test_completed_clears_header_but_failed_retains_preview():
+    completed = CardSession(
+        conversation_id="chat-1",
+        message_id="msg-1",
+        chat_id="oc_abc",
+    )
+    assert completed.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "read",
+                "name": "read_file",
+                "status": "running",
+                "detail": "读取 config.py",
+            },
+        )
+    )
+    assert completed.apply(event("message.completed", 2, {"answer": "完成"}))
+    assert completed.latest_tool_preview == ""
+    assert completed.runtime_header_text == ""
+
+    failed = CardSession(
+        conversation_id="chat-1",
+        message_id="msg-1",
+        chat_id="oc_abc",
+    )
+    assert failed.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "terminal",
+                "name": "terminal",
+                "status": "running",
+                "detail": "执行 pytest",
+            },
+        )
+    )
+    assert failed.apply(event("message.failed", 2, {"error": "测试失败"}))
+    assert failed.runtime_header_text == "正在执行终端：pytest"
+    assert not failed.apply(
+        event(
+            "tool.updated",
+            3,
+            {
+                "tool_id": "late",
+                "name": "read_file",
+                "status": "running",
+                "detail": "迟到更新",
+            },
+        )
+    )
+    assert failed.runtime_header_text == "正在执行终端：pytest"
+
+
+def test_runtime_header_summarizes_search_url_and_private_file_path():
+    search = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert search.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "search-1",
+                "name": "browser_console",
+                "status": "running",
+                "detail": "广州 小时天气 降雨概率 site:gbaweather.net",
+            },
+        )
+    )
+    assert search.runtime_header_text == "正在搜索：广州 小时天气 降雨概率"
+
+    assert search.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "browser-1",
+                "name": "browser_console",
+                "status": "running",
+                "detail": "https://www.ventusky.com/zh/guangzhou?token=private",
+            },
+        )
+    )
+    assert search.runtime_header_text == "正在浏览：ventusky.com/zh/guangzhou"
+
+    reader = CardSession(conversation_id="chat-1", message_id="msg-2", chat_id="oc_abc")
+    assert reader.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "read-1",
+                "name": "read_file",
+                "status": "running",
+                "detail": "/Users/private/project/weather_client.py",
+            },
+            message_id="msg-2",
+        )
+    )
+    assert reader.runtime_header_text == "正在读取：weather_client.py"
+
+
+def test_runtime_header_keeps_unknown_tools_specific_without_exposing_arguments():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "memos-1",
+                "name": "memos_skill_get",
+                "status": "running",
+                "detail": '参数: {"id": "private"}',
+            },
+        )
+    )
+
+    assert session.runtime_header_text == "正在使用 memos skill get"

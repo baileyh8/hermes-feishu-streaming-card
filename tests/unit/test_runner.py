@@ -177,11 +177,33 @@ def test_main_passes_selected_env_file_to_operations_root_resolution(monkeypatch
     assert captured["operations_hermes_root"] == hermes_root
 
 
-def test_main_switches_auto_interactions_to_text_for_localhost(monkeypatch):
+def test_main_uses_callback_interactions_for_localhost_auto_mode(monkeypatch):
     config = {
         "server": {"host": "127.0.0.1", "port": 0},
         "feishu": {},
         "card": {"title": "Local Card", "interaction_mode": "auto"},
+    }
+    captured = {}
+
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+
+    def fake_create_app(feishu_client, **kwargs):
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(runner, "create_app", fake_create_app)
+    monkeypatch.setattr(runner.web, "run_app", lambda app, **kwargs: None)
+
+    assert main(["--config", "config.yaml"]) == 0
+
+    assert captured["kwargs"]["card_config"]["interaction_mode"] == "callback"
+
+
+def test_main_preserves_explicit_text_interactions_on_localhost(monkeypatch):
+    config = {
+        "server": {"host": "127.0.0.1", "port": 0},
+        "feishu": {},
+        "card": {"title": "Local Card", "interaction_mode": "text"},
     }
     captured = {}
 

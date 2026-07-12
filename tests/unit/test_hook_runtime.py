@@ -1782,6 +1782,144 @@ def test_install_feishu_command_card_methods_adds_model_picker(monkeypatch):
     assert completed["data"]["answer"] == "Switched to openrouter/deepseek/deepseek-v4-pro"
 
 
+def test_model_picker_provider_tree_preserves_cli_order_and_deduplicates():
+    providers = [
+        {
+            "name": "DeepSeek",
+            "slug": "deepseek",
+            "is_current": True,
+            "models": [
+                "deepseek-v4-pro",
+                "",
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+            ],
+        },
+        {"name": "Broken", "slug": "", "models": ["ignored"]},
+        {
+            "name": "DeepSeek duplicate",
+            "slug": "deepseek",
+            "models": ["deepseek-v4-flash"],
+        },
+        {
+            "name": "OpenRouter",
+            "provider": "openrouter",
+            "total_models": 36,
+            "models": ["openai/gpt-5.5"],
+            "base_url": "https://must-not-appear.invalid/v1",
+            "api_key": "must-not-appear",
+        },
+        "not-a-provider-row",
+    ]
+
+    assert hook_runtime._model_picker_provider_tree(providers) == [
+        {
+            "slug": "deepseek",
+            "name": "DeepSeek",
+            "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+            "total_models": 2,
+            "is_current": True,
+        },
+        {
+            "slug": "openrouter",
+            "name": "OpenRouter",
+            "models": ["openai/gpt-5.5"],
+            "total_models": 36,
+            "is_current": False,
+        },
+    ]
+
+
+def test_model_picker_provider_card_marks_current_provider_and_counts_models():
+    providers = [
+        {
+            "slug": "deepseek",
+            "name": "DeepSeek",
+            "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+            "total_models": 4,
+            "is_current": True,
+        },
+        {
+            "slug": "openrouter",
+            "name": "OpenRouter",
+            "models": ["openai/gpt-5.5"],
+            "total_models": 36,
+            "is_current": False,
+        },
+    ]
+
+    card = hook_runtime._hfc_native_model_picker_card(
+        picker_id="model-1",
+        providers=providers,
+        current_provider="",
+        current_model="deepseek-v4-flash",
+    )
+
+    assert card["header"]["title"]["content"] == "选择模型"
+    select = card["elements"][1]["actions"][0]
+    assert select["value"] == {
+        "hfc_action": "model_picker",
+        "hfc_model_picker_id": "model-1",
+        "hfc_model_picker_view": "providers",
+    }
+    assert select["initial_option"] == "deepseek"
+    assert [option["text"]["content"] for option in select["options"]] == [
+        "当前 · DeepSeek (4 个模型)",
+        "OpenRouter (36 个模型)",
+    ]
+    assert [option["value"] for option in select["options"]] == [
+        "deepseek",
+        "openrouter",
+    ]
+    cancel = card["elements"][2]["actions"][0]
+    assert cancel["text"]["content"] == "取消"
+    assert cancel["value"]["hfc_model_picker_nav"] == "cancel"
+    assert "must-not-appear" not in json.dumps(card)
+
+
+def test_model_picker_model_card_shows_only_selected_provider_models():
+    providers = [
+        {
+            "slug": "deepseek",
+            "name": "DeepSeek",
+            "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        },
+        {
+            "slug": "openrouter",
+            "name": "OpenRouter",
+            "models": ["openai/gpt-5.5"],
+        },
+    ]
+
+    card = hook_runtime._hfc_native_model_picker_card(
+        picker_id="model-1",
+        providers=providers,
+        current_provider="deepseek",
+        current_model="deepseek-v4-flash",
+        selected_provider="deepseek",
+    )
+
+    assert card["header"]["title"]["content"] == "选择模型 · DeepSeek"
+    select = card["elements"][1]["actions"][0]
+    assert select["value"]["hfc_model_picker_view"] == "models"
+    assert [option["text"]["content"] for option in select["options"]] == [
+        "deepseek-v4-pro",
+        "当前 · deepseek-v4-flash",
+    ]
+    assert [json.loads(option["value"]) for option in select["options"]] == [
+        {"provider": "deepseek", "model": "deepseek-v4-pro"},
+        {"provider": "deepseek", "model": "deepseek-v4-flash"},
+    ]
+    assert json.loads(select["initial_option"]) == {
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+    }
+    assert "openai/gpt-5.5" not in json.dumps(card)
+    back, cancel = card["elements"][2]["actions"]
+    assert back["value"]["hfc_model_picker_nav"] == "back"
+    assert cancel["value"]["hfc_model_picker_nav"] == "cancel"
+
+
 def test_native_feishu_model_picker_uses_websocket_card_when_connected():
     class DummyFeishuAdapter:
         name = "feishu"
@@ -1830,57 +1968,238 @@ def test_native_feishu_model_picker_uses_websocket_card_when_connected():
     action = actions[0]
     assert action["tag"] == "select_static"
     assert action["value"]["hfc_action"] == "model_picker"
-    assert json.loads(action["options"][0]["value"]) == {
-        "provider": "openrouter",
-        "model": "deepseek/deepseek-v4-pro",
-    }
+    assert action["value"]["hfc_model_picker_view"] == "providers"
+    assert action["options"][0]["value"] == "openrouter"
+    assert action["options"][0]["text"]["content"] == "当前 · OpenRouter (1 个模型)"
     picker_id = action["value"]["hfc_model_picker_id"]
-    assert adapter._hfc_model_picker_state[picker_id]["session_key"] == "feishu:oc_abc"
+    picker_state = adapter._hfc_model_picker_state[picker_id]
+    assert picker_state["session_key"] == "feishu:oc_abc"
+    assert picker_state["current_provider"] == "openrouter"
+    assert picker_state["current_model"] == "deepseek/deepseek-v4-flash"
+    assert picker_state["providers"] == [
+        {
+            "name": "OpenRouter",
+            "slug": "openrouter",
+            "models": ["deepseek/deepseek-v4-pro"],
+            "total_models": 1,
+            "is_current": False,
+        }
+    ]
 
 
-def test_native_feishu_model_picker_uses_single_dropdown_without_truncating_to_eight():
-    class DummyFeishuAdapter:
-        name = "feishu"
+def test_native_feishu_model_picker_model_view_does_not_truncate_to_eight():
+    card = hook_runtime._hfc_native_model_picker_card(
+        picker_id="model-many",
+        providers=[
+            {
+                "name": "OpenAI Codex",
+                "slug": "openai-codex",
+                "models": [f"gpt-5.{index}" for index in range(12)],
+            }
+        ],
+        current_model="gpt-5.5",
+        current_provider="openai-codex",
+        selected_provider="openai-codex",
+    )
 
-        def __init__(self):
-            self._client = object()
-            self.sent = None
-
-        async def _feishu_send_with_retry(self, **kwargs):
-            self.sent = kwargs
-            return SimpleNamespace(
-                success=lambda: True,
-                data=SimpleNamespace(message_id="om_model_card"),
-            )
-
-    adapter = DummyFeishuAdapter()
-    runner = SimpleNamespace(adapters={"feishu": adapter})
-    assert hook_runtime.install_feishu_command_card_adapter_methods(runner) is True
-
-    async def run():
-        return await adapter.send_model_picker(
-            chat_id="oc_abc",
-            providers=[
-                {
-                    "name": "OpenAI Codex",
-                    "slug": "openai-codex",
-                    "models": [f"gpt-5.{index}" for index in range(12)],
-                }
-            ],
-            current_model="gpt-5.5",
-            current_provider="openai-codex",
-            session_key="feishu:oc_abc",
-            metadata=None,
-        )
-
-    result = asyncio.run(run())
-
-    assert result.success is True
-    card = json.loads(adapter.sent["payload"])
     select = card["elements"][1]["actions"][0]
     assert select["tag"] == "select_static"
     assert len(select["options"]) == 12
     assert "仅展示前 8 个" not in card["elements"][0]["content"]
+
+
+def test_native_model_picker_navigation_moves_between_provider_and_model_views(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        hook_runtime,
+        "_hfc_raw_feishu_callback_response",
+        lambda _adapter, card: card,
+    )
+
+    class DummyAdapter:
+        def __init__(self):
+            self._loop = object()
+
+        def _loop_accepts_callbacks(self, loop):
+            return loop is self._loop
+
+        def _allow_group_message(self, sender_id, chat_id, is_bot=False):
+            return sender_id.open_id == "ou_user" and chat_id == "oc_abc"
+
+    providers = [
+        {
+            "slug": "deepseek",
+            "name": "DeepSeek",
+            "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        },
+        {
+            "slug": "openrouter",
+            "name": "OpenRouter",
+            "models": ["openai/gpt-5.5"],
+        },
+    ]
+    adapter = DummyAdapter()
+    adapter._hfc_model_picker_state = {
+        "model-nav": {
+            "chat_id": "oc_abc",
+            "message_id": "om_model_card",
+            "providers": providers,
+            "current_provider": "deepseek",
+            "current_model": "deepseek-v4-flash",
+            "selected_provider": "",
+            "on_model_selected": None,
+        }
+    }
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            context=SimpleNamespace(open_chat_id="oc_abc"),
+            operator=SimpleNamespace(open_id="ou_user", user_id="u_1"),
+        )
+    )
+
+    model_card = hook_runtime._hfc_handle_native_model_action(
+        adapter,
+        data,
+        {
+            "hfc_model_picker_id": "model-nav",
+            "hfc_model_picker_view": "providers",
+            "hfc_choice": "deepseek",
+        },
+    )
+
+    assert model_card["header"]["title"]["content"] == "选择模型 · DeepSeek"
+    model_select = model_card["elements"][1]["actions"][0]
+    assert len(model_select["options"]) == 2
+    assert adapter._hfc_model_picker_state["model-nav"]["selected_provider"] == "deepseek"
+
+    provider_card = hook_runtime._hfc_handle_native_model_action(
+        adapter,
+        data,
+        {
+            "hfc_model_picker_id": "model-nav",
+            "hfc_model_picker_nav": "back",
+        },
+    )
+
+    assert provider_card["header"]["title"]["content"] == "选择模型"
+    assert len(provider_card["elements"][1]["actions"][0]["options"]) == 2
+    assert adapter._hfc_model_picker_state["model-nav"]["selected_provider"] == ""
+
+
+def test_native_model_picker_cancel_does_not_switch_model(monkeypatch):
+    monkeypatch.setattr(
+        hook_runtime,
+        "_hfc_raw_feishu_callback_response",
+        lambda _adapter, card: card,
+    )
+
+    class DummyAdapter:
+        def __init__(self):
+            self._loop = object()
+
+        def _loop_accepts_callbacks(self, loop):
+            return loop is self._loop
+
+        def _allow_group_message(self, sender_id, chat_id, is_bot=False):
+            return True
+
+    selected = []
+
+    async def on_model_selected(*args):
+        selected.append(args)
+
+    adapter = DummyAdapter()
+    adapter._hfc_model_picker_state = {
+        "model-cancel": {
+            "chat_id": "oc_abc",
+            "message_id": "om_model_card",
+            "providers": [
+                {
+                    "slug": "deepseek",
+                    "name": "DeepSeek",
+                    "models": ["deepseek-v4-pro"],
+                }
+            ],
+            "current_provider": "deepseek",
+            "current_model": "deepseek-v4-flash",
+            "on_model_selected": on_model_selected,
+        }
+    }
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            context=SimpleNamespace(open_chat_id="oc_abc"),
+            operator=SimpleNamespace(open_id="ou_user", user_id="u_1"),
+        )
+    )
+
+    card = hook_runtime._hfc_handle_native_model_action(
+        adapter,
+        data,
+        {
+            "hfc_model_picker_id": "model-cancel",
+            "hfc_model_picker_nav": "cancel",
+        },
+    )
+
+    assert card["header"]["title"]["content"] == "模型选择已取消"
+    assert selected == []
+    assert "model-cancel" not in adapter._hfc_model_picker_state
+
+
+def test_native_model_picker_rejects_unknown_provider_without_switching(monkeypatch):
+    monkeypatch.setattr(
+        hook_runtime,
+        "_hfc_raw_feishu_callback_response",
+        lambda _adapter, card: card,
+    )
+
+    class DummyAdapter:
+        def __init__(self):
+            self._loop = object()
+
+        def _loop_accepts_callbacks(self, loop):
+            return loop is self._loop
+
+        def _allow_group_message(self, sender_id, chat_id, is_bot=False):
+            return True
+
+    adapter = DummyAdapter()
+    adapter._hfc_model_picker_state = {
+        "model-invalid": {
+            "chat_id": "oc_abc",
+            "message_id": "om_model_card",
+            "providers": [
+                {
+                    "slug": "deepseek",
+                    "name": "DeepSeek",
+                    "models": ["deepseek-v4-pro"],
+                }
+            ],
+            "current_provider": "deepseek",
+            "current_model": "deepseek-v4-flash",
+            "on_model_selected": None,
+        }
+    }
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            context=SimpleNamespace(open_chat_id="oc_abc"),
+            operator=SimpleNamespace(open_id="ou_user", user_id="u_1"),
+        )
+    )
+
+    card = hook_runtime._hfc_handle_native_model_action(
+        adapter,
+        data,
+        {
+            "hfc_model_picker_id": "model-invalid",
+            "hfc_model_picker_view": "providers",
+            "hfc_choice": "not-configured",
+        },
+    )
+
+    assert card["header"]["title"]["content"] == "模型选择无效"
+    assert "model-invalid" in adapter._hfc_model_picker_state
 
 
 def test_native_feishu_model_picker_tracks_send_result_message_id():
@@ -2516,6 +2835,16 @@ def test_feishu_command_card_action_resolves_native_model_picker(monkeypatch):
             "chat_id": "oc_abc",
             "message_id": "om_model_card",
             "on_model_selected": on_model_selected,
+            "providers": [
+                {
+                    "slug": "openrouter",
+                    "name": "OpenRouter",
+                    "models": ["deepseek/deepseek-v4-pro"],
+                }
+            ],
+            "current_provider": "openrouter",
+            "current_model": "deepseek/deepseek-v4-flash",
+            "selected_provider": "openrouter",
         }
     }
     runner = SimpleNamespace(adapters={"feishu": adapter})

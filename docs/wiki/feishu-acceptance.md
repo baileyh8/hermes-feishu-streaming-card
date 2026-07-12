@@ -10,6 +10,30 @@
 - 飞书 bot 已在目标会话可用。
 - 不在仓库、issue 或日志中暴露 App Secret、tenant token、真实 chat id。
 
+## V4.0.0 实时双轨卡片
+
+使用刻意准备、适合公开展示的任务文案验证以下状态；截图只保留真实飞书卡片区域，不包含群名、头像、真实 chat/open id、无关会话或桌面内容。
+
+- 运行中：Header title 保留用户配置；Hermes 每次发送非空 `progress_callback.preview` 时，subtitle 根据工具名原地更新为动作摘要，不直接暴露完整命令、URL query 或私有路径；正文独立累积公开 `thinking.delta`。
+- 等待用户：clarify/approval 问题只在 Header 出现一次，正文保留必要说明和原生按钮/选项；点击后继续 PATCH 同一张卡。群聊必须由任务发起者点击，其他成员点击应被拒绝且不消耗交互。
+- 失败：Header 保留最后一条有效工具预览，正文明确显示 Hermes 的失败原因；footer 只有失败状态。
+- 已完成：飞书原生回复引用作为唯一 Header 显示用户原指令，Card JSON 不再叠加配置标题；正文只显示最终答案，完成态 footer 才显示时长、模型、token 和 context 数据。没有有效 reply anchor 的兼容路径仍使用配置标题 fallback。
+- 回归：工具 timeline、附件顺序、topic 锚点、command/operations 卡片、原 footer 布局和原生灰色消息抑制保持不变。
+
+推荐展示提示词：
+
+```text
+请查询广州未来两小时的天气变化，并给我一份简洁的通勤建议。请先核对天气数据，再整理结论。
+```
+
+```text
+请把广州周末出行建议整理到演示文件中。覆盖现有演示内容前，请先让我确认。
+```
+
+```text
+请读取演示天气数据并生成摘要；如果数据源不可用，请明确报告失败原因。
+```
+
 ## V3.10.0 `/resume` 与 footer
 
 - 私聊：发送裸 `/resume`，确认只出现一张原生下拉卡、当前会话有标记；选择其他会话后先显示恢复中，再在原卡显示结果，无灰色文本列表和 callback timeout。
@@ -122,10 +146,12 @@ V3.8.9 notice suppress smoke: please run terminal command date, then reply exact
 
 验收：
 
-- 出现模型选择卡片。
-- 使用下拉或选项选择模型。
+- 出现模型选择卡片，第一层 Provider 数量、名称和当前项与本机 Hermes CLI `/model` 一致。
+- 进入 DeepSeek 等已知 Provider，确认第二层模型数量和模型名称与 CLI 一致，不出现其他 Provider 的模型。
+- 点击“返回”后恢复 Provider 列表；再次进入 Provider 后选择模型。
 - 结果卡片显示模型已更新。
 - 再问“现在是什么模型”，模型应与选择一致。
+- 全程没有 callback timeout toast，也没有灰色重复消息。
 
 ## 长内容和 Markdown
 

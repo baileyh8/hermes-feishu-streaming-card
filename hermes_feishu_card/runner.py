@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from ipaddress import ip_address
 from typing import Any
 
 from aiohttp import web
@@ -176,32 +175,10 @@ def _card_config_for_server(config: dict[str, Any]) -> dict[str, Any]:
     card_config = dict(config.get("card", {}))
     mode = str(card_config.get("interaction_mode") or "callback").strip().lower()
     if mode == "auto":
-        server = config.get("server", {})
-        host = str(server.get("host") or "").strip()
-        card_config["interaction_mode"] = (
-            "text" if _is_local_sidecar_host(host) else "callback"
-        )
+        card_config["interaction_mode"] = "callback"
     elif mode not in {"callback", "text", "markdown", "reply"}:
         card_config["interaction_mode"] = "callback"
     return card_config
-
-
-def _is_local_sidecar_host(host: str) -> bool:
-    normalized = host.strip().lower().strip("[]")
-    if normalized in {"", "localhost"}:
-        return True
-    try:
-        address = ip_address(normalized)
-    except ValueError:
-        return False
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_unspecified
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hermes-feishu-card-sidecar")
     parser.add_argument("--config", default="config.yaml.example")

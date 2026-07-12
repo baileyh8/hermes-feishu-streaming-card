@@ -1930,10 +1930,16 @@ def _thread_id_for_event(event: SidecarEvent) -> str | None:
 def _reply_to_message_id_for_event(event: SidecarEvent) -> str | None:
     data = event.data if isinstance(event.data, dict) else {}
     reply_to = data.get("reply_to_message_id")
+    if _thread_id_for_event(event):
+        if isinstance(reply_to, str) and reply_to.startswith("om_"):
+            return reply_to
+        if event.message_id.startswith("om_"):
+            return event.message_id
+        return None
+    if event.message_id.startswith("om_"):
+        return event.message_id
     if isinstance(reply_to, str) and reply_to.startswith("om_"):
         return reply_to
-    if _thread_id_for_event(event) and event.message_id.startswith("om_"):
-        return event.message_id
     return None
 
 
@@ -2300,8 +2306,8 @@ def _extract_operator_name(payload: dict[str, Any]) -> str:
         return ""
     return str(
         operator.get("name")
-        or operator.get("open_id")
-        or operator.get("user_id")
+        or operator.get("user_name")
+        or operator.get("display_name")
         or ""
     ).strip()
 

@@ -20,6 +20,7 @@ DEFAULT_FOOTER_FIELDS = (
 )
 MAIN_CONTENT_CHUNK_CHARS = 2400
 DEFAULT_TITLE = "Hermes Agent"
+RUNTIME_HEADER_MAX_CHARS = 120
 MODEL_COLOR_PREFIXES = (
     (("gpt-", "o1", "o3"), "blue"),
     (("claude-",), "orange"),
@@ -56,6 +57,13 @@ _TOOL_DETAIL_QUOTED_REDACTION_RE = re.compile(
     + r"[\"']?\s*[:=]\s*)([\"'])(.*?)(\2)"
 )
 _TOOL_DETAIL_REDACTED = "[REDACTED]"
+_RUNTIME_FENCE_RE = re.compile(r"```[A-Za-z0-9_-]*")
+_RUNTIME_SECRET_FLAG_RE = re.compile(
+    r"(?i)(--(?:token|password|secret|api-key|app-secret)(?:=|\s+))([^\s]+)"
+)
+_RUNTIME_URL_SECRET_RE = re.compile(
+    r"(?i)([?&](?:token|password|secret|api_key|api-key|app_secret)=)([^&#\s]+)"
+)
 
 def _spinner_text(label: str = "生成中") -> str:
     return f"{_spinner_frame()} {label}"
@@ -78,18 +86,42 @@ def render_card(
     status_config: Optional[StatusConfig] = None,
 ) -> Dict[str, Any]:
     status = _render_status(session, status_config=status_config)
-    primary_text = normalize_stream_text(session.answer_text)
-    if not primary_text:
-        if session.status == "thinking":
-            primary_text = _spinner_frame()
-        else:
-            primary_text = normalize_stream_text(session.visible_main_text)
-    attachment_summary = _render_attachment_summary(session)
-    footer = _render_footer(session, footer_fields)
-    if session.delivery_kind == "notice" and session.notice_title:
-        header_title = session.notice_title
+    display_status = resolve_display_status(
+        session, status_config or StatusConfig.defaults()
+    ).value
+    native_reply_completed = (
+        session.status == "completed"
+        and session.delivery_kind == "chat"
+        and bool(session.reply_to_message_id)
+    )
+    if session.status in {"completed", "failed"}:
+        primary_text = normalize_stream_text(session.answer_text)
+    elif session.answer_text:
+        primary_text = normalize_stream_text(session.answer_text)
+    elif session.thinking_text:
+        primary_text = normalize_stream_text(session.thinking_text)
     else:
-        header_title = title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
+        primary_text = _spinner_frame()
+    attachment_summary = _render_attachment_summary(session)
+    footer = _render_footer(
+        session,
+        footer_fields,
+        display_status=display_status,
+    )
+    if native_reply_completed:
+        footer = f"已完成 · {footer}"
+    if session.delivery_kind == "notice" and session.notice_title:
+        configured_title = session.notice_title
+    else:
+        configured_title = (
+            title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
+        )
+    runtime_summary = _runtime_header_summary(session)
+    header_title = (
+        configured_title
+        if runtime_summary
+        else _runtime_header_title(session, configured_title)
+    )
     elements = _render_main_content_elements(primary_text)
     timeline_elements: list[Dict[str, Any]] = []
     if show_reasoning:
@@ -124,20 +156,24 @@ def render_card(
         "template": status["template"],
         "title": {"tag": "plain_text", "content": header_title},
     }
-    if status["subtitle"]:
+    if runtime_summary:
+        header["subtitle"] = {"tag": "plain_text", "content": runtime_summary}
+    elif status["subtitle"]:
         header["subtitle"] = {"tag": "plain_text", "content": status["subtitle"]}
 
-    return {
+    card = {
         "schema": "2.0",
         "config": {
             "update_multi": True,
             "summary": {"content": status.get("summary", status["subtitle"])},
         },
-        "header": header,
         "body": {
             "elements": elements
         },
     }
+    if not native_reply_completed:
+        card["header"] = header
+    return card
 
 
 def _render_status(
@@ -152,12 +188,42 @@ def _render_status(
     if display_status == "completed":
         return {"subtitle": "已完成", "template": "green"}
     if display_status == "failed":
-        return {"subtitle": "处理失败", "template": "red"}
+        return {"subtitle": "", "summary": "处理失败", "template": "red"}
     if display_status == "waiting":
-        return {"subtitle": "等待选择", "template": "orange"}
+        return {"subtitle": "", "summary": "等待选择", "template": "orange"}
     if display_status == "in_progress":
         return {"subtitle": "", "summary": "生成中", "template": "blue"}
     return {"subtitle": "", "summary": "思考中", "template": "indigo"}
+
+
+def _runtime_header_title(session: CardSession, configured_title: str) -> str:
+    if session.delivery_kind == "notice" and session.notice_title:
+        return session.notice_title
+    if session.status == "completed":
+        return configured_title
+    runtime_title = _sanitize_runtime_header(session.runtime_header_text)
+    return runtime_title or configured_title
+
+
+def _runtime_header_summary(session: CardSession) -> str:
+    interaction = session.active_interaction
+    if interaction is not None and interaction.status == "pending":
+        return ""
+    if session.status == "completed":
+        return ""
+    return _sanitize_runtime_header(session.latest_tool_preview)
+
+
+def _sanitize_runtime_header(text: str) -> str:
+    normalized = normalize_stream_text(str(text or ""))
+    normalized = _RUNTIME_FENCE_RE.sub("", normalized)
+    normalized = " ".join(normalized.split())
+    normalized = _redact_tool_detail(normalized)
+    normalized = _RUNTIME_SECRET_FLAG_RE.sub(r"\1[REDACTED]", normalized)
+    normalized = _RUNTIME_URL_SECRET_RE.sub(r"\1[REDACTED]", normalized)
+    if len(normalized) <= RUNTIME_HEADER_MAX_CHARS:
+        return normalized
+    return normalized[: RUNTIME_HEADER_MAX_CHARS - 1].rstrip() + "…"
 
 
 def _render_main_content_elements(main_text: str) -> list[Dict[str, Any]]:
@@ -190,19 +256,15 @@ def _render_interaction_elements(
     if interaction is None:
         return []
 
-    prompt = interaction.prompt or "请选择下一步"
-    lines = [f"**{prompt}**"]
-    if interaction.description:
-        lines.append("")
-        lines.append(interaction.description)
-
-    elements: list[Dict[str, Any]] = [
-        {
-            "tag": "markdown",
-            "element_id": "interaction_prompt",
-            "content": "\n".join(lines),
-        }
-    ]
+    elements: list[Dict[str, Any]] = []
+    if interaction.status == "pending" and interaction.description:
+        elements.append(
+            {
+                "tag": "markdown",
+                "element_id": "interaction_description",
+                "content": interaction.description,
+            }
+        )
     if interaction.status == "pending" and _normalize_interaction_mode(interaction_mode) == "text":
         choice_lines = [
             f"{index}. {option.label}"
@@ -463,9 +525,13 @@ def _render_attachment_summary(session: CardSession) -> str:
 def _render_footer(
     session: CardSession,
     footer_fields: list[str] | tuple[str, ...] | None = None,
+    *,
+    display_status: str = "",
 ) -> str:
-    if session.status == "failed":
+    if session.status == "failed" or display_status == "failed":
         return "已停止"
+    if display_status == "waiting":
+        return "等待选择"
     if session.status != "completed":
         return _spinner_text("生成中")
     tokens = session.tokens if isinstance(session.tokens, dict) else {}

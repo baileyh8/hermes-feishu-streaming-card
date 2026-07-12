@@ -21,9 +21,9 @@ card:
   # Global fallback title. profiles.<id>.card.title and bots.items.<id>.card.title
   # can override it; bot title wins over profile title.
   title: Hermes Agent
-  # auto: localhost/private sidecar shows numbered text choices; public sidecar uses buttons.
-  # callback: always render Feishu CardKit callback buttons.
-  # text: always render numbered text choices and let Hermes handle the reply.
+  # auto: use Feishu CardKit buttons through the native WebSocket card-action path.
+  # callback: explicitly keep native CardKit callback buttons.
+  # text: explicitly render numbered text choices and let Hermes handle the reply.
   interaction_mode: auto
   max_wait_ms: 800
   max_chars: 240

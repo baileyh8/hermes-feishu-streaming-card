@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.0 — 2026-07-12
+
+See also: [docs/release-notes-v4.0.0.md](docs/release-notes-v4.0.0.md)
+
+### Added
+- Added a live runtime Header that keeps the configured title and turns Hermes tool names plus `tool.updated.detail` into a deterministic subtitle action summary while public `thinking.delta` continues in the body.
+- Pending interactions temporarily use the Hermes prompt as the Header and restore the cached tool preview after the choice completes.
+- Failed cards retain the last tool preview; completed normal-chat cards use the native Feishu reply quote as their only header and remove the duplicate Card JSON Header.
+- Feishu `/model` now mirrors Hermes CLI's provider tree with Provider → Model navigation, Back, Cancel, upstream counts/current markers, and the original Hermes switch callback.
+
+### Changed
+- Public interim-assistant text is visible in the body until `answer.delta` begins; the answer remains primary afterward.
+- Running, waiting, and failed Footers contain status only. Completed native-reply cards show `已完成` followed by final model, token, duration, and context metrics.
+- Normal-chat card delivery now replies directly to the triggering Feishu message; legacy paths without a valid reply anchor retain the configured-title fallback.
+
+### Security and compatibility
+- Runtime summaries use deterministic action labels, reduce URLs/search operators/private paths, and remain single-line, bounded, Markdown-cleaned, and redacted before Card JSON serialization.
+- The Hermes hook protocol is unchanged, and versions without preview data retain the previous header/layout fallback.
+
 ## V3.10.0 — 2026-07-11
 
 See also: [docs/release-notes-v3.10.0.md](docs/release-notes-v3.10.0.md)

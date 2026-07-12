@@ -3854,6 +3854,191 @@ async def test_event_lifecycle_sends_then_updates_final_card(client):
     assert metrics["feishu_update_retries"] == 0
 
 
+async def test_v4_runtime_header_and_interim_body_share_one_card(client):
+    test_client, feishu_client = client
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "thinking.delta",
+            1,
+            {"text": "我先检查天气客户端。", "mode": "append_block"},
+        ),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "read",
+                "name": "read_file",
+                "status": "running",
+                "detail": "读取 weather_client.py",
+            },
+        ),
+    )
+
+    _, running = await wait_for_card_update(feishu_client, "正在读取：weather_client.py")
+    assert running["header"]["title"]["content"] == "Hermes Agent"
+    assert running["header"]["subtitle"]["content"] == "正在读取：weather_client.py"
+    assert "我先检查天气客户端。" in str(running)
+    assert all(
+        message_id == "feishu-message-1"
+        for message_id, _card in feishu_client.updated
+    )
+
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.completed",
+            3,
+            {
+                "answer": "广州今天有短时阵雨。",
+                "duration": 3.0,
+                "model": "gpt-5.5",
+                "tokens": {"input_tokens": 100, "output_tokens": 20},
+                "context": {"used_tokens": 120, "max_tokens": 272000},
+            },
+        ),
+    )
+
+    _, completed = await wait_for_card_update(
+        feishu_client,
+        "广州今天有短时阵雨。",
+    )
+    assert completed["header"]["title"]["content"] == "Hermes Agent"
+    assert "正在读取：weather_client.py" not in str(completed["header"])
+    assert "gpt-5.5" in str(completed)
+
+
+async def test_v4_interaction_restores_cached_preview_on_same_card(client):
+    test_client, feishu_client = client
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "read",
+                "name": "read_file",
+                "status": "running",
+                "detail": "读取 weather_client.py",
+            },
+        ),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "interaction.requested",
+            2,
+            {
+                "interaction_id": "approval-v4",
+                "kind": "approval",
+                "prompt": "允许读取精确位置吗？",
+                "description": "仅用于本次查询。",
+                "options": [
+                    {
+                        "label": "允许一次",
+                        "value": "once",
+                        "style": "primary",
+                    }
+                ],
+            },
+        ),
+    )
+
+    _, waiting = await wait_for_card_update(feishu_client, "允许读取精确位置吗？")
+    assert waiting["header"]["title"]["content"] == "允许读取精确位置吗？"
+    button = next(
+        item for item in waiting["body"]["elements"] if item.get("tag") == "button"
+    )
+    action_value = button["behaviors"][0]["value"]
+
+    response = await test_client.post(
+        "/card/actions",
+        json={
+            "event": {
+                "operator": {"open_id": "ou_bailey", "name": "Bailey"},
+                "context": {"open_chat_id": "oc_abc"},
+                "action": {"value": action_value},
+            }
+        },
+    )
+
+    assert response.status == 200
+    _, resumed = await wait_for_card_update(feishu_client, "已选择：允许一次")
+    assert resumed["header"]["title"]["content"] == "Hermes Agent"
+    assert resumed["header"]["subtitle"]["content"] == "正在读取：weather_client.py"
+    assert all(
+        message_id == "feishu-message-1"
+        for message_id, _card in feishu_client.updated
+    )
+
+
+async def test_v4_preview_burst_coalesces_and_late_preview_cannot_reopen_card(
+    client,
+):
+    test_client, feishu_client = client
+    feishu_client.update_delay = 0.03
+
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    responses = []
+    for index in range(1, 16):
+        responses.append(
+            await test_client.post(
+                "/events",
+                json=event_payload(
+                    "tool.updated",
+                    index,
+                    {
+                        "tool_id": f"tool-{index}",
+                        "name": "read_file",
+                        "status": "running",
+                        "detail": f"读取 file-{index}.py",
+                    },
+                ),
+            )
+        )
+    assert all(response.status == 200 for response in responses)
+
+    _, running = await wait_for_card_update(feishu_client, "正在读取：file-15.py")
+    assert running["header"]["title"]["content"] == "Hermes Agent"
+    assert running["header"]["subtitle"]["content"] == "正在读取：file-15.py"
+
+    completed = await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 16, {"answer": "完成"}),
+    )
+    assert await completed.json() == {"ok": True, "applied": True}
+    await wait_for_card_update(feishu_client, "完成")
+    updates_before_late = len(feishu_client.updated)
+
+    late = await test_client.post(
+        "/events",
+        json=event_payload(
+            "tool.updated",
+            17,
+            {
+                "tool_id": "late",
+                "name": "terminal",
+                "status": "running",
+                "detail": "迟到命令",
+            },
+        ),
+    )
+    assert await late.json() == {"ok": True, "applied": False}
+    assert len(feishu_client.updated) == updates_before_late
+
+    health = await test_client.get("/health")
+    metrics = (await health.json())["metrics"]
+    assert metrics["update_coalesced"] > 0
+    assert metrics["update_queue_peak"] == 1
+
+
 async def test_completed_without_deltas_updates_started_card(client):
     test_client, feishu_client = client
 
@@ -4070,6 +4255,26 @@ async def test_message_started_sends_card_as_thread_reply(client):
     assert len(feishu_client.sent) == 1
     assert feishu_client.sent[0][0] == "oc_abc"
     assert feishu_client.sent[0][2] == "omt_thread"
+    assert feishu_client.sent[0][3] == "om_user_message"
+
+
+async def test_message_started_uses_user_message_as_normal_chat_reply_anchor(client):
+    test_client, feishu_client = client
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id="conversation-1",
+            message_id="om_user_message",
+        ),
+    )
+
+    assert started.status == 200
+    assert await started.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][2] is None
     assert feishu_client.sent[0][3] == "om_user_message"
 
 
@@ -4338,6 +4543,15 @@ async def test_interaction_request_renders_buttons_and_callback_resolves(client)
         "interaction_id": "approval-1",
     }
     assert "已选择：允许一次" in str(feishu_client.updated[-1][1])
+
+
+def test_interaction_operator_name_never_falls_back_to_feishu_ids():
+    assert sidecar_server._extract_operator_name(
+        {"event": {"operator": {"open_id": "ou_private", "user_id": "on_private"}}}
+    ) == ""
+    assert sidecar_server._extract_operator_name(
+        {"event": {"operator": {"open_id": "ou_private", "name": "Bailey"}}}
+    ) == "Bailey"
 
 
 async def test_interaction_request_uses_text_fallback_when_configured():
@@ -4726,7 +4940,7 @@ async def test_replayed_started_with_higher_sequence_does_not_block_later_delta(
     assert await thinking.json() == {"ok": True, "applied": True}
     assert len(feishu_client.sent) == 1
     assert len(feishu_client.updated) == 1
-    assert "后续增量" not in str(feishu_client.updated[0][1])
+    assert "后续增量" in str(feishu_client.updated[0][1])
     assert "生成中" in str(feishu_client.updated[0][1])
 
 

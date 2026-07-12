@@ -14,7 +14,9 @@
    - 适合排查卡片不更新、重复灰色消息、topic/thread 锚点问题。
 3. [真实飞书验收清单](feishu-acceptance.md)
    - 适合每个 UX/兼容性版本发布前人工验证。
-4. [发布手册](release-playbook.md)
+4. [飞书 CLI 验收与诊断](feishu-cli-playbook.md)
+   - 适合用已认证的 `lark-cli` 旁路核对群成员、卡片回调和 topic/message 锚点。
+5. [发布手册](release-playbook.md)
    - 适合发版前按步骤核对版本号、测试、tag、release assets。
 
 ## 当前核心能力

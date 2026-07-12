@@ -144,6 +144,31 @@ async def test_send_card_replies_in_thread_when_reply_anchor_present(feishu_api)
     assert reply_request[3]["Authorization"] == "Bearer tenant-token-1"
 
 
+async def test_send_card_uses_native_reply_in_normal_chat(feishu_api):
+    test_client, requests, token_calls = feishu_api
+    client = FeishuClient(
+        FeishuClientConfig(
+            app_id="cli_test",
+            app_secret="secret",
+            base_url=str(test_client.make_url("/")),
+        )
+    )
+
+    message_id = await client.send_card(
+        "oc_abc",
+        {"schema": "2.0", "body": "你好"},
+        reply_to_message_id="om_user_message",
+    )
+
+    assert message_id == "om_reply_1"
+    assert token_calls() == 1
+    reply_request = requests[1]
+    assert reply_request[0] == "reply"
+    assert reply_request[1] == "om_user_message"
+    assert reply_request[2]["reply_in_thread"] is False
+    assert "你好" in reply_request[2]["content"]
+
+
 async def test_update_card_reuses_cached_token_and_patches_message(feishu_api):
     test_client, requests, token_calls = feishu_api
     client = FeishuClient(

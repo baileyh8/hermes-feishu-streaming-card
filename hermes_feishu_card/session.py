@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import re
 import secrets
 import time
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 from .card_timeline import CardTimeline
 from .events import SidecarEvent
@@ -14,6 +16,12 @@ from .text import StreamingTextNormalizer, normalize_stream_text
 
 MIN_COMPLETED_SUFFIX_CHARS = 20
 MIN_COMPLETED_SUFFIX_RATIO_DENOMINATOR = 5
+
+_RUNTIME_ACTION_PREFIX_RE = re.compile(
+    r"^(?:正在)?(?:读取|执行(?:终端)?|编辑|写入|搜索|查询|浏览|访问|打开)\s*[:：]?\s*",
+    re.IGNORECASE,
+)
+_SEARCH_SITE_OPERATOR_RE = re.compile(r"(?:^|\s)site:\S+", re.IGNORECASE)
 
 
 def _now() -> float:
@@ -63,6 +71,7 @@ class CardSession:
     last_sequence: int = -1
     thinking_text: str = ""
     answer_text: str = ""
+    latest_tool_preview: str = ""
     tools: Dict[str, ToolState] = field(default_factory=dict)
     tokens: Dict[str, Any] = field(default_factory=dict)
     model: str = "Unknown"
@@ -84,6 +93,15 @@ class CardSession:
     @property
     def tool_count(self) -> int:
         return self._tool_call_count
+
+    @property
+    def runtime_header_text(self) -> str:
+        interaction = self.active_interaction
+        if interaction is not None and interaction.status == "pending":
+            return normalize_stream_text(interaction.prompt).strip()
+        if self.status == "completed":
+            return ""
+        return self.latest_tool_preview
 
     @property
     def visible_main_text(self) -> str:
@@ -140,6 +158,13 @@ class CardSession:
                     self._archive_current_answer_to_reasoning()
                 self.answer_text += delta
         elif event.event == "tool.updated":
+            raw_preview = event.data.get("detail")
+            if isinstance(raw_preview, str):
+                normalized_preview = normalize_stream_text(raw_preview).strip()
+                if normalized_preview:
+                    self.latest_tool_preview = _runtime_tool_summary(
+                        event.data.get("name"), normalized_preview
+                    )
             tool_id = event.data.get("tool_id")
             if not isinstance(tool_id, str) or not tool_id:
                 self.updated_at = time.time()
@@ -168,6 +193,8 @@ class CardSession:
             reply_to_message_id = event.data.get("reply_to_message_id")
             if isinstance(reply_to_message_id, str):
                 self.reply_to_message_id = reply_to_message_id
+            elif event.message_id.startswith("om_"):
+                self.reply_to_message_id = event.message_id
         elif event.event == "interaction.requested":
             self.active_interaction = _interaction_from_event_data(event.data)
         elif event.event == "interaction.completed":
@@ -204,6 +231,7 @@ class CardSession:
                 completed_answer = self._prepare_completed_answer(completed_answer)
             self.timeline.complete()
             self.status = "completed"
+            self.latest_tool_preview = ""
             if completed_answer.strip():
                 self.answer_text = completed_answer
             delivery_kind = event.data.get("delivery_kind")
@@ -340,6 +368,58 @@ def _interaction_options(value: Any) -> list[InteractionOption]:
         style = str(item.get("style") or item.get("type") or "default").strip() or "default"
         options.append(InteractionOption(label=label, value=option_value, style=style))
     return options
+
+
+def _runtime_tool_summary(name: Any, preview: str) -> str:
+    text = normalize_stream_text(preview).strip()
+    if not text:
+        return ""
+    if text.startswith("正在"):
+        return text
+
+    tool_name = str(name or "").strip().lower()
+    is_url = text.startswith(("http://", "https://"))
+    is_search = bool(_SEARCH_SITE_OPERATOR_RE.search(text))
+
+    if is_search or "search" in tool_name or "query" in tool_name:
+        action = "正在搜索"
+    elif is_url or any(
+        marker in tool_name for marker in ("browser", "fetch", "web", "http")
+    ):
+        action = "正在浏览"
+    elif any(
+        marker in tool_name for marker in ("terminal", "shell", "exec", "command", "code")
+    ):
+        action = "正在执行终端"
+    elif any(marker in tool_name for marker in ("write", "edit", "patch", "replace")):
+        action = "正在编辑"
+    elif any(marker in tool_name for marker in ("read", "open", "list", "glob")):
+        action = "正在读取"
+    else:
+        readable_name = tool_name.replace("_", " ").strip() or "工具"
+        return f"正在使用 {readable_name}"
+
+    target = _runtime_preview_target(text, action=action, is_url=is_url)
+    return f"{action}：{target}" if target else action
+
+
+def _runtime_preview_target(text: str, *, action: str, is_url: bool) -> str:
+    if is_url:
+        parsed = urlsplit(text)
+        host = parsed.netloc.removeprefix("www.")
+        path = parsed.path.rstrip("/")
+        return f"{host}{path}" if host else ""
+
+    target = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
+    if action == "正在搜索":
+        target = _SEARCH_SITE_OPERATOR_RE.sub("", target).strip()
+        target = " ".join(target.split())
+    if action in {"正在读取", "正在编辑"} and target.startswith(("/", "~/")):
+        path = target.split(maxsplit=1)[0]
+        target = path.rstrip("/").rsplit("/", 1)[-1]
+    if target.lower().startswith(("参数:", "参数：", "args:", "arguments:")):
+        return ""
+    return target
 
 
 def _tool_detail_from_event_data(data: dict[str, Any]) -> str:

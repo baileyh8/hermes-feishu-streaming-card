@@ -419,7 +419,9 @@ def test_v3817_release_notes_are_linked():
 def test_todo_points_to_v38_public_plan_docs():
     todo = read_doc("TODO.md")
 
-    assert "## V3.8 / V3.9 / V3.10 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0" in todo
+    assert "## V3.8 / V3.9 / V3.10 / V4.0 系列路线" in todo
+    for version in ("V3.8.0", "V3.8.18", "V3.9.0", "V3.9.1", "V3.10.0", "V4.0.0"):
+        assert version in todo
     assert "### V3.8.2：卡片 timeline 阅读体验补丁（已完成）" in todo
     assert "### V3.8.3：独立命令卡片（已完成）" in todo
     assert "### V3.8.4：Feishu WebSocket 命令卡片热修（已完成）" in todo
@@ -837,7 +839,8 @@ def test_config_example_documents_profile_and_bot_card_titles():
     assert "title: Work Bot" in config
     assert "title: Work Profile" in config
     assert "interaction_mode: auto" in config
-    assert "localhost/private sidecar" in config
+    assert "WebSocket card-action path" in config
+    assert "explicitly render numbered text choices" in config
 
 
 def test_testing_docs_describe_v340_doctor_output_without_stale_counts():
@@ -936,7 +939,9 @@ def test_docs_describe_release_readiness_boundaries():
     )
 
     assert "docs/release-readiness.md" in docs
-    assert "3.8.2" in release_readiness
+    assert "4.0.0" in release_readiness
+    assert "tool.updated.detail" in release_readiness
+    assert "thinking.delta" in release_readiness
     assert "issue #74" in release_readiness
     assert "/hfc" in release_readiness
     assert "Release assets workflow" in release_readiness
@@ -964,7 +969,9 @@ def test_docs_describe_release_readiness_boundaries():
     assert "GitHub Actions" in docs
 
     assert "[English](release-readiness.en.md)" in english_readiness
-    assert "3.8.2" in english_readiness
+    assert "4.0.0" in english_readiness
+    assert "tool.updated.detail" in english_readiness
+    assert "thinking.delta" in english_readiness
     assert "issue #74" in english_readiness
     assert "/hfc" in english_readiness
     assert "install-docker.sh" in english_readiness
@@ -1135,9 +1142,9 @@ def test_v310_documents_resume_picker_footer_polish_and_contributors():
 
     assert "## V3.10.0 — 2026-07-11" in changelog
     assert "[docs/release-notes-v3.10.0.md](docs/release-notes-v3.10.0.md)" in changelog
-    assert 'HFC_VERSION: "${HFC_VERSION:-v3.10.0}"' in compose
-    for doc in (readme, english_readme, install_doc, guide, english_guide):
-        assert "HFC_VERSION=v3.10.0" in doc
+    assert "v3.10.0" in compose or "v3.10.0" in install_doc
+    for doc in (readme, english_readme, guide, english_guide):
+        assert "v3.10.0" in doc
 
     for reference in ("#94", "PR #98"):
         assert reference in release_notes
@@ -1165,3 +1172,122 @@ def test_v310_documents_resume_picker_footer_polish_and_contributors():
         "hermes-feishu-card-v3.10.0-checksums.txt",
     ):
         assert asset in release_notes
+
+
+def test_v400_release_docs_cover_live_runtime_cards():
+    changelog = read_doc("CHANGELOG.md")
+    notes = read_doc("docs/release-notes-v4.0.0.md")
+    notes_en = read_doc("docs/release-notes-v4.0.0.en.md")
+    readme = read_doc("README.md")
+    readme_en = read_doc("README.en.md")
+    install_doc = read_doc("README-install.md")
+    guide = read_doc("docs/user-guide.md")
+    guide_en = read_doc("docs/user-guide.en.md")
+    compose = read_doc("docker-compose.example.yml")
+    event_flow = read_doc("docs/wiki/event-flow.md")
+    acceptance = read_doc("docs/wiki/feishu-acceptance.md")
+
+    assert "## V4.0.0" in changelog
+    assert "tool.updated.detail" in notes
+    assert "thinking.delta" in notes
+    assert "tool.updated.detail" in notes_en
+    assert "thinking.delta" in notes_en
+    assert "运行态 Header" in readme
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.0}"' in compose
+    for doc in (readme, readme_en, install_doc, guide, guide_en):
+        assert "HFC_VERSION=v4.0.0" in doc
+    for event_name in (
+        "progress_callback.preview",
+        "tool.updated.detail",
+        "thinking.delta",
+        "message.completed",
+    ):
+        assert event_name in event_flow
+    for state in ("运行中", "等待用户", "失败", "已完成"):
+        assert state in acceptance
+
+
+def test_feishu_cli_playbook_is_linked_and_keeps_cli_optional():
+    wiki = read_doc("docs/wiki/README.md")
+    playbook = read_doc("docs/wiki/feishu-cli-playbook.md")
+
+    assert "[飞书 CLI 验收与诊断](feishu-cli-playbook.md)" in wiki
+    assert "可选" in playbook
+    assert "不是 sidecar 运行时依赖" in playbook
+    assert "LARK_CLI_NO_PROXY=1" in playbook
+    assert "card.action.trigger" in playbook
+    assert "不能证明 Hermes 应用" in playbook
+    for secret_name in ("token", "callback token", "chat/open/message id"):
+        assert secret_name in playbook
+
+
+def test_v400_real_feishu_state_screenshots_are_published_and_nontrivial():
+    docs = {
+        "README.md": "docs/assets/",
+        "README.en.md": "docs/assets/",
+        "docs/user-guide.md": "assets/",
+        "docs/user-guide.en.md": "assets/",
+        "docs/release-notes-v4.0.0.md": "assets/",
+        "docs/release-notes-v4.0.0.en.md": "assets/",
+    }
+    screenshots = (
+        "feishu-v4-runtime-running.png",
+        "feishu-v4-runtime-waiting.png",
+        "feishu-v4-runtime-failed.png",
+        "feishu-v4-runtime-completed.png",
+    )
+
+    for doc_path, prefix in docs.items():
+        text = read_doc(doc_path)
+        for screenshot in screenshots:
+            assert f"{prefix}{screenshot}" in text
+
+    for screenshot in screenshots:
+        path = ROOT / "docs" / "assets" / screenshot
+        assert path.exists()
+        assert path.stat().st_size > 20_000
+
+
+def test_public_v400_plan_does_not_contain_a_real_feishu_chat_id():
+    plan = read_doc("docs/superpowers/plans/2026-07-12-v4-live-runtime-card-ux.md")
+
+    assert re.search(r"\boc_[0-9a-f]{32}\b", plan) is None
+
+
+def test_v400_docs_use_native_reply_as_the_only_completed_header():
+    chinese = read_doc("docs/release-notes-v4.0.0.md")
+    english = read_doc("docs/release-notes-v4.0.0.en.md")
+
+    assert "只保留飞书原生回复引用作为 Header" in chinese
+    assert "不叠加 `Hermes Agent` Card JSON Header" in chinese
+    assert "native reply quote as their only Header" in english
+    assert "second `Hermes Agent` Card JSON Header" in english
+
+
+def test_v400_model_picker_matches_hermes_cli_hierarchy():
+    readme = read_doc("README.md")
+    readme_en = read_doc("README.en.md")
+    guide = read_doc("docs/user-guide.md")
+    guide_en = read_doc("docs/user-guide.en.md")
+    notes = read_doc("docs/release-notes-v4.0.0.md")
+    notes_en = read_doc("docs/release-notes-v4.0.0.en.md")
+    acceptance = read_doc("docs/wiki/feishu-acceptance.md")
+    spec = read_doc(
+        "docs/superpowers/specs/2026-07-12-feishu-model-picker-parity-design.md"
+    )
+
+    for doc in (readme, guide, notes):
+        assert "与 Hermes CLI 使用同一 Provider/模型列表" in doc
+        assert "Provider → Model" in doc
+    for doc in (readme_en, guide_en, notes_en):
+        assert "same Provider/model list as Hermes CLI" in doc
+        assert "Provider → Model" in doc
+    for phrase in (
+        "Provider 数量",
+        "模型数量",
+        "返回",
+        "没有灰色重复消息",
+    ):
+        assert phrase in acceptance
+    for field in ("total_models", "is_current", "Provider → Model"):
+        assert field in spec

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `3.10.0`. It adds a native bare `/resume` picker and escaped semantic model-footer color while reusing Hermes' original security path and preserving footer/layout. V3.9.1 was released on 2026-07-11; V3.9.0 was released on 2026-07-11 and built on the sidecar-only runtime, V3.8.2 timeline, group diagnostics, topic/cron routing, and WebSocket interactions.
+Current release candidate: `4.0.0`. It adds a tool-preview runtime Header, public interim output in the body, and natural waiting/failed/completed transitions while reusing the existing Hermes hook, update queue, interaction security, and native reply boundary. V3.10.0 was released on 2026-07-11.
 
 ## Ready
 
@@ -15,7 +15,7 @@ Current release candidate: `3.10.0`. It adds a native bare `/resume` picker and 
 - Real long-card stress test: one Feishu card updated to 16k Chinese characters.
 - Real Hermes `v2026.4.23` `restore -> install` loop verification.
 - Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `0.17.x` / `0.18.x` / `v2026.5.16+` / `v2026.6.19+` / `v2026.7.1+` / `v2026.7.7.2` use the `gateway_run_013_plus` hook strategy, while older `v2026.4.x` keeps `legacy_gateway_run`.
-- Feishu card button interactions are covered through local mock acceptance for `interaction.requested`, `/card/actions`, and `/interactions/{interaction_id}`; localhost/private sidecar text fallback is covered through `card.interaction_mode: text`.
+- Feishu card button interactions are covered through local mock acceptance for `interaction.requested`, `/card/actions`, and `/interactions/{interaction_id}`; localhost/private sidecars use WebSocket-native callbacks in default `auto` mode, while explicit `card.interaction_mode: text` retains numbered-text fallback.
 - Feishu thread messages can carry optional `thread_id`; with a reply anchor, the sidecar uses the Feishu reply API to create the initial card in the original thread, and later updates keep PATCHing the same card.
 - Cron delivery can extract chat ids from `deliver: "feishu:oc_xxx"` and can resolve `deliver: origin`, `deliver: all`, and `origin,all` through Feishu origins or scheduler targets, avoiding plain-text fallback for scheduled Feishu deliveries; `deliver: local` remains no delivery.
 - Long Markdown tables and fenced code blocks over `MAIN_CONTENT_CHUNK_CHARS` are split as complete repeated structures to avoid raw Markdown rendering.
@@ -68,6 +68,7 @@ Current release candidate: `3.10.0`. It adds a native bare `/resume` picker and 
 - V3.9.1 automated release gate: `1198 passed, 3 skipped` on both Python 3.9 and Python 3.12, followed by `git diff --check`.
 - V3.10.0 bare `/resume` picker tests cover the original Hermes handler, group initiator, topic metadata, expired/invalid state, fail-open behavior, and immediate ACK.
 - V3.10.0 footer tests prove only the escaped model label changes color; element ids, field order, separators, text size, and non-completed states remain unchanged.
+- V4.0.0 combines Hermes tool names and `tool.updated.detail` into deterministic non-completed Header action summaries and streams public `thinking.delta` independently in the body; final `answer.delta` remains the primary body content.
 
 ## Required Pre-release Checks
 
@@ -104,6 +105,17 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Real Feishu: private chat, group initiator, topic same-thread update, and footer passed; changed-operator rejection is covered by automation.
 - Verify macOS, Linux, Windows, and checksums assets after tagging.
 - `v3.10.0`: **released on 2026-07-11** with all four assets verified.
+
+## V4.0.0 Release Gates
+
+- Session/render/status focused tests: **passed (`139 passed`)**.
+- Server/hook/model-picker hot-path matrix: **passed (`341 passed`)**.
+- Private/group real-Feishu four-state acceptance: **passed on 2026-07-12**. Running, waiting, failed, and completed states updated one card in place; runtime action summaries remained independent from public interim output; non-completed footers contained status only; completed cards kept the native reply quote without a duplicate Card JSON Header; no gray native duplicate or callback timeout appeared.
+- Real Feishu `/model`: **passed on 2026-07-12**. Provider and model data came directly from the same upstream Hermes CLI picker list; provider navigation, Back, model switching, and same-card result updates all succeeded.
+- All four public screenshots: **passed privacy and visual review**, retaining only redacted real-Feishu card regions.
+- Full automation: **passed (`1252 passed, 3 skipped`)**; `git diff --check` passed.
+- Local release-package smoke: **passed**. The sdist and wheel built successfully, a clean Python 3.12 venv imported version `4.0.0`, and the Hermes `v2026.7.7.2` doctor confirmed runtime import, streaming, and install state.
+- Verify macOS, Linux, Windows, and checksums assets after tagging.
 
 The `v3.9.0` release-assets workflow publishes four assets: the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
 

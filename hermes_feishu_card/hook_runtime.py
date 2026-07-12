@@ -1278,6 +1278,267 @@ def _model_picker_options(
     return options
 
 
+def _model_picker_provider_tree(providers: Any) -> list[dict[str, Any]]:
+    """Return the public provider/model tree already selected by Hermes."""
+    if not isinstance(providers, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    seen_providers: set[str] = set()
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        provider_slug = str(
+            provider.get("slug") or provider.get("provider") or ""
+        ).strip()
+        provider_key = provider_slug.casefold()
+        models = provider.get("models")
+        if not provider_slug or provider_key in seen_providers or not isinstance(models, list):
+            continue
+        model_ids: list[str] = []
+        seen_models: set[str] = set()
+        for model in models:
+            model_id = str(model or "").strip()
+            if not model_id or model_id in seen_models:
+                continue
+            seen_models.add(model_id)
+            model_ids.append(model_id)
+        if not model_ids:
+            continue
+        try:
+            total_models = int(provider.get("total_models", len(model_ids)))
+        except (TypeError, ValueError):
+            total_models = len(model_ids)
+        total_models = max(len(model_ids), total_models)
+        seen_providers.add(provider_key)
+        normalized.append(
+            {
+                "slug": provider_slug,
+                "name": str(provider.get("name") or provider_slug).strip()
+                or provider_slug,
+                "models": model_ids,
+                "total_models": total_models,
+                "is_current": bool(provider.get("is_current")),
+            }
+        )
+    return normalized
+
+
+def _model_picker_provider_options(
+    providers: list[dict[str, Any]],
+    *,
+    current_provider: str,
+    max_options: int = 100,
+) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    current = str(current_provider or "").strip().casefold()
+    for provider in providers:
+        provider_slug = str(provider.get("slug") or "").strip()
+        provider_name = str(provider.get("name") or provider_slug).strip()
+        models = provider.get("models")
+        if not provider_slug or not isinstance(models, list) or not models:
+            continue
+        try:
+            total_models = max(len(models), int(provider.get("total_models", len(models))))
+        except (TypeError, ValueError):
+            total_models = len(models)
+        label = f"{provider_name} ({total_models} 个模型)"
+        if bool(provider.get("is_current")) or provider_slug.casefold() == current:
+            label = f"当前 · {label}"
+        options.append({"label": label[:80], "value": provider_slug})
+        if len(options) >= max_options:
+            break
+    return options
+
+
+def _model_picker_model_options(
+    provider: dict[str, Any],
+    *,
+    current_model: str,
+    max_options: int = 100,
+) -> list[dict[str, str]]:
+    options: list[dict[str, str]] = []
+    provider_slug = str(provider.get("slug") or "").strip()
+    models = provider.get("models")
+    if not provider_slug or not isinstance(models, list):
+        return options
+    current = str(current_model or "").strip()
+    for model in models:
+        model_id = str(model or "").strip()
+        if not model_id:
+            continue
+        label = f"当前 · {model_id}" if model_id == current else model_id
+        options.append(
+            {
+                "label": label[:80],
+                "value": json.dumps(
+                    {"provider": provider_slug, "model": model_id},
+                    ensure_ascii=False,
+                ),
+            }
+        )
+        if len(options) >= max_options:
+            break
+    return options
+
+
+def _model_picker_provider(
+    providers: list[dict[str, Any]], provider_slug: str
+) -> dict[str, Any] | None:
+    selected = str(provider_slug or "").strip().casefold()
+    for provider in providers:
+        if str(provider.get("slug") or "").strip().casefold() == selected:
+            return provider
+    return None
+
+
+def _model_picker_current_provider_slug(
+    providers: list[dict[str, Any]], current_provider: str
+) -> str:
+    for provider in providers:
+        if bool(provider.get("is_current")):
+            return str(provider.get("slug") or "").strip()
+    current = str(current_provider or "").strip().casefold()
+    for provider in providers:
+        provider_slug = str(provider.get("slug") or "").strip()
+        if provider_slug.casefold() == current:
+            return provider_slug
+    return ""
+
+
+def _hfc_native_model_picker_card(
+    *,
+    picker_id: str,
+    providers: list[dict[str, Any]],
+    current_provider: str,
+    current_model: str,
+    selected_provider: str = "",
+) -> dict[str, Any]:
+    provider = _model_picker_provider(providers, selected_provider)
+    if provider is None:
+        current_provider_slug = _model_picker_current_provider_slug(
+            providers, current_provider
+        )
+        options = _model_picker_provider_options(
+            providers,
+            current_provider=current_provider,
+        )
+        description_parts = []
+        if current_model:
+            description_parts.append(f"当前模型：`{current_model}`")
+        if current_provider:
+            description_parts.append(f"当前 Provider：`{current_provider}`")
+        description_parts.append("先选择 Provider，再选择模型。")
+        elements: list[dict[str, Any]] = [
+            {"tag": "markdown", "content": "\n".join(description_parts)},
+            {
+                "tag": "action",
+                "actions": [
+                    _hfc_select_static(
+                        placeholder="选择 Provider",
+                        value={
+                            "hfc_action": "model_picker",
+                            "hfc_model_picker_id": picker_id,
+                            "hfc_model_picker_view": "providers",
+                        },
+                        options=options,
+                        initial_option=next(
+                            (
+                                option["value"]
+                                for option in options
+                                if option["value"].casefold()
+                                == current_provider_slug.casefold()
+                            ),
+                            "",
+                        ),
+                    )
+                ],
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    _hfc_button(
+                        "取消",
+                        {
+                            "hfc_action": "model_picker",
+                            "hfc_model_picker_id": picker_id,
+                            "hfc_model_picker_nav": "cancel",
+                        },
+                    )
+                ],
+            },
+        ]
+        title = "选择模型"
+    else:
+        provider_slug = str(provider.get("slug") or "").strip()
+        provider_name = str(provider.get("name") or provider_slug).strip()
+        options = _model_picker_model_options(
+            provider,
+            current_model=current_model,
+        )
+        initial_option = ""
+        if provider_slug.casefold() == str(current_provider or "").strip().casefold():
+            initial_option = next(
+                (
+                    option["value"]
+                    for option in options
+                    if json.loads(option["value"]).get("model") == current_model
+                ),
+                "",
+            )
+        elements = [
+            {
+                "tag": "markdown",
+                "content": f"Provider：`{provider_name}`\n\n请选择模型。",
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    _hfc_select_static(
+                        placeholder="选择模型",
+                        value={
+                            "hfc_action": "model_picker",
+                            "hfc_model_picker_id": picker_id,
+                            "hfc_model_picker_view": "models",
+                        },
+                        options=options,
+                        initial_option=initial_option,
+                    )
+                ],
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    _hfc_button(
+                        "返回",
+                        {
+                            "hfc_action": "model_picker",
+                            "hfc_model_picker_id": picker_id,
+                            "hfc_model_picker_nav": "back",
+                        },
+                    ),
+                    _hfc_button(
+                        "取消",
+                        {
+                            "hfc_action": "model_picker",
+                            "hfc_model_picker_id": picker_id,
+                            "hfc_model_picker_nav": "cancel",
+                        },
+                    ),
+                ],
+            },
+        ]
+        title = f"选择模型 · {provider_name}"
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"content": title, "tag": "plain_text"},
+            "template": "blue",
+        },
+        "elements": elements,
+    }
+
+
 def _resume_picker_options(
     sessions: Any,
     *,
@@ -2357,50 +2618,18 @@ async def _hfc_send_native_model_picker(
             metadata=metadata,
         )
 
-    options = _model_picker_options(providers, current_model=current_model, max_options=100)
-    if not options:
+    provider_tree = _model_picker_provider_tree(providers)
+    if not provider_tree:
         return _send_result(False, error="no model options")
-    all_options_count = len(_model_picker_options(providers, current_model=current_model, max_options=1000))
     picker_id = "model_" + sha256(
         f"{chat_id}:{session_key}:{time.time()}".encode("utf-8")
     ).hexdigest()[:16]
-    description_parts = []
-    if current_model:
-        description_parts.append(f"当前模型：`{current_model}`")
-    if current_provider:
-        description_parts.append(f"当前 provider：`{current_provider}`")
-    if all_options_count > len(options):
-        description_parts.append(f"展示前 {len(options)} 个可选模型，可继续用 `/model <模型名>` 精确切换。")
-    initial_option = ""
-    for option in options:
-        if option.get("style") == "primary":
-            initial_option = str(option.get("value") or "")
-            break
-
-    card = {
-        "config": {"wide_screen_mode": True},
-        "header": {
-            "title": {"content": "选择模型", "tag": "plain_text"},
-            "template": "blue",
-        },
-        "elements": [
-            {"tag": "markdown", "content": "\n".join(description_parts) or "请选择模型。"},
-            {
-                "tag": "action",
-                "actions": [
-                    _hfc_select_static(
-                        placeholder="选择模型",
-                        value={
-                            "hfc_action": "model_picker",
-                            "hfc_model_picker_id": picker_id,
-                        },
-                        options=options,
-                        initial_option=initial_option,
-                    )
-                ],
-            },
-        ],
-    }
+    card = _hfc_native_model_picker_card(
+        picker_id=picker_id,
+        providers=provider_tree,
+        current_provider=current_provider,
+        current_model=current_model,
+    )
     try:
         response = await self._feishu_send_with_retry(
             chat_id=chat_id,
@@ -2425,6 +2654,10 @@ async def _hfc_send_native_model_picker(
         "session_key": str(session_key or ""),
         "message_id": message_id,
         "on_model_selected": on_model_selected,
+        "providers": provider_tree,
+        "current_provider": str(current_provider or ""),
+        "current_model": str(current_model or ""),
+        "selected_provider": "",
     }
     return _send_result(True, message_id=message_id)
 
@@ -2554,6 +2787,8 @@ def _hfc_action_value_from_data(data: Any) -> dict[str, Any]:
             "hfc_confirm_id",
             "hfc_choice",
             "hfc_model_picker_id",
+            "hfc_model_picker_view",
+            "hfc_model_picker_nav",
             "hfc_resume_picker_id",
         ):
             if key not in value and form_value.get(key):
@@ -2700,6 +2935,8 @@ def _hfc_prepare_native_model_action(
         "chat_id": chat_id,
         "expected_chat_id": expected_chat_id,
         "choice": str(action_value.get("hfc_choice") or ""),
+        "view": str(action_value.get("hfc_model_picker_view") or "").strip(),
+        "navigation": str(action_value.get("hfc_model_picker_nav") or "").strip(),
     }
 
 
@@ -3098,6 +3335,51 @@ def _hfc_handle_native_slash_action(
     return _hfc_raw_feishu_callback_response(adapter, card)
 
 
+def _hfc_model_picker_choice_allowed(
+    item: dict[str, Any], provider_slug: str, model_id: str
+) -> bool:
+    providers = item.get("providers")
+    if not isinstance(providers, list):
+        # Picker state created by older plugin code did not retain the tree.
+        return True
+    provider = _model_picker_provider(providers, provider_slug)
+    if provider is None:
+        return False
+    selected_provider = str(item.get("selected_provider") or "").strip()
+    if not selected_provider or selected_provider.casefold() != provider_slug.casefold():
+        return False
+    models = provider.get("models")
+    return isinstance(models, list) and model_id in {
+        str(model or "").strip() for model in models
+    }
+
+
+def _hfc_model_picker_card_from_state(
+    picker_id: str,
+    item: dict[str, Any],
+    *,
+    selected_provider: str = "",
+) -> dict[str, Any] | None:
+    providers = item.get("providers")
+    if not isinstance(providers, list) or not providers:
+        return None
+    return _hfc_native_model_picker_card(
+        picker_id=picker_id,
+        providers=providers,
+        current_provider=str(item.get("current_provider") or ""),
+        current_model=str(item.get("current_model") or ""),
+        selected_provider=selected_provider,
+    )
+
+
+def _hfc_invalid_model_picker_card() -> dict[str, Any]:
+    return _hfc_command_result_card(
+        title="模型选择无效",
+        content="请重新选择，或重新发送 `/model`。",
+        template="red",
+    )
+
+
 def _hfc_resolve_native_model_action(
     adapter: Any,
     data: Any,
@@ -3111,14 +3393,15 @@ def _hfc_resolve_native_model_action(
     selected = _parse_model_picker_choice(prepared["choice"])
     if selected is None:
         return (
-            _hfc_command_result_card(
-                title="模型选择无效",
-                content="请重新发送 `/model`。",
-                template="red",
-            ),
+            _hfc_invalid_model_picker_card(),
             str(item.get("message_id") or ""),
         )
     provider_slug, model_id = selected
+    if not _hfc_model_picker_choice_allowed(item, provider_slug, model_id):
+        return (
+            _hfc_invalid_model_picker_card(),
+            str(item.get("message_id") or ""),
+        )
     callback = item.get("on_model_selected")
     try:
         if callback is None:
@@ -3159,14 +3442,15 @@ async def _hfc_resolve_native_model_action_async(
     selected = _parse_model_picker_choice(prepared["choice"])
     if selected is None:
         return (
-            _hfc_command_result_card(
-                title="模型选择无效",
-                content="请重新发送 `/model`。",
-                template="red",
-            ),
+            _hfc_invalid_model_picker_card(),
             str(item.get("message_id") or ""),
         )
     provider_slug, model_id = selected
+    if not _hfc_model_picker_choice_allowed(item, provider_slug, model_id):
+        return (
+            _hfc_invalid_model_picker_card(),
+            str(item.get("message_id") or ""),
+        )
     callback = item.get("on_model_selected")
     try:
         if callback is None:
@@ -3276,14 +3560,63 @@ def _hfc_handle_native_model_action(
         _hfc_info("inline model_picker ignored: unresolved")
         return _hfc_empty_feishu_callback_response(adapter)
 
-    message_id = str(prepared["item"].get("message_id") or "")
+    item = prepared["item"]
+    picker_id = prepared["picker_id"]
+    navigation = prepared["navigation"]
+    if navigation == "cancel":
+        prepared["state"].pop(picker_id, None)
+        card = _hfc_command_result_card(
+            title="模型选择已取消",
+            content="当前模型未更改。",
+            template="grey",
+        )
+        return _hfc_raw_feishu_callback_response(adapter, card)
+    if navigation == "back":
+        item["selected_provider"] = ""
+        card = _hfc_model_picker_card_from_state(picker_id, item)
+        if card is None:
+            card = _hfc_invalid_model_picker_card()
+        return _hfc_raw_feishu_callback_response(adapter, card)
+    if navigation:
+        return _hfc_raw_feishu_callback_response(
+            adapter, _hfc_invalid_model_picker_card()
+        )
+
+    if prepared["view"] == "providers":
+        providers = item.get("providers")
+        provider = (
+            _model_picker_provider(providers, prepared["choice"])
+            if isinstance(providers, list)
+            else None
+        )
+        if provider is None:
+            return _hfc_raw_feishu_callback_response(
+                adapter, _hfc_invalid_model_picker_card()
+            )
+        provider_slug = str(provider.get("slug") or "").strip()
+        item["selected_provider"] = provider_slug
+        card = _hfc_model_picker_card_from_state(
+            picker_id,
+            item,
+            selected_provider=provider_slug,
+        )
+        if card is None:
+            card = _hfc_invalid_model_picker_card()
+        return _hfc_raw_feishu_callback_response(adapter, card)
+
+    message_id = str(item.get("message_id") or "")
     # Parse the model choice properly — prepared["choice"] is a raw JSON string
     # like '{"provider":"zai","model":"glm-5.2"}', not a "provider/model" path.
     parsed = _parse_model_picker_choice(prepared["choice"])
-    if parsed is not None:
-        provider_slug, model_id = parsed
-    else:
-        provider_slug, model_id = "?", prepared["choice"]
+    if parsed is None:
+        return _hfc_raw_feishu_callback_response(
+            adapter, _hfc_invalid_model_picker_card()
+        )
+    provider_slug, model_id = parsed
+    if not _hfc_model_picker_choice_allowed(item, provider_slug, model_id):
+        return _hfc_raw_feishu_callback_response(
+            adapter, _hfc_invalid_model_picker_card()
+        )
 
     # FIX-3: acknowledge the click immediately with a "switching" card and run
     # the real (potentially slow) switch off the callback path.

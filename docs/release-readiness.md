@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前候选包版本为 `3.10.0`。它加入裸 `/resume` 原生会话选择器和转义后的模型 footer 语义色，同时复用 Hermes 原生安全恢复路径并保持 footer/layout 不变。V3.9.1 已于 2026-07-11 发布；V3.9.0 同样已于 2026-07-11 发布，并建立在 sidecar-only、V3.8.2 timeline、群聊诊断、话题/cron 路由和 WebSocket 交互基础上。
+当前候选包版本为 `4.0.0`。它加入工具 preview 驱动的运行态 Header、公开阶段输出正文和自然的等待/失败/完成状态衔接，同时复用现有 Hermes hook、更新队列、安全交互与原生回复边界。V3.10.0 已于 2026-07-11 发布。
 
 ## 已具备
 
@@ -15,7 +15,7 @@
 - 真实长卡压力测试：同一张 Feishu 卡片更新到 16k 中文字符成功。
 - 真实 Hermes `v2026.4.23` 目录 `restore -> install` 循环验证。
 - Hermes `0.13.0+` / `0.14.0` / `0.15.x` / `0.17.x` / `0.18.x` / `v2026.5.16+` / `v2026.6.19+` / `v2026.7.1+` / `v2026.7.7.2` 使用 `gateway_run_013_plus` hook strategy，旧版 `v2026.4.x` 保持 `legacy_gateway_run`。
-- 飞书卡片按钮交互覆盖 `interaction.requested`、`/card/actions`、`/interactions/{interaction_id}` 的本地 mock 验收；localhost/private sidecar 覆盖 `card.interaction_mode: text` fallback。
+- 飞书卡片按钮交互覆盖 `interaction.requested`、`/card/actions`、`/interactions/{interaction_id}` 的本地 mock 验收；localhost/private sidecar 的默认 `auto` 走 WebSocket-native callback，显式 `card.interaction_mode: text` 保留编号文本 fallback。
 - 飞书 thread 消息会携带可选 `thread_id`，有 reply anchor 时通过 Feishu reply API 把初始卡片放回原 thread，后续更新继续 PATCH 同一张卡片。
 - cron delivery 支持从 `deliver: "feishu:oc_xxx"` 提取 chat id，也支持 `deliver: origin` / `deliver: all` / `origin,all` 先解析到 Feishu origin 或 scheduler targets，避免定时投递退回 plain text；`deliver: local` 仍保持无投递。
 - Markdown 长表格/长代码块超过 `MAIN_CONTENT_CHUNK_CHARS` 后按完整结构重复切分，避免 raw markdown。
@@ -68,6 +68,7 @@
 - V3.9.1 自动化 release gate：Python 3.9 / 3.12 均为 `1198 passed, 3 skipped`，`git diff --check` 通过。
 - V3.10.0 裸 `/resume` picker 复用 original Hermes handler；群聊发起者、topic metadata、失效/无效 state、fail-open 和即时 ACK 有聚焦回归。
 - V3.10.0 模型 footer 仅改变转义后的 model label 颜色，element id、字段顺序、分隔符、字号与非完成态不变。
+- V4.0.0 将 Hermes 工具名与 `tool.updated.detail` 整理为非完成态 Header 的确定性动作摘要，将公开 `thinking.delta` 独立流式显示在正文；最终 `answer.delta` 仍保持正文优先级。
 
 ## 发布前必须验证
 
@@ -104,6 +105,17 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - 真实 Feishu：私聊、群聊发起者、topic 原线程更新和 footer 已通过；换人拒绝由自动化覆盖。
 - tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
 - `v3.10.0`：**已发布（2026-07-11）**，四个 assets 验证通过。
+
+## V4.0.0 发布门禁
+
+- 会话、渲染、状态聚焦测试：**已通过（`139 passed`）**。
+- server/hook/model picker 热区矩阵：**已通过（`341 passed`）**。
+- 真实飞书私聊/群聊四状态验收：**已通过（2026-07-12）**。运行、等待、失败、完成态均原位更新同一卡；运行态动作摘要与公开阶段输出相互独立；非完成态 footer 仅显示状态；完成态保留原生回复引用且不叠加 Card JSON Header；没有灰色原生重复消息或回调超时。
+- 真实飞书 `/model`：**已通过（2026-07-12）**。Provider 与模型数据直接复用 Hermes CLI picker 的同源列表；进入 Provider、返回上一级、切换模型和结果回写同一卡均成功。
+- 四张公开截图：**已通过隐私与视觉检查**，仅保留脱敏后的真实飞书卡片区域。
+- 全量自动化：**已通过（`1252 passed, 3 skipped`）**；`git diff --check` 通过。
+- 本地发布包 smoke：**已通过**。sdist/wheel 构建成功，干净 Python 3.12 venv 安装后导入版本为 `4.0.0`；Hermes `v2026.7.7.2` doctor 确认 runtime import、streaming 和 install state 正常。
+- tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
 
 `v3.9.0` tag 的 release-assets workflow 会发布 4 个 assets：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。
 

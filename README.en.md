@@ -20,11 +20,22 @@ It targets the real pain points of running Hermes inside Feishu: missing or out-
 
 ![Hermes Feishu card command interaction, command result feedback, and tool timeline showcase](docs/assets/feishu-card-showcase-v385.png)
 
+## V4 Live Agent States
+
+| Running | Waiting for user |
+|---|---|
+| ![Real Feishu running state with the current tool action in the Header](docs/assets/feishu-v4-runtime-running.png) | ![Real Feishu waiting state with native buttons in the same card](docs/assets/feishu-v4-runtime-waiting.png) |
+| Failed | Completed |
+| ![Real Feishu failed state retaining the last tool preview](docs/assets/feishu-v4-runtime-failed.png) | ![Real Feishu completed state with only the native reply Header and final result](docs/assets/feishu-v4-runtime-completed.png) |
+
+During execution, the Header follows real Hermes tool actions while public interim output continues streaming in the body. On completion, the native Feishu reply quote becomes the only Header instead of stacking a second `Hermes Agent` card title above it.
+
 ## What You Get
 
 - **One continuously updated Feishu card**: `thinking.delta`, `answer.delta`, `tool.updated`, and `message.completed` merge into one card.
+- **A live runtime Header**: the title keeps the user-configured card name (`Hermes Agent` by default), while the subtitle turns tool names and `tool.updated.detail` into concise action summaries; full commands remain in the timeline.
 - **Primary answer and process timeline**: the final answer stays in the main content area while pre-tool answers, tool calls, and system notices move into the "Reasoning and Tools" timeline.
-- **In-card interactions**: approval and clarify choices render as buttons; standalone commands such as `/new`, `/reset`, `/undo`, and `/model` use native interactive cards.
+- **In-card interactions**: approval and clarify choices render as buttons; standalone commands such as `/new`, `/reset`, `/undo`, and `/model` use native interactive cards. V4 `/model` uses the same Provider/model list as Hermes CLI and follows a Provider → Model flow instead of crowding every model into one dropdown.
 - **Consistent topic replies**: later topic stream events resolve by `reply_to_message_id` and keep updating the original card; system notices no longer spill out as duplicates.
 - **Clearer group diagnostics**: `/hfc status` explains group chat binding state, the suggested bind command, and slash-command behavior boundaries.
 - **Bounded operations cards**: `/hfc doctor` can present diagnosis, two-step safe repair, and restart confirmation; private chats do not compare operators, while group confirmations stay with the initiator. When operations cards are unavailable, use the CLI; normal streaming-card layout and footer are unchanged.
@@ -122,7 +133,7 @@ For an existing Hermes container:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v3.10.0
+export HFC_VERSION=v4.0.0
 bash install-docker.sh
 ```
 
@@ -165,6 +176,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 
 | Version | Highlights |
 |---|---|
+| [v4.0.0](docs/release-notes-v4.0.0.en.md) | The running Header shows the latest Hermes tool preview while public interim output streams independently in the body; waiting, failed, and completed states preserve established Footer and reply boundaries |
 | [v3.10.0](docs/release-notes-v3.10.0.md) | Bare `/resume` uses a native session picker while retaining Hermes' security path; the model footer gains escaped semantic color without changing layout or field order |
 | [v3.9.1](docs/release-notes-v3.9.1.md) | Reliability hotfix: preserve completed answers, serialize interrupted terminal cards, make model-picker callbacks asynchronous, and recover verifiable marker-only installer damage; normal streaming-card footer/layout remains unchanged |
 | [v3.9.0](docs/release-notes-v3.9.0.md) | Operations/reliability foundation: PR #84 / @Zanetach contributed card progress-status routing and `.env` allowlist expansion for profile environment support, plus safe repair/restart operations cards and CLI fallback; normal streaming-card footer/layout remains unchanged |
