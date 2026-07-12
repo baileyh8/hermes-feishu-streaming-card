@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.0.0`. It adds a tool-preview runtime Header, public interim output in the body, and natural waiting/failed/completed transitions while reusing the existing Hermes hook, update queue, interaction security, and native reply boundary. V3.10.0 was released on 2026-07-11.
+Current release candidate: `4.0.1`. It fixes duplicate native answer text after completed `MEDIA:` image/file cards while preserving V4.0.0 live Headers, public interim output, interaction security, and native media delivery. V3.9.1 was released on 2026-07-11, and V4.0.0 was released on 2026-07-12.
 
 ## Ready
 
@@ -105,6 +105,15 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Real Feishu: private chat, group initiator, topic same-thread update, and footer passed; changed-operator rejection is covered by automation.
 - `v4.0.0`: **released on 2026-07-12**. The release-assets workflow succeeded; the macOS, Linux, Windows, and checksums assets were complete and checksum-verified; installation from the public tag reported version `4.0.0` and the CLI started successfully.
 - `v3.10.0`: **released on 2026-07-11** with all four assets verified.
+
+## V4.0.1 Release Gates
+
+- Issue #106 data-flow regression, normal/queued completion, and V4.0.0 hook-upgrade tests: **passed**.
+- Hook/patcher/install/server hot-path matrix: **passed (`509 passed`)**.
+- Hermes `extract_media()` verification: **passed**, preserving the media path with an empty native-visible text body.
+- Full automation: **passed (`1257 passed, 3 skipped`)**; `git diff --check` passed.
+- Local package smoke: **passed**. The sdist and wheel built successfully, and a clean venv imported version `4.0.1`.
+- Real-Feishu media smoke, public installation, and Release assets: **pending post-tag verification**.
 
 ## V4.0.0 Release Gates
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "4.0.0"
+version = "4.0.1"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"

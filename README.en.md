@@ -133,7 +133,7 @@ For an existing Hermes container:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.0
+export HFC_VERSION=v4.0.1
 bash install-docker.sh
 ```
 
@@ -176,6 +176,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 
 | Version | Highlights |
 |---|---|
+| [v4.0.1](docs/release-notes-v4.0.1.en.md) | Fixes duplicate native answer text after `MEDIA:` image/file cards; the native path delivers media only and the card hides internal local paths |
 | [v4.0.0](docs/release-notes-v4.0.0.en.md) | The running Header shows the latest Hermes tool preview while public interim output streams independently in the body; waiting, failed, and completed states preserve established Footer and reply boundaries |
 | [v3.10.0](docs/release-notes-v3.10.0.md) | Bare `/resume` uses a native session picker while retaining Hermes' security path; the model footer gains escaped semantic color without changing layout or field order |
 | [v3.9.1](docs/release-notes-v3.9.1.md) | Reliability hotfix: preserve completed answers, serialize interrupted terminal cards, make model-picker callbacks asynchronous, and recover verifiable marker-only installer damage; normal streaming-card footer/layout remains unchanged |

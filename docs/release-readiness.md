@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前候选包版本为 `4.0.0`。它加入工具 preview 驱动的运行态 Header、公开阶段输出正文和自然的等待/失败/完成状态衔接，同时复用现有 Hermes hook、更新队列、安全交互与原生回复边界。V3.10.0 已于 2026-07-11 发布。
+当前候选包版本为 `4.0.1`。它修复 `MEDIA:` 图片/文件完成卡之后的原生正文重复消息，并保留 V4.0.0 的实时 Header、公开阶段输出、交互安全与原生媒体投递边界。V3.9.1 已于 2026-07-11 发布，V4.0.0 已于 2026-07-12 发布。
 
 ## 已具备
 
@@ -105,6 +105,15 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - 真实 Feishu：私聊、群聊发起者、topic 原线程更新和 footer 已通过；换人拒绝由自动化覆盖。
 - `v4.0.0`：**已发布（2026-07-12）**。release-assets workflow 成功；macOS、Linux、Windows 与 checksums 四个 assets 完整且 checksum 通过；从公开 tag 安装后版本为 `4.0.0`，CLI 可启动。
 - `v3.10.0`：**已发布（2026-07-11）**，四个 assets 验证通过。
+
+## V4.0.1 发布门禁
+
+- Issue #106 数据流回归、普通/queued completion 和 V4.0.0 hook 升级测试：**已通过**。
+- hook/patcher/install/server 热区矩阵：**已通过（`509 passed`）**。
+- Hermes `extract_media()` 验证：**已通过**，媒体路径保留且原生可见正文为空。
+- 全量自动化：**已通过（`1257 passed, 3 skipped`）**；`git diff --check` 通过。
+- 本地发布包 smoke：**已通过**。sdist/wheel 构建成功，干净 venv 安装后导入版本为 `4.0.1`。
+- 真实飞书媒体 smoke、公开安装和 Release assets：**待 tag 后验证**。
 
 ## V4.0.0 发布门禁
 

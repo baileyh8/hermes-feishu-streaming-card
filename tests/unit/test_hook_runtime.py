@@ -3258,6 +3258,30 @@ def test_completed_event_extracts_attachment_summaries_from_response():
     assert {"kind": "image", "name": "chart.png", "summary": "chart.png"} in attachments
 
 
+def test_completed_event_hides_media_directive_from_card_answer():
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_1",
+            "message_id": "m_1",
+            "answer": (
+                "发你一张之前生成的咖啡馆坐姿图：\n\n"
+                "MEDIA:/opt/data/image_cache/continue_ani_cafe_leaning_table_00001_.png"
+            ),
+        },
+    )
+
+    assert payload["data"]["answer"] == "发你一张之前生成的咖啡馆坐姿图："
+    assert payload["data"]["native_delivery"] == "required"
+    assert payload["data"]["attachments"] == [
+        {
+            "kind": "image",
+            "name": "continue_ani_cafe_leaning_table_00001_.png",
+            "summary": "continue_ani_cafe_leaning_table_00001_.png",
+        }
+    ]
+
+
 def test_completed_event_extracts_attachment_summaries_from_response_field():
     payload = hook_runtime.build_event(
         "message.completed",
@@ -3478,6 +3502,27 @@ def test_completed_event_strips_trailing_attachment_punctuation_and_deduplicates
     assert payload["data"]["attachments"] == [
         {"kind": "file", "name": "report.pdf", "summary": "report.pdf"}
     ]
+
+
+def test_native_media_only_response_removes_duplicate_text_but_keeps_directives():
+    response = (
+        "发你一张之前生成的图片。\n"
+        "[[as_document]]\n"
+        "MEDIA:/opt/data/image_cache/cafe.png\n"
+        "/opt/data/report.pdf"
+    )
+
+    assert hook_runtime.native_media_only_response(response) == (
+        "[[as_document]]\n"
+        "MEDIA:/opt/data/image_cache/cafe.png\n"
+        "/opt/data/report.pdf"
+    )
+
+
+def test_native_media_only_response_keeps_original_when_no_explicit_delivery_path():
+    response = "视频已生成"
+
+    assert hook_runtime.native_media_only_response(response) == response
 
 
 @pytest.mark.parametrize(

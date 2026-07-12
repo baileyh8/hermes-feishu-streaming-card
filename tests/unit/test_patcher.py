@@ -321,6 +321,7 @@ def test_apply_patch_inserts_completion_hook_before_response_return():
     assert patcher.COMPLETE_PATCH_BEGIN in patched
     assert 'event_name="message.completed"' in patched
     assert "should_suppress_native_response as _hfc_should_suppress" in patched
+    assert "native_media_only_response as _hfc_media_only" in patched
     assert "_hfc_card_delivered = await _hfc_emit_async(_hfc_completed_locals" in patched
     assert (
         '_hfc_completed_event = _hfc_build_event("message.completed", '
@@ -340,6 +341,11 @@ def test_apply_patch_inserts_completion_hook_before_response_return():
         "_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery"
         "):"
     ) in patched
+    assert (
+        'if str(_hfc_platform).lower() == "feishu" and '
+        '_hfc_card_delivered and _hfc_native_delivery == "required":'
+    ) in patched
+    assert "response = _hfc_media_only(response)" in patched
     assert "        return None\n" in patched
     assert '"model": agent_result.get("model", ""),' in patched
     assert '"context": {' in patched
@@ -372,6 +378,12 @@ def test_apply_patch_suppresses_queued_followup_native_resend():
         '"required" if _hfc_attachments else "allowed")'
     ) in patched
     assert "_already_streamed = True" in patched
+    assert "native_media_only_response as _hfc_media_only" in patched
+    assert (
+        'if str(_hfc_platform).lower() == "feishu" and '
+        '_hfc_card_delivered and _hfc_native_delivery == "required":'
+    ) in patched
+    assert "first_response = _hfc_media_only(first_response)" in patched
     assert patched.index(patcher.QUEUED_COMPLETE_PATCH_BEGIN) < patched.index(
         "    if first_response and not _already_streamed:\n"
     )
@@ -439,6 +451,36 @@ def test_apply_patch_upgrades_previous_async_completion_hook_without_platform_gu
 
     assert "should_suppress_native_response as _hfc_should_suppress" in upgraded
     assert "if _hfc_card_delivered:\n" not in upgraded
+
+
+def test_apply_patch_upgrades_v400_completion_hook_with_media_text_split():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1.5\n"
+        "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
+        "    return response\n"
+    )
+    latest = patcher.apply_patch(content)
+    v400 = latest.replace(
+        "        from hermes_feishu_card.hook_runtime import native_media_only_response as _hfc_media_only\n",
+        "",
+    ).replace(
+        '        if str(_hfc_platform).lower() == "feishu" and '
+        '_hfc_card_delivered and _hfc_native_delivery == "required":\n'
+        "            response = _hfc_media_only(response)\n",
+        "",
+    )
+
+    upgraded = patcher.apply_patch(v400)
+
+    assert "native_media_only_response as _hfc_media_only" in upgraded
+    assert (
+        'if str(_hfc_platform).lower() == "feishu" and '
+        '_hfc_card_delivered and _hfc_native_delivery == "required":'
+    ) in upgraded
+    assert "response = _hfc_media_only(response)" in upgraded
+    assert patcher.remove_patch(upgraded) == content
 
 
 def test_remove_patch_lenient_removes_previous_async_completion_hook_block():

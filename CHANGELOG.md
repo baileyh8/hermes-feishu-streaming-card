@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.1 — 2026-07-12
+
+See also: [docs/release-notes-v4.0.1.md](docs/release-notes-v4.0.1.md)
+
+### Fixed
+- Fixed issue #106: successful Feishu cards with explicit `MEDIA:` or local output paths now leave only media directives for Hermes native delivery, preventing a second native copy of the answer text.
+- Removed internal media directives and local delivery paths from the completed card body while retaining attachment summaries and native image/file delivery.
+
+### Compatibility
+- Card delivery failure, non-Feishu platforms, and structured-media responses without explicit delivery paths retain the original fail-open response.
+- Existing V4.0.0 completion hook blocks are recognized and upgraded instead of being reported as corrupt markers.
+
+### Credits
+- Issue #106 was reported by @ShakuOvO and independently confirmed on Hermes 0.18.2 by @blakejia.
+
 ## V4.0.0 — 2026-07-12
 
 See also: [docs/release-notes-v4.0.0.md](docs/release-notes-v4.0.0.md)
