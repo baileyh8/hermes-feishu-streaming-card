@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from hermes_feishu_card import __version__ as PACKAGE_VERSION
 from hermes_feishu_card.config import load_config
 from hermes_feishu_card.bots import BotRegistry, RoutingContext
 from hermes_feishu_card.diagnostics import (
@@ -995,8 +996,13 @@ def _detect_hermes_runtime_python(hermes_root: Path | str) -> Path | None:
 
 def _check_runtime_hook_import(runtime_python: Path) -> dict[str, Any]:
     code = (
-        "import hermes_feishu_card.hook_runtime as hook_runtime; "
-        "print(getattr(hook_runtime, '__file__', ''))"
+        "import json; "
+        "import hermes_feishu_card as package; "
+        "import hermes_feishu_card.hook_runtime; "
+        "print(json.dumps({"
+        "'version': getattr(package, '__version__', ''), "
+        "'location': getattr(package, '__file__', '')"
+        "}))"
     )
     cwd = _hermes_runtime_cwd(runtime_python)
     try:
@@ -1026,12 +1032,24 @@ def _check_runtime_hook_import(runtime_python: Path) -> dict[str, Any]:
             ),
         }
     if result.returncode == 0:
-        location = result.stdout.strip()
+        try:
+            metadata = json.loads(result.stdout.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError):
+            return {
+                "checked": True,
+                "status": "failed",
+                "python": str(runtime_python),
+                "message": "Hermes runtime returned invalid package metadata.",
+            }
+        version = str(metadata.get("version", "")).strip()
+        location = str(metadata.get("location", "")).strip()
         suffix = f" from {location}" if location else ""
         return {
             "checked": True,
             "status": "ok",
             "python": str(runtime_python),
+            "version": version,
+            "location": location,
             "message": f"Hermes runtime can import hook_runtime{suffix}.",
         }
     detail = _summarize_process_output(result)
@@ -1057,9 +1075,11 @@ def _ensure_hermes_runtime_package(detection: HermesDetection) -> None:
         print("runtime package: skipped (Hermes venv Python not found)")
         return
     report = _check_runtime_hook_import(runtime_python)
-    if report["status"] == "ok":
-        print(f"runtime package: import ok ({runtime_python})")
+    if report["status"] == "ok" and report.get("version") == PACKAGE_VERSION:
+        print(f"runtime package: {PACKAGE_VERSION} import ok ({runtime_python})")
         return
+
+    previous_version = report.get("version") if report["status"] == "ok" else None
 
     spec = _runtime_install_spec()
     if not spec:
@@ -1088,7 +1108,20 @@ def _ensure_hermes_runtime_package(detection: HermesDetection) -> None:
     report = _check_runtime_hook_import(runtime_python)
     if report["status"] != "ok":
         raise ValueError(report["message"])
-    print(f"runtime package: installed into {runtime_python}")
+    if report.get("version") != PACKAGE_VERSION:
+        actual = report.get("version") or "unknown"
+        raise ValueError(
+            "Hermes runtime package version mismatch after install: "
+            f"expected {PACKAGE_VERSION}, got {actual} from "
+            f"{report.get('location') or runtime_python}."
+        )
+    if previous_version:
+        print(
+            f"runtime package: upgraded {previous_version} -> {PACKAGE_VERSION} "
+            f"in {runtime_python}"
+        )
+    else:
+        print(f"runtime package: installed into {runtime_python}")
 
 
 def _run_runtime_pip(

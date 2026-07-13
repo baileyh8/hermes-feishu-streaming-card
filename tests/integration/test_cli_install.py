@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from hermes_feishu_card import __version__ as PACKAGE_VERSION
 from hermes_feishu_card import cli
 from hermes_feishu_card.install import patcher
 
@@ -109,7 +110,7 @@ set -euo pipefail
 printf '%s\\n' "$*" >> {str(runtime_log)!r}
 if [ "$1" = "-c" ]; then
   if [ -f {str(marker)!r} ]; then
-    echo "hook-runtime-ok"
+    printf '%s\\n' '{{"version":"{PACKAGE_VERSION}","location":"/runtime/hermes_feishu_card/__init__.py"}}'
     exit 0
   fi
   echo "No module named hermes_feishu_card" >&2
@@ -138,6 +139,84 @@ exit 0
     assert "install ok" in result.stdout.lower()
 
 
+def test_install_upgrades_importable_outdated_runtime_package(tmp_path, monkeypatch):
+    hermes_dir = copy_hermes(tmp_path)
+    venv_bin = hermes_dir / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    runtime_python = venv_bin / "python"
+    upgraded = tmp_path / "runtime-upgraded"
+    runtime_log = tmp_path / "runtime-python.log"
+    runtime_python.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> {str(runtime_log)!r}
+if [ "$1" = "-c" ]; then
+  if [ -f {str(upgraded)!r} ]; then
+    printf '%s\\n' '{{"version":"{PACKAGE_VERSION}","location":"/runtime/hermes_feishu_card/__init__.py"}}'
+  else
+    printf '%s\\n' '{{"version":"3.6.3","location":"/runtime/hermes_feishu_card/__init__.py"}}'
+  fi
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "--version" ]; then
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  touch {str(upgraded)!r}
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+    monkeypatch.setenv(
+        "HFC_INSTALL_SPEC", f"git+https://example.test/pkg.git@v{PACKAGE_VERSION}"
+    )
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert upgraded.exists()
+    assert (
+        f"-m pip install --upgrade git+https://example.test/pkg.git@v{PACKAGE_VERSION}"
+        in runtime_log.read_text(encoding="utf-8")
+    )
+    assert f"runtime package: upgraded 3.6.3 -> {PACKAGE_VERSION}" in result.stdout
+
+
+def test_install_skips_matching_runtime_package(tmp_path, monkeypatch):
+    hermes_dir = copy_hermes(tmp_path)
+    venv_bin = hermes_dir / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    runtime_python = venv_bin / "python"
+    runtime_log = tmp_path / "runtime-python.log"
+    runtime_python.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> {str(runtime_log)!r}
+if [ "$1" = "-c" ]; then
+  printf '%s\\n' '{{"version":"{PACKAGE_VERSION}","location":"/runtime/hermes_feishu_card/__init__.py"}}'
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  echo "unexpected install" >&2
+  exit 90
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+    monkeypatch.delenv("HFC_INSTALL_SPEC", raising=False)
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert "-m pip install" not in runtime_log.read_text(encoding="utf-8")
+    assert f"runtime package: {PACKAGE_VERSION} import ok" in result.stdout
+
+
 def test_install_does_not_accept_project_cwd_runtime_import_false_positive(
     tmp_path, monkeypatch
 ):
@@ -153,7 +232,7 @@ set -euo pipefail
 printf 'cwd=%s args=%s\\n' "$PWD" "$*" >> {str(runtime_log)!r}
 if [ "$1" = "-c" ]; then
   if [ -f {str(marker)!r} ]; then
-    echo "hook-runtime-ok"
+    printf '%s\\n' '{{"version":"{PACKAGE_VERSION}","location":"/runtime/hermes_feishu_card/__init__.py"}}'
     exit 0
   fi
   if [ "$PWD" != {str(hermes_dir)!r} ]; then
