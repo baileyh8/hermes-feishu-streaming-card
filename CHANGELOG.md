@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.5 — 2026-07-13
+
+See also: [docs/release-notes-v4.0.5.md](docs/release-notes-v4.0.5.md)
+
+### Fixed
+- Fixed issue #115 by comparing the plugin version installed in the Hermes Gateway venv with the invoking CLI package instead of treating any successful `hook_runtime` import as current.
+- An importable but outdated Gateway runtime package is now upgraded from the same install source, then checked again for the expected version and module path.
+
+### Safety
+- Matching runtime versions remain idempotent and skip pip installation.
+- A failed metadata read or post-install version mismatch now fails explicitly instead of reporting a successful setup with a stale Gateway runtime.
+
+### Credits
+- Thanks to @blakejia for the issue #115 upgrade transcript, sidecar metrics, screenshot, and the earlier Gateway venv output showing that version 3.6.3 was still loaded.
+
 ## V4.0.4 — 2026-07-13
 
 See also: [docs/release-notes-v4.0.4.md](docs/release-notes-v4.0.4.md)

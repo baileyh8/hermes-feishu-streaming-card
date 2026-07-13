@@ -2,17 +2,24 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V4.0.4：Markdown 媒体字面量与旧 callback 交互热修（候选）
+### V4.0.5：Gateway runtime 版本同步热修（已发布）
+
+- [x] Issue #115：安装器读取 Gateway venv 中的插件版本，不再把旧版可 import 误判为已升级。
+- [x] runtime 版本落后时沿用当前安装源自动升级，安装后复核版本与模块路径。
+- [x] 同版本保持幂等；metadata 异常或安装后版本不一致时明确失败。
+- [x] `v4.0.5` tag、GitHub Release、四个 assets、公开安装与 #115 回复。
+
+### V4.0.4：Markdown 媒体字面量与旧 callback 交互热修（已发布）
 
 - [x] Issue #107：上游只返回一个含义不明确的 primary window 时使用 `limit` 标签，不误标为 `5h`；双窗口格式保持不变。
 - [x] Issue #110：inline/fenced Markdown code 中的 `MEDIA:` 和本地路径不再进入附件提取与 native delivery。
 - [x] Issue #112：lark SDK 已捕获旧 bound callback 时，`interaction.select` 仍由后台兼容路径转发 sidecar。
 - [x] Issue #111：确认是 #106 的重复反馈，关联 V4.0.3 真实飞书验收。
-- [ ] `v4.0.4` tag、GitHub Release、四个 assets、公开安装与 issues 回复。
+- [x] `v4.0.4` tag、GitHub Release、四个 assets、公开安装与 issues 回复。
 
 ### V4.0.3：#106 stale-hook 媒体正文去重热修（已发布）
 

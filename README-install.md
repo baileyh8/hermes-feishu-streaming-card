@@ -172,7 +172,7 @@ script selects Hermes venv Python and does not fall back to system Python unless
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.4
+export HFC_VERSION=v4.0.5
 bash install-docker.sh
 ```
 
