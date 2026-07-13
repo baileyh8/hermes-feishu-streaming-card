@@ -1592,7 +1592,7 @@ async def _events(request: web.Request) -> web.Response:
             cleanup_orphan_message_lock(request.app, lock_key, lock)
     if post_lock_task is not None and _should_await_card_update(event):
         await post_lock_task
-    if event.event in TERMINAL_EVENTS and post_lock_task is None:
+    if _event_is_terminal(event) and post_lock_task is None:
         cleanup_runtime_state(request.app, time.time())
     return response
 
@@ -1961,6 +1961,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     session = sessions.get(session_key)
     if session is not None:
         event = _event_for_session(incoming_event, session)
+    event_is_terminal = _event_is_terminal(event)
 
     if _skip_native_text_fallback_interaction(request.app, event):
         metrics.events_ignored += 1
@@ -2055,9 +2056,10 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
             # the gateway interrupts a running turn and starts a new one
             # without sending message.completed for the old turn — the old
             # card would be stuck at "生成中" forever.
-            await _abandon_stale_sessions_for_chat(
-                request.app, event.chat_id, session_key, event,
-            )
+            if not _is_independent_notice_event(event):
+                await _abandon_stale_sessions_for_chat(
+                    request.app, event.chat_id, session_key, event,
+                )
             session = CardSession(
                 conversation_id=event.conversation_id,
                 message_id=event.message_id,
@@ -2112,7 +2114,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 message_bot_ids[session_key] = route.bot_id
                 if event.event == "interaction.requested":
                     _store_interaction_result(request.app, session)
-                if event.event in TERMINAL_EVENTS:
+                if event_is_terminal:
                     _store_card_summary(request.app, event, session, message_id)
                     request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
                         "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -2155,14 +2157,14 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
     # the native text message (avoiding duplicate delivery).
     terminal_already_handled = (
         not applied
-        and event.event in TERMINAL_EVENTS
+        and event_is_terminal
         and session.status in {"completed", "failed"}
     )
     if terminal_already_handled:
         applied = True
     if applied and event.event.startswith("interaction."):
         _store_interaction_result(request.app, session)
-    if event.event in TERMINAL_EVENTS:
+    if event_is_terminal:
         request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
             "message_id_hash": _diagnostic_id_hash(event.message_id),
             "event": event.event,
@@ -2176,9 +2178,9 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
         return web.json_response({"ok": True, "applied": True}), None
     post_lock_task = None
     if applied and feishu_message_id is not None:
-        if event.event in TERMINAL_EVENTS:
+        if event_is_terminal:
             _store_card_summary(request.app, event, session, feishu_message_id)
-        is_terminal = event.event in TERMINAL_EVENTS
+        is_terminal = event_is_terminal
         controller = _flush_controller_for_session(request.app, session_key)
         bot_id = message_bot_ids.get(session_key)
 
@@ -2401,6 +2403,24 @@ def _skip_native_text_fallback_interaction(
     if fallback_policy != "native_text":
         return False
     return _interaction_mode_for_session_key(app, _session_key(event)) == "text"
+
+
+def _is_independent_notice_event(event: SidecarEvent) -> bool:
+    if event.event != "system.notice":
+        return False
+    data = event.data if isinstance(event.data, dict) else {}
+    scope = str(data.get("notice_scope") or "session").strip().lower()
+    delivery_kind = str(data.get("delivery_kind") or "").strip().lower()
+    return scope == "independent" or delivery_kind == "notice"
+
+
+def _event_is_terminal(event: SidecarEvent) -> bool:
+    if event.event in TERMINAL_EVENTS:
+        return True
+    if not _is_independent_notice_event(event):
+        return False
+    terminal = event.data.get("notice_terminal")
+    return not (isinstance(terminal, bool) and terminal is False)
 
 
 def _should_await_card_update(event: SidecarEvent) -> bool:
@@ -2734,6 +2754,8 @@ async def _abandon_stale_sessions_for_chat(
         if sess.conversation_id != new_conversation_id:
             continue
         if sess.status in {"completed", "failed"}:
+            continue
+        if sess.delivery_kind == "notice":
             continue
         # Match profile prefix
         key_profile = key.split(":", 1)[0] if ":" in key else ""

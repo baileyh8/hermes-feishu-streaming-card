@@ -126,7 +126,7 @@ class CardSession:
             or event.chat_id != self.chat_id
         ):
             return False
-        is_terminal_event = event.event in {"message.completed", "message.failed"}
+        is_terminal_event = _is_terminal_session_event(event)
         if event.sequence <= self.last_sequence and not is_terminal_event:
             return False
         if self.status in {"completed", "failed"}:
@@ -222,7 +222,11 @@ class CardSession:
                 self.notice_title = title
                 self.notice_level = level
                 self.answer_text = content or title
-                self.status = "completed"
+                self.status = (
+                    "completed"
+                    if _notice_is_terminal(event.data.get("notice_terminal"))
+                    else "running"
+                )
                 self.updated_at = time.time()
                 self.refresh_display_status_source()
                 return True
@@ -510,6 +514,24 @@ def _notice_level(value: Any) -> str:
     if level in {"ok", "done", "green"}:
         return "success"
     return "info"
+
+
+def _notice_is_terminal(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return True
+
+
+def _is_terminal_session_event(event: SidecarEvent) -> bool:
+    if event.event in {"message.completed", "message.failed"}:
+        return True
+    if event.event != "system.notice":
+        return False
+    scope = str(event.data.get("notice_scope") or "session").strip().lower()
+    delivery_kind = str(event.data.get("delivery_kind") or "").strip().lower()
+    return (
+        scope == "independent" or delivery_kind == "notice"
+    ) and _notice_is_terminal(event.data.get("notice_terminal"))
 
 
 def _has_substantial_completed_suffix(final: str, stripped: str) -> bool:

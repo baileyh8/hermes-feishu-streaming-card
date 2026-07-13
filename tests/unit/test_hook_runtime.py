@@ -1169,6 +1169,273 @@ def test_native_feishu_system_notice_send_suppresses_text_when_card_times_out(mo
     assert adapter.text_sent == []
 
 
+def _install_background_notice_probe(
+    monkeypatch,
+    *,
+    post_result=None,
+    post_error=None,
+):
+    posted = []
+
+    async def fake_post_json_ordered_response(url, payload, timeout):
+        posted.append((url, payload, timeout))
+        if post_error is not None:
+            raise post_error
+        if post_result is not None:
+            return post_result
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(
+        hook_runtime,
+        "_post_json_ordered_response",
+        fake_post_json_ordered_response,
+    )
+
+    class DummyFeishuAdapter:
+        name = "feishu"
+
+        def __init__(self):
+            self._client = object()
+            self.text_sent = []
+
+        async def send(self, chat_id, content, reply_to=None, metadata=None):
+            self.text_sent.append((chat_id, content, reply_to, metadata))
+            return SimpleNamespace(success=True, message_id="om_native_text")
+
+    adapter = DummyFeishuAdapter()
+    runner = SimpleNamespace(adapters={"feishu": adapter})
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner) is True
+    return adapter, posted
+
+
+def test_background_process_notice_classification_and_stable_id():
+    running = hook_runtime._hfc_classify_system_notice(
+        "[Background process proc_109e6dc419af is still running~ "
+        "New output:\nUpdating files: 76%]"
+    )
+    completed = hook_runtime._hfc_classify_system_notice(
+        "[Background process proc_109e6dc419af finished with exit code 0~ "
+        "Here's the final output:\nCloning into 'skills'...\n]"
+    )
+    failed = hook_runtime._hfc_classify_system_notice(
+        "[Background process proc_109e6dc419af finished with exit code 17~ "
+        "Here's the final output:\nReading skill failed\n]"
+    )
+    unknown = hook_runtime._hfc_classify_system_notice(
+        "[Background process proc_109e6dc419af finished with exit code None~ "
+        "Here's the final output:\n\n]"
+    )
+    killed = hook_runtime._hfc_classify_system_notice(
+        "[Background process proc_109e6dc419af finished with exit code -9~ "
+        "Here's the final output:\nkilled\n]"
+    )
+    another = hook_runtime._hfc_classify_system_notice(
+        "[Background process proc_aaaaaaaaaaaa finished with exit code 0~ "
+        "Here's the final output:\ndone\n]"
+    )
+
+    assert running == {
+        "title": "后台进程运行中",
+        "level": "info",
+        "notice_kind": "background-process",
+        "notice_id": "background-process:proc_109e6dc419af",
+        "notice_terminal": False,
+    }
+    assert completed == {
+        "title": "后台进程已完成",
+        "level": "success",
+        "notice_kind": "background-process",
+        "notice_id": "background-process:proc_109e6dc419af",
+        "notice_terminal": True,
+    }
+    assert failed == {
+        "title": "后台进程失败",
+        "level": "error",
+        "notice_kind": "background-process",
+        "notice_id": "background-process:proc_109e6dc419af",
+        "notice_terminal": True,
+    }
+    assert unknown == {
+        "title": "后台进程已结束",
+        "level": "warning",
+        "notice_kind": "background-process",
+        "notice_id": "background-process:proc_109e6dc419af",
+        "notice_terminal": True,
+    }
+    assert killed == failed
+    assert another is not None
+    assert another["notice_id"] == "background-process:proc_aaaaaaaaaaaa"
+    independent_ids = {
+        hook_runtime._hfc_independent_notice_message_id(
+            "oc_abc",
+            content,
+            notice,
+        )
+        for content, notice in (
+            ("running", running),
+            ("completed", completed),
+            ("failed", failed),
+            ("unknown", unknown),
+            ("killed", killed),
+        )
+    }
+    assert len(independent_ids) == 1
+
+
+@pytest.mark.parametrize(
+    (
+        "content",
+        "expected_title",
+        "expected_level",
+        "expected_kind",
+        "expected_terminal",
+    ),
+    [
+        (
+            "[Background process proc_111111111111 is still running~ "
+            "New output:\nUpdating files: 76%]",
+            "后台进程运行中",
+            "info",
+            "background-process",
+            False,
+        ),
+        (
+            "[Background process proc_222222222222 finished with exit code 0~ "
+            "Here's the final output:\nCloning into 'skills'...\n]",
+            "后台进程已完成",
+            "success",
+            "background-process",
+            True,
+        ),
+        (
+            "[Background process proc_333333333333 finished with exit code 9~ "
+            "Here's the final output:\nfatal: repository not found\n]",
+            "后台进程失败",
+            "error",
+            "background-process",
+            True,
+        ),
+        (
+            '✅ Background task complete\nPrompt: "Clone repositories"\n\nDone.',
+            "后台任务已完成",
+            "success",
+            "background-task",
+            True,
+        ),
+        (
+            "❌ Background task bg_123456_abcdef failed: provider timeout",
+            "后台任务失败",
+            "error",
+            "background-task",
+            True,
+        ),
+    ],
+)
+def test_background_direct_send_uses_system_notice_card(
+    monkeypatch,
+    content,
+    expected_title,
+    expected_level,
+    expected_kind,
+    expected_terminal,
+):
+    adapter, posted = _install_background_notice_probe(monkeypatch)
+
+    async def run():
+        return await adapter.send(
+            "oc_topic",
+            content,
+            metadata={"thread_id": "omt_topic"},
+        )
+
+    result = asyncio.run(run())
+
+    assert result.success is True
+    assert adapter.text_sent == []
+    assert len(posted) == 1
+    _, payload, timeout = posted[0]
+    assert timeout == hook_runtime.TERMINAL_TIMEOUT_SECONDS
+    assert result.message_id == payload["message_id"]
+    assert payload["event"] == "system.notice"
+    assert payload["conversation_id"] == "omt_topic"
+    assert payload["thread_id"] == "omt_topic"
+    assert payload["data"]["notice_scope"] == "independent"
+    assert payload["data"]["title"] == expected_title
+    assert payload["data"]["level"] == expected_level
+    assert payload["data"]["notice_kind"] == expected_kind
+    assert payload["data"]["notice_terminal"] is expected_terminal
+    assert payload["data"]["notice_id"]
+    assert payload["data"]["content"] == content
+
+
+def test_identical_background_task_results_use_distinct_independent_message_ids(
+    monkeypatch,
+):
+    adapter, posted = _install_background_notice_probe(monkeypatch)
+    content = '✅ Background task complete\nPrompt: "Clone repositories"\n\nDone.'
+
+    async def run():
+        first = await adapter.send("oc_abc", content)
+        second = await adapter.send("oc_abc", content)
+        return first, second
+
+    first, second = asyncio.run(run())
+
+    assert first.success is True
+    assert second.success is True
+    assert first.message_id != second.message_id
+    assert adapter.text_sent == []
+    assert len(posted) == 2
+    first_payload = posted[0][1]
+    second_payload = posted[1][1]
+    assert first_payload["data"]["notice_id"] == second_payload["data"]["notice_id"]
+    assert first_payload["message_id"] != second_payload["message_id"]
+
+
+def test_background_notice_timeout_suppresses_native_text(monkeypatch):
+    adapter, posted = _install_background_notice_probe(
+        monkeypatch,
+        post_error=TimeoutError("timed out"),
+    )
+    content = (
+        "[Background process proc_444444444444 finished with exit code 0~ "
+        "Here's the final output:\ndone\n]"
+    )
+
+    result = asyncio.run(adapter.send("oc_abc", content))
+
+    assert result.success is True
+    assert result.message_id == "notice_suppressed"
+    assert len(posted) == 1
+    assert adapter.text_sent == []
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "[Background process proc_abc finished somehow]",
+        "[Background process proc_555555555555 finished with exit code zero~ "
+        "Here's the final output:\ndone\n]",
+        "[Background process proc_555555555555 finished with exit code 0~ "
+        "Here's the final output:\ndone\n] trailing text",
+        "ordinary prefix [Background process proc_555555555555 is still running~ "
+        "New output:\n42%]",
+        "✅ Background task",
+        "✅ Background task complete\nordinary text without a Prompt envelope",
+        "❌ Background task failed without an id",
+    ],
+)
+def test_malformed_background_notice_fails_open(monkeypatch, content):
+    adapter, posted = _install_background_notice_probe(monkeypatch)
+
+    result = asyncio.run(adapter.send("oc_abc", content))
+
+    assert result.success is True
+    assert result.message_id == "om_native_text"
+    assert posted == []
+    assert adapter.text_sent == [("oc_abc", content, None, None)]
+
+
 def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkeypatch):
     posted = []
 

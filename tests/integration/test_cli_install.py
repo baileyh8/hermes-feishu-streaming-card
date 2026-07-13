@@ -777,14 +777,19 @@ def test_install_and_restore_013_plus_fixture(tmp_path):
         Path(__file__).resolve().parents[1] / "fixtures" / "hermes_0_13_plus",
         hermes_dir,
     )
+    original = (hermes_dir / "gateway" / "run.py").read_text(encoding="utf-8")
 
     assert cli.main(["install", "--hermes-dir", str(hermes_dir), "--yes"]) == 0
     patched = (hermes_dir / "gateway" / "run.py").read_text(encoding="utf-8")
     assert "HERMES_FEISHU_CARD_STRATEGY gateway_run_013_plus" in patched
+    assert patcher.COMMAND_CARD_STARTUP_PATCH_BEGIN in patched
+    assert patched.index(patcher.COMMAND_CARD_STARTUP_PATCH_BEGIN) < patched.index(
+        "watchers = process_registry.pending_watchers"
+    )
 
     assert cli.main(["restore", "--hermes-dir", str(hermes_dir), "--yes"]) == 0
     restored = (hermes_dir / "gateway" / "run.py").read_text(encoding="utf-8")
-    assert "HERMES_FEISHU_CARD_PATCH_BEGIN" not in restored
+    assert restored == original
 
 
 def test_install_and_restore_latest_layout_patches_scheduler_cron(tmp_path):

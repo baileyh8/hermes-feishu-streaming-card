@@ -1,4 +1,18 @@
 class GatewayRunner:
+    async def start(self):
+        await self._finish_startup_restore()
+
+        # Drain any recovered process watchers from the crash-recovery checkpoint.
+        try:
+            from tools.process_registry import process_registry
+
+            watchers = process_registry.pending_watchers
+            process_registry.pending_watchers = []
+            for watcher in watchers:
+                self._run_process_watcher(watcher)
+        except Exception:
+            pass
+
     async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):
         _msg_start_time = 0.0
         agent_result = {

@@ -189,6 +189,74 @@ def test_apply_patch_installs_feishu_command_card_adapter_methods():
     assert patcher.remove_patch(patched) == content
 
 
+def test_apply_patch_installs_command_card_adapter_before_recovered_watchers():
+    content = (
+        "class GatewayRunner:\n"
+        "    async def start(self):\n"
+        "        await self._finish_startup_restore()\n"
+        "        try:\n"
+        "            from tools.process_registry import process_registry\n"
+        "            watchers = process_registry.pending_watchers\n"
+        "            process_registry.pending_watchers = []\n"
+        "            for watcher in watchers:\n"
+        "                self._run_process_watcher(watcher)\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "\n"
+        "    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "        response = 'ok'\n"
+        "        _response_time = 1\n"
+        "        agent_result = {}\n"
+        "        return response\n"
+    )
+
+    patched = patcher.apply_patch(content, strategy="gateway_run_013_plus")
+
+    ast.parse(patched)
+    assert patcher.COMMAND_CARD_STARTUP_PATCH_BEGIN in patched
+    assert "_hfc_install_command_cards(self)" in patched
+    assert patched.index(patcher.COMMAND_CARD_STARTUP_PATCH_BEGIN) < patched.index(
+        "watchers = process_registry.pending_watchers"
+    )
+    assert patcher.apply_patch(patched, strategy="gateway_run_013_plus") == patched
+    assert patcher.remove_patch(patched) == content
+
+
+@pytest.mark.parametrize(
+    "runner_name, watcher_call",
+    [
+        ("OtherRunner", "self._run_process_watcher(watcher)"),
+        ("GatewayRunner", "self._record_recovered_watcher(watcher)"),
+    ],
+)
+def test_command_card_startup_patch_requires_gateway_runner_recovered_watcher_drain(
+    runner_name,
+    watcher_call,
+):
+    content = (
+        f"class {runner_name}:\n"
+        "    async def start(self):\n"
+        "        try:\n"
+        "            from tools.process_registry import process_registry\n"
+        "            watchers = process_registry.pending_watchers\n"
+        "            for watcher in watchers:\n"
+        f"                {watcher_call}\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "\n"
+        "    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "        response = 'ok'\n"
+        "        _response_time = 1\n"
+        "        agent_result = {}\n"
+        "        return response\n"
+    )
+
+    patched = patcher.apply_patch(content, strategy="gateway_run_013_plus")
+
+    assert patcher.COMMAND_CARD_STARTUP_PATCH_BEGIN not in patched
+    assert patcher.remove_patch(patched) == content
+
+
 def test_apply_patch_013_plus_intercepts_hfc_command_before_unknown_slash():
     content = (
         "class GatewayRunner:\n"

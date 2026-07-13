@@ -107,13 +107,17 @@ Hermes 原生运行提示会被归一为 `system.notice`：
 - skill loading
 - self-improvement review
 - context compression
+- background process running / finished output
+- background task complete / failed output
 
 处理规则：
 
 1. 如果当前 session 可用，notice 进入辅助 timeline。
 2. 如果没有当前 session，发送独立小卡片。
-3. 已识别 notice 如果卡片投递超时，也不再退回原生灰色文本。
-4. 未识别 notice 保持 Hermes 原生路径，避免吞掉重要未知提示。
+3. 同一 background process 使用稳定的 `notice_id` 和独立 message id；running 更新与 finished 终态复用同一张卡。exit code `0` 显示成功，非零显示失败，未知 exit code 显示警告。
+4. Gateway 启动时会在 recovered watcher drain 前安装 adapter wrapper；contextless / recovered watcher 优先沿用 Hermes `metadata.thread_id`，避免独立通知掉出原 topic。
+5. 已识别 notice 如果卡片投递超时，也不再退回原生灰色文本。
+6. 只有严格匹配 Hermes 固定 envelope 和 production process/task id 的后台通知才会被接管；未知或不完整文本保持 Hermes 原生路径，避免吞掉普通回复。
 
 ## 独立 slash command 卡片
 

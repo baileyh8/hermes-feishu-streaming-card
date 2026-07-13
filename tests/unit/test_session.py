@@ -374,6 +374,44 @@ def test_independent_system_notice_becomes_completed_notice_card():
     assert session.timeline.snapshot() == []
 
 
+def test_independent_terminal_notice_applies_after_sequence_resets():
+    session = CardSession(
+        conversation_id="chat-1", message_id="notice-process", chat_id="oc_abc"
+    )
+
+    assert session.apply(
+        event(
+            "system.notice",
+            100,
+            {
+                "title": "后台进程运行中",
+                "content": "Updating files: 76%",
+                "notice_scope": "independent",
+                "notice_terminal": False,
+            },
+            message_id="notice-process",
+        )
+    )
+    assert session.status == "running"
+
+    assert session.apply(
+        event(
+            "system.notice",
+            1,
+            {
+                "title": "后台进程已完成",
+                "content": "Updating files: 100%, done.",
+                "notice_scope": "independent",
+                "notice_terminal": True,
+            },
+            message_id="notice-process",
+        )
+    )
+    assert session.status == "completed"
+    assert session.last_sequence == 100
+    assert session.visible_main_text == "Updating files: 100%, done."
+
+
 def test_answer_delta_takes_over_visible_text_before_completion():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 1, {"text": "思考内容。"}))

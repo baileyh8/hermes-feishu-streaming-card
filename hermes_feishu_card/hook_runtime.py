@@ -46,6 +46,27 @@ MEDIA_RE = re.compile(r"MEDIA:([^\s\]]+)")
 LOCAL_FILE_RE = re.compile(
     r"(?<![:\w/])(/[^\s`]+\.(?:png|jpg|jpeg|webp|gif|pdf|txt|md|csv|xlsx|docx|mp3|wav|ogg|mp4|mov|webm))"
 )
+BACKGROUND_PROCESS_FINISHED_RE = re.compile(
+    r"\A\[Background process "
+    r"(?P<process_id>proc_[0-9a-f]{12}) "
+    r"finished with exit code (?P<exit_code>-?\d+|None)~ "
+    r"Here's the final output:\n[\s\S]*\]\Z"
+)
+BACKGROUND_PROCESS_RUNNING_RE = re.compile(
+    r"\A\[Background process "
+    r"(?P<process_id>proc_[0-9a-f]{12}) "
+    r"is still running~ New output:\n[\s\S]*\]\Z"
+)
+BACKGROUND_TASK_COMPLETED_RE = re.compile(
+    r"\A✅ Background task complete\n"
+    r'Prompt: "(?:[\s\S]{60}\.\.\.|[\s\S]{0,60})"\n\n'
+    r"[\s\S]*\Z"
+)
+BACKGROUND_TASK_FAILED_RE = re.compile(
+    r"\A❌ Background task "
+    r"(?P<task_id>bg_\d{6}_[0-9a-f]{6}) "
+    r"failed:(?:[ \t\r\n][\s\S]*)?\Z"
+)
 ATTACHMENT_TRAILING_PUNCTUATION = ",.;:)]}，。；：）】}"
 NATIVE_DELIVERY_MARKERS = ("[[as_document]]", "[[audio_as_voice]]")
 NATIVE_DELIVERY_ATTACHMENT_FIELDS = (
@@ -1811,6 +1832,12 @@ def _metadata_reply_to(metadata: dict[str, Any] | None) -> str:
     ).strip()
 
 
+def _metadata_thread_id(metadata: dict[str, Any] | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    return str(metadata.get("thread_id") or "").strip()
+
+
 def _send_result(success: bool, message_id: str | None = None, error: str | None = None):
     return SimpleNamespace(success=success, message_id=message_id, error=error)
 
@@ -2124,10 +2151,14 @@ def _hfc_notice_context_from_source(
     }
 
 
-def _hfc_classify_system_notice(content: Any) -> dict[str, str] | None:
-    text = str(content or "").strip()
-    if not text:
+def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
+    raw_text = str(content or "")
+    if not raw_text.strip():
         return None
+    background_notice = _hfc_classify_background_notice(raw_text)
+    if background_notice is not None:
+        return background_notice
+    text = raw_text.strip()
     lowered = text.lower()
     if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
         return {
@@ -2170,6 +2201,61 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, str] | None:
             "level": "info",
             "notice_kind": "compression",
             "notice_id": _hfc_content_notice_id("compression", text),
+        }
+    return None
+
+
+def _hfc_classify_background_notice(text: str) -> dict[str, Any] | None:
+    process_finished = BACKGROUND_PROCESS_FINISHED_RE.fullmatch(text)
+    if process_finished is not None:
+        process_id = process_finished.group("process_id")
+        exit_code_text = process_finished.group("exit_code")
+        if exit_code_text == "0":
+            title = "后台进程已完成"
+            level = "success"
+        elif exit_code_text == "None":
+            title = "后台进程已结束"
+            level = "warning"
+        else:
+            title = "后台进程失败"
+            level = "error"
+        return {
+            "title": title,
+            "level": level,
+            "notice_kind": "background-process",
+            "notice_id": f"background-process:{process_id}",
+            "notice_terminal": True,
+        }
+
+    process_running = BACKGROUND_PROCESS_RUNNING_RE.fullmatch(text)
+    if process_running is not None:
+        process_id = process_running.group("process_id")
+        return {
+            "title": "后台进程运行中",
+            "level": "info",
+            "notice_kind": "background-process",
+            "notice_id": f"background-process:{process_id}",
+            "notice_terminal": False,
+        }
+
+    if BACKGROUND_TASK_COMPLETED_RE.fullmatch(text) is not None:
+        return {
+            "title": "后台任务已完成",
+            "level": "success",
+            "notice_kind": "background-task",
+            "notice_id": _hfc_content_notice_id("background-task-completed", text),
+            "notice_terminal": True,
+        }
+
+    task_failed = BACKGROUND_TASK_FAILED_RE.fullmatch(text)
+    if task_failed is not None:
+        task_id = task_failed.group("task_id")
+        return {
+            "title": "后台任务失败",
+            "level": "error",
+            "notice_kind": "background-task",
+            "notice_id": f"background-task:{task_id}",
+            "notice_terminal": True,
         }
     return None
 
@@ -2257,12 +2343,18 @@ def _hfc_notice_post_applied(result: Any) -> bool:
 def _hfc_independent_notice_message_id(
     chat_id: str,
     content: str,
-    notice: dict[str, str],
+    notice: dict[str, Any],
 ) -> str:
+    notice_id = str(notice.get("notice_id") or "").strip()
+    if notice.get("notice_kind") == "background-process" and notice_id:
+        raw = f"{chat_id}:{notice_id}".encode("utf-8")
+        return "notice_" + sha256(raw).hexdigest()[:16]
+    if notice_id.startswith("background-task-completed:"):
+        return "notice_" + secrets.token_hex(8)
     bucket = int(time.time() // 300)
     raw = (
         f"{chat_id}:"
-        f"{notice.get('notice_id', '')}:"
+        f"{notice_id}:"
         f"{content}:"
         f"{bucket}"
     ).encode("utf-8")
@@ -2276,13 +2368,17 @@ def _hfc_build_system_notice_payload(
     reply_to: str | None,
     metadata: dict[str, Any] | None,
     context: dict[str, str],
-    notice: dict[str, str],
+    notice: dict[str, Any],
     notice_scope: str,
     message_id: str,
 ) -> dict[str, Any]:
     reply_id = str(reply_to or "").strip() or _metadata_reply_to(metadata)
-    conversation_id = str(context.get("conversation_id") or chat_id).strip() or chat_id
-    thread_id = str(context.get("thread_id") or "").strip()
+    thread_id = str(
+        context.get("thread_id") or _metadata_thread_id(metadata) or ""
+    ).strip()
+    conversation_id = str(
+        context.get("conversation_id") or thread_id or chat_id
+    ).strip() or chat_id
     source = SimpleNamespace(platform="feishu", chat_id=chat_id, thread_id=thread_id)
     local_vars: dict[str, Any] = {
         "source": source,
@@ -2297,6 +2393,8 @@ def _hfc_build_system_notice_payload(
         "_hfc_notice_scope": notice_scope,
         "delivery_kind": "notice" if notice_scope == "independent" else "chat",
     }
+    if "notice_terminal" in notice:
+        local_vars["_hfc_notice_terminal"] = bool(notice["notice_terminal"])
     if reply_id:
         local_vars["reply_to_message_id"] = reply_id
     payload = build_event("system.notice", local_vars)
@@ -4893,6 +4991,12 @@ def _event_data(
                 "notice_scope": notice_scope,
             }
         )
+        notice_terminal = local_vars.get(
+            "_hfc_notice_terminal",
+            local_vars.get("notice_terminal"),
+        )
+        if isinstance(notice_terminal, bool):
+            data["notice_terminal"] = notice_terminal
         delivery_kind = _first_string(local_vars, ("delivery_kind",))
         if delivery_kind:
             data["delivery_kind"] = delivery_kind

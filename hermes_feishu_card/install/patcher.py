@@ -23,6 +23,10 @@ SLASH_CONFIRM_PATCH_BEGIN = "# HERMES_FEISHU_CARD_SLASH_CONFIRM_PATCH_BEGIN"
 SLASH_CONFIRM_PATCH_END = "# HERMES_FEISHU_CARD_SLASH_CONFIRM_PATCH_END"
 COMMAND_CARD_PATCH_BEGIN = "# HERMES_FEISHU_CARD_COMMAND_CARD_PATCH_BEGIN"
 COMMAND_CARD_PATCH_END = "# HERMES_FEISHU_CARD_COMMAND_CARD_PATCH_END"
+COMMAND_CARD_STARTUP_PATCH_BEGIN = (
+    "# HERMES_FEISHU_CARD_COMMAND_CARD_STARTUP_PATCH_BEGIN"
+)
+COMMAND_CARD_STARTUP_PATCH_END = "# HERMES_FEISHU_CARD_COMMAND_CARD_STARTUP_PATCH_END"
 PLATFORM_NOTICE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_PLATFORM_NOTICE_PATCH_BEGIN"
 PLATFORM_NOTICE_PATCH_END = "# HERMES_FEISHU_CARD_PLATFORM_NOTICE_PATCH_END"
 HFC_COMMAND_PATCH_BEGIN = "# HERMES_FEISHU_CARD_HFC_COMMAND_PATCH_BEGIN"
@@ -43,6 +47,7 @@ def apply_patch(content: str, strategy: str = "legacy_gateway_run") -> str:
     content = _apply_queued_complete_patch(content)
     if strategy == "gateway_run_013_plus":
         content = _apply_cron_patch(content)
+        content = _apply_command_card_startup_patch(content)
         content = _apply_command_card_adapter_patch(content)
         content = _apply_hfc_command_patch(content)
         content = _apply_platform_notice_patch(content)
@@ -282,6 +287,39 @@ def _apply_command_card_adapter_patch(content: str) -> str:
     return content
 
 
+def _apply_command_card_startup_patch(content: str) -> str:
+    owned_block = _find_simple_marker_block(
+        content,
+        COMMAND_CARD_STARTUP_PATCH_BEGIN,
+        COMMAND_CARD_STARTUP_PATCH_END,
+        "command card startup patch markers",
+    )
+    if owned_block is not None:
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_command_card_startup_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
+
+    tree = _parse_content(content)
+    func = _find_gateway_runner_method(tree, "start")
+    if func is None:
+        return content
+    drain = _find_recovered_watcher_drain(func)
+    if drain is None or drain.lineno is None:
+        return content
+
+    lines = content.splitlines(keepends=True)
+    insert_at = drain.lineno - 1
+    indent = _line_indent(lines, insert_at)
+    newline = _line_ending(lines[insert_at]) or _detect_newline(content)
+    hook = _render_command_card_startup_hook_block(indent, newline)
+    return "".join(lines[:insert_at] + hook + lines[insert_at:])
+
+
 def _apply_platform_notice_patch(content: str) -> str:
     owned_block = _find_simple_marker_block(
         content,
@@ -354,6 +392,13 @@ def _apply_hfc_command_patch(content: str) -> str:
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
     content = _remove_cron_patch(content)
+    content = _remove_simple_owned_patch(
+        content,
+        COMMAND_CARD_STARTUP_PATCH_BEGIN,
+        COMMAND_CARD_STARTUP_PATCH_END,
+        _render_command_card_startup_hook_block,
+        "command card startup patch markers",
+    )
     content = _remove_simple_owned_patch(
         content,
         COMMAND_CARD_PATCH_BEGIN,
@@ -464,6 +509,7 @@ def remove_patch_lenient(content: str) -> str:
         (THINKING_DELTA_PATCH_BEGIN, THINKING_DELTA_PATCH_END),
         (CLARIFY_PATCH_BEGIN, CLARIFY_PATCH_END),
         (APPROVAL_PATCH_BEGIN, APPROVAL_PATCH_END),
+        (COMMAND_CARD_STARTUP_PATCH_BEGIN, COMMAND_CARD_STARTUP_PATCH_END),
         (COMMAND_CARD_PATCH_BEGIN, COMMAND_CARD_PATCH_END),
         (HFC_COMMAND_PATCH_BEGIN, HFC_COMMAND_PATCH_END),
         (PLATFORM_NOTICE_PATCH_BEGIN, PLATFORM_NOTICE_PATCH_END),
@@ -1011,6 +1057,40 @@ def _find_async_function(tree, name: str):
                 if isinstance(child, ast.AsyncFunctionDef) and child.name == name:
                     return child
 
+    return None
+
+
+def _find_gateway_runner_method(tree, name: str):
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name != "GatewayRunner":
+            continue
+        for child in node.body:
+            if isinstance(child, ast.AsyncFunctionDef) and child.name == name:
+                return child
+    return None
+
+
+def _find_recovered_watcher_drain(func):
+    for node in func.body:
+        if not isinstance(node, ast.Try):
+            continue
+        has_pending_watchers = any(
+            isinstance(child, ast.Attribute)
+            and child.attr == "pending_watchers"
+            and isinstance(child.value, ast.Name)
+            and child.value.id == "process_registry"
+            for child in ast.walk(node)
+        )
+        has_watcher_call = any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "_run_process_watcher"
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == "self"
+            for child in ast.walk(node)
+        )
+        if has_pending_watchers and has_watcher_call:
+            return node
     return None
 
 
@@ -1601,6 +1681,21 @@ def _render_command_card_adapter_hook_block(indent: str, newline: str):
         f"{inner_indent}_hfc_install_command_cards(self, event=event){newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMMAND_CARD_PATCH_END}{newline}",
+    ]
+
+
+def _render_command_card_startup_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}{COMMAND_CARD_STARTUP_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import install_feishu_command_card_adapter_methods as _hfc_install_command_cards{newline}"
+        ),
+        f"{inner_indent}_hfc_install_command_cards(self){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{COMMAND_CARD_STARTUP_PATCH_END}{newline}",
     ]
 
 

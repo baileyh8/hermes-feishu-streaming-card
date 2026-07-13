@@ -4886,6 +4886,194 @@ async def test_independent_system_notice_without_started_sends_notice_card(clien
     assert feishu_client.updated == []
 
 
+async def test_independent_background_process_notice_updates_same_card(client):
+    test_client, feishu_client = client
+    message_id = "notice_background_process_proc_109e6dc419af"
+
+    running_response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            100,
+            {
+                "title": "后台进程运行中",
+                "content": "Updating files: 76%",
+                "notice_scope": "independent",
+                "notice_kind": "background-process",
+                "notice_id": "background-process:proc_109e6dc419af",
+                "notice_terminal": False,
+                "level": "info",
+            },
+            message_id=message_id,
+        ),
+    )
+
+    assert running_response.status == 200
+    assert await running_response.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent[0][1]["header"]["title"]["content"] == "后台进程运行中"
+    assert feishu_client.updated == []
+
+    completed_response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            1,
+            {
+                "title": "后台进程已完成",
+                "content": "Updating files: 100%, done.",
+                "notice_scope": "independent",
+                "notice_kind": "background-process",
+                "notice_id": "background-process:proc_109e6dc419af",
+                "notice_terminal": True,
+                "level": "success",
+            },
+            message_id=message_id,
+        ),
+    )
+
+    assert completed_response.status == 200
+    assert await completed_response.json() == {"ok": True, "applied": True}
+    assert len(feishu_client.sent) == 1
+    assert len(feishu_client.updated) == 1
+    card = feishu_client.updated[0][1]
+    assert card["header"]["title"]["content"] == "后台进程已完成"
+    assert card["header"]["template"] == "green"
+    assert "Updating files: 100%, done." in str(card)
+
+
+async def test_independent_background_notices_do_not_abandon_active_cards(client):
+    test_client, _feishu_client = client
+    conversation_id = "conversation-background-concurrency"
+
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id=conversation_id,
+            message_id="main-turn-1",
+        ),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            100,
+            {
+                "title": "后台进程运行中",
+                "content": "process one: 50%",
+                "notice_scope": "independent",
+                "notice_kind": "background-process",
+                "notice_id": "background-process:proc_111111111111",
+                "notice_terminal": False,
+                "level": "info",
+            },
+            conversation_id=conversation_id,
+            message_id="notice-process-one",
+        ),
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            100,
+            {
+                "title": "后台进程运行中",
+                "content": "process two: 50%",
+                "notice_scope": "independent",
+                "notice_kind": "background-process",
+                "notice_id": "background-process:proc_222222222222",
+                "notice_terminal": False,
+                "level": "info",
+            },
+            conversation_id=conversation_id,
+            message_id="notice-process-two",
+        ),
+    )
+
+    sessions = test_client.app[SESSIONS_KEY]
+    assert sessions["main-turn-1"].status == "thinking"
+    assert sessions["notice-process-one"].status == "running"
+    assert sessions["notice-process-two"].status == "running"
+
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started",
+            0,
+            conversation_id=conversation_id,
+            message_id="main-turn-2",
+        ),
+    )
+
+    assert sessions["main-turn-1"].status == "completed"
+    assert sessions["notice-process-one"].status == "running"
+    assert sessions["notice-process-two"].status == "running"
+
+
+async def test_background_notice_terminal_update_retries_and_cleans_controller(
+    client, monkeypatch
+):
+    test_client, feishu_client = client
+    message_id = "notice-background-terminal-retry"
+
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            100,
+            {
+                "title": "后台进程运行中",
+                "content": "Updating files: 76%",
+                "notice_scope": "independent",
+                "notice_kind": "background-process",
+                "notice_id": "background-process:proc_333333333333",
+                "notice_terminal": False,
+                "level": "info",
+            },
+            message_id=message_id,
+        ),
+    )
+    feishu_client.update_failures_remaining = sidecar_server.UPDATE_MAX_ATTEMPTS
+
+    async def fake_sleep(_delay):
+        return None
+
+    monkeypatch.setattr(sidecar_server.asyncio, "sleep", fake_sleep)
+    completed = await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            1,
+            {
+                "title": "后台进程已完成",
+                "content": "Updating files: 100%, done.",
+                "notice_scope": "independent",
+                "notice_kind": "background-process",
+                "notice_id": "background-process:proc_333333333333",
+                "notice_terminal": True,
+                "level": "success",
+            },
+            message_id=message_id,
+        ),
+    )
+
+    assert completed.status == 200
+    assert await completed.json() == {"ok": True, "applied": True}
+    await wait_for_card_update(feishu_client, "Updating files: 100%, done.")
+    for _ in range(20):
+        if message_id not in test_client.app[FLUSH_CONTROLLERS_KEY]:
+            break
+        await _REAL_ASYNCIO_SLEEP(0)
+
+    metrics = test_client.app[METRICS_KEY]
+    assert metrics.feishu_update_attempts == sidecar_server.UPDATE_MAX_ATTEMPTS + 1
+    assert metrics.feishu_update_failures == sidecar_server.UPDATE_MAX_ATTEMPTS
+    assert message_id not in test_client.app[FLUSH_CONTROLLERS_KEY]
+    assert metrics.flush_controllers_collected == 1
+
+
 async def test_cron_completed_event_sends_completed_card_without_started(client):
     test_client, feishu_client = client
 
