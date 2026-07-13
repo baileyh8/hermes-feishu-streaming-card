@@ -420,7 +420,7 @@ def test_todo_points_to_v38_public_plan_docs():
     todo = read_doc("TODO.md")
 
     assert "## V3.8 / V3.9 / V3.10 / V4.0 系列路线" in todo
-    for version in ("V3.8.0", "V3.8.18", "V3.9.0", "V3.9.1", "V3.10.0", "V4.0.0", "V4.0.1", "V4.0.2", "V4.0.3"):
+    for version in ("V3.8.0", "V3.8.18", "V3.9.0", "V3.9.1", "V3.10.0", "V4.0.0", "V4.0.1", "V4.0.2", "V4.0.3", "V4.0.4"):
         assert version in todo
     assert "### V3.8.2：卡片 timeline 阅读体验补丁（已完成）" in todo
     assert "### V3.8.3：独立命令卡片（已完成）" in todo
@@ -1193,9 +1193,9 @@ def test_v400_release_docs_cover_live_runtime_cards():
     assert "tool.updated.detail" in notes_en
     assert "thinking.delta" in notes_en
     assert "运行态 Header" in readme
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.3}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.4}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.0.3" in doc
+        assert "HFC_VERSION=v4.0.4" in doc
     for event_name in (
         "progress_callback.preview",
         "tool.updated.detail",
@@ -1292,6 +1292,37 @@ def test_v403_release_docs_cover_stale_hook_media_text_deduplication():
             "hermes-feishu-card-v4.0.3-linux.tar.gz",
             "hermes-feishu-card-v4.0.3-windows.zip",
             "hermes-feishu-card-v4.0.3-checksums.txt",
+        ):
+            assert asset in doc
+
+
+def test_v404_release_docs_cover_media_literals_and_bound_callbacks():
+    changelog = read_doc("CHANGELOG.md")
+    notes = read_doc("docs/release-notes-v4.0.4.md")
+    notes_en = read_doc("docs/release-notes-v4.0.4.en.md")
+    todo = read_doc("TODO.md")
+    readme = read_doc("README.md")
+    readme_en = read_doc("README.en.md")
+
+    assert "## V4.0.4 — 2026-07-13" in changelog
+    assert "V4.0.4" in todo
+    assert "v4.0.4" in readme
+    assert "v4.0.4" in readme_en
+    for doc in (notes, notes_en):
+        assert "#107" in doc
+        assert "#110" in doc
+        assert "#111" in doc
+        assert "#112" in doc
+        assert "@sthnow" in doc
+        assert "@zkyken" in doc
+        assert "@tianqiii" in doc
+        assert "404 passed" in doc
+        assert "1275 passed, 3 skipped" in doc
+        for asset in (
+            "hermes-feishu-card-v4.0.4-macos.tar.gz",
+            "hermes-feishu-card-v4.0.4-linux.tar.gz",
+            "hermes-feishu-card-v4.0.4-windows.zip",
+            "hermes-feishu-card-v4.0.4-checksums.txt",
         ):
             assert asset in doc
 

@@ -3904,6 +3904,16 @@ async def _hfc_handle_feishu_card_action_event(self: Any, data: Any) -> None:
         else:
             _hfc_info("background resume_picker ignored: unresolved")
         return
+    if action == "interaction.select":
+        if _hfc_is_duplicate_card_action(self, data):
+            return
+        await asyncio.to_thread(
+            _hfc_handle_interaction_select_action,
+            self,
+            data,
+            action_value,
+        )
+        return
     if action == "operations.select":
         _hfc_info("background operations.select claimed by HFC")
         return
@@ -5151,7 +5161,10 @@ def _extract_attachments(
             continue
         seen.add(name)
         attachments.append(attachment)
-    for raw in list(MEDIA_RE.findall(text or "")) + list(LOCAL_FILE_RE.findall(text or "")):
+    visible_text = _mask_markdown_code(text)
+    for raw in list(MEDIA_RE.findall(visible_text)) + list(
+        LOCAL_FILE_RE.findall(visible_text)
+    ):
         name = _attachment_name(raw)
         if not name or name in seen:
             continue
@@ -5160,12 +5173,55 @@ def _extract_attachments(
     return attachments
 
 
+def _mask_markdown_code(text: Any) -> str:
+    source = str(text or "")
+    masked = list(source)
+    index = 0
+    while index < len(source):
+        marker = source[index]
+        if marker not in {"`", "~"}:
+            index += 1
+            continue
+        run_end = index + 1
+        while run_end < len(source) and source[run_end] == marker:
+            run_end += 1
+        width = run_end - index
+        if marker == "~" and width < 3:
+            index = run_end
+            continue
+        delimiter = marker * width
+        closing = source.find(delimiter, run_end)
+        if closing < 0:
+            index = run_end
+            continue
+        span_end = closing + width
+        for position in range(index, span_end):
+            if masked[position] not in {"\n", "\r"}:
+                masked[position] = " "
+        index = span_end
+    return "".join(masked)
+
+
+def _remove_media_paths_outside_markdown_code(text: str) -> str:
+    masked = _mask_markdown_code(text)
+    spans = [
+        match.span()
+        for pattern in (MEDIA_RE, LOCAL_FILE_RE)
+        for match in pattern.finditer(masked)
+    ]
+    if not spans:
+        return text
+    cleaned = text
+    for start, end in sorted(spans, reverse=True):
+        cleaned = cleaned[:start] + cleaned[end:]
+    return cleaned
+
+
 def _card_visible_answer(text: str) -> str:
     cleaned = str(text or "")
     for marker in NATIVE_DELIVERY_MARKERS:
         cleaned = cleaned.replace(marker, "")
-    cleaned = MEDIA_RE.sub("", cleaned)
-    cleaned = LOCAL_FILE_RE.sub("", cleaned)
+    cleaned = _remove_media_paths_outside_markdown_code(cleaned)
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
@@ -5182,13 +5238,14 @@ def native_media_only_response(response: Any) -> Any:
             delivery_parts.append((offset, marker))
 
     has_delivery_path = False
-    for match in MEDIA_RE.finditer(response):
+    visible_response = _mask_markdown_code(response)
+    for match in MEDIA_RE.finditer(visible_response):
         path = match.group(1).rstrip(ATTACHMENT_TRAILING_PUNCTUATION)
         if not path:
             continue
         has_delivery_path = True
         delivery_parts.append((match.start(), f"MEDIA:{path}"))
-    for match in LOCAL_FILE_RE.finditer(response):
+    for match in LOCAL_FILE_RE.finditer(visible_response):
         path = match.group(1).rstrip(ATTACHMENT_TRAILING_PUNCTUATION)
         if not path:
             continue
@@ -5211,7 +5268,8 @@ def native_media_only_response(response: Any) -> Any:
 def _native_delivery_policy(
     text: str, local_vars: dict[str, Any] | None = None
 ) -> str:
-    if MEDIA_RE.search(text or "") or LOCAL_FILE_RE.search(text or ""):
+    visible_text = _mask_markdown_code(text)
+    if MEDIA_RE.search(visible_text) or LOCAL_FILE_RE.search(visible_text):
         return "required"
     for candidate in _structured_native_delivery_candidates(local_vars or {}):
         if _coerce_attachment(candidate) is not None:

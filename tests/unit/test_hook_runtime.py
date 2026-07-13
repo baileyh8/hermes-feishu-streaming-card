@@ -3380,6 +3380,28 @@ def test_completed_event_hides_media_directive_from_card_answer():
     ]
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "说明语法时请保留 `MEDIA:` 字面量。",
+        "```text\nMEDIA:/tmp/example.png\n```\n以上只是示例。",
+    ],
+)
+def test_completed_event_ignores_media_directives_inside_markdown_code(answer):
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_1",
+            "message_id": "m_1",
+            "answer": answer,
+        },
+    )
+
+    assert payload["data"]["answer"] == answer
+    assert payload["data"]["attachments"] == []
+    assert payload["data"]["native_delivery"] == "allowed"
+
+
 def test_completed_event_extracts_attachment_summaries_from_response_field():
     payload = hook_runtime.build_event(
         "message.completed",
@@ -3619,6 +3641,12 @@ def test_native_media_only_response_removes_duplicate_text_but_keeps_directives(
 
 def test_native_media_only_response_keeps_original_when_no_explicit_delivery_path():
     response = "视频已生成"
+
+    assert hook_runtime.native_media_only_response(response) == response
+
+
+def test_native_media_only_response_keeps_markdown_media_literal():
+    response = "解释语法：`MEDIA:/tmp/example.png` 只是代码示例。"
 
     assert hook_runtime.native_media_only_response(response) == response
 
@@ -5633,6 +5661,67 @@ def test_interaction_select_returns_empty_response_when_sidecar_rejects(monkeypa
     response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
 
     assert response.card is None
+
+
+@pytest.mark.asyncio
+async def test_stale_bound_card_action_callback_forwards_interaction_select(monkeypatch):
+    """A callback captured before HFC patches the class must still reach sidecar."""
+
+    posted = threading.Event()
+    native_actions = []
+
+    def fake_post(url, payload, timeout):
+        assert url == "http://127.0.0.1:8765/card/actions"
+        assert payload["event"]["action"]["value"]["hfc_action"] == "interaction.select"
+        posted.set()
+        return {"ok": True, "card": {"header": {"template": "green"}}}
+
+    monkeypatch.setattr(hook_runtime, "_post_json_sync_response", fake_post)
+    monkeypatch.setattr(
+        hook_runtime,
+        "load_runtime_config",
+        lambda: SimpleNamespace(event_url="http://127.0.0.1:8765/events"),
+    )
+
+    class DummyFeishuAdapter:
+        name = "feishu"
+
+        def __init__(self):
+            self._loop = asyncio.get_running_loop()
+            self.sdk_callback = self._on_card_action_trigger
+
+        def _on_card_action_trigger(self, data):
+            self._loop.create_task(self._handle_card_action_event(data))
+            return "sdk-ack"
+
+        async def _handle_card_action_event(self, data):
+            native_actions.append(data)
+
+    adapter = DummyFeishuAdapter()
+    captured_callback = adapter.sdk_callback
+    runner = SimpleNamespace(adapters={"feishu": adapter})
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            action=SimpleNamespace(
+                value={
+                    "hfc_action": "interaction.select",
+                    "interaction_id": "int-stale-bound",
+                    "choice": "approve_once",
+                    "choice_label": "允许一次",
+                    "token": "tok-stale-bound",
+                }
+            ),
+            context=SimpleNamespace(open_chat_id="oc_abc"),
+            operator=SimpleNamespace(open_id="ou_user", user_name="Bailey"),
+        )
+    )
+
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner) is True
+    assert captured_callback.__func__ is not hook_runtime._hfc_on_feishu_card_action_trigger
+
+    assert captured_callback(data) == "sdk-ack"
+    assert await asyncio.to_thread(posted.wait, 1.0)
+    assert native_actions == []
 
 
 def test_operations_select_passes_admission_and_forwards_profile_context(monkeypatch):

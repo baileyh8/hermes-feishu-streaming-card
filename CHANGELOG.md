@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.4 — 2026-07-13
+
+See also: [docs/release-notes-v4.0.4.md](docs/release-notes-v4.0.4.md)
+
+### Fixed
+- Fixed issue #110 by excluding fenced and inline Markdown code from `MEDIA:` and local-path extraction, card cleanup, native-delivery policy, and native-media-only response rewriting.
+- Fixed issue #112's stale bound-callback path: when lark SDK retained the original `_on_card_action_trigger`, background `interaction.select` handling now forwards to the sidecar instead of falling through to a synthetic `/card button` command.
+- Adapted issue #107's footer to an upstream Codex usage response with only one ambiguous primary window: it now uses a neutral `limit` label instead of incorrectly claiming the value is a five-hour window.
+
+### Safety
+- Real media directives outside Markdown code and structured Hermes media fields retain native image/file delivery.
+- Background callback forwarding runs off the adapter event loop and retains duplicate-action protection.
+
+### Credits
+- Thanks to @tianqiii for promptly reporting the temporary upstream Codex usage-window change in issue #107.
+- Thanks to @sthnow for issue #110's precise reproduction and parser diagnosis.
+- Thanks to @zkyken for issue #112's logs and bound-method analysis, which exposed the missing background compatibility path.
+- Issue #111 is the duplicate follow-up to #106; @ShakuOvO and @blakejia remain credited for the original report, retesting, and screenshots.
+
 ## V4.0.3 — 2026-07-13
 
 See also: [docs/release-notes-v4.0.3.md](docs/release-notes-v4.0.3.md)

@@ -76,14 +76,14 @@ def format_subscription_usage(payload: Any) -> str:
     windows = payload.get("windows")
     if not isinstance(windows, list):
         return ""
-    values: list[str] = []
-    seen: set[str] = set()
+    candidates: list[tuple[str, float]] = []
     for window in windows:
         if not isinstance(window, dict):
             continue
-        label = _WINDOW_LABELS.get(str(window.get("label") or "").strip().lower())
+        raw_label = str(window.get("label") or "").strip().lower()
+        label = _WINDOW_LABELS.get(raw_label)
         used = window.get("used_percent")
-        if not label or label in seen or isinstance(used, bool):
+        if not label or isinstance(used, bool):
             continue
         try:
             used_percent = float(used)
@@ -91,6 +91,15 @@ def format_subscription_usage(payload: Any) -> str:
             continue
         if not math.isfinite(used_percent):
             continue
+        candidates.append((label, used_percent))
+
+    values: list[str] = []
+    seen: set[str] = set()
+    for label, used_percent in candidates:
+        if label in seen:
+            continue
+        if len(candidates) == 1 and label == "5h":
+            label = "limit"
         remaining = max(0, min(100, round(100 - used_percent)))
         values.append(f"{label} {remaining}%")
         seen.add(label)

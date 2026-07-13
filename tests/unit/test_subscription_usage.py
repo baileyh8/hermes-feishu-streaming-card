@@ -19,6 +19,12 @@ def test_format_subscription_usage_uses_compact_remaining_percentages():
     assert subscription_usage.format_subscription_usage(payload) == "5h 26% · weekly 89%"
 
 
+def test_format_subscription_usage_uses_neutral_label_for_single_primary_window():
+    payload = {"windows": [{"label": "Session", "used_percent": 6}]}
+
+    assert subscription_usage.format_subscription_usage(payload) == "limit 94%"
+
+
 def test_format_subscription_usage_skips_invalid_or_unknown_windows():
     payload = {
         "windows": [
@@ -54,7 +60,7 @@ def test_fetch_sync_uses_hermes_runtime_without_exposing_credentials(tmp_path, m
 
     result = subscription_usage._fetch_sync(tmp_path, timeout_seconds=3.0)
 
-    assert result == "5h 75%"
+    assert result == "limit 75%"
     assert captured["command"][0] == str(runtime_python)
     assert captured["command"][1] == "-c"
     assert "fetch_account_usage" in captured["command"][2]
