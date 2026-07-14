@@ -39,7 +39,7 @@ def apply_patch(content: str, strategy: str = "legacy_gateway_run") -> str:
     if strategy not in _SUPPORTED_STRATEGIES:
         raise ValueError(f"unsupported patch strategy: {strategy}")
     content = _apply_start_patch(content, strategy=strategy)
-    content = _apply_complete_patch(content)
+    content = _apply_complete_patch(content, strategy=strategy)
     content = _apply_queued_complete_patch(content)
     if strategy == "gateway_run_013_plus":
         content = _apply_cron_patch(content)
@@ -153,14 +153,27 @@ def _apply_start_patch(content: str, *, strategy: str) -> str:
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
 
-def _apply_complete_patch(content: str) -> str:
+def _apply_complete_patch(content: str, *, strategy: str = "legacy_gateway_run") -> str:
+    renderer = (
+        _render_complete_hook_block_with_reply_anchor
+        if strategy == "gateway_run_013_plus"
+        else _render_complete_hook_block
+    )
+
     owned_block = _find_owned_complete_block(content)
     if owned_block is not None:
+        # Re-apply from a clean slate so a recognised block migrates to the
+        # current expected location (for example, from after an
+        # `already_sent` early return to before it) and to the current
+        # rendering in one pass.
+        stripped = _remove_complete_patch(content)
+        if stripped != content:
+            return _apply_complete_patch(stripped, strategy=strategy)
         lines = content.splitlines(keepends=True)
         begin_index, end_index = owned_block
         indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
         newline = _line_ending(lines[begin_index]) or _detect_newline(content)
-        expected = _render_complete_hook_block(indent, newline)
+        expected = renderer(indent, newline)
         if lines[begin_index : end_index + 1] == expected:
             return content
         return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
@@ -173,7 +186,7 @@ def _apply_complete_patch(content: str) -> str:
 
     newline = _detect_newline(content)
     insert_at, body_indent = completion_location
-    hook = _render_complete_hook_block(body_indent, newline)
+    hook = renderer(body_indent, newline)
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
 
@@ -199,8 +212,12 @@ def _apply_queued_complete_patch(content: str) -> str:
     for index, line in enumerate(lines):
         if _strip_line_ending(line).strip() != target:
             continue
-        previous = lines[index - 1] if index > 0 else ""
-        if "first_response = result.get(" not in previous:
+        # `first_response = result.get(...)` no longer sits on the immediately
+        # preceding line in newer Hermes (a multi-line call to
+        # _stream_confirmed_final_delivery is interleaved), so scan a short
+        # window above the anchor instead of only lines[index - 1].
+        lookback = lines[max(0, index - 12) : index]
+        if not any("first_response = result.get(" in item for item in lookback):
             continue
         indent = _leading_whitespace(_strip_line_ending(line))
         newline = _line_ending(line) or _detect_newline(content)
@@ -612,6 +629,10 @@ def _find_completion_return_location(tree, lines):
     if handler is None:
         return None
 
+    already_sent_location = _find_already_sent_early_return_location(handler, lines)
+    if already_sent_location is not None:
+        return already_sent_location
+
     returns = [
         node
         for node in ast.walk(handler)
@@ -626,6 +647,46 @@ def _find_completion_return_location(tree, lines):
     target = max(returns, key=lambda node: node.lineno)
     insert_at = target.lineno - 1
     return insert_at, _line_indent(lines, insert_at)
+
+
+def _find_already_sent_early_return_location(handler, lines):
+    """Locate the streaming `already_sent` early-return branch, if present.
+
+    Hermes 0.18.x returns None from the handler before the final
+    `return response` when gateway streaming already delivered the text
+    (``if agent_result.get("already_sent") and not agent_result.get("failed"):``).
+    The completion hook must run before that branch or streamed turns never
+    emit ``message.completed``.
+    """
+    candidates = []
+    for node in ast.walk(handler):
+        if not isinstance(node, ast.If) or node.lineno is None:
+            continue
+        try:
+            test_source = ast.unparse(node.test)
+        except Exception:
+            continue
+        if "agent_result.get('already_sent')" not in test_source:
+            continue
+        if "not agent_result.get('failed')" not in test_source:
+            continue
+        if not _branch_returns(node.body):
+            continue
+        candidates.append(node)
+    if not candidates:
+        return None
+
+    target = min(candidates, key=lambda node: node.lineno)
+    insert_at = target.lineno - 1
+    return insert_at, _line_indent(lines, insert_at)
+
+
+def _branch_returns(body) -> bool:
+    for node in body:
+        for child in ast.walk(node):
+            if isinstance(child, ast.Return):
+                return True
+    return False
 
 
 def _find_cron_deliver_body_location(tree, lines):
@@ -857,12 +918,16 @@ def _find_owned_complete_block(content: str):
 
     indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+    expected_with_anchor = _render_complete_hook_block_with_reply_anchor(indent, newline)
     expected = _render_complete_hook_block(indent, newline)
     v400 = _render_v400_complete_hook_block(indent, newline)
     legacy = _render_legacy_complete_hook_block(indent, newline)
     previous_async = _render_previous_async_complete_hook_block(indent, newline)
     previous_async_without_platform = (
         _render_previous_async_complete_hook_block_without_platform_guard(indent, newline)
+    )
+    expected_with_anchor_silent = _with_silent_exception_handler(
+        expected_with_anchor, indent, newline
     )
     expected_silent = _with_silent_exception_handler(expected, indent, newline)
     v400_silent = _with_silent_exception_handler(v400, indent, newline)
@@ -875,11 +940,13 @@ def _find_owned_complete_block(content: str):
     )
     actual = lines[begin_index : end_index + 1]
     if actual not in (
+        expected_with_anchor,
         expected,
         v400,
         legacy,
         previous_async,
         previous_async_without_platform,
+        expected_with_anchor_silent,
         expected_silent,
         v400_silent,
         legacy_silent,
@@ -1259,6 +1326,39 @@ def _render_complete_hook_block(indent: str, newline: str):
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
+
+
+def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str):
+    """Completion hook for gateway_run_013_plus handlers.
+
+    Derives an explicit message_id from the same reply anchor the started and
+    delta hooks use, so the terminal event always lands on the session that
+    owns the card instead of relying on the ambiguous terminal fallback cache
+    (which can make build_event return None on streamed turns).
+    """
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    block = list(_render_complete_hook_block(indent, newline))
+    anchor_lines = [
+        f"{inner_indent}_hfc_completed_message_id = None{newline}",
+        f"{inner_indent}try:{newline}",
+        f"{deeper_indent}_hfc_completed_message_id = self._reply_anchor_for_event(event){newline}",
+        f"{inner_indent}except Exception:{newline}",
+        f"{deeper_indent}_hfc_completed_message_id = getattr(event, \"message_id\", None){newline}",
+    ]
+    import_index = next(
+        index
+        for index, line in enumerate(block)
+        if "native_media_only_response as _hfc_media_only" in line
+    )
+    block[import_index + 1 : import_index + 1] = anchor_lines
+    locals_index = next(
+        index for index, line in enumerate(block) if "**locals()," in line
+    )
+    block[locals_index + 1 : locals_index + 1] = [
+        f"{deeper_indent}\"message_id\": _hfc_completed_message_id,{newline}"
+    ]
+    return block
 
 
 def _render_v400_complete_hook_block(indent: str, newline: str):

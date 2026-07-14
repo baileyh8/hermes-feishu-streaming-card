@@ -1268,3 +1268,148 @@ def test_legacy_complete_hook_block_has_no_return_none():
     from hermes_feishu_card.install.patcher import _render_legacy_complete_hook_block
     block = "".join(_render_legacy_complete_hook_block("    ", "\n"))
     assert "return None" not in block
+
+
+_ALREADY_SENT_HANDLER = (
+    "class GatewayRunner:\n"
+    "    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+    "        response = 'ok'\n"
+    "        _response_time = 1\n"
+    "        agent_result = {}\n"
+    "        if agent_result.get(\"already_sent\") and not agent_result.get(\"failed\"):\n"
+    "            if response:\n"
+    "                pass\n"
+    "            return None\n"
+    "        return response\n"
+    "\n"
+    "    def _reply_anchor_for_event(self, event):\n"
+    "        return getattr(event, 'reply_to_message_id', None) or event.message_id\n"
+)
+
+
+def test_complete_hook_inserted_before_already_sent_early_return():
+    """Hermes 0.18.x: streamed turns return None from the already_sent branch
+    before the final `return response`, so the completion hook must run first."""
+    patched = patcher.apply_patch(_ALREADY_SENT_HANDLER, strategy="gateway_run_013_plus")
+
+    assert patcher.COMPLETE_PATCH_BEGIN in patched
+    assert patched.index(patcher.COMPLETE_PATCH_BEGIN) < patched.index(
+        'if agent_result.get("already_sent")'
+    )
+    ast.parse(patched)
+
+
+def test_complete_hook_keeps_final_return_location_without_already_sent_branch():
+    content = (
+        "class GatewayRunner:\n"
+        "    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "        response = 'ok'\n"
+        "        _response_time = 1\n"
+        "        agent_result = {}\n"
+        "        return response\n"
+    )
+
+    patched = patcher.apply_patch(content, strategy="gateway_run_013_plus")
+    lines = patched.splitlines()
+    marker_line = next(
+        index for index, line in enumerate(lines) if patcher.COMPLETE_PATCH_END in line
+    )
+
+    assert lines[marker_line + 1].strip() == "return response"
+
+
+def test_013_plus_complete_hook_derives_reply_anchor_message_id():
+    patched = patcher.apply_patch(_ALREADY_SENT_HANDLER, strategy="gateway_run_013_plus")
+    complete_block = patched[
+        patched.index(patcher.COMPLETE_PATCH_BEGIN) : patched.index(
+            patcher.COMPLETE_PATCH_END
+        )
+    ]
+
+    assert (
+        "_hfc_completed_message_id = self._reply_anchor_for_event(event)"
+        in complete_block
+    )
+    assert '"message_id": _hfc_completed_message_id' in complete_block
+
+
+def test_legacy_complete_hook_does_not_reference_reply_anchor():
+    content = (
+        "async def _handle_message_with_agent(message):\n"
+        "    response = await run_agent(message)\n"
+        "    _response_time = 1\n"
+        "    agent_result = {}\n"
+        "    return response\n"
+    )
+
+    patched = patcher.apply_patch(content, strategy="legacy_gateway_run")
+    complete_block = patched[
+        patched.index(patcher.COMPLETE_PATCH_BEGIN) : patched.index(
+            patcher.COMPLETE_PATCH_END
+        )
+    ]
+
+    assert "_reply_anchor_for_event" not in complete_block
+
+
+def test_apply_complete_patch_migrates_stale_block_before_already_sent_branch():
+    """A block installed by an older version after the already_sent branch is
+    dead code on Hermes 0.18.x; re-applying must move it before the branch."""
+    from hermes_feishu_card.install.patcher import _render_complete_hook_block
+
+    stale_block = "".join(_render_complete_hook_block("        ", "\n"))
+    content = (
+        "class GatewayRunner:\n"
+        "    async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "        response = 'ok'\n"
+        "        _response_time = 1\n"
+        "        agent_result = {}\n"
+        "        if agent_result.get(\"already_sent\") and not agent_result.get(\"failed\"):\n"
+        "            return None\n"
+        + stale_block
+        + "        return response\n"
+    )
+
+    patched = patcher._apply_complete_patch(content, strategy="gateway_run_013_plus")
+
+    assert patched.count(patcher.COMPLETE_PATCH_BEGIN) == 1
+    assert patched.index(patcher.COMPLETE_PATCH_BEGIN) < patched.index(
+        'if agent_result.get("already_sent")'
+    )
+    ast.parse(patched)
+
+
+def test_queued_complete_patch_tolerates_interleaved_stream_confirmation():
+    """Newer Hermes interleaves a multi-line _stream_confirmed_final_delivery
+    call between the first_response assignment and the anchor line; the patch
+    must not be silently skipped."""
+    content = (
+        "async def _drain_queue(self):\n"
+        "    result = {}\n"
+        "    _previewed = bool(result.get('response_previewed'))\n"
+        "    first_response = result.get('final_response', '')\n"
+        "    _already_streamed = _stream_confirmed_final_delivery(\n"
+        "        _sc,\n"
+        "        first_response,\n"
+        "        previewed=_previewed,\n"
+        "    )\n"
+        "    if first_response and not _already_streamed:\n"
+        "        await adapter.send('chat', first_response)\n"
+    )
+
+    patched = patcher._apply_queued_complete_patch(content)
+
+    assert patcher.QUEUED_COMPLETE_PATCH_BEGIN in patched
+    lines = patched.splitlines()
+    marker_line = next(
+        index
+        for index, line in enumerate(lines)
+        if patcher.QUEUED_COMPLETE_PATCH_BEGIN in line
+    )
+    anchor_line = next(
+        index
+        for index, line in enumerate(lines)
+        if line.strip() == "if first_response and not _already_streamed:"
+    )
+    assert marker_line < anchor_line
+    ast.parse(patched)
