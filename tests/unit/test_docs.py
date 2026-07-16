@@ -1404,6 +1404,11 @@ def test_v407_release_docs_cover_systemd_lifecycle_and_notice_isolation():
     assert "V4.0.7" in todo
     assert "v4.0.7" in readme
     assert "v4.0.7" in readme_en
+    for doc in (readme, readme_en):
+        assert "Issue #125" in doc
+        assert "PR #124" in doc
+        assert "nasvip" in doc
+        assert "hzy" in doc
     for doc in (notes, notes_en):
         assert "#125" in doc
         assert "PR #124" in doc
