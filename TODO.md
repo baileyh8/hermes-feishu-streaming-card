@@ -6,7 +6,7 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V4.0.9：Feishu WebSocket live handler 稳定性热修（发布候选）
+### V4.0.9：Feishu WebSocket live handler 稳定性热修（已发布）
 
 - [x] Issue #130：startup hook 不再重建并替换已连接 Lark WS client 的 live `EventDispatcherHandler`。
 - [x] 仅更新 `p2.card.action.trigger` processor callback，并通过 `_ws_thread_loop.call_soon_threadsafe(...)` 在 SDK 线程执行。
@@ -15,7 +15,7 @@
 - [x] 感谢 @Jasonsun77 提供安装 hook 前后 A/B、断连时间线、SDK 版本与上游 #64712/#64741 关联证据。
 - [x] 完整 gate `1330 passed, 4 skipped`、`git diff --check` 与真实飞书 420 秒 idle/message、`/model` callback/实际切换 smoke 通过。
 - [x] sdist/wheel 构建与干净 Python 3.12 wheel import `4.0.9` 通过。
-- [ ] tag、Release 与公共安装验证。
+- [x] annotated tag `v4.0.9`、GitHub Release、四个 assets/checksums 与公共 tagged installer fixture 验证通过。
 
 ### V4.0.8：cron 原生附件投递热修（已发布）
 
