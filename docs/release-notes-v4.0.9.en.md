@@ -29,7 +29,7 @@ V4.0.9 fixes Issue #130: after installing the hook, the Feishu/Lark WebSocket co
 - Live Hermes v2026.7.7.2 / Feishu WebSocket: pre-idle, a 420-second idle window, post-idle, and an additional liveness message all completed. Gateway and sidecar PIDs stayed stable; the sidecar applied 10/10 events with 3 successful sends, 7 successful updates, and zero delivery failures.
 - The `/model` Provider callback updated the original card into the model list, and Bailey then switched models manually and confirmed success with no callback timeout.
 - The sdist and wheel build succeeded; a clean Python 3.12 environment imported `hermes_feishu_card==4.0.9` from the wheel and ran the CLI entry point.
-- GitHub Actions now has a dedicated Ubuntu/Python 3.11 exact-SDK job. Public installer validation completes after the tag is published.
+- GitHub Actions now has a dedicated Ubuntu/Python 3.11 exact-SDK job. All four public asset checksums and the public `v4.0.9` tagged-installer fixture smoke passed.
 
 ## Release assets
 
