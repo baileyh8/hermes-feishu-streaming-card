@@ -1911,14 +1911,35 @@ def test_install_feishu_command_card_methods_repairs_stale_install_marker():
     assert adapter.sent["msg_type"] == "interactive"
 
 
-def test_install_feishu_command_card_methods_refreshes_connected_feishu_event_handler():
+def test_install_feishu_command_card_methods_refreshes_live_callback_without_replacing_handler():
+    class FakeWsLoop:
+        def __init__(self):
+            self.callbacks = []
+
+        def is_closed(self):
+            return False
+
+        def call_soon_threadsafe(self, callback):
+            self.callbacks.append(callback)
+
+    class CardActionProcessor:
+        def __init__(self, callback):
+            self.f = callback
+
     class DummyFeishuAdapter:
         name = "feishu"
 
         def __init__(self):
             self._client = object()
-            self._event_handler = SimpleNamespace(name="old")
+            self._event_handler = SimpleNamespace(
+                _callback_processor_map={
+                    "p2.card.action.trigger": CardActionProcessor(
+                        self._on_card_action_trigger
+                    )
+                }
+            )
             self._ws_client = SimpleNamespace(_event_handler=self._event_handler)
+            self._ws_thread_loop = FakeWsLoop()
             self.rebuild_count = 0
 
         def _on_card_action_trigger(self, data):
@@ -1935,14 +1956,47 @@ def test_install_feishu_command_card_methods_refreshes_connected_feishu_event_ha
             )
 
     adapter = DummyFeishuAdapter()
+    live_handler = adapter._event_handler
+    original_callback = live_handler._callback_processor_map[
+        "p2.card.action.trigger"
+    ].f
     runner = SimpleNamespace(adapters={"feishu": adapter})
 
     assert hook_runtime.install_feishu_command_card_adapter_methods(runner) is True
 
-    assert adapter.rebuild_count == 1
-    assert adapter._event_handler.name == "rebuilt"
-    assert adapter._ws_client._event_handler is adapter._event_handler
-    assert adapter._event_handler.callback.__func__ is hook_runtime._hfc_on_feishu_card_action_trigger
+    assert adapter.rebuild_count == 0
+    assert adapter._event_handler is live_handler
+    assert adapter._ws_client._event_handler is live_handler
+    assert len(adapter._ws_thread_loop.callbacks) == 1
+    assert live_handler._callback_processor_map["p2.card.action.trigger"].f is original_callback
+
+    adapter._ws_thread_loop.callbacks[0]()
+
+    refreshed_callback = live_handler._callback_processor_map[
+        "p2.card.action.trigger"
+    ].f
+    assert refreshed_callback.__func__ is hook_runtime._hfc_on_feishu_card_action_trigger
+
+
+def test_refresh_feishu_event_handler_fails_open_when_ws_loop_state_raises():
+    class BrokenWsLoop:
+        def is_closed(self):
+            raise RuntimeError("loop state unavailable")
+
+        def call_soon_threadsafe(self, callback):
+            raise AssertionError("callback must not be scheduled")
+
+    live_handler = SimpleNamespace(_callback_processor_map={})
+    adapter = SimpleNamespace(
+        _event_handler=live_handler,
+        _ws_client=SimpleNamespace(_event_handler=live_handler),
+        _ws_thread_loop=BrokenWsLoop(),
+        _on_card_action_trigger=lambda data: data,
+    )
+
+    assert hook_runtime._hfc_refresh_feishu_event_handler(adapter) is False
+    assert adapter._event_handler is live_handler
+    assert adapter._ws_client._event_handler is live_handler
 
 
 def test_feishu_command_card_action_resolves_native_slash_confirm(monkeypatch):

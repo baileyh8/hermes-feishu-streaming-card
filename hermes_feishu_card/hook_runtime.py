@@ -4043,7 +4043,11 @@ async def _hfc_handle_feishu_card_action_event(self: Any, data: Any) -> None:
 
 
 def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
-    if getattr(adapter, "_hfc_command_card_event_handler_refreshed", False):
+    if getattr(adapter, "_hfc_command_card_event_handler_refreshed", False) or getattr(
+        adapter,
+        "_hfc_command_card_event_handler_refresh_scheduled",
+        False,
+    ):
         return False
 
     current_handler = getattr(adapter, "_event_handler", None)
@@ -4052,28 +4056,73 @@ def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
     if current_handler is None and ws_handler is None:
         return False
 
-    build_event_handler = getattr(adapter, "_build_event_handler", None)
-    if not callable(build_event_handler):
+    callback = getattr(adapter, "_on_card_action_trigger", None)
+    if not callable(callback):
         return False
 
+    handlers = []
+    for handler in (current_handler, ws_handler):
+        if handler is not None and all(handler is not item for item in handlers):
+            handlers.append(handler)
+
+    def refresh_card_action_callback() -> bool:
+        refreshed = False
+        for handler in handlers:
+            processor_map = getattr(handler, "_callback_processor_map", None)
+            if not isinstance(processor_map, dict):
+                continue
+            processor = processor_map.get("p2.card.action.trigger")
+            if processor is None or not hasattr(processor, "f"):
+                continue
+            try:
+                setattr(processor, "f", callback)
+                refreshed = True
+            except Exception:
+                continue
+        if refreshed:
+            setattr(adapter, "_hfc_command_card_event_handler_refreshed", True)
+            _hfc_info(
+                "Feishu card action callback refreshed without replacing live event handler"
+            )
+        return refreshed
+
+    if ws_client is None:
+        return refresh_card_action_callback()
+
+    ws_loop = getattr(adapter, "_ws_thread_loop", None)
+    call_soon_threadsafe = getattr(ws_loop, "call_soon_threadsafe", None)
+    is_closed = getattr(ws_loop, "is_closed", None)
     try:
-        rebuilt_handler = build_event_handler()
+        ws_loop_closed = callable(is_closed) and bool(is_closed())
     except Exception as exc:
-        _hfc_warn(f"Feishu event handler refresh failed: {exc.__class__.__name__}: {exc}")
+        _hfc_warn(
+            "Feishu card action callback refresh skipped: "
+            f"WS loop state unavailable ({exc.__class__.__name__})"
+        )
         return False
-    if rebuilt_handler is None:
-        _hfc_warn("Feishu event handler refresh skipped: builder returned None")
+    if not callable(call_soon_threadsafe) or ws_loop_closed:
+        _hfc_warn("Feishu card action callback refresh skipped: WS loop unavailable")
         return False
-
     try:
-        setattr(adapter, "_event_handler", rebuilt_handler)
-        if ws_client is not None:
-            setattr(ws_client, "_event_handler", rebuilt_handler)
-        setattr(adapter, "_hfc_command_card_event_handler_refreshed", True)
-        _hfc_info("Feishu event handler refreshed for command card callbacks")
+        setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", True)
+
+        def refresh_on_ws_loop() -> None:
+            try:
+                refresh_card_action_callback()
+            finally:
+                setattr(
+                    adapter,
+                    "_hfc_command_card_event_handler_refresh_scheduled",
+                    False,
+                )
+
+        call_soon_threadsafe(refresh_on_ws_loop)
         return True
     except Exception as exc:
-        _hfc_warn(f"Feishu event handler refresh failed: {exc.__class__.__name__}: {exc}")
+        setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+        _hfc_warn(
+            f"Feishu card action callback refresh failed: {exc.__class__.__name__}: {exc}"
+        )
         return False
 
 

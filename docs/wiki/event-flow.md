@@ -139,6 +139,12 @@ Hermes 原生运行提示会被归一为 `system.notice`：
 - `/update` 是 Hermes 后台升级命令，不渲染交互命令卡片。
 - sidecar 或 command card 不可用时，允许回到 Hermes 原生文本 fallback。
 
+### V4.0.9 WebSocket live handler 边界
+
+Hermes 建立 Feishu/Lark WebSocket 时，SDK 持有一个包含消息、卡片、reaction、bot 生命周期等 processor 的 live `EventDispatcherHandler`。HFC startup hook 不得调用 `_build_event_handler()` 重建它，也不得替换 adapter 或 WS client 上的 handler identity。
+
+HFC 只更新现有 `p2.card.action.trigger` processor 的 callback，使 `/new`、`/model`、`/resume` 等命令卡片继续进入运行时包装后的 handler。WebSocket 模式必须通过 `_ws_thread_loop.call_soon_threadsafe(...)` 在 SDK 线程执行；如果当前 Hermes/Lark SDK 内部结构不兼容，则保持 fail-open，不改写 live handler。这样消息、reaction、bot 生命周期、drive、meeting 等其他 processor 和 WebSocket receive loop 始终使用连接建立时的同一 handler 对象。
+
 ### 裸 `/resume` 原生选择器
 
 V3.10.0 的 command-card adapter hook 会在运行时包装 runner 的 `_handle_resume_command`，不增加新的 patcher block：

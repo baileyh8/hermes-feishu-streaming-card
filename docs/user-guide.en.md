@@ -459,7 +459,7 @@ Example:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.8
+export HFC_VERSION=v4.0.9
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -686,6 +686,7 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 
 | Version | Date | Highlights |
 |---------|------|-----------|
+| [v4.0.9](release-notes-v4.0.9.en.md) | 2026-07-16 | Issue #130: preserve the live Lark WebSocket event-handler identity and update only the card callback on the WS thread; thanks to @Jasonsun77 for the complete crash-loop evidence |
 | [v4.0.8](release-notes-v4.0.8.en.md) | 2026-07-16 | Issue #127: cron cards retain the text while Hermes native `media_files` delivery uploads the actual attachment; thanks to @zyq2552899783-lgtm for the report |
 | [v4.0.7](release-notes-v4.0.7.en.md) | 2026-07-16 | Restartable Linux/systemd user-service lifecycle, Hermes venv Python preference, and PR #124 self-improvement notice isolation |
 | [v4.0.6](release-notes-v4.0.6.en.md) | 2026-07-15 | Hermes 0.18.x terminal/queued completion, terminal background notice cards without gray native output, and explicit fail-closed Hermes-upgrade recovery |
@@ -777,6 +778,7 @@ Thanks to these contributors for improving the project:
 - [charles5g](https://github.com/charles5g) / jackmim — [PR #98](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/98) semantic model-footer color concept (V3.10.0, with mainline HTML escaping)
 - [tianqiii](https://github.com/tianqiii) — [Issue #107](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/107) requirements, Hermes-native API direction, and display format for the Codex subscription-quota footer (V4.0.2)
 - [zyq2552899783-lgtm](https://github.com/zyq2552899783-lgtm) — [Issue #127](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/127) report that cron attachments showed only their filename and never reached native upload (V4.0.8)
+- [Jasonsun77](https://github.com/Jasonsun77) — [Issue #130](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/130) Linux before/after hook stability evidence, 3–6 minute disconnect timing, SDK versions, and upstream reconnect correlation (V4.0.9)
 
 ## Security
 

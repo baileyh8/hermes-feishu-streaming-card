@@ -29,6 +29,7 @@
 - 已识别 `system.notice` 不能在卡片投递超时后再次退回灰色原生文本。
 - cron completion hook 必须位于 `extract_media` / `media_files` 过滤之后：`native_delivery=required` 时清空原生正文但继续文件上传，不能在媒体提取前提前返回。
 - `/update` 不进入命令卡片，保持 Hermes 后台升级。
+- 已连接 Lark WebSocket 的 live `EventDispatcherHandler` identity 不得被重建或替换；只可通过 `_ws_thread_loop.call_soon_threadsafe(...)` 更新现有 `p2.card.action.trigger` processor callback，不兼容内部结构必须 fail-open。
 - `_hfc_original_handle_resume_command` 必须保留为唯一恢复执行路径；不要在 HFC 重写 session ownership、continuation 或 `switch_session` 规则。
 - 群聊/topic picker 只有在发起者 `open_id` 可验证时才显示；不可验证时 fail-open。私聊不额外比较操作者。
 
@@ -96,6 +97,7 @@
 | 改动 | 先跑 | 发布前还要跑 |
 |---|---|---|
 | runtime event 抽取、topic、notice | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_server.py -q` | `python -m pytest -q` |
+| Lark WebSocket handler / command-card callback | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_feishu_sdk_compat.py -q` | Python 3.11 + `lark-oapi==1.6.8` + `websockets==15.0.1` CI、真实 Feishu 稳定性 smoke、`python -m pytest -q` |
 | `/resume` / `/model` 原生 picker | `python -m pytest tests/unit/test_hook_runtime.py tests/unit/test_patcher.py tests/integration/test_cli_install.py -q` | 真实 Feishu 私聊、群聊、topic smoke + `python -m pytest -q` |
 | 群聊路由诊断 / 工具详情 | `python -m pytest tests/unit/test_bots.py tests/unit/test_session.py tests/unit/test_render.py tests/integration/test_server.py -q` | `python -m pytest -q` |
 | patcher / install hook | `python -m pytest tests/unit/test_patcher.py tests/integration/test_cli_install.py -q` | `python -m pytest -q` |

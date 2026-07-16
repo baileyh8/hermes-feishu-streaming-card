@@ -10,6 +10,16 @@
 - 飞书 bot 已在目标会话可用。
 - 不在仓库、issue 或日志中暴露 App Secret、tenant token、真实 chat id。
 
+## V4.0.9 WebSocket live handler 稳定性
+
+- 使用官方 `restore` / `install` 路径把真实 Hermes Gateway 更新到 V4.0.9，不手工编辑 `gateway/run.py`；`doctor --explain` 必须显示 runtime/import/install state 一致。
+- 启动后先发送一条普通消息并确认收到流式完成卡，再保持 WebSocket 空闲超过 Issue #130 报告的 3–6 分钟故障窗口。
+- 空闲窗口后再次发送普通消息，确认仍能收到回复；期间 Gateway 不得出现 Lark `ConnectionClosedOK` 后的 restart loop，进程 identity 和 restart count 保持稳定。
+- 发送 `/model` 或 `/new` 并完成一次卡片交互，确认 `p2.card.action.trigger` callback 仍可用，且没有 callback timeout 或灰色 fallback。
+- 自动化门禁在 Python 3.11 上使用 `lark-oapi==1.6.8`、`websockets==15.0.1`，断言 startup hook 前后 live `EventDispatcherHandler` identity 不变，并且卡片 callback 已通过 `_ws_thread_loop.call_soon_threadsafe(...)` 更新。
+
+2026-07-16 发布候选验收结果：真实 Hermes v2026.7.7.2 通过官方 `restore` / `install` 路径加载 V4.0.9，`doctor --explain` 的 runtime/import/install state 一致。私聊先后完成 pre-idle、超过故障窗口的 420 秒空闲、post-idle 与额外 liveness 消息；Gateway/sidecar PID 全程不变，sidecar 10/10 个事件全部应用，3 次发送与 7 次更新成功，发送/更新失败均为 0。`/model` 卡片成功打开，Provider 选择回调原位进入模型列表，随后由 Bailey 手动切换模型并确认成功，没有 callback timeout。完整自动化为 `1330 passed, 4 skipped`，精确 SDK smoke 另行通过。发布资产与公共安装验证在 tag 后完成。
+
 ## V4.0.8 cron 原生附件投递
 
 - 使用 no-agent 一次性 cron，让脚本返回一段安全测试正文和一个 `MEDIA:` 本地文本文件。

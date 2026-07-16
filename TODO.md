@@ -2,18 +2,29 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V4.0.8：cron 原生附件投递热修（发布候选）
+### V4.0.9：Feishu WebSocket live handler 稳定性热修（发布候选）
+
+- [x] Issue #130：startup hook 不再重建并替换已连接 Lark WS client 的 live `EventDispatcherHandler`。
+- [x] 仅更新 `p2.card.action.trigger` processor callback，并通过 `_ws_thread_loop.call_soon_threadsafe(...)` 在 SDK 线程执行。
+- [x] 不兼容的 handler 内部结构保持 fail-open，不回退到 live handler 整体替换。
+- [x] Python 3.11.15 + `lark-oapi==1.6.8` + `websockets==15.0.1` 精确兼容 smoke 通过；Ubuntu 专用 CI job 已加入。
+- [x] 感谢 @Jasonsun77 提供安装 hook 前后 A/B、断连时间线、SDK 版本与上游 #64712/#64741 关联证据。
+- [x] 完整 gate `1330 passed, 4 skipped`、`git diff --check` 与真实飞书 420 秒 idle/message、`/model` callback/实际切换 smoke 通过。
+- [x] sdist/wheel 构建与干净 Python 3.12 wheel import `4.0.9` 通过。
+- [ ] tag、Release 与公共安装验证。
+
+### V4.0.8：cron 原生附件投递热修（已发布）
 
 - [x] Issue #127：cron 卡片成功后不再于 `extract_media` 前提前返回；有 `media_files` 时继续执行 Hermes 原生附件上传。
 - [x] 卡片保留正文与附件摘要，原生 `cleaned_delivery_content` 清空，避免再次发送灰色 cron 文本。
 - [x] V4.0.7 旧 cron hook 可安全迁移到媒体提取后的新锚点，保持幂等、可移除与 fail-open。
 - [x] `/health` 记录真实 `native_delivery` 策略；感谢 @zyq2552899783-lgtm 报告 Issue #127。
 - [x] 完整 gate `1328 passed, 3 skipped`、`git diff --check`、真实飞书 cron 文件 smoke、sdist/wheel 与干净 Python 3.12 import 通过。
-- [ ] `v4.0.8` tag、GitHub Release、四个 assets 与公共 tagged installer 验证。
+- [x] `v4.0.8` tag、GitHub Release、四个 assets 与公共 tagged installer 验证。
 
 ### V4.0.7：Linux/systemd sidecar 生命周期热修（已发布）
 

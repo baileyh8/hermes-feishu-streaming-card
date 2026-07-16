@@ -1193,9 +1193,9 @@ def test_v400_release_docs_cover_live_runtime_cards():
     assert "tool.updated.detail" in notes_en
     assert "thinking.delta" in notes_en
     assert "运行态 Header" in readme
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.9}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.0.8" in doc
+        assert "HFC_VERSION=v4.0.9" in doc
     for event_name in (
         "progress_callback.preview",
         "tool.updated.detail",
@@ -1460,6 +1460,47 @@ def test_v408_release_docs_cover_issue_127_cron_native_attachments():
     for doc in (event_flow, maintenance):
         assert "media_files" in doc
         assert "native_delivery" in doc
+
+
+def test_v409_release_docs_cover_issue_130_websocket_handler_stability():
+    changelog = read_doc("CHANGELOG.md")
+    notes = read_doc("docs/release-notes-v4.0.9.md")
+    notes_en = read_doc("docs/release-notes-v4.0.9.en.md")
+    todo = read_doc("TODO.md")
+    readme = read_doc("README.md")
+    readme_en = read_doc("README.en.md")
+    guide = read_doc("docs/user-guide.md")
+    guide_en = read_doc("docs/user-guide.en.md")
+    event_flow = read_doc("docs/wiki/event-flow.md")
+    maintenance = read_doc("docs/wiki/maintenance-guide.md")
+    acceptance = read_doc("docs/wiki/feishu-acceptance.md")
+
+    assert "## V4.0.9 — 2026-07-16" in changelog
+    assert "[docs/release-notes-v4.0.9.md](docs/release-notes-v4.0.9.md)" in changelog
+    assert "V4.0.9" in todo
+    for doc in (readme, readme_en, guide, guide_en):
+        assert "v4.0.9" in doc
+        assert "Issue #130" in doc
+        assert "Jasonsun77" in doc
+    for doc in (notes, notes_en):
+        assert "#130" in doc
+        assert "EventDispatcherHandler" in doc
+        assert "call_soon_threadsafe" in doc
+        assert "lark-oapi==1.6.8" in doc
+        assert "websockets==15.0.1" in doc
+        assert "@Jasonsun77" in doc
+        for asset in (
+            "hermes-feishu-card-v4.0.9-macos.tar.gz",
+            "hermes-feishu-card-v4.0.9-linux.tar.gz",
+            "hermes-feishu-card-v4.0.9-windows.zip",
+            "hermes-feishu-card-v4.0.9-checksums.txt",
+        ):
+            assert asset in doc
+    for doc in (event_flow, maintenance, acceptance):
+        assert "EventDispatcherHandler" in doc
+        assert "call_soon_threadsafe" in doc
+    assert "lark-oapi==1.6.8" in acceptance
+    assert "websockets==15.0.1" in acceptance
 
 
 def test_feishu_cli_playbook_is_linked_and_keeps_cli_optional():

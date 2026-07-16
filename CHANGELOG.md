@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.9 — 2026-07-16
+
+See also: [docs/release-notes-v4.0.9.md](docs/release-notes-v4.0.9.md)
+
+### Fixed
+- Fixed issue #130: the startup hook no longer rebuilds and replaces the live `EventDispatcherHandler` owned by an already-connected Lark WebSocket client.
+- HFC now updates only the `p2.card.action.trigger` processor callback, scheduled through the SDK WebSocket thread with `call_soon_threadsafe(...)`; message, reaction, bot lifecycle, drive, meeting, and other registered processors keep the same handler object.
+
+### Compatibility and safety
+- Unsupported or changed Lark handler internals fail open without falling back to whole-handler replacement.
+- Added a dedicated Ubuntu/Python 3.11 compatibility job for `lark-oapi==1.6.8` and `websockets==15.0.1`, matching the reported production stack.
+- The separate upstream Hermes reconnect-exhaustion bug remains tracked by NousResearch/hermes-agent#64712 and #64741; this release removes HFC's live-handler mutation instead of rewriting Hermes reconnect ownership.
+
+### Credits
+- Thanks to @Jasonsun77 for issue #130's clean-versus-patched Linux A/B, complete 3–6 minute disconnect timeline, SDK versions, sidecar health evidence, and upstream reconnect correlation.
+
 ## V4.0.8 — 2026-07-16
 
 See also: [docs/release-notes-v4.0.8.md](docs/release-notes-v4.0.8.md)

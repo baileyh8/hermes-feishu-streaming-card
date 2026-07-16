@@ -26,6 +26,22 @@ jobs:
       - name: Test
         run: python -m pytest -q
 
+  feishu-sdk-compat:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install exact Feishu WebSocket compatibility matrix
+        run: |
+          python -m pip install -e ".[test]"
+          python -m pip install "lark-oapi==1.6.8" "websockets==15.0.1"
+      - name: Test live handler compatibility
+        run: python -m pytest tests/integration/test_feishu_sdk_compat.py -q
+
   powershell-installer:
     runs-on: windows-latest
 
