@@ -6,7 +6,7 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V4.0.10：事件传输安全边界（发布候选）
+### V4.0.10：事件传输安全边界（已发布）
 
 - [x] 本机回环监听保持兼容；非回环监听默认拒绝，只有显式 `server.allow_non_loopback: true` 才允许启动。
 - [x] 非回环 `/events` 使用 transport root 对 raw body、timestamp、nonce 做 HMAC-SHA256 鉴权，并拒绝错误、过期和重放 proof。
@@ -15,7 +15,7 @@
 - [x] 安全专项 `523 passed`，候选全量 gate 与 `git diff --check` 通过。
 - [x] sdist/wheel、干净 Python 3.12 import 与真实 Hermes/Feishu smoke 通过；客户端为 1 张完成卡、0 条匹配原生灰色重复正文，sidecar 发送/更新/鉴权拒绝均无异常。
 - [x] 版本文档合入后的最终全量 gate `1362 passed, 4 skipped` 与 `git diff --check` 通过。
-- [ ] annotated tag、GitHub Release、四个 assets/checksums 与公共 tagged installer 验证。
+- [x] annotated tag `v4.0.10`、GitHub Release、四个 assets/checksums 与公共 tagged installer fixture 验证通过。
 
 ### V4.0.9：Feishu WebSocket live handler 稳定性热修（已发布）
 

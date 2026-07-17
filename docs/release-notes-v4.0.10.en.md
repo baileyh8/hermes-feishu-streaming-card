@@ -29,6 +29,8 @@ V4.0.10 hardens the event-transport boundary between the Hermes hook and the HFC
 - `uv build` produced both the sdist and wheel. A clean Python 3.12 venv imported `hermes_feishu_card==4.0.10` and `event_auth` from the wheel, with the expected console entry-point metadata.
 - Live Hermes `v2026.7.7.2` upgraded its Gateway venv from 4.0.9 to 4.0.10 through the official `install` path; `doctor` reported consistent runtime/import/install/recovery state.
 - An authenticated Feishu user sent one unique transport smoke. The sidecar received and applied 3/3 events, completed one send and two updates, and reported zero event rejections, `event_auth_rejections`, or delivery failures. The client exposed one completed interactive card and zero matching native app-text duplicates.
+- GitHub `tests` and `release-assets` workflows all passed. The annotated tag points to the release commit, all four public assets uploaded successfully, and every archive passed its published SHA-256 checksum.
+- The public `v4.0.10` tagged-installer fixture installed Git tag commit `e464316` into isolated `site-packages` with consistent runtime/import/install/recovery state. The live Gateway and sidecar were then force-reinstalled from the same public tag; the final Feishu smoke produced one completed card, zero target running cards, zero native duplicates, 3/3 applied events, and no send/update/authentication failures.
 
 ## Release assets
 

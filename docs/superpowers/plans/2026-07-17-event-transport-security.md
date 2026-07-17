@@ -284,6 +284,6 @@ Build wheel/sdist and import `hermes_feishu_card` in a clean Python 3.12 environ
 
 Verify private, group, topic, `/model`, background/system notice, no duplicate gray text, terminal completion, and zero delivery failures.
 
-- [ ] **Step 5: Review the exact diff and decide whether to publish `v4.0.10`**
+- [x] **Step 5: Review the exact diff and decide whether to publish `v4.0.10`**
 
 Do not tag or publish until all prior evidence is current and the release checklist is complete.

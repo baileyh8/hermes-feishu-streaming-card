@@ -10,7 +10,7 @@
 - 通过 Feishu API 结构检查完成卡只有一张，匹配答案不存在 app text duplicate；不在记录中暴露 chat/message/user id。
 - 非回环默认拒绝、显式 opt-in 后强制 event proof、错误/过期/重放 proof 的 401 由自动化矩阵验证；真实 smoke 不临时把生产 sidecar 暴露到非回环地址。
 
-2026-07-17 发布候选验收结果：真实 Hermes `v2026.7.7.2` 通过官方安装路径将 Gateway venv 从 4.0.9 升级到 4.0.10，`doctor` 的 runtime/import/install/recovery state 一致。已认证 Feishu user 发起唯一 transport smoke，sidecar 收到并应用 3/3 个事件，1 次发送和 2 次更新全部成功，事件/鉴权拒绝与投递失败均为 0；客户端为 1 张完成 interactive card、0 条匹配原生 app text duplicate。Gateway 与 sidecar 在 smoke 前后保持运行。
+2026-07-17 发布验收结果：真实 Hermes `v2026.7.7.2` 通过官方安装路径将 Gateway venv 从 4.0.9 升级到 4.0.10，`doctor` 的 runtime/import/install/recovery state 一致。已认证 Feishu user 发起唯一 transport smoke，sidecar 收到并应用 3/3 个事件，1 次发送和 2 次更新全部成功，事件/鉴权拒绝与投递失败均为 0；客户端为 1 张完成 interactive card、0 条匹配原生 app text duplicate。发布后进一步验证 annotated tag、Release、四个 assets/checksums 与 public tagged installer fixture；真实 Gateway/sidecar 强制切换到 `v4.0.10@e464316` 的 `site-packages` 后再次完成 3/3 事件 smoke，目标卡完成态 1、运行态 0、原生重复 0。Gateway 与 sidecar 在 smoke 前后保持运行。
 
 ## 准备
 
