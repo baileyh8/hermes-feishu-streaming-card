@@ -1609,6 +1609,7 @@ def _run_status(args: argparse.Namespace) -> int:
                 "events_applied",
                 "events_ignored",
                 "events_rejected",
+                "event_auth_rejections",
                 "feishu_send_attempts",
                 "feishu_send_successes",
                 "feishu_send_failures",

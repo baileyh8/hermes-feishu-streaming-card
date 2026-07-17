@@ -2,34 +2,55 @@
 
 [中文](architecture.md) | [English](architecture.en.md)
 
-The target architecture is sidecar-only. Hermes Agent keeps only a minimal hook that forwards message lifecycle events to a local HTTP sidecar. Feishu card creation, updates, final-state rendering, and state accumulation happen inside `hermes_feishu_card/`.
+The active mainline uses a sidecar-only architecture. Hermes Agent keeps a minimal hook that forwards message lifecycle events to an HTTP sidecar; Feishu/Lark card creation, updates, terminal rendering, session accumulation, diagnostics, and safe recovery live in `hermes_feishu_card/`. V4 has completed real Feishu private, group, topic, WebSocket card-action, and long-idle smoke checks. Automated tests do not replace the real Feishu release gate.
 
-The current implementation includes the installer, backup/restore/uninstall loop, event protocol, sidecar HTTP API, rendering, session state, fail-open forwarding from the Hermes hook to `/events`, Feishu CardKit HTTP delivery, process management, health metrics, and retry diagnostics.
+```text
+Hermes Gateway
+  -> marker-wrapped minimal hook (gateway/run.py)
+  -> hermes_feishu_card.hook_runtime
+  -> authenticated/fail-open HTTP POST /events
+  -> hermes_feishu_card.server
+  -> session + render + Feishu CardKit send/update
+```
+
+The Hermes hook-to-sidecar `/events` path is fail-open. Sidecar unavailability or event rejection must not bring down Hermes; a message not confirmed as accepted by the card path continues through Hermes' native fallback. Once the card path accepts delivery, the hook suppresses duplicate gray native text.
 
 ## Components
 
 ### Minimal Hermes hook
 
-The installer only modifies Hermes `gateway/run.py` by inserting a marked hook block. The hook calls `hermes_feishu_card.hook_runtime`; extraction and forwarding logic is tested in this package. The hook remains fail-open and does not contain Feishu credentials or card rendering logic.
+The installer modifies Hermes `gateway/run.py` only through `hermes_feishu_card.install.patcher`, inserting marker blocks that can be detected, removed, and restored. Event extraction, delta coalescing, command cards, and Feishu adapter compatibility live in `hermes_feishu_card.hook_runtime`. The hook stores no Feishu credentials and does not rewrite Hermes session ownership, resume, or group-admission rules.
 
 ### HTTP sidecar
 
-`hermes_feishu_card.server` exposes local HTTP endpoints that receive events from the Hermes hook. The sidecar runs independently from the Hermes process, so card delivery failures should not bring down the Agent.
+`hermes_feishu_card.server` receives events, routes by profile, bot, message, and reply anchor, manages `CardSession`, coalesces high-frequency deltas into bounded PATCH calls, and drains pending content before terminal updates. `hermes_feishu_card.cli start/status/stop` manages the local process. Stop verifies both the pidfile PID/token and `/health` `process_pid/process_token_hash` before terminating anything.
 
-`hermes_feishu_card.cli start/status/stop` manages the local sidecar process. Process state is stored in a user-level pidfile. `status` uses `/health` as the source of truth. `stop` only terminates the process when the PID/token in the pidfile matches `process_pid/process_token_hash` returned by `/health`, avoiding stale pidfiles and PID-reuse hazards. This process model targets POSIX environments such as macOS and Linux.
+`/health` exposes only sanitized, hashed, process-local state, including event, event-auth rejection, card delivery, cleanup, and routing metrics. `send_card` is not blindly retried because a retry could create duplicate cards; updates to an existing message id use bounded retries.
 
-When Feishu credentials are missing, advanced sidecar starts use a no-op client that accepts events and maintains session state without sending real Feishu cards. When credentials are configured, the runner uses the real Feishu HTTP client. The ordinary-user `setup` command requires credentials before installing the Hermes hook.
+### Session and rendering
 
-`/health` exposes process-local `metrics`, including `events_received`, `events_applied`, `events_ignored`, `events_rejected`, `feishu_send_successes`, `feishu_update_successes`, `feishu_update_failures`, and `feishu_update_retries`. To avoid duplicate cards, `send_card` does not blindly retry card creation. Updates for an existing message_id use a limited retry.
-
-### Session state
-
-`hermes_feishu_card.session` maintains streaming state per message: thinking text, answer text, tool call counts, completion status, and failure status. Events are aggregated by session before rendering creates the Feishu card content.
+`hermes_feishu_card.session` stores process-local streaming state. `render` produces CardKit JSON from thinking, answer, tool preview, notice, interaction, and terminal state. Cleanup bounds this transient data, but a sidecar restart does not promise recovery of an in-flight card. Hermes remains the source of truth for the agent workflow.
 
 ### Feishu client
 
-`hermes_feishu_card.feishu_client` defines the Feishu/Lark CardKit boundary. Credentials come from local config or environment variables and must not enter the repository. The client obtains a tenant access token, sends an interactive card, and updates the card message incrementally.
+`hermes_feishu_card.feishu_client` implements tenant-token acquisition, interactive-card creation, and message updates. Credentials come from local config or environment variables and must not enter the repository, cards, `/health`, or logs. Real Feishu evidence lives in release notes and `docs/wiki/feishu-acceptance.md`.
 
-## Legacy Boundary
+## Event transport security boundary
 
-`legacy/adapter/`, `legacy/sidecar/`, `legacy/patch/`, `legacy/installer.py`, `legacy/installer_sidecar.py`, `legacy/installer_v2.py`, `legacy/gateway_run_patch.py`, and `legacy/patch_feishu.py` are historical legacy/dual/patch implementations. They are not the active runtime. The active runtime is `hermes_feishu_card/`, the current CLI, and the current installer safety model.
+The default `server.host: 127.0.0.1` uses **local-process trust**. For upgrade compatibility, loopback `/events` can accept unsigned events; when the private state-directory transport root is available, the hook still sends an event authentication proof.
+
+A non-loopback listener is rejected by default. Binding is allowed only with explicit `server.allow_non_loopback: true`, and the sidecar then requires a domain-separated HMAC event authentication proof over the raw request body, timestamp, and nonce. Missing, incorrect, expired, or replayed proofs are rejected before event parsing or card delivery. The root secret never enters YAML, environment files, cards, logs, or health output.
+
+Event authentication provides source authentication and integrity, not HTTP encryption. Non-loopback mode is only for trusted containers or private networks that share the private state directory. Do not expose the sidecar directly to the public internet; public deployment requires an additional TLS/mTLS or controlled reverse-proxy boundary.
+
+| Endpoint | Default boundary |
+|---|---|
+| `POST /events` | loopback local-process trust; explicit non-loopback requires event authentication |
+| `POST /commands` | state-directory command transport proof |
+| `POST /card/actions` | interaction token or operations transport proof |
+| `GET /health` | unauthenticated but strictly sanitized; local liveness only |
+| `GET /messages/{id}/summary`, `/interactions/{id}` | local hook collaboration indexes; must not be network-exposed |
+
+## Legacy boundary
+
+`legacy/adapter/`, `legacy/sidecar/`, `legacy/patch/`, and the old installer/patch scripts under `legacy/` are historical legacy/dual implementations, not active runtime. Current maintenance targets `hermes_feishu_card/`, the current CLI, the installer safety model, and `docs/wiki/`.

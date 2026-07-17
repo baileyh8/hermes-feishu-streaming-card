@@ -16,6 +16,7 @@ from hermes_feishu_card.bots import RouteResult
 from hermes_feishu_card import flush as flush_module
 from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.events import SidecarEvent
+from hermes_feishu_card.event_auth import sign_event_request
 from hermes_feishu_card.diagnostics import DiagnosticFinding, DiagnosticReport
 from hermes_feishu_card.flush import FlushController
 from hermes_feishu_card.lifecycle import (
@@ -429,6 +430,95 @@ async def client():
         await test_client.close()
 
 
+async def test_event_auth_required_rejects_unsigned_and_reports_bounded_health():
+    app = create_app(FakeFeishuClient(), event_auth_required=True)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        response = await test_client.post(
+            "/events",
+            json=event_payload("message.started", 0),
+        )
+        response_body = await response.json()
+        health = await (await test_client.get("/health")).json()
+    finally:
+        await test_client.close()
+
+    assert response.status == 401
+    assert response_body == {
+        "ok": False,
+        "error": "event authentication failed",
+    }
+    assert health["event_auth_required"] is True
+    assert health["metrics"]["events_received"] == 0
+    assert health["metrics"]["events_rejected"] == 1
+    assert health["metrics"]["event_auth_rejections"] == 1
+    assert "signature" not in json.dumps(health).lower()
+
+
+async def test_event_auth_required_accepts_valid_body_once_and_rejects_replay():
+    app = create_app(FakeFeishuClient(), event_auth_required=True)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    payload = event_payload("message.started", 0)
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        **sign_event_request(
+            TRANSPORT_ROOT_SECRET,
+            body,
+            timestamp=int(sidecar_server.time.time()),
+            nonce="nonce-1234567890",
+        ),
+    }
+    try:
+        accepted = await test_client.post("/events", data=body, headers=headers)
+        accepted_body = await accepted.json()
+        replayed = await test_client.post("/events", data=body, headers=headers)
+    finally:
+        await test_client.close()
+
+    assert accepted.status == 200
+    assert accepted_body == {"ok": True, "applied": True}
+    assert replayed.status == 401
+
+
+async def test_event_auth_required_rejects_wrong_signature_without_echoing_it():
+    app = create_app(FakeFeishuClient(), event_auth_required=True)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    payload = event_payload("message.started", 0)
+    body = json.dumps(payload).encode("utf-8")
+    wrong_signature = "f" * 64
+    headers = {
+        "Content-Type": "application/json",
+        **sign_event_request(
+            TRANSPORT_ROOT_SECRET,
+            body,
+            timestamp=int(sidecar_server.time.time()),
+            nonce="nonce-1234567890",
+        ),
+        "X-HFC-Event-Signature": wrong_signature,
+    }
+    try:
+        response = await test_client.post("/events", data=body, headers=headers)
+        response_text = await response.text()
+    finally:
+        await test_client.close()
+
+    assert response.status == 401
+    assert wrong_signature not in response_text
+
+
+def test_create_app_refuses_required_event_auth_without_private_root_secret():
+    with pytest.raises(ValueError, match="event authentication"):
+        _create_app(
+            FakeFeishuClient(),
+            operations_transport_root_secret=None,
+            event_auth_required=True,
+        )
+
+
 async def wait_for_card_update(feishu_client, expected_text, attempts=80):
     for _ in range(attempts):
         for message_id, card in reversed(feishu_client.updated):
@@ -591,12 +681,14 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     assert response.status == 200
     body = await response.json()
     assert body["status"] == "healthy"
+    assert body["event_auth_required"] is False
     assert body["active_sessions"] == 0
     assert body["metrics"] == {
         "events_received": 0,
         "events_applied": 0,
         "events_ignored": 0,
         "events_rejected": 0,
+        "event_auth_rejections": 0,
         "feishu_send_attempts": 0,
         "feishu_send_successes": 0,
         "feishu_send_failures": 0,

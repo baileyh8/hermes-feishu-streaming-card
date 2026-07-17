@@ -2,32 +2,55 @@
 
 [中文](architecture.md) | [English](architecture.en.md)
 
-目标架构是 sidecar-only：Hermes Agent 内只保留最小 hook，把消息生命周期事件转发到本机 HTTP sidecar；飞书卡片创建、更新、最终态渲染和状态累积都在 `hermes_feishu_card/` 内完成。
+当前主线采用 sidecar-only 架构：Hermes Agent 内只保留最小 hook，把消息生命周期事件转发到 HTTP sidecar；飞书/Lark 卡片创建、更新、终态渲染、会话累积、诊断和安全恢复都在 `hermes_feishu_card/` 内完成。V4 已完成真实飞书私聊、群聊、topic、WebSocket card action 和长空闲连接 smoke；自动化测试不能替代发布前的真实飞书验收。
 
-第二阶段已实现最小事件转发：安装器、备份/恢复/卸载闭环、事件协议、sidecar HTTP 接口、渲染、会话状态骨架，以及 Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地。Feishu CardKit HTTP client 已通过 mock server 验证，真实飞书应用联调仍未完成。
+```text
+Hermes Gateway
+  -> marker-wrapped minimal hook (gateway/run.py)
+  -> hermes_feishu_card.hook_runtime
+  -> authenticated/fail-open HTTP POST /events
+  -> hermes_feishu_card.server
+  -> session + render + Feishu CardKit send/update
+```
+
+Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地：sidecar 不可用或拒绝事件时，hook 不拖垮 Hermes，未被卡片路径确认接管的消息继续遵循 Hermes 原生 fallback。卡片已经接受的路径则抑制重复灰色原生文本。
 
 ## 组件
 
 ### 最小 Hermes hook
 
-安装器只修改 Hermes 的 `gateway/run.py`，插入受标记包围的 hook block。第二阶段 hook block 已升级为真实 runtime 调用，复杂提取和发送逻辑在 `hermes_feishu_card.hook_runtime` 中测试。hook 仍保持 fail-open，不直接包含飞书凭据或长逻辑。
+安装器只通过 `hermes_feishu_card.install.patcher` 修改 Hermes 的 `gateway/run.py`，插入可识别、可移除、可恢复的 marker block。复杂事件抽取、delta 合并、命令卡和 Feishu adapter 兼容逻辑位于 `hermes_feishu_card.hook_runtime`；hook 不保存飞书凭据，也不重写 Hermes 的会话 ownership、resume 或群聊准入规则。
 
 ### HTTP sidecar
 
-`hermes_feishu_card.server` 提供本机 HTTP 接口，接收 Hermes hook 发送的事件。sidecar 独立于 Hermes 进程运行；卡片故障不应拖垮 Agent 主流程。
+`hermes_feishu_card.server` 接收事件，按 profile、bot、message/reply anchor 管理 `CardSession`，把高频 delta 合并成有限 PATCH，并在 terminal 前排空待发送内容。`hermes_feishu_card.cli start/status/stop` 管理本机进程；停止时同时校验 pidfile PID/token 和 `/health` 的 `process_pid/process_token_hash`，避免 PID 复用误杀。独立进程和 systemd user service 生命周期主要面向 macOS/Linux 等 POSIX 环境。
 
-`hermes_feishu_card.cli start/status/stop` 管理本机 sidecar 进程。进程状态保存在用户态 pidfile 中，`status` 以 `/health` 作为真实探活来源，`stop` 只有在 pidfile 的 PID/token 与 `/health` 返回的 `process_pid/process_token_hash` 同时匹配时才停止进程，避免陈旧 pidfile 或 PID 复用误杀无关进程。当前进程管理面向 macOS/Linux 这类 POSIX 环境。未配置飞书凭据时，CLI runner 使用 no-op client 接收事件并维护会话状态；配置凭据后，runner 使用真实 Feishu HTTP client。
+`/health` 只暴露脱敏、hash 化和 process-local 的状态，包括事件、事件鉴权拒绝、卡片发送/更新、cleanup 和路由指标。`send_card` 不盲目重试，避免重复创建卡片；已有 message id 的更新采用有限重试。
 
-`/health` 还暴露 process-local `metrics`，用于观察当前进程生命周期内的事件流和飞书交付结果。指标包括 `events_received`、`events_applied`、`events_ignored`、`events_rejected`、`feishu_send_successes`、`feishu_update_successes`、`feishu_update_failures` 和 `feishu_update_retries` 等；CLI `status` 会同步打印这些指标。为避免重复创建飞书卡片，`send_card` 不自动重试；`update_card_message` 针对已有 message_id 做一次有限重试。
+### 会话与渲染
 
-### 会话状态
-
-`hermes_feishu_card.session` 维护每个会话的流式状态，包括思考文本、答案文本、工具调用次数、消息是否完成以及错误状态。事件按会话聚合后再交给渲染层生成卡片内容。
+`hermes_feishu_card.session` 保存单进程内的流式会话状态；`render` 根据 thinking、answer、tool preview、notice、interaction 和 terminal 状态生成 CardKit JSON。状态是有界清理的暂态数据，sidecar 重启不承诺恢复正在进行的卡片；Hermes 仍是主流程事实来源。
 
 ### Feishu client
 
-`hermes_feishu_card.feishu_client` 定义飞书/Lark CardKit 调用边界。凭据来自本机配置或环境变量，不进入仓库。client 会获取 tenant access token，调用发送消息接口创建 interactive card，并通过消息更新接口增量更新卡片内容；真实飞书应用联调仍是后续阶段。
+`hermes_feishu_card.feishu_client` 已实现 tenant token 获取、interactive card 创建和消息更新。凭据来自本机配置或环境变量，不进入仓库、卡片、`/health` 或日志。真实飞书验证记录在 release notes 和 `docs/wiki/feishu-acceptance.md`。
+
+## 事件传输安全边界
+
+默认 `server.host: 127.0.0.1` 使用**本机进程互信**：为了兼容旧安装，loopback `/events` 可以接收未签名事件；hook 在私有 state directory 的 transport root 可用时仍会发送事件鉴权 proof。
+
+非 loopback listener 默认拒绝启动。只有显式设置 `server.allow_non_loopback: true` 才允许绑定，并且 sidecar 会强制校验基于私有 transport root、请求原始 body、时间戳和 nonce 的 HMAC 事件鉴权 proof；缺失、错误、过期或重放 proof 都在事件解析和发卡前拒绝。root secret 使用独立事件域分隔，不写进 YAML、env、卡片、日志或健康检查。
+
+事件鉴权只证明请求来源和完整性，不为 HTTP 内容加密。非 loopback 只适合共享同一私有 state directory 的受信容器/私有网络；不要把 sidecar 直接暴露到公网。公网部署需要额外的 TLS/mTLS 或受控反向代理边界。
+
+| 端点 | 默认边界 |
+|---|---|
+| `POST /events` | loopback 本机互信；显式非 loopback 强制事件鉴权 |
+| `POST /commands` | state-dir command transport proof |
+| `POST /card/actions` | interaction token 或 operations transport proof |
+| `GET /health` | 无鉴权但严格脱敏；仅供本机探活 |
+| `GET /messages/{id}/summary`, `/interactions/{id}` | 本机 hook 协作索引，不应网络暴露 |
 
 ## 旧代码边界
 
-`legacy/adapter/`、`legacy/sidecar/`、`legacy/patch/`、`legacy/installer.py`、`legacy/installer_sidecar.py`、`legacy/installer_v2.py`、`legacy/gateway_run_patch.py`、`legacy/patch_feishu.py` 等目录或脚本是历史 legacy/dual/patch 实现，不是 active runtime。新主线只以 `hermes_feishu_card/`、当前 CLI 和当前安装器安全模型为准。
+`legacy/adapter/`、`legacy/sidecar/`、`legacy/patch/` 及 `legacy/` 下的旧安装/patch 脚本是历史 legacy/dual 实现，不是 active runtime。当前维护只以 `hermes_feishu_card/`、当前 CLI、安装器安全模型和 `docs/wiki/` 为准。

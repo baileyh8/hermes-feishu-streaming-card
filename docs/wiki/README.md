@@ -18,6 +18,8 @@
    - 适合用已认证的 `lark-cli` 旁路核对群成员、卡片回调和 topic/message 锚点。
 5. [发布手册](release-playbook.md)
    - 适合发版前按步骤核对版本号、测试、tag、release assets。
+6. [Fail-open 边界](fail-open-boundaries.md)
+   - 适合判断异常时应退回 Hermes 原生路径，还是必须拒绝启动、请求或修复。
 
 ## 当前核心能力
 

@@ -76,6 +76,17 @@ def test_card_safe_report_redacts_paths_and_route_ids(tmp_path):
     assert payload["routing"]["chat_id_hash"]
 
 
+def test_card_safe_report_keeps_event_auth_rejection_counter(tmp_path):
+    report = _report(
+        tmp_path,
+        runtime={"metrics": {"event_auth_rejections": 3}},
+    )
+
+    payload = report.to_dict(card_safe=True)
+
+    assert payload["runtime"]["metrics"]["event_auth_rejections"] == 3
+
+
 def test_report_keeps_full_recovery_fingerprint_internal_and_redacts_output(tmp_path):
     plan = _recovery_plan(tmp_path, state="owned_incomplete")
     report = build_diagnostic_report(

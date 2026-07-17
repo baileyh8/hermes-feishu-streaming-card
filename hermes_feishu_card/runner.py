@@ -9,6 +9,7 @@ from aiohttp import web
 from .bots import BotRegistry, FeishuClientFactory, RoutingContext
 from .bots import resolve_card_config as _resolve_card_config
 from .config import load_config, resolve_operations_hermes_root
+from .event_auth import is_loopback_host
 from .feishu_client import FeishuClient, FeishuClientConfig
 from .server import create_app
 from .operations_transport import ensure_transport_root_secret
@@ -188,10 +189,23 @@ def main(argv: list[str] | None = None) -> int:
 
     config = load_config(args.config)
     server = config["server"]
+    allow_non_loopback = server.get("allow_non_loopback", False)
+    if not isinstance(allow_non_loopback, bool):
+        raise ValueError("server.allow_non_loopback must be a boolean")
+    event_auth_required = not is_loopback_host(str(server["host"]))
+    if event_auth_required and not allow_non_loopback:
+        raise ValueError(
+            "non-loopback sidecar binding requires "
+            "server.allow_non_loopback: true"
+        )
     try:
         operations_transport_root_secret = ensure_transport_root_secret()
     except OSError:
         operations_transport_root_secret = None
+    if event_auth_required and operations_transport_root_secret is None:
+        raise RuntimeError(
+            "non-loopback sidecar binding requires event authentication"
+        )
     if _has_any_feishu_credentials(config):
         boundary = build_feishu_boundary(config)
     else:
@@ -208,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
                 env_file=args.env_file,
             ),
             operations_transport_root_secret=operations_transport_root_secret,
+            event_auth_required=event_auth_required,
         ),
         host=server["host"],
         port=server["port"],

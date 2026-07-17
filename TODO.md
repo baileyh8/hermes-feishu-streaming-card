@@ -2,9 +2,20 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V4.0.10：事件传输安全边界（发布候选）
+
+- [x] 本机回环监听保持兼容；非回环监听默认拒绝，只有显式 `server.allow_non_loopback: true` 才允许启动。
+- [x] 非回环 `/events` 使用 transport root 对 raw body、timestamp、nonce 做 HMAC-SHA256 鉴权，并拒绝错误、过期和重放 proof。
+- [x] `/health`、CLI 与 card-safe diagnostics 增加不含敏感内容的 `event_auth_rejections` 可观测性。
+- [x] 中英文架构、安装与安全说明更新；新增 fail-open/必须失败维护矩阵。
+- [x] 安全专项 `523 passed`，候选全量 gate 与 `git diff --check` 通过。
+- [x] sdist/wheel、干净 Python 3.12 import 与真实 Hermes/Feishu smoke 通过；客户端为 1 张完成卡、0 条匹配原生灰色重复正文，sidecar 发送/更新/鉴权拒绝均无异常。
+- [x] 版本文档合入后的最终全量 gate `1362 passed, 4 skipped` 与 `git diff --check` 通过。
+- [ ] annotated tag、GitHub Release、四个 assets/checksums 与公共 tagged installer 验证。
 
 ### V4.0.9：Feishu WebSocket live handler 稳定性热修（已发布）
 

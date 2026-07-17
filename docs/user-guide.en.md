@@ -459,7 +459,7 @@ Example:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.9
+export HFC_VERSION=v4.0.10
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -782,4 +782,4 @@ Thanks to these contributors for improving the project:
 
 ## Security
 
-Do not commit App Secret, tenant token, or real chat_id. Screenshots demonstrate card rendering only. Production credentials belong in local config or environment variables.
+Default loopback uses local-process trust; do not expose an unauthenticated sidecar to the network. Non-loopback requires explicit `server.allow_non_loopback: true` and state-directory HMAC event authentication. Event authentication does not encrypt traffic, so public deployment still requires TLS/mTLS or a controlled reverse proxy. Do not commit App Secret, tenant token, or real chat_id. Production credentials belong in local config or environment variables.

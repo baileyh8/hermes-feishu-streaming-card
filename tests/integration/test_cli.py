@@ -113,6 +113,26 @@ def test_status_reports_cron_metrics_when_sidecar_is_running(monkeypatch, capsys
     assert "cron_fallbacks: 1" in captured.out
 
 
+def test_status_reports_event_auth_rejections(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "hermes_feishu_card.cli.status_sidecar",
+        lambda config: {
+            "running": True,
+            "pid": 12345,
+            "health": {
+                "active_sessions": 0,
+                "metrics": {"event_auth_rejections": 2},
+            },
+        },
+    )
+
+    exit_code = main(["status"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "event_auth_rejections: 2" in captured.out
+
+
 def test_status_reports_routing_and_profile_diagnostics(monkeypatch, capsys):
     def fake_status_sidecar(config):
         return {

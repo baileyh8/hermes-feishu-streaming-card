@@ -85,6 +85,32 @@ def post_started_event(port: int) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def test_sidecar_process_rejects_non_loopback_listener_without_opt_in(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "server:\n  host: 0.0.0.0\n  port: 8765\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "hermes_feishu_card.runner",
+            "--config",
+            str(config),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **process_env(tmp_path)},
+        timeout=5,
+    )
+
+    assert result.returncode != 0
+    assert "allow_non_loopback" in result.stderr
+
+
 def test_status_reports_stopped_when_sidecar_is_not_running(tmp_path):
     config = write_config(tmp_path, free_port())
 

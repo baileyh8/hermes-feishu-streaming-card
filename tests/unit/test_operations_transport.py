@@ -4,6 +4,12 @@ import os
 
 import pytest
 
+from hermes_feishu_card.event_auth import (
+    EventAuthenticationError,
+    EventProofVerifier,
+    is_loopback_host,
+    sign_event_request,
+)
 from hermes_feishu_card.operations_transport import (
     CommandProofVerifier,
     TransportAuthenticationError,
@@ -191,3 +197,99 @@ def test_operation_transport_secret_is_deterministic_and_scoped():
     assert first == derive_operation_transport_secret(root, "operation-1")
     assert first != derive_operation_transport_secret(root, "operation-2")
     assert len(first) == 32
+
+
+def test_event_proof_binds_raw_body_and_rejects_replay():
+    secret = b"r" * 32
+    body = b'{"event":"message.started"}'
+    headers = sign_event_request(
+        secret,
+        body,
+        timestamp=100,
+        nonce="nonce-1234567890",
+    )
+    verifier = EventProofVerifier(secret, now=lambda: 100.0)
+
+    verifier.verify(headers, body)
+
+    with pytest.raises(EventAuthenticationError, match="replayed"):
+        verifier.verify(headers, body)
+    with pytest.raises(EventAuthenticationError, match="invalid"):
+        EventProofVerifier(secret, now=lambda: 100.0).verify(
+            headers,
+            b'{"event":"message.completed"}',
+        )
+    with pytest.raises(EventAuthenticationError, match="invalid"):
+        EventProofVerifier(b"x" * 32, now=lambda: 100.0).verify(headers, body)
+
+
+def test_event_proof_rejects_missing_malformed_and_stale_headers():
+    secret = b"r" * 32
+    body = b"{}"
+    headers = sign_event_request(
+        secret,
+        body,
+        timestamp=100,
+        nonce="nonce-1234567890",
+    )
+
+    with pytest.raises(EventAuthenticationError, match="invalid"):
+        EventProofVerifier(secret, now=lambda: 100.0).verify({}, body)
+    with pytest.raises(EventAuthenticationError, match="invalid"):
+        EventProofVerifier(secret, now=lambda: 100.0).verify(
+            {**headers, "X-HFC-Event-Timestamp": "not-a-timestamp"},
+            body,
+        )
+    with pytest.raises(EventAuthenticationError, match="expired"):
+        EventProofVerifier(secret, now=lambda: 131.0).verify(headers, body)
+
+
+def test_event_proof_nonce_capacity_fails_closed_until_entries_expire():
+    secret = b"r" * 32
+    body = b"{}"
+    clock = [100.0]
+    verifier = EventProofVerifier(secret, now=lambda: clock[0], max_nonces=1)
+
+    verifier.verify(
+        sign_event_request(
+            secret,
+            body,
+            timestamp=100,
+            nonce="nonce-0000000001",
+        ),
+        body,
+    )
+    with pytest.raises(EventAuthenticationError, match="overloaded"):
+        verifier.verify(
+            sign_event_request(
+                secret,
+                body,
+                timestamp=100,
+                nonce="nonce-0000000002",
+            ),
+            body,
+        )
+
+    clock[0] = 131.0
+    verifier.verify(
+        sign_event_request(
+            secret,
+            body,
+            timestamp=131,
+            nonce="nonce-0000000003",
+        ),
+        body,
+    )
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.42", "::1", "[::1]", "localhost"])
+def test_is_loopback_host_accepts_only_loopback_names_and_addresses(host):
+    assert is_loopback_host(host) is True
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["", "0.0.0.0", "::", "192.168.1.20", "host.docker.internal", "sidecar"],
+)
+def test_is_loopback_host_rejects_unspecified_private_and_named_hosts(host):
+    assert is_loopback_host(host) is False

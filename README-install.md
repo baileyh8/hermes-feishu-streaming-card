@@ -130,6 +130,18 @@ initiating user, while private chats do not add an extra identity comparison.
 Recognized model names receive HTML-escaped semantic color inside the existing
 footer; its layout, field order, separators, and text size are unchanged.
 
+The default `127.0.0.1` / `localhost` deployment uses a local-process trust
+boundary: hook event requests remain compatible with existing local installs.
+Binding the sidecar to a non-loopback address is rejected unless
+`server.allow_non_loopback: true` is set explicitly. In that mode, event authentication
+is mandatory and the hook signs the exact `/events` request
+body with the private transport root stored in the sidecar state directory.
+The signature prevents unauthenticated injection and replay; it does not
+encrypt traffic. Keep the route on a private trusted network, and place TLS or mTLS
+in front of the sidecar before any public or cross-host deployment. Never put
+the transport root in `config.yaml`, environment variables, logs, cards, or
+screenshots.
+
 Current installers default `PIP_ROOT_USER_ACTION=ignore` so Debian/Ubuntu root
 installs do not print pip's root-user warning. If Python reports
 `externally-managed-environment`, `install.sh` and `install-docker.sh` retry with
@@ -180,7 +192,7 @@ script selects Hermes venv Python and does not fall back to system Python unless
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.9
+export HFC_VERSION=v4.0.10
 bash install-docker.sh
 ```
 

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.10 — 2026-07-17
+
+See also: [docs/release-notes-v4.0.10.md](docs/release-notes-v4.0.10.md)
+
+### Security
+- Non-loopback sidecar listeners now require explicit `server.allow_non_loopback: true`; accidental `0.0.0.0`, private-address, or named-host exposure fails before binding.
+- Every enabled non-loopback `/events` request requires a timestamped, nonce-bound HMAC-SHA256 proof over the exact raw body using the private operations transport root. Missing, invalid, stale, and replayed proofs return a generic 401.
+- Loopback listeners remain backward compatible with unsigned hook events. HMAC authenticates but does not encrypt; cross-host deployments still require a trusted private network plus TLS or mTLS.
+
+### Operations and documentation
+- `/health`, CLI `status`, and card-safe diagnostics expose bounded `event_auth_required` / `event_auth_rejections` state without exposing proof headers or secret material.
+- Replaced stale architecture claims with the current V4 event flow and added a maintainer fail-open boundary matrix for authentication, native suppression, delivery, and installer recovery.
+
 ## V4.0.9 — 2026-07-16
 
 See also: [docs/release-notes-v4.0.9.md](docs/release-notes-v4.0.9.md)

@@ -115,6 +115,122 @@ def test_main_passes_boundary_to_create_app_when_bot_credentials_exist(monkeypat
     assert captured["kwargs"]["operations_config_path"] == "config.yaml"
 
 
+def test_main_rejects_non_loopback_listener_without_explicit_opt_in(monkeypatch):
+    config = {
+        "server": {"host": "0.0.0.0", "port": 8765},
+        "feishu": {},
+        "card": {},
+    }
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        runner.web,
+        "run_app",
+        lambda *_args, **_kwargs: pytest.fail("unsafe listener must not start"),
+    )
+
+    with pytest.raises(ValueError, match="allow_non_loopback"):
+        main(["--config", "config.yaml"])
+
+
+def test_main_requires_private_transport_root_for_non_loopback_listener(monkeypatch):
+    config = {
+        "server": {
+            "host": "0.0.0.0",
+            "port": 8765,
+            "allow_non_loopback": True,
+        },
+        "feishu": {},
+        "card": {},
+    }
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        runner,
+        "ensure_transport_root_secret",
+        lambda: (_ for _ in ()).throw(OSError("insecure state directory")),
+    )
+    monkeypatch.setattr(
+        runner.web,
+        "run_app",
+        lambda *_args, **_kwargs: pytest.fail("unauthenticated listener must not start"),
+    )
+
+    with pytest.raises(RuntimeError, match="event authentication"):
+        main(["--config", "config.yaml"])
+
+
+def test_main_enforces_event_auth_for_explicit_non_loopback_listener(monkeypatch):
+    config = {
+        "server": {
+            "host": "0.0.0.0",
+            "port": 8765,
+            "allow_non_loopback": True,
+        },
+        "feishu": {},
+        "card": {},
+    }
+    captured = {}
+    root_secret = b"r" * 32
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(runner, "ensure_transport_root_secret", lambda: root_secret)
+    monkeypatch.setattr(
+        runner,
+        "create_app",
+        lambda _client, **kwargs: captured.update(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        runner.web,
+        "run_app",
+        lambda _app, **kwargs: captured.update({"run_app": kwargs}),
+    )
+
+    assert main(["--config", "config.yaml"]) == 0
+
+    assert captured["event_auth_required"] is True
+    assert captured["operations_transport_root_secret"] == root_secret
+    assert captured["run_app"]["host"] == "0.0.0.0"
+
+
+def test_main_keeps_loopback_listener_backward_compatible(monkeypatch):
+    config = {
+        "server": {"host": "::1", "port": 8765},
+        "feishu": {},
+        "card": {},
+    }
+    captured = {}
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        runner,
+        "create_app",
+        lambda _client, **kwargs: captured.update(kwargs) or object(),
+    )
+    monkeypatch.setattr(runner.web, "run_app", lambda *_args, **_kwargs: None)
+
+    assert main(["--config", "config.yaml"]) == 0
+
+    assert captured["event_auth_required"] is False
+
+
+def test_main_rejects_non_boolean_non_loopback_opt_in(monkeypatch):
+    config = {
+        "server": {
+            "host": "0.0.0.0",
+            "port": 8765,
+            "allow_non_loopback": "true",
+        },
+        "feishu": {},
+        "card": {},
+    }
+    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        runner.web,
+        "run_app",
+        lambda *_args, **_kwargs: pytest.fail("invalid opt-in must not start"),
+    )
+
+    with pytest.raises(ValueError, match="must be a boolean"):
+        main(["--config", "config.yaml"])
+
+
 def test_main_uses_noop_without_any_credentials(monkeypatch):
     config = {
         "server": {"host": "127.0.0.1", "port": 0},

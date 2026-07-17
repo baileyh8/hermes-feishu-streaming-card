@@ -8,7 +8,7 @@ services:
       HERMES_DIR: /opt/hermes
       HFC_CONFIG: /opt/data/config.yaml
       HFC_ENV_FILE: /opt/data/.env
-      HFC_VERSION: "${HFC_VERSION:-v4.0.9}"
+      HFC_VERSION: "${HFC_VERSION:-v4.0.10}"
       HFC_NO_PROMPT: "1"
       HFC_SKIP_START: "1"
       FEISHU_APP_ID: "${FEISHU_APP_ID}"

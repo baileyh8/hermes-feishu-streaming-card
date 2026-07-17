@@ -13,6 +13,7 @@ from urllib import error
 import pytest
 
 from hermes_feishu_card import hook_runtime
+from hermes_feishu_card.event_auth import EventProofVerifier
 
 
 def _operation_token(operation_id="operation-1"):
@@ -5693,6 +5694,7 @@ async def test_post_json_constructs_json_post_and_timeout(monkeypatch):
         opened["timeout"] = timeout
 
     monkeypatch.setattr(hook_runtime, "_open_request", fake_open_request)
+    monkeypatch.setattr(hook_runtime, "read_transport_root_secret", lambda: None)
 
     await hook_runtime._post_json(
         "http://sidecar.test/events",
@@ -5703,11 +5705,61 @@ async def test_post_json_constructs_json_post_and_timeout(monkeypatch):
     assert opened["url"] == "http://sidecar.test/events"
     assert opened["method"] == "POST"
     assert opened["headers"]["Content-type"] == "application/json"
+    assert "X-hfc-event-signature" not in opened["headers"]
     assert json.loads(opened["body"].decode("utf-8")) == {
         "event": "message.started",
         "data": {"text": "对象文本"},
     }
     assert opened["timeout"] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_post_json_signs_event_body_with_private_transport_root(monkeypatch):
+    opened = {}
+    secret = b"r" * 32
+
+    def fake_open_request(req, timeout):
+        opened["headers"] = dict(req.header_items())
+        opened["body"] = req.data
+
+    monkeypatch.setattr(hook_runtime, "_open_request", fake_open_request)
+    monkeypatch.setattr(
+        hook_runtime,
+        "read_transport_root_secret",
+        lambda: secret,
+    )
+
+    await hook_runtime._post_json(
+        "http://sidecar.test/events",
+        {"event": "message.started"},
+        0.25,
+    )
+
+    normalized_headers = {key.lower(): value for key, value in opened["headers"].items()}
+    EventProofVerifier(secret).verify(normalized_headers, opened["body"])
+
+
+@pytest.mark.asyncio
+async def test_post_json_does_not_add_event_proof_to_other_sidecar_paths(monkeypatch):
+    opened = {}
+
+    def fake_open_request(req, timeout):
+        opened["headers"] = dict(req.header_items())
+
+    monkeypatch.setattr(hook_runtime, "_open_request", fake_open_request)
+    monkeypatch.setattr(
+        hook_runtime,
+        "read_transport_root_secret",
+        lambda: b"r" * 32,
+    )
+
+    await hook_runtime._post_json(
+        "http://sidecar.test/commands",
+        {"command": "status"},
+        0.25,
+    )
+
+    assert not any("hfc-event" in key.lower() for key in opened["headers"])
 
 
 @pytest.mark.asyncio

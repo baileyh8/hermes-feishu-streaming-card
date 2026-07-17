@@ -23,6 +23,7 @@ from typing import Any, Callable
 from urllib import parse
 from urllib import request
 
+from .event_auth import sign_event_request
 from .operations import sign_transport_proof
 from .operations_transport import (
     derive_operation_transport_secret,
@@ -4527,7 +4528,7 @@ async def _post_json(url: str, payload: dict[str, Any], timeout: float) -> None:
     req = request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=_post_headers(url, body),
         method="POST",
     )
     loop = asyncio.get_running_loop()
@@ -4539,7 +4540,7 @@ async def _post_json_response(url: str, payload: dict[str, Any], timeout: float)
     req = request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=_post_headers(url, body),
         method="POST",
     )
     loop = asyncio.get_running_loop()
@@ -4551,10 +4552,23 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
     req = request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json"},
+        headers=_post_headers(url, body),
         method="POST",
     )
     return _open_json_request(req, timeout)
+
+
+def _post_headers(url: str, body: bytes) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if not parse.urlsplit(url).path.rstrip("/").endswith("/events"):
+        return headers
+    try:
+        root_secret = read_transport_root_secret()
+        if root_secret is not None:
+            headers.update(sign_event_request(root_secret, body))
+    except Exception:
+        pass
+    return headers
 
 
 async def lookup_card_summary(

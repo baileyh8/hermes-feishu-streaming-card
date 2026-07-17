@@ -27,7 +27,11 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
     config = load_config(tmp_path / "missing.yaml")
 
     assert config == {
-        "server": {"host": "127.0.0.1", "port": 8765},
+        "server": {
+            "host": "127.0.0.1",
+            "port": 8765,
+            "allow_non_loopback": False,
+        },
         "feishu": {"app_id": "", "app_secret": ""},
         "profiles": {},
         "bots": {"default": "default", "items": {}},
@@ -128,7 +132,11 @@ card:
 
     config = load_config(path)
 
-    assert config["server"] == {"host": "127.0.0.1", "port": 9000}
+    assert config["server"] == {
+        "host": "127.0.0.1",
+        "port": 9000,
+        "allow_non_loopback": False,
+    }
     assert config["feishu"] == {"app_id": "cli_test", "app_secret": ""}
     assert config["card"] == {
         "max_wait_ms": 800,
@@ -305,7 +313,11 @@ def test_load_config_applies_supported_environment_overrides(tmp_path, monkeypat
 
     config = load_config(tmp_path / "missing.yaml")
 
-    assert config["server"] == {"host": "0.0.0.0", "port": 9001}
+    assert config["server"] == {
+        "host": "0.0.0.0",
+        "port": 9001,
+        "allow_non_loopback": False,
+    }
     assert config["feishu"] == {"app_id": "cli_app", "app_secret": "cli_secret"}
 
 
@@ -326,7 +338,11 @@ def test_load_config_applies_dotenv_next_to_config(tmp_path):
 
     config = load_config(config_path)
 
-    assert config["server"] == {"host": "0.0.0.0", "port": 9012}
+    assert config["server"] == {
+        "host": "0.0.0.0",
+        "port": 9012,
+        "allow_non_loopback": False,
+    }
     assert config["feishu"] == {
         "app_id": "dotenv_app",
         "app_secret": "dotenv secret",

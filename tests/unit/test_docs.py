@@ -552,6 +552,53 @@ def test_docs_describe_event_forwarding_and_real_e2e_completion():
     assert "- [x] 在真实 Hermes Gateway 进程中做人工 smoke test。" in todo
 
 
+def test_docs_describe_secure_event_transport_and_current_feishu_state():
+    readme = read_doc("README.md")
+    english_readme = read_doc("README.en.md")
+    guide = read_doc("docs/user-guide.md")
+    english_guide = read_doc("docs/user-guide.en.md")
+    architecture = read_doc("docs/architecture.md")
+    english_architecture = read_doc("docs/architecture.en.md")
+    config = read_doc("config.yaml.example")
+
+    assert "真实飞书应用联调仍未完成" not in architecture
+    assert "真实飞书应用联调仍是后续阶段" not in architecture
+    for doc in (readme, guide, architecture):
+        assert "本机进程互信" in doc
+        assert "allow_non_loopback" in doc
+        assert "事件鉴权" in doc
+    for doc in (english_readme, english_guide, english_architecture):
+        assert "local-process trust" in doc
+        assert "allow_non_loopback" in doc
+        assert "event authentication" in doc
+    assert "allow_non_loopback: false" in config
+    assert "不要把 sidecar 未鉴权暴露" in config
+    assert "Do not expose an unauthenticated sidecar" in config
+
+
+def test_install_and_maintainer_docs_define_event_security_and_fail_open_boundaries():
+    install_doc = read_doc("README-install.md")
+    wiki = read_doc("docs/wiki/README.md")
+    boundaries = read_doc("docs/wiki/fail-open-boundaries.md")
+
+    for phrase in (
+        "local-process trust",
+        "allow_non_loopback",
+        "event authentication",
+        "TLS or mTLS",
+    ):
+        assert phrase in install_doc
+    assert "fail-open-boundaries.md" in wiki
+    for phrase in (
+        "可继续",
+        "必须失败",
+        "event_auth_rejections",
+        "未知事件",
+        "用户可验证修改",
+    ):
+        assert phrase in boundaries
+
+
 def test_docs_describe_sidecar_process_management_scope():
     docs = "\n".join(
         [
@@ -1193,9 +1240,9 @@ def test_v400_release_docs_cover_live_runtime_cards():
     assert "tool.updated.detail" in notes_en
     assert "thinking.delta" in notes_en
     assert "运行态 Header" in readme
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.9}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.10}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.0.9" in doc
+        assert "HFC_VERSION=v4.0.10" in doc
     for event_name in (
         "progress_callback.preview",
         "tool.updated.detail",
@@ -1501,6 +1548,29 @@ def test_v409_release_docs_cover_issue_130_websocket_handler_stability():
         assert "call_soon_threadsafe" in doc
     assert "lark-oapi==1.6.8" in acceptance
     assert "websockets==15.0.1" in acceptance
+
+
+def test_v4010_release_candidate_documents_event_transport_security():
+    changelog = read_doc("CHANGELOG.md")
+    notes = read_doc("docs/release-notes-v4.0.10.md")
+    notes_en = read_doc("docs/release-notes-v4.0.10.en.md")
+    readme = read_doc("README.md")
+    readme_en = read_doc("README.en.md")
+    install_doc = read_doc("README-install.md")
+    compose = read_doc("docker-compose.example.yml")
+    todo = read_doc("TODO.md")
+
+    assert "## V4.0.10 — 2026-07-17" in changelog
+    assert "[docs/release-notes-v4.0.10.md](docs/release-notes-v4.0.10.md)" in changelog
+    for text in (notes, notes_en):
+        assert "allow_non_loopback" in text
+        assert "HMAC-SHA256" in text
+        assert "event_auth_rejections" in text
+    assert "docs/release-notes-v4.0.10.md" in readme
+    assert "docs/release-notes-v4.0.10.en.md" in readme_en
+    assert "HFC_VERSION=v4.0.10" in install_doc
+    assert "v4.0.10" in compose
+    assert "V4.0.10" in todo
 
 
 def test_feishu_cli_playbook_is_linked_and_keeps_cli_optional():

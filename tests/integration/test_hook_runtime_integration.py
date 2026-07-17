@@ -292,6 +292,47 @@ class _OperationsFeishuClient:
         self.updated.append((message_id, card))
 
 
+async def test_hook_event_proof_is_accepted_by_authenticated_sidecar(
+    tmp_path,
+    monkeypatch,
+):
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(state_dir))
+    root_secret = ensure_transport_root_secret(state_dir)
+    app = create_app(
+        _OperationsFeishuClient(),
+        operations_transport_root_secret=root_secret,
+        event_auth_required=True,
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    payload = {
+        "schema_version": "1",
+        "event": "message.started",
+        "conversation_id": "conversation-authenticated",
+        "message_id": "message-authenticated",
+        "chat_id": "oc_authenticated",
+        "platform": "feishu",
+        "sequence": 0,
+        "created_at": 1777017600.0,
+        "data": {},
+    }
+    try:
+        await hook_runtime._post_json(
+            str(test_client.make_url("/events")),
+            payload,
+            0.8,
+        )
+        health = await (await test_client.get("/health")).json()
+    finally:
+        await test_client.close()
+
+    assert health["event_auth_required"] is True
+    assert health["metrics"]["events_received"] == 1
+    assert health["metrics"]["events_applied"] == 1
+    assert health["metrics"]["event_auth_rejections"] == 0
+
+
 def _operations_report():
     return DiagnosticReport(
         status="warning",

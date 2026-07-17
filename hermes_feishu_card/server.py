@@ -22,6 +22,7 @@ from .bots import RouteResult
 from .config import load_config, resolve_operations_hermes_root
 from .diagnostics import DiagnosticFinding, DiagnosticReport, build_diagnostic_report
 from .events import EventValidationError, SidecarEvent
+from .event_auth import EventAuthenticationError, EventProofVerifier
 from .flush import FlushController
 from .lifecycle import (
     cleanup_closed_controller,
@@ -65,6 +66,8 @@ ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
 PROCESS_TOKEN_KEY = web.AppKey("process_token", str)
 METRICS_KEY = web.AppKey("metrics", SidecarMetrics)
+EVENT_AUTH_REQUIRED_KEY = web.AppKey("event_auth_required", bool)
+EVENT_AUTH_VERIFIER_KEY = web.AppKey("event_auth_verifier", EventProofVerifier)
 MESSAGE_LOCKS_KEY = web.AppKey("message_locks", dict)
 MESSAGE_LOCK_USERS_KEY = web.AppKey("message_lock_users", dict)
 FOOTER_FIELDS_KEY = web.AppKey("footer_fields", Any)
@@ -156,7 +159,14 @@ def create_app(
     operations_config_path: str | Path | None = None,
     operations_hermes_root: str | Path | None = None,
     operations_transport_root_secret: bytes | None = None,
+    event_auth_required: bool = False,
 ) -> web.Application:
+    valid_transport_root = (
+        isinstance(operations_transport_root_secret, bytes)
+        and len(operations_transport_root_secret) == 32
+    )
+    if event_auth_required and not valid_transport_root:
+        raise ValueError("event authentication requires a private transport root")
     app = web.Application()
     card_config = card_config or {}
     app[FEISHU_CLIENT_KEY] = feishu_client
@@ -173,6 +183,11 @@ def create_app(
     app[BOT_ROUTER_KEY] = bot_router
     app[PROCESS_TOKEN_KEY] = process_token
     app[METRICS_KEY] = SidecarMetrics()
+    app[EVENT_AUTH_REQUIRED_KEY] = bool(event_auth_required)
+    if event_auth_required:
+        app[EVENT_AUTH_VERIFIER_KEY] = EventProofVerifier(
+            operations_transport_root_secret
+        )
     app[MESSAGE_LOCKS_KEY] = {}
     app[MESSAGE_LOCK_USERS_KEY] = {}
     app[FLUSH_CONTROLLERS_KEY] = {}
@@ -209,10 +224,7 @@ def create_app(
         operations_hermes_root, config_path=operations_config
     )
     app[OPERATIONS_DELIVERIES_KEY] = {}
-    if (
-        isinstance(operations_transport_root_secret, bytes)
-        and len(operations_transport_root_secret) == 32
-    ):
+    if valid_transport_root:
         app[OPERATIONS_TRANSPORT_ROOT_KEY] = operations_transport_root_secret
         app[OPERATIONS_COMMAND_AUTH_KEY] = CommandProofVerifier(
             operations_transport_root_secret
@@ -284,6 +296,7 @@ async def _health(request: web.Request) -> web.Response:
     diagnostics = request.app[DIAGNOSTICS_KEY]
     response = {
         "status": "healthy",
+        "event_auth_required": request.app[EVENT_AUTH_REQUIRED_KEY],
         "active_sessions": len(sessions),
         "process_pid": os.getpid(),
         "metrics": metrics.snapshot(),
@@ -1567,6 +1580,17 @@ def _restart_output_status(output: str) -> str:
 
 async def _events(request: web.Request) -> web.Response:
     metrics: SidecarMetrics = request.app[METRICS_KEY]
+    if request.app[EVENT_AUTH_REQUIRED_KEY]:
+        body = await request.read()
+        try:
+            request.app[EVENT_AUTH_VERIFIER_KEY].verify(request.headers, body)
+        except EventAuthenticationError:
+            metrics.events_rejected += 1
+            metrics.event_auth_rejections += 1
+            return web.json_response(
+                {"ok": False, "error": "event authentication failed"},
+                status=401,
+            )
     try:
         payload = await request.json()
         event = SidecarEvent.from_dict(payload)

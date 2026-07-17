@@ -5,6 +5,11 @@
 server:
   host: 127.0.0.1
   port: 8765
+  # 默认保持 loopback 本机进程互信。非 loopback 只有显式开启后才允许，
+  # 并强制使用 state-dir HMAC 事件鉴权；不要把 sidecar 未鉴权暴露到网络。
+  # Keep local-process trust on loopback. Non-loopback requires explicit opt-in
+  # and state-directory HMAC event authentication. Do not expose an unauthenticated sidecar.
+  allow_non_loopback: false
 
 # ── Single Profile (minimal) ─────────────────────────────────────────────────
 # For simple setups with one Hermes profile and optionally multiple bots.

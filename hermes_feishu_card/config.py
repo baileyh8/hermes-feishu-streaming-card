@@ -11,7 +11,11 @@ import yaml
 
 
 DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
-    "server": {"host": "127.0.0.1", "port": 8765},
+    "server": {
+        "host": "127.0.0.1",
+        "port": 8765,
+        "allow_non_loopback": False,
+    },
     "feishu": {"app_id": "", "app_secret": ""},
     "profiles": {},
     "bots": {"default": "default", "items": {}},
