@@ -17,6 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from hermes_feishu_card import hook_runtime
 from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.diagnostics import DiagnosticFinding, DiagnosticReport
+from hermes_feishu_card.feishu_client import FeishuAPIError
 from hermes_feishu_card.server import create_app
 from hermes_feishu_card.operations_transport import ensure_transport_root_secret
 
@@ -290,6 +291,123 @@ class _OperationsFeishuClient:
 
     async def update_card_message(self, message_id, card):
         self.updated.append((message_id, card))
+
+
+class _NoticeFailureClient:
+    def __init__(self, outcome):
+        self.outcome = outcome
+        self.delivery_calls = []
+
+    async def send_card_delivery(self, *args, **kwargs):
+        self.delivery_calls.append((args, kwargs))
+        raise FeishuAPIError(
+            "safe failure",
+            status_code=400 if self.outcome == "not_sent" else 503,
+            api_code=9499,
+            retryable=self.outcome == "unknown",
+            outcome=self.outcome,
+            retry_count=0 if self.outcome == "not_sent" else 2,
+        )
+
+    async def update_card_message(self, message_id, card):
+        return None
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_content", "metric_name"),
+    [
+        (
+            "not_sent",
+            "ℹ️ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
+            "notice_native_fallbacks",
+        ),
+        (
+            "unknown",
+            "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。",
+            "notice_uncertain_warnings",
+        ),
+    ],
+)
+async def test_installed_notice_hook_uses_sidecar_delivery_outcome_for_topic_fallback(
+    monkeypatch,
+    outcome,
+    expected_content,
+    metric_name,
+):
+    feishu_client = _NoticeFailureClient(outcome)
+    app = create_app(feishu_client)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        monkeypatch.setenv(
+            "HERMES_FEISHU_CARD_EVENT_URL",
+            str(test_client.make_url("/events")),
+        )
+
+        class Adapter:
+            name = "feishu"
+
+            def __init__(self):
+                self._client = object()
+                self.native_calls = []
+
+            async def send(self, chat_id, content, reply_to=None, metadata=None):
+                self.native_calls.append((chat_id, content, reply_to, metadata))
+                return SimpleNamespace(
+                    success=True,
+                    message_id="om_native_fallback",
+                    error="",
+                )
+
+        adapter = Adapter()
+        runner = SimpleNamespace(adapters={"feishu": adapter})
+        event = SimpleNamespace(
+            source=SimpleNamespace(
+                platform="feishu",
+                chat_id="oc_topic",
+                message_id="om_topic_user",
+                thread_id="omt_topic",
+            ),
+            message_id="om_topic_user",
+            thread_id="omt_topic",
+            get_command=lambda: "",
+        )
+        assert hook_runtime.install_feishu_command_card_adapter_methods(
+            runner,
+            event=event,
+        )
+
+        original_content = (
+            "ℹ️ Codex gpt-5.5 caps context at 272K, "
+            "so auto-compaction was raised to 85%."
+        )
+        result = await adapter.send(
+            "oc_topic",
+            original_content,
+            reply_to="om_topic_user",
+            metadata={"thread_id": "omt_topic"},
+        )
+        health = await (await test_client.get("/health")).json()
+    finally:
+        await test_client.close()
+
+    assert result.success is True
+    assert adapter.native_calls == [
+        (
+            "oc_topic",
+            expected_content,
+            "om_topic_user",
+            {"thread_id": "omt_topic"},
+        )
+    ]
+    assert len(feishu_client.delivery_calls) == 1
+    delivery_kwargs = feishu_client.delivery_calls[0][1]
+    assert delivery_kwargs["reply_to_message_id"] == "om_topic_user"
+    assert delivery_kwargs["thread_id"] == "omt_topic"
+    assert delivery_kwargs["delivery_uuid"].startswith("hfc_")
+    metrics = health["metrics"]
+    assert metrics[metric_name] == 1
+    assert metrics["feishu_send_retries"] == (0 if outcome == "not_sent" else 2)
 
 
 async def test_hook_event_proof_is_accepted_by_authenticated_sidecar(
