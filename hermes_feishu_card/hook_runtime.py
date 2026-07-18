@@ -20,6 +20,7 @@ from types import SimpleNamespace
 import threading
 import time
 from typing import Any, Callable
+from urllib import error as urlerror
 from urllib import parse
 from urllib import request
 
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 DEFAULT_TIMEOUT_SECONDS = 0.8
 TERMINAL_TIMEOUT_SECONDS = 10.0
+_NOTICE_UNCERTAIN_WARNING = (
+    "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。"
+)
 OPERATIONS_ACTION_TIMEOUT_SECONDS = 10.0
 OPERATIONS_ACTION_FORWARD_ATTEMPTS = 2
 OPERATIONS_ACTION_RETRY_DELAY_SECONDS = 0.1
@@ -2297,7 +2301,7 @@ async def _hfc_send_system_notice_card(
     try:
         config = load_runtime_config()
         if not config.enabled:
-            return _send_result(False, error="disabled")
+            return _send_result(False, error="delivery_outcome=not_sent")
         context = _HFC_FEISHU_NOTICE_CONTEXT.get()
         if not isinstance(context, dict):
             context = {}
@@ -2325,6 +2329,18 @@ async def _hfc_send_system_notice_card(
             )
             if _hfc_notice_post_applied(post_result):
                 return _send_result(True, message_id=payload["message_id"])
+            if not (
+                isinstance(post_result, dict)
+                and post_result.get("ok") is not False
+                and post_result.get("applied") is False
+            ):
+                return _send_result(
+                    False,
+                    error=(
+                        "delivery_outcome="
+                        + _hfc_notice_delivery_outcome(post_result)
+                    ),
+                )
 
         independent_message_id = (
             message_id
@@ -2349,17 +2365,42 @@ async def _hfc_send_system_notice_card(
         if _hfc_notice_post_applied(post_result):
             return _send_result(True, message_id=payload["message_id"])
     except Exception as exc:
-        _hfc_warn(f"send system notice card failed: {exc.__class__.__name__}: {exc}")
-        return _send_result(False, error=str(exc))
-    return _send_result(False, error="system notice card not applied")
+        _hfc_warn(f"send system notice card failed: {exc.__class__.__name__}")
+        return _send_result(False, error="delivery_outcome=unknown")
+    return _send_result(
+        False,
+        error="delivery_outcome=" + _hfc_notice_delivery_outcome(post_result),
+    )
 
 
 def _hfc_notice_post_applied(result: Any) -> bool:
+    return (
+        isinstance(result, dict)
+        and result.get("ok") is not False
+        and result.get("applied") is not False
+        and _hfc_notice_delivery_outcome(result) == "delivered"
+    )
+
+
+def _hfc_notice_delivery_outcome(result: Any) -> str:
     if not isinstance(result, dict):
-        return True
-    if result.get("ok") is False:
-        return False
-    return result.get("applied") is not False
+        return "unknown"
+    delivery = result.get("delivery")
+    if not isinstance(delivery, dict):
+        return "unknown"
+    outcome = delivery.get("outcome")
+    if outcome in {"delivered", "not_sent", "unknown"}:
+        return outcome
+    return "unknown"
+
+
+def _hfc_send_result_delivery_outcome(result: Any) -> str:
+    error = getattr(result, "error", None)
+    if error == "delivery_outcome=not_sent":
+        return "not_sent"
+    if error == "delivery_outcome=unknown":
+        return "unknown"
+    return "unknown"
 
 
 def _hfc_independent_notice_message_id(
@@ -2508,16 +2549,19 @@ async def _hfc_send_with_native_command_result_card(
     if getattr(notice_result, "success", False):
         return notice_result
     if _hfc_classify_system_notice(content) is not None:
-        error = getattr(notice_result, "error", None) or "system notice card not applied"
-        _hfc_warn(f"system notice native fallback suppressed: {error}")
-        return _send_result(
-            True,
-            message_id=(
-                str(reply_to or "").strip()
-                or _metadata_reply_to(metadata)
-                or "notice_suppressed"
-            ),
-        )
+        outcome = _hfc_send_result_delivery_outcome(notice_result)
+        if callable(original):
+            fallback_content = (
+                content if outcome == "not_sent" else _NOTICE_UNCERTAIN_WARNING
+            )
+            return await original(
+                self,
+                chat_id,
+                fallback_content,
+                reply_to=reply_to,
+                metadata=metadata,
+            )
+        return _send_result(False, error="original Feishu send unavailable")
     if callable(original):
         return await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
     return _send_result(False, error="original Feishu send unavailable")
@@ -4622,8 +4666,23 @@ def _open_request(req: request.Request, timeout: float) -> None:
 
 
 def _open_json_request(req: request.Request, timeout: float) -> Any:
-    with _open_sidecar_request(req, timeout) as response:
-        body = response.read()
+    try:
+        with _open_sidecar_request(req, timeout) as response:
+            body = response.read()
+    except urlerror.HTTPError as exc:
+        try:
+            body = exc.read()
+        finally:
+            exc.close()
+        if not body:
+            raise
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("ok"), bool):
+            raise exc
+        return payload
     if not body:
         return None
     return json.loads(body.decode("utf-8"))

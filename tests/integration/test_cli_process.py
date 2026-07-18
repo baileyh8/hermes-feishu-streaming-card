@@ -186,7 +186,11 @@ def test_start_status_and_stop_manage_sidecar_process(tmp_path):
         assert health["status"] == "healthy"
         assert health["process_token_hash"]
         assert "process_token" not in health
-        assert post_started_event(port) == {"ok": True, "applied": True}
+        assert post_started_event(port) == {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
         status = run_cli("status", "--config", str(config), env=env)
 

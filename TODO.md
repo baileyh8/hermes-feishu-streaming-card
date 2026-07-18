@@ -2,9 +2,19 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V4.0.11：system.notice 可靠投递（发布候选）
+
+- [x] Issue #135：Feishu create/reply 使用稳定 `delivery_uuid`，只对可重试 HTTP/网络错误做最多 3 次有界重试。
+- [x] sidecar 明确返回 `delivered`、`not_sent`、`unknown`；Hermes hook 分别抑制原生文本、回退原文或只发不含原通知内容的通用警告。
+- [x] `/health` 与 card-safe diagnostics 增加重试、未知结果、原生回退、通用警告指标，并排除原始 ID、UUID、响应正文、URL 与凭据。
+- [x] 自动化覆盖 503 后成功、永久 400、结果不明、topic 路由、同 UUID 重试与单次 hook `/events` 调用。
+- [x] 真实 loopback sidecar + Feishu API 的私聊 create 与 topic reply 均为 `delivered/applied`，2 次发送全部成功；诊断未包含验收正文或 UUID。
+- [x] 最终全量 gate `1389 passed, 4 skipped`、`git diff --check`、sdist/wheel 构建与干净 Python 3.12 wheel import `4.0.11` 通过。
+- [ ] annotated tag `v4.0.11`、GitHub Release、四个 assets/checksums 与公共 tagged installer fixture 验证通过。
 
 ### V4.0.10：事件传输安全边界（已发布）
 

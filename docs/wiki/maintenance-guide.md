@@ -26,7 +26,7 @@
 
 - 字段名必须贴合 Hermes 变量：`source`、`event`、`response`、`agent_result`、`event_message_id` 等。
 - Feishu topic 场景必须保留 `source.message_id` 和 `reply_to_message_id`。
-- 已识别 `system.notice` 不能在卡片投递超时后再次退回灰色原生文本。
+- 已识别 `system.notice` 必须按 sidecar 结果分流：`delivered` 抑制原生文本，`not_sent` 回退原始通知文本，`unknown` 只尝试固定通用提示且不重复原始通知文本；不可解析响应一律视为 `unknown`。
 - cron completion hook 必须位于 `extract_media` / `media_files` 过滤之后：`native_delivery=required` 时清空原生正文但继续文件上传，不能在媒体提取前提前返回。
 - `/update` 不进入命令卡片，保持 Hermes 后台升级。
 - 已连接 Lark WebSocket 的 live `EventDispatcherHandler` identity 不得被重建或替换；只可通过 `_ws_thread_loop.call_soon_threadsafe(...)` 更新现有 `p2.card.action.trigger` processor callback，不兼容内部结构必须 fail-open。
@@ -47,6 +47,8 @@
 - topic 后续事件使用不同内部 `message_id` 时，必须先查 reply anchor。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
+- 初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；不重试 `/events`，也不把这套策略套到 PATCH。
+- `feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings` 与 `last_send_error` 必须保持脱敏；不得记录 UUID、响应正文、URL 或原始标识符。
 - 群聊 `/hfc status` 只做路由诊断和 binding 提示；@机器人触发、白名单和群消息准入属于 Hermes Gateway。
 
 ### `hermes_feishu_card/install/patcher.py`

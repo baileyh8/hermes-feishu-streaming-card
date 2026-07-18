@@ -1066,7 +1066,11 @@ def test_native_feishu_system_notice_send_posts_sidecar_and_suppresses_text(monk
 
     async def fake_post_json_ordered_response(url, payload, timeout):
         posted.append((url, payload, timeout))
-        return {"ok": True, "applied": True}
+        return {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
     monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://127.0.0.1:8765/events")
     monkeypatch.setattr(
@@ -1119,7 +1123,7 @@ def test_native_feishu_system_notice_send_posts_sidecar_and_suppresses_text(monk
     assert posted[0][2] == hook_runtime.TERMINAL_TIMEOUT_SECONDS
 
 
-def test_native_feishu_system_notice_send_suppresses_text_when_card_times_out(monkeypatch):
+def test_native_feishu_system_notice_send_warns_when_card_times_out(monkeypatch):
     attempts = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -1165,9 +1169,105 @@ def test_native_feishu_system_notice_send_suppresses_text_when_card_times_out(mo
     result = asyncio.run(run())
 
     assert result.success is True
-    assert result.message_id == "om_user_weather"
+    assert result.message_id == "om_native_text"
     assert len(attempts) == 1
-    assert adapter.text_sent == []
+    assert adapter.text_sent == [
+        (
+            "oc_abc",
+            "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。",
+            "om_user_weather",
+            {"reply_to_message_id": "om_user_weather"},
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_content"),
+    [
+        ("delivery_outcome=not_sent", "原始系统通知"),
+        (
+            "delivery_outcome=unknown",
+            "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。",
+        ),
+        (
+            "sidecar response invalid",
+            "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。",
+        ),
+    ],
+)
+def test_system_notice_delivery_outcome_selects_safe_native_fallback(
+    monkeypatch,
+    error,
+    expected_content,
+):
+    calls = []
+
+    class Adapter:
+        pass
+
+    async def original(self, chat_id, content, reply_to=None, metadata=None):
+        calls.append((chat_id, content, reply_to, metadata))
+        return SimpleNamespace(success=True, message_id="native-1", error="")
+
+    async def failed_notice(self, **kwargs):
+        return SimpleNamespace(success=False, message_id="", error=error)
+
+    Adapter._hfc_original_send = original
+    monkeypatch.setattr(hook_runtime, "_hfc_send_system_notice_card", failed_notice)
+    monkeypatch.setattr(
+        hook_runtime,
+        "_hfc_classify_system_notice",
+        lambda content: {"notice_kind": "system"},
+    )
+
+    result = asyncio.run(
+        hook_runtime._hfc_send_with_native_command_result_card(
+            Adapter(),
+            "oc_test",
+            "原始系统通知",
+            reply_to="om_test",
+            metadata={"thread_id": "omt_test"},
+        )
+    )
+
+    assert result.success is True
+    assert calls == [
+        ("oc_test", expected_content, "om_test", {"thread_id": "omt_test"})
+    ]
+
+
+def test_system_notice_delivered_suppresses_native_fallback(monkeypatch):
+    calls = []
+
+    class Adapter:
+        pass
+
+    async def original(self, chat_id, content, reply_to=None, metadata=None):
+        calls.append(content)
+        return SimpleNamespace(success=True, message_id="native-1", error="")
+
+    async def delivered_notice(self, **kwargs):
+        return SimpleNamespace(success=True, message_id="card-1", error="")
+
+    Adapter._hfc_original_send = original
+    monkeypatch.setattr(hook_runtime, "_hfc_send_system_notice_card", delivered_notice)
+    monkeypatch.setattr(
+        hook_runtime,
+        "_hfc_classify_system_notice",
+        lambda content: {"notice_kind": "system"},
+    )
+
+    result = asyncio.run(
+        hook_runtime._hfc_send_with_native_command_result_card(
+            Adapter(),
+            "oc_test",
+            "原始系统通知",
+        )
+    )
+
+    assert result.success is True
+    assert result.message_id == "card-1"
+    assert calls == []
 
 
 def _install_background_notice_probe(
@@ -1185,7 +1285,11 @@ def _install_background_notice_probe(
             raise post_error
         if post_result is not None:
             return post_result
-        return {"ok": True, "applied": True}
+        return {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
     monkeypatch.setattr(
         hook_runtime,
@@ -1459,7 +1563,7 @@ def test_identical_background_task_results_use_distinct_independent_message_ids(
     assert first_payload["message_id"] != second_payload["message_id"]
 
 
-def test_background_notice_timeout_suppresses_native_text(monkeypatch):
+def test_background_notice_timeout_uses_uncertain_warning(monkeypatch):
     adapter, posted = _install_background_notice_probe(
         monkeypatch,
         post_error=TimeoutError("timed out"),
@@ -1472,9 +1576,16 @@ def test_background_notice_timeout_suppresses_native_text(monkeypatch):
     result = asyncio.run(adapter.send("oc_abc", content))
 
     assert result.success is True
-    assert result.message_id == "notice_suppressed"
+    assert result.message_id == "om_native_text"
     assert len(posted) == 1
-    assert adapter.text_sent == []
+    assert adapter.text_sent == [
+        (
+            "oc_abc",
+            "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。",
+            None,
+            None,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1513,7 +1624,11 @@ def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkey
 
     async def fake_post_json_ordered_response(url, payload, timeout):
         posted.append((url, payload, timeout))
-        return {"ok": True, "applied": True}
+        return {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
     monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://127.0.0.1:8765/events")
     monkeypatch.setattr(
@@ -1585,7 +1700,11 @@ def test_handle_platform_notice_from_hermes_schedules_card(monkeypatch):
 
     async def fake_post_json_ordered_response(url, payload, timeout):
         posted.append((url, payload, timeout))
-        return {"ok": True, "applied": True}
+        return {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
     monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://127.0.0.1:8765/events")
     monkeypatch.setattr(
@@ -1758,7 +1877,11 @@ def test_native_feishu_system_notice_retries_as_independent_card_when_session_mi
         posted.append(payload)
         if len(posted) == 1:
             return {"ok": True, "applied": False}
-        return {"ok": True, "applied": True}
+        return {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
     monkeypatch.setattr(
         hook_runtime,
@@ -1813,7 +1936,11 @@ def test_native_feishu_system_notice_edit_updates_same_card(monkeypatch):
 
     async def fake_post_json_ordered_response(url, payload, timeout):
         posted.append(payload)
-        return {"ok": True, "applied": True}
+        return {
+            "ok": True,
+            "applied": True,
+            "delivery": {"outcome": "delivered"},
+        }
 
     monkeypatch.setattr(
         hook_runtime,
