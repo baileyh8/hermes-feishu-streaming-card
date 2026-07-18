@@ -9,6 +9,28 @@ def read_doc(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def test_maintainer_docs_define_reliable_notice_delivery_contract():
+    event_flow = read_doc("docs/wiki/event-flow.md")
+    maintenance = read_doc("docs/wiki/maintenance-guide.md")
+    acceptance = read_doc("docs/wiki/feishu-acceptance.md")
+    combined = "\n".join((event_flow, maintenance, acceptance))
+
+    for marker in (
+        "delivery_uuid",
+        "not_sent",
+        "unknown",
+        "feishu_send_retries",
+        "feishu_send_unknown_outcomes",
+        "notice_native_fallbacks",
+        "notice_uncertain_warnings",
+    ):
+        assert marker in combined
+    assert "不重试 `/events`" in combined
+    assert "原始通知文本" in combined
+    assert "不重复原始通知文本" in combined
+    assert "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。" in combined
+
+
 def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme = read_doc("README.md")
     guide = read_doc("docs/user-guide.md")

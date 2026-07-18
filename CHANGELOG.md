@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.11 — 2026-07-18
+
+### Fixed
+- Fixed issue #135: initial Feishu create/reply delivery now uses a stable UUID and at most three attempts for retryable HTTP/network failures, while sidecar `/events` requests remain single-shot.
+- System notices now distinguish `delivered`, `not_sent`, and `unknown`: only definite non-delivery falls back to the original text, while uncertain outcomes use a generic warning without repeating private notice content.
+
+### Operations and safety
+- Added retry, unknown-outcome, native-fallback, and uncertain-warning metrics plus redacted send-error diagnostics; raw IDs, UUIDs, response bodies, URLs, and credentials are excluded.
+
 ## V4.0.10 — 2026-07-17
 
 See also: [docs/release-notes-v4.0.10.md](docs/release-notes-v4.0.10.md)

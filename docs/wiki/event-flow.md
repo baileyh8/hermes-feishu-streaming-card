@@ -13,6 +13,14 @@ Hermes Gateway
 
 Hermes 进程内的 hook 只负责提取和转发。sidecar 负责会话状态、卡片渲染、Feishu API、重试、诊断和 metrics。
 
+## 初始卡片可靠投递
+
+sidecar 为 Feishu create/reply 初始卡片生成同一条逻辑投递稳定、不同 bot/route 隔离的 `delivery_uuid`。仅 429、502、503、504、连接异常和超时会在 Feishu API 边界内重试，最多 3 次；不重试 `/events`，PATCH 更新继续沿用原有独立策略。
+
+初始投递对 hook 只暴露三种结果：`delivered` 表示拿到 message id；`not_sent` 表示确定未发送；`unknown` 表示请求可能已被飞书接收但客户端无法确认。异常、日志和 `/health` 不记录 UUID、原始响应正文、chat/message id、URL 或凭据。
+
+`/health.metrics` 使用 `feishu_send_retries` 统计额外 Feishu 尝试，`feishu_send_unknown_outcomes` 统计不确定结果，`notice_native_fallbacks` / `notice_uncertain_warnings` 分别统计 hook 被要求执行原文回退和通用提示的次数；后两项不代表原生飞书发送一定成功。
+
 ## 普通消息生命周期
 
 1. `message.started`
@@ -118,7 +126,7 @@ Hermes 原生运行提示会被归一为 `system.notice`：
 2. 如果没有当前 session，发送独立小卡片。
 3. 同一 background process 使用稳定的 `notice_id` 和独立 message id；running 更新与 finished 终态复用同一张卡。exit code `0` 显示成功，非零显示失败，未知 exit code 显示警告。
 4. Gateway 启动时会在 recovered watcher drain 前安装 adapter wrapper；contextless / recovered watcher 优先沿用 Hermes `metadata.thread_id`，避免独立通知掉出原 topic。
-5. 已识别 notice 如果卡片投递超时，也不再退回原生灰色文本。
+5. `delivered` 抑制原生灰色文本；`not_sent` 才回退原始通知文本；`unknown` 或不可解析响应只尝试发送 `⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。`，不重复原始通知文本。飞书本身完全不可用时，不保证通用提示最终可见。
 6. 只有严格匹配 Hermes 固定 envelope 和 production process/task id 的后台通知才会被接管；未知或不完整文本保持 Hermes 原生路径，避免吞掉普通回复。
 
 ## 独立 slash command 卡片
