@@ -2,9 +2,18 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V4.0.13：Hermes 全命令反馈卡片化（实现中）
+
+- [x] 任意 Feishu/Lark slash command 的非空文本反馈进入统一 command context，不再维护固定命令 allowlist；built-in、alias、plugin/quick 和 unknown-command 提示自动覆盖。
+- [x] 首次反馈创建命令卡，后续反馈串行更新同一卡；长 Markdown 分块，topic/reply anchor 保持不变。
+- [x] create/PATCH 成功才抑制原生灰色文本，失败逐条回退 Hermes 原始反馈。
+- [x] `/model`、裸 `/resume`、destructive confirmation 与 `/hfc` 专用交互卡保持优先；Agent turn 继续进入普通流式卡。
+- [x] 手动 `/compress` 先创建“正在压缩上下文”卡，再以 original handler 的成功、no-op 或 aborted 结果更新同一卡。
+- [ ] 完成全量自动化、真实 Feishu 命令矩阵与发布整理。
 
 ### V4.0.12：上下文压缩、字号与凭据可观测性（已发布）
 

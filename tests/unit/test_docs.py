@@ -1798,3 +1798,26 @@ def test_v400_model_picker_matches_hermes_cli_hierarchy():
         assert phrase in acceptance
     for field in ("total_models", "is_current", "Provider → Model"):
         assert field in spec
+
+
+def test_all_command_feedback_card_lifecycle_is_documented():
+    event_flow = read_doc("docs/wiki/event-flow.md")
+    maintenance = read_doc("docs/wiki/maintenance-guide.md")
+    acceptance = read_doc("docs/wiki/feishu-acceptance.md")
+    todo = read_doc("TODO.md")
+
+    for phrase in (
+        "all slash command feedback",
+        "same card",
+        "fail-open",
+        "/compress",
+        "/model",
+        "/resume",
+        "/update",
+    ):
+        assert phrase in event_flow
+    assert "固定 command allowlist" in maintenance
+    assert "create/PATCH 成功才抑制" in maintenance
+    assert "V4.0.13 全命令反馈卡片" in acceptance
+    assert "手动 `/compress`" in acceptance
+    assert "V4.0.13：Hermes 全命令反馈卡片化" in todo

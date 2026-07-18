@@ -145,23 +145,23 @@ Hermes 原生运行提示会被归一为 `system.notice`：
 5. `delivered` 抑制原生灰色文本；`not_sent` 才回退原始通知文本；`unknown` 或不可解析响应只尝试发送 `⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。`，不重复原始通知文本。飞书本身完全不可用时，不保证通用提示最终可见。
 6. 只有严格匹配 Hermes 固定 envelope 和 production process/task id 的后台通知才会被接管；未知或不完整文本保持 Hermes 原生路径，避免吞掉普通回复。
 
-## 独立 slash command 卡片
+## 全 slash command 反馈卡片
 
-独立命令不混入正在运行的 Agent 卡片：
+`all slash command feedback` 使用统一的命令上下文，不混入正在运行的 Agent 卡片，也不再维护固定命令 allowlist：
 
-- `/new`
-- `/reset`
-- `/clear`
-- `/undo`
-- `/stop`
-- `/model`
+1. Feishu/Lark inbound event 只要是 slash command，built-in、alias、plugin/quick 和 unknown-command 提示都建立有期限的 task-local context。
+2. Hermes 发出第一条非空文本反馈时 reply 创建 interactive card；同一命令后续反馈串行 PATCH the same card。
+3. `/help`、`/commands`、`/debug` 等长反馈按 Markdown 结构拆成多个 element；topic/thread metadata 与原 user message reply anchor 保持不变。
+4. create/PATCH 成功才抑制该条原生灰色文本；失败把未修改的 Hermes feedback fail-open 回 original adapter `send`。
+5. 手动 `/compress` 运行时包装 original handler：先创建“正在压缩上下文”卡，再以成功、no-op、fallback 或 aborted 原文更新同一卡。
 
-这些命令在 Feishu/Lark WebSocket 长连接环境中优先走原生 interactive card。按钮或下拉选择通过 Hermes 原 handler 回写结果。
+专用交互路径仍优先：
 
-特殊情况：
-
-- `/update` 是 Hermes 后台升级命令，不渲染交互命令卡片。
-- sidecar 或 command card 不可用时，允许回到 Hermes 原生文本 fallback。
+- `/model`、裸 `/resume` 和 `/new`、`/reset`、`/undo` 等 destructive confirmation 继续使用原有按钮、下拉框和同卡结果更新；成功时不会再创建第二张命令卡。
+- `/hfc help/status/doctor/monitor` 继续使用 sidecar 运维卡；只有专用路径失败返回文本时才进入统一反馈卡。
+- `/learn`、`/blueprint`、`/steer`、`/queue`、`/moa` 等转入 Agent turn 的命令只把即时确认、usage 或错误当作命令反馈；正常 reasoning/answer 仍由普通流式卡承载。
+- `/update` 的重启前反馈进入命令卡；Gateway 重启后的状态继续由现有 `system.notice` 卡承载。
+- 文件、图片、音频等附件继续使用 Hermes 原生媒体发送路径。
 
 ### V4.0.9 WebSocket live handler 边界
 

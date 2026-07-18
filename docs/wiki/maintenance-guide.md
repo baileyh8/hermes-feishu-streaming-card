@@ -20,6 +20,8 @@
 - 向 sidecar 发送 `message.*`、`tool.updated`、`system.notice` 等事件。
 - monkeypatch Feishu adapter 的 `send`、`edit_message`、slash confirm、model picker。
 - 运行时包装 bare `/resume` 并安装 native resume picker；选择结果复用 original Hermes resume handler。
+- 运行时包装手动 `/compress`，先创建运行卡，再以 original handler 返回值更新同一卡。
+- 用 task-local command context 承载 all slash command feedback；首次 create、后续 PATCH，失败逐条回原生文本。
 - 处理新版 Hermes 缺少 `message.started` 的首事件场景。
 
 高风险点：
@@ -29,7 +31,8 @@
 - 已识别 `system.notice` 必须按 sidecar 结果分流：`delivered` 抑制原生文本，`not_sent` 回退原始通知文本，`unknown` 只尝试固定通用提示且不重复原始通知文本；不可解析响应一律视为 `unknown`。
 - 上下文压缩只从 `_status_callback_sync` 的固定 `Compacting context` 标记产生 `context-compaction`；不得用静默 watchdog、普通 compression 文本或虚构百分比推断。
 - cron completion hook 必须位于 `extract_media` / `media_files` 过滤之后：`native_delivery=required` 时清空原生正文但继续文件上传，不能在媒体提取前提前返回。
-- `/update` 不进入命令卡片，保持 Hermes 后台升级。
+- 不得恢复固定 command allowlist；built-in、alias、plugin/quick、unknown feedback 都必须经过统一 command context。`/update` 只卡片化重启前反馈，不改变后台升级和重启语义。
+- command context 只能接管非空文本；Agent turn、专用交互卡和媒体路径保持原边界。只有 create/PATCH 成功才抑制对应原生文本。
 - 已连接 Lark WebSocket 的 live `EventDispatcherHandler` identity 不得被重建或替换；只可通过 `_ws_thread_loop.call_soon_threadsafe(...)` 更新现有 `p2.card.action.trigger` processor callback，不兼容内部结构必须 fail-open。
 - `_hfc_original_handle_resume_command` 必须保留为唯一恢复执行路径；不要在 HFC 重写 session ownership、continuation 或 `switch_session` 规则。
 - 群聊/topic picker 只有在发起者 `open_id` 可验证时才显示；不可验证时 fail-open。私聊不额外比较操作者。

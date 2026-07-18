@@ -2,6 +2,17 @@
 
 自动化测试不能完全证明 Feishu/Lark 客户端体验。涉及卡片 UX、topic、系统提示、命令卡片的版本，发布前需要真实飞书 smoke。
 
+## V4.0.13 全命令反馈卡片
+
+- `/status`、`/usage`、`/commands`、`/reasoning` 与一个 unknown command：每条反馈使用独立命令卡，无灰色原生文本；`/commands` 长 Markdown 不缺段、不破坏代码块。
+- 同一命令产生两条以上反馈时只 create 一次，后续更新 same card；topic 内 reply anchor 不掉出原话题。
+- 手动 `/compress`：先显示蓝色“正在压缩上下文”，完成后原位显示 Hermes 的 messages/tokens 统计；no-op 和 aborted warning 也更新原卡。
+- `/model`、裸 `/resume`、`/new` confirmation：继续使用已有交互卡，选择/确认后原卡更新，不出现第二张结果卡。
+- `/learn` 或 `/blueprint`：即时确认使用命令卡，后续 Agent reasoning/answer 使用普通流式卡，不串到命令卡。
+- `/update`：重启前反馈使用命令卡；重启后状态允许由独立 `system.notice` 卡继续，不要求跨进程 PATCH 内存中的旧卡。
+- 受控让 command card create/PATCH 失败：对应 Hermes 原始反馈必须通过 native fail-open 可见，不能静默丢失。
+- 媒体/附件命令继续投递原生文件；文本卡片不能吞掉附件。
+
 ## V4.0.12 上下文压缩与字号（发布候选验收）
 
 - 使用官方 installer/patcher 更新真实 Hermes；确认 `doctor` 的 `status_callback=true`，不得手工编辑 `gateway/run.py`。
