@@ -54,8 +54,11 @@ class GatewayRunner:
 
     async def _run_agent(self, source, event_message_id=None):
         _loop_for_step = None
+        _status_chat_id = source.chat_id
         def _run_still_current():
             return True
+        def _status_callback_sync(event_type: str, message: str) -> None:
+            return None
         def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):
             return None
         def _stream_delta_cb(text: str) -> None:
@@ -82,6 +85,75 @@ def _deliver_media_from_response(response):
     assert detection.hook_strategy == "gateway_run_013_plus"
     assert detection.compatibility == "full"
     assert detection.capabilities["cron_delivery"] is True
+
+
+def test_detect_status_callback_requires_patchable_scope(tmp_path):
+    root = tmp_path / "hermes"
+    run_py = root / "gateway" / "run.py"
+    run_py.parent.mkdir(parents=True)
+    (root / "VERSION").write_text("v0.18.2\n", encoding="utf-8")
+    run_py.write_text(
+        '''
+class GatewayRunner:
+    async def _handle_message_with_agent(self, event, source):
+        response = "ok"
+        await self.hooks.emit("agent:end", {"response": response})
+        return response
+
+    async def _run_agent(self, source, event_message_id=None):
+        _loop_for_step = None
+        _status_chat_id = source.chat_id
+        def _run_still_current():
+            return True
+        def _status_callback_sync(event_type: str, message: str) -> None:
+            return None
+        return {}
+''',
+        encoding="utf-8",
+    )
+
+    detection = detect_hermes(root)
+
+    assert detection.supported is True
+    assert detection.capabilities["status_callback"] is True
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        ("_status_callback_sync", "_renamed_status_callback_sync"),
+        ("event_type: str, message: str", "event_type: str"),
+        ("        _status_chat_id = source.chat_id\n", ""),
+    ],
+)
+def test_detect_status_callback_rejects_unpatchable_scope(tmp_path, replacement):
+    root = tmp_path / "hermes"
+    run_py = root / "gateway" / "run.py"
+    run_py.parent.mkdir(parents=True)
+    (root / "VERSION").write_text("v0.18.2\n", encoding="utf-8")
+    contents = '''
+class GatewayRunner:
+    async def _handle_message_with_agent(self, event, source):
+        response = "ok"
+        await self.hooks.emit("agent:end", {"response": response})
+        return response
+
+    async def _run_agent(self, source, event_message_id=None):
+        _loop_for_step = None
+        _status_chat_id = source.chat_id
+        def _run_still_current():
+            return True
+        def _status_callback_sync(event_type: str, message: str) -> None:
+            return None
+        return {}
+'''
+    run_py.write_text(contents.replace(*replacement), encoding="utf-8")
+
+    detection = detect_hermes(root)
+
+    assert detection.supported is True
+    assert detection.compatibility == "partial"
+    assert detection.capabilities["status_callback"] is False
 
 
 def test_detect_calendar_version_013_plus_strategy_for_v2026_5_16(tmp_path):
@@ -165,8 +237,11 @@ class GatewayRunner:
 
     async def _run_agent_inner(self, source, event_message_id=None):
         _loop_for_step = None
+        _status_chat_id = source.chat_id
         def _run_still_current():
             return True
+        def _status_callback_sync(event_type: str, message: str) -> None:
+            return None
         def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):
             return None
         def _stream_delta_cb(text: str) -> None:
@@ -230,8 +305,11 @@ class GatewayRunner:
 
     async def _run_agent(self, source, event_message_id=None):
         _loop_for_step = None
+        _status_chat_id = source.chat_id
         def _run_still_current():
             return True
+        def _status_callback_sync(event_type: str, message: str) -> None:
+            return None
         def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):
             return None
         def _stream_delta_cb(text: str) -> None:

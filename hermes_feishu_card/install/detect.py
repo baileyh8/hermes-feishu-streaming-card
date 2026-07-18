@@ -15,6 +15,7 @@ OPTIONAL_CAPABILITIES = (
     "tool_callback",
     "answer_delta_callback",
     "thinking_delta_callback",
+    "status_callback",
     "cron_delivery",
     "reply_context",
     "attachment_delivery",
@@ -296,6 +297,7 @@ def _detect_capabilities(
         "tool_callback": _find_callback(module, "progress_callback") is not None,
         "answer_delta_callback": _find_callback(module, "_stream_delta_cb") is not None,
         "thinking_delta_callback": _find_callback(module, "_interim_assistant_cb") is not None,
+        "status_callback": _has_patchable_status_callback(module),
         "cron_delivery": _has_cron_delivery(contents, cron_contents),
         "reply_context": "reply_to_message_id" in contents
         or "_reply_anchor_for_event" in contents,
@@ -393,6 +395,67 @@ def _find_callback(
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == name:
             return node
     return None
+
+
+def _has_patchable_status_callback(module: ast.Module) -> bool:
+    run_agent = _find_function(module, "_run_agent_inner") or _find_function(
+        module, "_run_agent"
+    )
+    if run_agent is None:
+        return False
+    callback = next(
+        (
+            node
+            for node in ast.walk(run_agent)
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_status_callback_sync"
+        ),
+        None,
+    )
+    if callback is None:
+        return False
+    required_outer_names = {
+        "source",
+        "event_message_id",
+        "_status_chat_id",
+        "_loop_for_step",
+        "_run_still_current",
+    }
+    required_callback_args = {"event_type", "message"}
+    return required_outer_names.issubset(_function_scope_names(run_agent)) and (
+        required_callback_args.issubset(_function_argument_names(callback))
+    )
+
+
+def _function_scope_names(node: ast.AsyncFunctionDef | ast.FunctionDef) -> set[str]:
+    names = set(_function_argument_names(node))
+    for child in ast.walk(node):
+        if child is node:
+            continue
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(child.name)
+        elif isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store):
+            names.add(child.id)
+        elif isinstance(child, ast.ExceptHandler) and child.name:
+            names.add(child.name)
+    return names
+
+
+def _function_argument_names(node: ast.AsyncFunctionDef | ast.FunctionDef) -> set[str]:
+    arguments = node.args
+    names = {
+        argument.arg
+        for argument in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        )
+    }
+    if arguments.vararg is not None:
+        names.add(arguments.vararg.arg)
+    if arguments.kwarg is not None:
+        names.add(arguments.kwarg.arg)
+    return names
 
 
 class _HandlerCompletionVisitor(ast.NodeVisitor):

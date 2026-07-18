@@ -656,6 +656,7 @@ def _build_doctor_report(
         return _finalize_doctor_report(report)
 
     if detection.compatibility != "full":
+        status_callback_missing = detection.capabilities.get("status_callback") is False
         recommendations.append(
             {
                 "severity": "warning",
@@ -664,7 +665,10 @@ def _build_doctor_report(
                     "Hermes is supported, but optional compatibility anchors are missing."
                 ),
                 "next_step": (
-                    "Review the anchors section if streaming, cron, reply, or "
+                    "Review anchors.status_callback before relying on "
+                    "context-compaction visibility."
+                    if status_callback_missing
+                    else "Review the anchors section if streaming, cron, reply, or "
                     "attachment features do not behave as expected."
                 ),
             }

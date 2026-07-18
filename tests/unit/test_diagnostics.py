@@ -102,6 +102,28 @@ def test_report_keeps_full_recovery_fingerprint_internal_and_redacts_output(tmp_
     assert plan.fingerprint not in json.dumps(report.to_dict(card_safe=True), sort_keys=True)
 
 
+def test_partial_compatibility_reports_unavailable_compaction_visibility(tmp_path):
+    detection = replace(
+        _detection(tmp_path),
+        compatibility="partial",
+        capabilities={"message_handler": True, "status_callback": False},
+    )
+
+    report = build_diagnostic_report(
+        tmp_path / "config.yaml",
+        {"server": {"host": "127.0.0.1", "port": 8765}},
+        detection,
+        _recovery_plan(tmp_path),
+    )
+
+    finding = next(
+        item for item in report.findings if item.code == "hermes_compatibility_partial"
+    )
+    assert detection.supported is True
+    assert "Context-compaction visibility is unavailable" in finding.impact
+    assert "status_callback" in finding.actions[0]
+
+
 def test_card_safe_report_redacts_secrets_source_text_and_raw_hashes(tmp_path):
     raw_hash = "b" * 64
     report = _report(
