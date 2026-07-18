@@ -97,6 +97,155 @@ class GatewayEventObject:
         self.message_id = message_id
 
 
+def test_status_from_hermes_emits_compaction_notice_with_topic_context(monkeypatch):
+    posted = []
+
+    def capture(local_vars, event_name="message.started"):
+        payload = hook_runtime.build_event(event_name, local_vars)
+        posted.append(payload)
+        return payload is not None
+
+    monkeypatch.setattr(
+        hook_runtime,
+        "emit_from_hermes_locals_threadsafe",
+        capture,
+    )
+    local_vars = {
+        "source": SourceObject(),
+        "message_id": "om_compaction",
+        "thread_id": "omt_compaction_topic",
+        "reply_to_message_id": "om_topic_user",
+        "_run_still_current": lambda: True,
+    }
+
+    handled = hook_runtime.handle_status_from_hermes_locals(
+        local_vars,
+        event_type="context",
+        message=(
+            "🗜️ Compacting context — summarizing earlier conversation "
+            "so I can continue..."
+        ),
+    )
+
+    assert handled is True
+    assert len(posted) == 1
+    payload = posted[0]
+    assert payload["event"] == "system.notice"
+    assert payload["conversation_id"] == "omt_compaction_topic"
+    assert payload["thread_id"] == "omt_compaction_topic"
+    assert payload["data"]["reply_to_message_id"] == "om_topic_user"
+    assert payload["data"]["notice_kind"] == "context-compaction"
+    assert payload["data"]["notice_id"] == "context-compaction:active"
+    assert payload["data"]["notice_scope"] == "session"
+    assert payload["data"]["phase"] == "started"
+    assert payload["data"]["title"] == "正在压缩上下文"
+    assert payload["data"]["level"] == "info"
+    assert payload["data"]["content"] == "正在总结较早的对话，完成后会继续当前任务。"
+    assert payload["data"]["create_session"] is True
+    assert payload["data"]["display_status"] == "in_progress"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "compression failed",
+        "compressing files",
+        "context pressure is high",
+        "provider status: waiting",
+        "",
+    ],
+)
+def test_status_from_hermes_ignores_non_compaction_messages(monkeypatch, message):
+    posted = []
+    monkeypatch.setattr(
+        hook_runtime,
+        "emit_from_hermes_locals_threadsafe",
+        lambda *args, **kwargs: posted.append((args, kwargs)) or True,
+    )
+
+    handled = hook_runtime.handle_status_from_hermes_locals(
+        {
+            "source": SourceObject(),
+            "message_id": "om_compaction_non_match",
+            "_run_still_current": lambda: True,
+        },
+        event_type="context",
+        message=message,
+    )
+
+    assert handled is False
+    assert posted == []
+
+
+@pytest.mark.parametrize(
+    "local_vars",
+    [
+        {
+            "source": TelegramSourceObject(),
+            "message_id": "telegram-message",
+            "_run_still_current": lambda: True,
+        },
+        {
+            "source": SourceObject(),
+            "message_id": "om_stale_compaction",
+            "_run_still_current": lambda: False,
+        },
+    ],
+)
+def test_status_from_hermes_ignores_non_feishu_or_stale_run(monkeypatch, local_vars):
+    posted = []
+    monkeypatch.setattr(
+        hook_runtime,
+        "emit_from_hermes_locals_threadsafe",
+        lambda *args, **kwargs: posted.append((args, kwargs)) or True,
+    )
+
+    handled = hook_runtime.handle_status_from_hermes_locals(
+        local_vars,
+        event_type="context",
+        message="Compacting context",
+    )
+
+    assert handled is False
+    assert posted == []
+
+
+def test_compaction_status_and_next_delta_use_increasing_sequence(monkeypatch):
+    posted = []
+
+    def capture(local_vars, event_name="message.started"):
+        payload = hook_runtime.build_event(event_name, local_vars)
+        posted.append(payload)
+        return payload is not None
+
+    monkeypatch.setattr(
+        hook_runtime,
+        "emit_from_hermes_locals_threadsafe",
+        capture,
+    )
+    local_vars = {
+        "source": SourceObject(),
+        "message_id": "om_compaction_order",
+        "_run_still_current": lambda: True,
+    }
+
+    assert hook_runtime.handle_status_from_hermes_locals(
+        local_vars,
+        event_type="context",
+        message="COMPACTING   CONTEXT",
+    )
+    assert capture(
+        {**local_vars, "text": "continued output"},
+        event_name="answer.delta",
+    )
+
+    assert [payload["event"] for payload in posted] == [
+        "system.notice",
+        "answer.delta",
+    ]
+    assert [payload["sequence"] for payload in posted] == [0, 1]
+
+
 def test_build_event_extracts_direct_fields():
     payload = hook_runtime.build_event(
         "message.started",

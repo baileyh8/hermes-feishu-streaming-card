@@ -47,6 +47,10 @@ OPERATIONS_ACTION_RETRY_DELAY_SECONDS = 0.1
 OPERATIONS_ACTION_WORKERS = 4
 OPERATIONS_ACTION_QUEUE_LIMIT = 64
 PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_CONTEXT_COMPACTION_STATUS_RE = re.compile(
+    r"\bCompacting\s+context\b",
+    re.IGNORECASE,
+)
 MEDIA_RE = re.compile(r"MEDIA:([^\s\]]+)")
 LOCAL_FILE_RE = re.compile(
     r"(?<![:\w/])(/[^\s`]+\.(?:png|jpg|jpeg|webp|gif|pdf|txt|md|csv|xlsx|docx|mp3|wav|ogg|mp4|mov|webm))"
@@ -580,6 +584,41 @@ def emit_from_hermes_locals_threadsafe(
                 )
             )
         return True
+    except Exception:
+        return False
+
+
+def handle_status_from_hermes_locals(
+    local_vars: dict[str, Any],
+    *,
+    event_type: str,
+    message: str,
+) -> bool:
+    try:
+        source = local_vars.get("source")
+        if _platform_name(local_vars, source) != "feishu":
+            return False
+        if not _CONTEXT_COMPACTION_STATUS_RE.search(str(message or "")):
+            return False
+        run_guard = local_vars.get("_run_still_current")
+        if callable(run_guard) and not run_guard():
+            return False
+        event_locals = {
+            **local_vars,
+            "_hfc_notice_title": "正在压缩上下文",
+            "_hfc_notice_level": "info",
+            "_hfc_notice_kind": "context-compaction",
+            "_hfc_notice_id": "context-compaction:active",
+            "_hfc_notice_scope": "session",
+            "_hfc_notice_phase": "started",
+            "_hfc_notice_create_session": True,
+            "display_status": "in_progress",
+            "content": "正在总结较早的对话，完成后会继续当前任务。",
+        }
+        return emit_from_hermes_locals_threadsafe(
+            event_locals,
+            event_name="system.notice",
+        )
     except Exception:
         return False
 
@@ -5149,6 +5188,18 @@ def _event_data(
         )
         if isinstance(notice_terminal, bool):
             data["notice_terminal"] = notice_terminal
+        notice_phase = _first_string(
+            local_vars,
+            ("_hfc_notice_phase", "notice_phase", "phase"),
+        )
+        if notice_phase:
+            data["phase"] = notice_phase
+        notice_create_session = local_vars.get(
+            "_hfc_notice_create_session",
+            local_vars.get("create_session"),
+        )
+        if isinstance(notice_create_session, bool):
+            data["create_session"] = notice_create_session
         delivery_kind = _first_string(local_vars, ("delivery_kind",))
         if delivery_kind:
             data["delivery_kind"] = delivery_kind
