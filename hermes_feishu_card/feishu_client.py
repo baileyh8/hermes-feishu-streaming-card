@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import time
@@ -10,6 +11,41 @@ from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote, urlparse
 
 import aiohttp
+
+
+_RETRYABLE_HTTP_STATUSES = {429, 502, 503, 504}
+_SEND_MAX_ATTEMPTS = 3
+_SEND_RETRY_DELAYS_SECONDS = (0.4, 1.2)
+_MAX_RETRY_AFTER_SECONDS = 2.0
+_sleep = asyncio.sleep
+
+
+def _safe_api_code(value: Any) -> int | str | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip()
+        if (
+            normalized
+            and len(normalized) <= 32
+            and all(char.isalnum() or char in {"_", "-"} for char in normalized)
+        ):
+            return normalized
+    return None
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        seconds = float(value.strip())
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
 
 
 DeliveryFailureOutcome = Literal["not_sent", "unknown"]
@@ -148,40 +184,81 @@ class FeishuClient:
             if len(delivery_uuid) > 50:
                 raise ValueError("delivery_uuid must not exceed 50 characters")
 
-        token = await self._tenant_token()
         payload = self.build_message_payload(
             chat_id,
             card,
             thread_id=thread_id,
             reply_to_message_id=reply_to_message_id,
         )
-        if reply_to_message_id:
-            body = await self._request_json(
-                "POST",
-                f"/im/v1/messages/{quote(reply_to_message_id, safe='')}/reply",
-                token=token,
-                json_body={
-                    "msg_type": payload["msg_type"],
-                    "content": payload["content"],
-                    "reply_in_thread": bool(thread_id),
-                    **({"uuid": delivery_uuid} if delivery_uuid is not None else {}),
-                },
-            )
-        else:
-            if delivery_uuid is not None:
-                payload["uuid"] = delivery_uuid
-            receive_id_type = "thread_id" if thread_id else "chat_id"
-            body = await self._request_json(
-                "POST",
-                "/im/v1/messages",
-                token=token,
-                params={"receive_id_type": receive_id_type},
-                json_body=payload,
-            )
-        data = body.get("data")
-        if not isinstance(data, dict) or not isinstance(data.get("message_id"), str):
-            raise FeishuAPIError("Feishu send message response missing message_id")
-        return FeishuSendResult(message_id=data["message_id"])
+        if delivery_uuid is not None and not reply_to_message_id:
+            payload["uuid"] = delivery_uuid
+
+        max_attempts = _SEND_MAX_ATTEMPTS if delivery_uuid is not None else 1
+        for attempt_index in range(max_attempts):
+            try:
+                token = await self._tenant_token()
+                if reply_to_message_id:
+                    body = await self._request_json(
+                        "POST",
+                        f"/im/v1/messages/{quote(reply_to_message_id, safe='')}/reply",
+                        token=token,
+                        json_body={
+                            "msg_type": payload["msg_type"],
+                            "content": payload["content"],
+                            "reply_in_thread": bool(thread_id),
+                            **(
+                                {"uuid": delivery_uuid}
+                                if delivery_uuid is not None
+                                else {}
+                            ),
+                        },
+                    )
+                else:
+                    receive_id_type = "thread_id" if thread_id else "chat_id"
+                    body = await self._request_json(
+                        "POST",
+                        "/im/v1/messages",
+                        token=token,
+                        params={"receive_id_type": receive_id_type},
+                        json_body=payload,
+                    )
+                data = body.get("data")
+                if not isinstance(data, dict) or not isinstance(
+                    data.get("message_id"), str
+                ):
+                    raise FeishuAPIError(
+                        "Feishu send response missing message_id",
+                        retryable=False,
+                        outcome="unknown",
+                    )
+                return FeishuSendResult(
+                    message_id=data["message_id"],
+                    retry_count=attempt_index,
+                )
+            except FeishuAPIError as exc:
+                error = FeishuAPIError(
+                    str(exc),
+                    status_code=exc.status_code,
+                    api_code=exc.api_code,
+                    retryable=exc.retryable,
+                    outcome=exc.outcome,
+                    retry_after_seconds=exc.retry_after_seconds,
+                    retry_count=attempt_index,
+                )
+                if not exc.retryable or attempt_index + 1 >= max_attempts:
+                    raise error from exc
+
+                configured_delay = _SEND_RETRY_DELAYS_SECONDS[attempt_index]
+                retry_after = exc.retry_after_seconds
+                delay = configured_delay
+                if retry_after is not None:
+                    delay = min(
+                        max(retry_after, configured_delay),
+                        _MAX_RETRY_AFTER_SECONDS,
+                    )
+                await _sleep(delay)
+
+        raise AssertionError("unreachable")
 
     async def update_card_message(self, message_id: str, card: Dict[str, Any]) -> None:
         if not isinstance(message_id, str) or not message_id.strip():
@@ -247,25 +324,51 @@ class FeishuClient:
                     try:
                         payload = await response.json(content_type=None)
                     except (aiohttp.ContentTypeError, json.JSONDecodeError) as exc:
+                        retryable = response.status in _RETRYABLE_HTTP_STATUSES
                         raise FeishuAPIError(
-                            f"Feishu API returned non-json response: HTTP {response.status}"
+                            "Feishu API returned non-json response",
+                            status_code=response.status,
+                            retryable=retryable,
+                            outcome="unknown" if retryable or response.status < 400 else "not_sent",
+                            retry_after_seconds=_retry_after_seconds(
+                                response.headers.get("Retry-After")
+                            ),
                         ) from exc
-        except aiohttp.ClientError as exc:
-            raise FeishuAPIError(f"Feishu API request failed: {exc.__class__.__name__}") from exc
+        except FeishuAPIError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise FeishuAPIError(
+                f"Feishu API request failed: {exc.__class__.__name__}",
+                retryable=True,
+                outcome="unknown",
+            ) from exc
 
         if not isinstance(payload, dict):
-            raise FeishuAPIError("Feishu API returned non-object response")
+            raise FeishuAPIError(
+                "Feishu API returned non-object response",
+                retryable=False,
+                outcome="unknown",
+            )
         if response.status >= 400:
-            detail = self._format_error_payload(payload)
-            suffix = f": {detail}" if detail else ""
-            raise FeishuAPIError(f"Feishu API HTTP {response.status}{suffix}")
+            retryable = response.status in _RETRYABLE_HTTP_STATUSES
+            raise FeishuAPIError(
+                "Feishu API HTTP failure",
+                status_code=response.status,
+                api_code=_safe_api_code(payload.get("code")),
+                retryable=retryable,
+                outcome="unknown" if retryable else "not_sent",
+                retry_after_seconds=_retry_after_seconds(
+                    response.headers.get("Retry-After")
+                ),
+            )
         code = payload.get("code")
         if code != 0:
-            msg = payload.get("msg", "")
-            if not isinstance(msg, str):
-                msg = ""
-            msg = self._redact_sensitive_text(msg)
-            raise FeishuAPIError(f"Feishu API error {code}: {msg}")
+            raise FeishuAPIError(
+                "Feishu API application failure",
+                api_code=_safe_api_code(code),
+                retryable=False,
+                outcome="not_sent",
+            )
         return payload
 
     def _format_error_payload(self, payload: dict[str, Any]) -> str:
