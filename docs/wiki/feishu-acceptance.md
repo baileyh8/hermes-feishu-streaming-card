@@ -11,7 +11,7 @@
 - 受控 503 耗尽或连接结果不明返回 `unknown`：只尝试一次 `⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。`，不重复原始通知文本，`notice_uncertain_warnings` 加一；飞书完全不可用时不要求该提示必达。
 - 检查 `/health`：`feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings` 与脱敏 `last_send_error` 符合分支，且没有原始 chat/message id、UUID、通知正文、URL、token 或 secret。
 
-2026-07-18 发布候选验收结果：真实 Hermes `v2026.7.7.2` 通过项目 CLI 重载当前工作树的 sidecar，并使用 Gateway 官方 CLI 重启 Gateway；`doctor` 显示 runtime/import/install state 一致。通过 loopback `/events` 向已认证 Feishu 会话执行私聊 create 与 topic reply，两条事件均返回 `delivered/applied`，sidecar 指标增加 2 次接收、2 次应用和 2 次成功发送，失败、重试及 unknown 均未增加；card-safe diagnostics 未包含验收正文或 `delivery_uuid`。受控 503/400/unknown 与 hook 原生回退分支由自动化集成测试覆盖；本次直接 `/events` smoke 不宣称已完成客户端原生灰字去重视觉验收或真实 Feishu 故障注入。
+2026-07-18 发布验收结果：真实 Hermes `v2026.7.7.2` 通过项目 CLI 重载当前工作树的 sidecar，并使用 Gateway 官方 CLI 重启 Gateway；`doctor` 显示 runtime/import/install state 一致。通过 loopback `/events` 向已认证 Feishu 会话执行私聊 create 与 topic reply，两条事件均返回 `delivered/applied`，sidecar 指标增加 2 次接收、2 次应用和 2 次成功发送，失败、重试及 unknown 均未增加；card-safe diagnostics 未包含验收正文或 `delivery_uuid`。受控 503/400/unknown 与 hook 原生回退分支由自动化集成测试覆盖；本次直接 `/events` smoke 不宣称已完成客户端原生灰字去重视觉验收或真实 Feishu 故障注入。发布后进一步确认 annotated tag 指向 `2a806d3`、四个 assets/checksums 全部通过，公共 `v4.0.11` tag 可安装到独立 Python 3.12 `site-packages`，临时 Hermes fixture 的 hook install state 完整一致。
 
 ## V4.0.10 事件传输安全边界
 
