@@ -14,7 +14,7 @@
 - [x] 自动化覆盖 503 后成功、永久 400、结果不明、topic 路由、同 UUID 重试与单次 hook `/events` 调用。
 - [x] 真实 loopback sidecar + Feishu API 的私聊 create 与 topic reply 均为 `delivered/applied`，2 次发送全部成功；诊断未包含验收正文或 UUID。
 - [x] 最终全量 gate `1389 passed, 4 skipped`、`git diff --check`、sdist/wheel 构建与干净 Python 3.12 wheel import `4.0.11` 通过。
-- [ ] annotated tag `v4.0.11`、GitHub Release、四个 assets/checksums 与公共 tagged installer fixture 验证通过。
+- [x] annotated tag `v4.0.11`、GitHub Release、四个 assets/checksums 与公共 tagged installer fixture 验证通过。
 
 ### V4.0.10：事件传输安全边界（已发布）
 

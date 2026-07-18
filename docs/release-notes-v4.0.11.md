@@ -27,6 +27,8 @@ V4.0.11 修复 Issue #135：当 Feishu 初始 create/reply 的 HTTP 结果不可
 - `uv build` 成功生成 sdist/wheel；干净 Python 3.12 环境从 wheel 导入 `hermes_feishu_card==4.0.11`，console entry point metadata 正确。
 - 真实 Hermes `v2026.7.7.2` 重载当前工作树后，loopback `/events` 的 Feishu 私聊 create 与 topic reply 均返回 `delivered/applied`；2 次发送全部成功，失败、重试和 unknown 未增加，诊断未包含验收正文或 UUID。
 - 本次直接 `/events` smoke 不经过 Hermes 原生消息分支，因此不把客户端灰字去重或真实 Feishu 故障注入写成已完成；相关分支由自动化集成测试验证。
+- annotated tag `v4.0.11` 正确指向合并提交 `2a806d3`；`release-assets` workflow 成功，四个公开资产齐全并逐项通过 SHA-256 checksums。
+- 公共 `v4.0.11` tagged installer fixture 从 Git tag 安装到独立 Python 3.12 `site-packages`，版本为 `4.0.11`；临时 Hermes fixture 的 hook install state 完整一致。
 
 ## Release assets
 

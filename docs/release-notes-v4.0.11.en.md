@@ -27,6 +27,8 @@ V4.0.11 fixes Issue #135: unreliable Feishu create/reply results no longer let r
 - `uv build` produced both sdist and wheel. A clean Python 3.12 environment imported `hermes_feishu_card==4.0.11` from the wheel with the expected console entry point metadata.
 - After reloading the current worktree into a real Hermes `v2026.7.7.2` installation, Feishu DM create and topic reply through loopback `/events` both returned `delivered/applied`; both sends succeeded, failures/retries/unknown did not increase, and diagnostics contained neither smoke text nor UUIDs.
 - This direct `/events` smoke does not traverse the Hermes native-message branch, so it does not claim a completed client-side gray-text visual check or real Feishu fault injection; automated integration tests cover those branches.
+- The annotated `v4.0.11` tag points to merged commit `2a806d3`. The `release-assets` workflow succeeded, all four public assets were present, and every SHA-256 checksum passed.
+- A public `v4.0.11` tagged-installer fixture installed the Git tag into isolated Python 3.12 `site-packages` as version `4.0.11`; a temporary Hermes fixture then reported a complete, consistent hook install state.
 
 ## Release assets
 
