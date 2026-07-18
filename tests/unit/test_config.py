@@ -599,6 +599,31 @@ profiles:
     assert config["profiles"]["work"]["card"]["footer_fields"] == ["model"]
 
 
+def test_profile_card_text_size_override_preserves_global_roles(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+card:
+  text_sizes:
+    body: normal
+    footer: x-small
+profiles:
+  work:
+    card:
+      text_sizes:
+        footer: notation
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config["profiles"]["work"]["card"]["text_sizes"] == {
+        "body": "normal",
+        "footer": "notation",
+    }
+
+
 def test_load_config_rejects_non_mapping_profile_card(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(

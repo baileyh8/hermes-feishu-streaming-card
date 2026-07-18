@@ -109,6 +109,30 @@ def normalize_text_sizes(
     return normalized
 
 
+def merge_card_config(
+    base: Mapping[str, Any] | None,
+    override: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    resolved = copy.deepcopy(dict(base or {}))
+    incoming = copy.deepcopy(dict(override or {}))
+    has_incoming_sizes = "text_sizes" in incoming
+    incoming_sizes = incoming.pop("text_sizes", None)
+    resolved.update(incoming)
+    if has_incoming_sizes:
+        if isinstance(incoming_sizes, Mapping):
+            existing_sizes = resolved.get("text_sizes")
+            sizes = (
+                copy.deepcopy(dict(existing_sizes))
+                if isinstance(existing_sizes, Mapping)
+                else {}
+            )
+            sizes.update(copy.deepcopy(dict(incoming_sizes)))
+            resolved["text_sizes"] = sizes
+        else:
+            resolved["text_sizes"] = copy.deepcopy(incoming_sizes)
+    return resolved
+
+
 def _normalize_text_size_value(value: object, path: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{path} must be a supported text size")
@@ -174,8 +198,9 @@ def load_config(path: str | Path) -> dict[str, dict[str, Any]]:
                 raw_profile_card = {}
             if not isinstance(raw_profile_card, dict):
                 raise ValueError(f"profile {profile_id!r} card must be a mapping")
-            profile_card = copy.deepcopy(config.get("card", DEFAULT_CONFIG["card"]))
-            profile_card.update(raw_profile_card)
+            profile_card = merge_card_config(
+                config.get("card", DEFAULT_CONFIG["card"]), raw_profile_card
+            )
             profile_cfg.setdefault("feishu", copy.deepcopy(DEFAULT_CONFIG["feishu"]))
             profile_cfg.setdefault("bots", copy.deepcopy(DEFAULT_CONFIG["bots"]))
             profile_cfg.setdefault("bindings", copy.deepcopy(DEFAULT_CONFIG["bindings"]))

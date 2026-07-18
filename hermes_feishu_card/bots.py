@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .config import normalize_text_sizes
+from .config import merge_card_config, normalize_text_sizes
 from .feishu_client import FeishuClient, FeishuClientConfig
 
 
@@ -246,12 +246,8 @@ def resolve_card_config(
     profile_card: dict[str, Any] | None,
     bot_card: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    resolved = copy.deepcopy(base_card or {})
-    if isinstance(profile_card, dict):
-        resolved.update(copy.deepcopy(profile_card))
-    if isinstance(bot_card, dict):
-        resolved.update(copy.deepcopy(bot_card))
-    return resolved
+    resolved = merge_card_config(base_card, profile_card)
+    return merge_card_config(resolved, bot_card)
 
 
 def _select_default_bot_id(

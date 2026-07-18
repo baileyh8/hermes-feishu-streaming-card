@@ -1,6 +1,11 @@
 import pytest
 
-from hermes_feishu_card.bots import BotRegistry, FeishuClientFactory, RoutingContext
+from hermes_feishu_card.bots import (
+    BotRegistry,
+    FeishuClientFactory,
+    RoutingContext,
+    resolve_card_config,
+)
 from hermes_feishu_card.config import load_config
 
 
@@ -383,6 +388,16 @@ def test_bot_registry_rejects_invalid_bot_card_text_size_with_path():
                 }
             }
         )
+
+
+def test_resolve_card_config_deep_merges_only_text_size_roles():
+    resolved = resolve_card_config(
+        {"text_sizes": {"body": "normal", "footer": "x-small"}},
+        {"text_sizes": {"footer": "notation"}},
+        {"text_sizes": {"body": "large"}},
+    )
+
+    assert resolved["text_sizes"] == {"body": "large", "footer": "notation"}
 
 
 def test_safe_diagnostics_exposes_only_card_title():

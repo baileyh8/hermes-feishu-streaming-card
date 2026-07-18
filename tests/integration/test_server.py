@@ -6380,6 +6380,36 @@ async def test_started_card_title_uses_bot_over_profile_and_global():
     assert sent_card["header"]["title"]["content"] == "Sales Bot"
 
 
+async def test_session_card_config_preserves_base_text_size_roles_on_profile_override():
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={
+            "text_sizes": {"body": "normal", "footer": "x-small"},
+        },
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        response = await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started",
+                0,
+                data={"card": {"text_sizes": {"footer": "notation"}}},
+            ),
+        )
+    finally:
+        await test_client.close()
+
+    assert response.status == 200
+    session_card = next(iter(app[SESSION_CARD_CONFIGS_KEY].values()))
+    assert session_card["text_sizes"] == {
+        "body": "normal",
+        "footer": "notation",
+    }
+
+
 @pytest.mark.parametrize("profile_id", ["bad:profile/path", "", "x" * 65])
 async def test_invalid_profile_routes_with_default_factory_and_health_key(profile_id):
     factory = FakeFeishuClientFactory()

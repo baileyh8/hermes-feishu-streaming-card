@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict
 from aiohttp import web
 
 from .bots import RouteResult
-from .config import load_config, resolve_operations_hermes_root
+from .config import load_config, merge_card_config, resolve_operations_hermes_root
 from .diagnostics import DiagnosticFinding, DiagnosticReport, build_diagnostic_report
 from .events import EventValidationError, SidecarEvent
 from .event_auth import EventAuthenticationError, EventProofVerifier
@@ -2720,10 +2720,7 @@ def _card_config_for_client(
             return resolver(bot_id, base_card=base_card, profile_card=profile_card)
         except Exception:
             return dict(base_card)
-    resolved = dict(base_card)
-    if isinstance(profile_card, dict):
-        resolved.update(profile_card)
-    return resolved
+    return merge_card_config(base_card, profile_card)
 
 
 async def _send_card(
