@@ -216,10 +216,11 @@ class CardSession:
             self._fail_interaction(event.data)
         elif event.event == "system.notice":
             title = str(event.data.get("title") or "运行提示").strip() or "运行提示"
-            if (
+            is_runtime_phase = (
                 str(event.data.get("notice_kind") or "") == "context-compaction"
                 and str(event.data.get("phase") or "") == "started"
-            ):
+            )
+            if is_runtime_phase:
                 self.runtime_phase_text = title
             content = normalize_stream_text(
                 str(event.data.get("content") or event.data.get("text") or "")
@@ -246,7 +247,8 @@ class CardSession:
                 self.updated_at = time.time()
                 self.refresh_display_status_source()
                 return True
-            self.timeline.record_notice(notice_id, title, level, content)
+            if not is_runtime_phase:
+                self.timeline.record_notice(notice_id, title, level, content)
         elif event.event == "message.completed":
             completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
             if completed_answer.strip():

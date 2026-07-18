@@ -2028,6 +2028,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
         session is None
         and event.event == "system.notice"
         and not _is_independent_notice_event(event)
+        and not _is_compaction_session_start(event)
     ):
         # Session-scoped notices are auxiliary timeline entries, not a reason
         # to create a new primary card. Background callbacks can outlive the
@@ -2132,7 +2133,7 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
         ), None
 
     if session is None:
-        if event.event in SESSION_CREATING_EVENTS:
+        if event.event in SESSION_CREATING_EVENTS or _is_compaction_session_start(event):
             # Abandon stale sessions for the same conversation when a new
             # session is being created.  This handles the interrupt scenario:
             # the gateway interrupts a running turn and starts a new one
@@ -2518,6 +2519,18 @@ def _is_independent_notice_event(event: SidecarEvent) -> bool:
     scope = str(data.get("notice_scope") or "session").strip().lower()
     delivery_kind = str(data.get("delivery_kind") or "").strip().lower()
     return scope == "independent" or delivery_kind == "notice"
+
+
+def _is_compaction_session_start(event: SidecarEvent) -> bool:
+    if event.event != "system.notice":
+        return False
+    data = event.data if isinstance(event.data, dict) else {}
+    return (
+        str(data.get("notice_kind") or "") == "context-compaction"
+        and str(data.get("phase") or "") == "started"
+        and data.get("create_session") is True
+        and str(data.get("notice_scope") or "session").strip().lower() == "session"
+    )
 
 
 def _event_is_terminal(event: SidecarEvent) -> bool:
