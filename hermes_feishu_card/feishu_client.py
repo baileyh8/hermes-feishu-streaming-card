@@ -4,15 +4,56 @@ import json
 import math
 import time
 from dataclasses import dataclass
+from hashlib import sha256
 from numbers import Real
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote, urlparse
 
 import aiohttp
 
 
+DeliveryFailureOutcome = Literal["not_sent", "unknown"]
+
+
 class FeishuAPIError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        api_code: int | str | None = None,
+        retryable: bool = False,
+        outcome: DeliveryFailureOutcome = "not_sent",
+        retry_after_seconds: float | None = None,
+        retry_count: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.api_code = api_code
+        self.retryable = retryable
+        self.outcome = outcome
+        self.retry_after_seconds = retry_after_seconds
+        self.retry_count = retry_count
+
+
+@dataclass(frozen=True)
+class FeishuSendResult:
+    message_id: str
+    retry_count: int = 0
+
+
+def build_delivery_uuid(
+    *,
+    bot_id: str,
+    chat_id: str,
+    reply_to_message_id: str,
+    session_key: str,
+    delivery_kind: str,
+) -> str:
+    raw = "\x1f".join(
+        (bot_id, chat_id, reply_to_message_id, session_key, delivery_kind)
+    ).encode("utf-8")
+    return "hfc_" + sha256(raw).hexdigest()[:40]
 
 
 @dataclass(frozen=True)
@@ -82,7 +123,31 @@ class FeishuClient:
         card: Dict[str, Any],
         thread_id: Optional[str] = None,
         reply_to_message_id: Optional[str] = None,
+        delivery_uuid: Optional[str] = None,
     ) -> str:
+        result = await self.send_card_delivery(
+            chat_id,
+            card,
+            thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
+            delivery_uuid=delivery_uuid,
+        )
+        return result.message_id
+
+    async def send_card_delivery(
+        self,
+        chat_id: str,
+        card: Dict[str, Any],
+        thread_id: Optional[str] = None,
+        reply_to_message_id: Optional[str] = None,
+        delivery_uuid: Optional[str] = None,
+    ) -> FeishuSendResult:
+        if delivery_uuid is not None:
+            if not isinstance(delivery_uuid, str) or not delivery_uuid.strip():
+                raise ValueError("delivery_uuid must be a non-empty string")
+            if len(delivery_uuid) > 50:
+                raise ValueError("delivery_uuid must not exceed 50 characters")
+
         token = await self._tenant_token()
         payload = self.build_message_payload(
             chat_id,
@@ -99,9 +164,12 @@ class FeishuClient:
                     "msg_type": payload["msg_type"],
                     "content": payload["content"],
                     "reply_in_thread": bool(thread_id),
+                    **({"uuid": delivery_uuid} if delivery_uuid is not None else {}),
                 },
             )
         else:
+            if delivery_uuid is not None:
+                payload["uuid"] = delivery_uuid
             receive_id_type = "thread_id" if thread_id else "chat_id"
             body = await self._request_json(
                 "POST",
@@ -113,7 +181,7 @@ class FeishuClient:
         data = body.get("data")
         if not isinstance(data, dict) or not isinstance(data.get("message_id"), str):
             raise FeishuAPIError("Feishu send message response missing message_id")
-        return data["message_id"]
+        return FeishuSendResult(message_id=data["message_id"])
 
     async def update_card_message(self, message_id: str, card: Dict[str, Any]) -> None:
         if not isinstance(message_id, str) or not message_id.strip():

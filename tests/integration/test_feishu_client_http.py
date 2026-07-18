@@ -100,9 +100,14 @@ async def test_send_card_fetches_token_and_posts_interactive_message(feishu_api)
         )
     )
 
-    message_id = await client.send_card("oc_abc", {"schema": "2.0", "body": "你好"})
+    result = await client.send_card_delivery(
+        "oc_abc",
+        {"schema": "2.0", "body": "你好"},
+        delivery_uuid="hfc_" + "a" * 40,
+    )
 
-    assert message_id == "om_message_1"
+    assert result.message_id == "om_message_1"
+    assert result.retry_count == 0
     assert token_calls() == 1
     token_request = requests[0]
     assert token_request[0] == "token"
@@ -113,6 +118,7 @@ async def test_send_card_fetches_token_and_posts_interactive_message(feishu_api)
     assert send_request[2]["receive_id"] == "oc_abc"
     assert send_request[2]["msg_type"] == "interactive"
     assert "你好" in send_request[2]["content"]
+    assert send_request[2]["uuid"] == "hfc_" + "a" * 40
     assert send_request[3]["Authorization"] == "Bearer tenant-token-1"
 
 
@@ -126,14 +132,16 @@ async def test_send_card_replies_in_thread_when_reply_anchor_present(feishu_api)
         )
     )
 
-    message_id = await client.send_card(
+    result = await client.send_card_delivery(
         "oc_abc",
         {"schema": "2.0", "body": "你好"},
         thread_id="omt_thread",
         reply_to_message_id="om_user_message",
+        delivery_uuid="hfc_" + "a" * 40,
     )
 
-    assert message_id == "om_reply_1"
+    assert result.message_id == "om_reply_1"
+    assert result.retry_count == 0
     assert token_calls() == 1
     reply_request = requests[1]
     assert reply_request[0] == "reply"
@@ -141,7 +149,27 @@ async def test_send_card_replies_in_thread_when_reply_anchor_present(feishu_api)
     assert reply_request[2]["msg_type"] == "interactive"
     assert reply_request[2]["reply_in_thread"] is True
     assert "你好" in reply_request[2]["content"]
+    assert reply_request[2]["uuid"] == "hfc_" + "a" * 40
     assert reply_request[3]["Authorization"] == "Bearer tenant-token-1"
+
+
+@pytest.mark.parametrize("delivery_uuid", ["", "   ", "x" * 51, 123])
+async def test_send_card_delivery_rejects_invalid_uuid(feishu_api, delivery_uuid):
+    test_client, _, _ = feishu_api
+    client = FeishuClient(
+        FeishuClientConfig(
+            app_id="cli_test",
+            app_secret="secret",
+            base_url=str(test_client.make_url("/")),
+        )
+    )
+
+    with pytest.raises(ValueError, match="delivery_uuid"):
+        await client.send_card_delivery(
+            "oc_abc",
+            {"schema": "2.0"},
+            delivery_uuid=delivery_uuid,
+        )
 
 
 async def test_send_card_uses_native_reply_in_normal_chat(feishu_api):

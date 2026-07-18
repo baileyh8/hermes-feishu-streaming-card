@@ -2,7 +2,51 @@ import json
 
 import pytest
 
-from hermes_feishu_card.feishu_client import FeishuClient, FeishuClientConfig
+from hermes_feishu_card.feishu_client import (
+    FeishuAPIError,
+    FeishuClient,
+    FeishuClientConfig,
+    build_delivery_uuid,
+)
+
+
+def test_delivery_uuid_is_stable_bounded_and_route_isolated():
+    values = dict(
+        bot_id="default",
+        chat_id="oc_secret",
+        reply_to_message_id="om_secret",
+        session_key="profile:message-1",
+        delivery_kind="notice",
+    )
+
+    first = build_delivery_uuid(**values)
+
+    assert first == build_delivery_uuid(**values)
+    assert first.startswith("hfc_")
+    assert len(first) == 44
+    assert first != build_delivery_uuid(**{**values, "bot_id": "sales"})
+    assert "oc_secret" not in first
+    assert "om_secret" not in first
+
+
+def test_feishu_api_error_exposes_only_structured_safe_metadata():
+    error = FeishuAPIError(
+        "Feishu API HTTP failure",
+        status_code=503,
+        api_code=999,
+        retryable=True,
+        outcome="unknown",
+        retry_after_seconds=1.5,
+        retry_count=2,
+    )
+
+    assert error.status_code == 503
+    assert error.api_code == 999
+    assert error.retryable is True
+    assert error.outcome == "unknown"
+    assert error.retry_after_seconds == 1.5
+    assert error.retry_count == 2
+    assert "secret" not in str(error).lower()
 
 
 @pytest.mark.parametrize("app_id", ["", "   "])
