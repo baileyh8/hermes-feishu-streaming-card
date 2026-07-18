@@ -2,7 +2,7 @@
 
 自动化测试不能完全证明 Feishu/Lark 客户端体验。涉及卡片 UX、topic、系统提示、命令卡片的版本，发布前需要真实飞书 smoke。
 
-## V4.0.11 system.notice 可靠投递（待真实验收）
+## V4.0.11 system.notice 可靠投递（发布候选验收）
 
 - 私聊触发一条独立 `system.notice`，确认 create 请求携带稳定 `delivery_uuid`，正常路径只有一张卡和 0 条灰色原文。
 - topic 内触发 notice，确认 reply 保留原 `reply_to_message_id` / `thread_id`，卡片与任何降级提示都留在 topic。
@@ -10,6 +10,8 @@
 - 受控永久 400 返回 `not_sent`：只出现一次原始通知文本，`notice_native_fallbacks` 加一。
 - 受控 503 耗尽或连接结果不明返回 `unknown`：只尝试一次 `⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。`，不重复原始通知文本，`notice_uncertain_warnings` 加一；飞书完全不可用时不要求该提示必达。
 - 检查 `/health`：`feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings` 与脱敏 `last_send_error` 符合分支，且没有原始 chat/message id、UUID、通知正文、URL、token 或 secret。
+
+2026-07-18 发布候选验收结果：真实 Hermes `v2026.7.7.2` 通过项目 CLI 重载当前工作树的 sidecar，并使用 Gateway 官方 CLI 重启 Gateway；`doctor` 显示 runtime/import/install state 一致。通过 loopback `/events` 向已认证 Feishu 会话执行私聊 create 与 topic reply，两条事件均返回 `delivered/applied`，sidecar 指标增加 2 次接收、2 次应用和 2 次成功发送，失败、重试及 unknown 均未增加；card-safe diagnostics 未包含验收正文或 `delivery_uuid`。受控 503/400/unknown 与 hook 原生回退分支由自动化集成测试覆盖；本次直接 `/events` smoke 不宣称已完成客户端原生灰字去重视觉验收或真实 Feishu 故障注入。
 
 ## V4.0.10 事件传输安全边界
 

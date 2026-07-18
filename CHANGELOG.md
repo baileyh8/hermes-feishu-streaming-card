@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## V4.0.11 — 2026-07-18
 
+See also: [docs/release-notes-v4.0.11.md](docs/release-notes-v4.0.11.md)
+
 ### Fixed
 - Fixed issue #135: initial Feishu create/reply delivery now uses a stable UUID and at most three attempts for retryable HTTP/network failures, while sidecar `/events` requests remain single-shot.
 - System notices now distinguish `delivered`, `not_sent`, and `unknown`: only definite non-delivery falls back to the original text, while uncertain outcomes use a generic warning without repeating private notice content.

@@ -133,7 +133,7 @@ For an existing Hermes container:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.10
+export HFC_VERSION=v4.0.11
 bash install-docker.sh
 ```
 
@@ -171,10 +171,10 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | Pending delta session cap |
 
 ## Latest Releases
-
 ![Feishu topic reply card continuity and reasoning/tool timeline showcase](docs/assets/feishu-topic-card-showcase-v389.png)
 | Version | Highlights |
 |---|---|
+| [v4.0.11](docs/release-notes-v4.0.11.en.md) | Fixes Issue #135 with stable-UUID bounded initial delivery retries and safe `delivered/not_sent/unknown` notice fallback semantics |
 | [v4.0.10](docs/release-notes-v4.0.10.en.md) | Hardens sidecar event transport: non-loopback listeners require explicit opt-in plus HMAC-SHA256 anti-forgery/replay proofs, while loopback installs stay compatible |
 | [v4.0.9](docs/release-notes-v4.0.9.en.md) | Fixes Issue #130 by preserving the connected Lark WebSocket event handler and updating only its card callback on the WS thread, preventing disconnect/crash-loop behavior |
 | [v4.0.8](docs/release-notes-v4.0.8.en.md) | Fixes Issue #127 so cron cards own the text while Hermes native delivery still uploads the actual attachment instead of showing only its name |
@@ -201,7 +201,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 | [v3.8.8](docs/release-notes-v3.8.8.md) | Cardifies native Hermes notices: Working, context compression, skill loading, and self-improvement review |
 | [v3.8.7](docs/release-notes-v3.8.7.md) | Newer Hermes streams can create cards even when `message.started` is missing |
 | [v3.8.6](docs/release-notes-v3.8.6.md) | Docker/source-stripped Hermes can fall back from missing `VERSION` to Gateway anchors; Hermes v0.18.0 support |
-| [v3.8.5](docs/release-notes-v3.8.5.md) | Direct command results for `/new`, `/model`, and similar commands stay in cards |
+| [v3.8.5](docs/release-notes-v3.8.5.en.md) | Historical maintenance release; full details remain in the release notes |
 Full history: [CHANGELOG.md](CHANGELOG.md). Longer historical notes remain in the [full user guide](docs/user-guide.en.md#version-history).
 
 ## Architecture At A Glance
