@@ -401,8 +401,9 @@ def test_setup_starts_sidecar_with_selected_env_file(tmp_path, monkeypatch, caps
     hermes_dir = copy_hermes(tmp_path)
     config_path = tmp_path / "config.yaml"
     env_path = tmp_path / "selected.env"
-    config_path.write_text(
-        "feishu:\n  app_id: setup-app\n  app_secret: setup-secret\n",
+    config_path.write_text("", encoding="utf-8")
+    env_path.write_text(
+        "FEISHU_APP_ID=setup-app\nFEISHU_APP_SECRET=setup-secret\n",
         encoding="utf-8",
     )
     started = {}

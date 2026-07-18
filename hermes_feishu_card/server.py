@@ -67,6 +67,7 @@ ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
 PROCESS_TOKEN_KEY = web.AppKey("process_token", str)
 METRICS_KEY = web.AppKey("metrics", SidecarMetrics)
+NOOP_MODE_KEY = web.AppKey("noop_mode", bool)
 EVENT_AUTH_REQUIRED_KEY = web.AppKey("event_auth_required", bool)
 EVENT_AUTH_VERIFIER_KEY = web.AppKey("event_auth_verifier", EventProofVerifier)
 MESSAGE_LOCKS_KEY = web.AppKey("message_locks", dict)
@@ -76,6 +77,7 @@ CARD_TITLE_KEY = web.AppKey("card_title", str)
 BASE_CARD_CONFIG_KEY = web.AppKey("base_card_config", dict)
 OPERATIONS_STORE_KEY = web.AppKey("operations_store", OperationStore)
 OPERATIONS_CONFIG_PATH_KEY = web.AppKey("operations_config_path", Path)
+OPERATIONS_ENV_FILE_KEY = web.AppKey("operations_env_file", Any)
 OPERATIONS_HERMES_ROOT_KEY = web.AppKey("operations_hermes_root", Path)
 OPERATIONS_DELIVERIES_KEY = web.AppKey("operations_deliveries", dict)
 OPERATIONS_COMMAND_AUTH_KEY = web.AppKey(
@@ -170,9 +172,11 @@ def create_app(
     card_config: dict[str, Any] | None = None,
     bot_router: Any = None,
     operations_config_path: str | Path | None = None,
+    operations_env_file: str | Path | None = None,
     operations_hermes_root: str | Path | None = None,
     operations_transport_root_secret: bytes | None = None,
     event_auth_required: bool = False,
+    noop_mode: bool = False,
 ) -> web.Application:
     valid_transport_root = (
         isinstance(operations_transport_root_secret, bytes)
@@ -196,6 +200,7 @@ def create_app(
     app[BOT_ROUTER_KEY] = bot_router
     app[PROCESS_TOKEN_KEY] = process_token
     app[METRICS_KEY] = SidecarMetrics()
+    app[NOOP_MODE_KEY] = bool(noop_mode)
     app[EVENT_AUTH_REQUIRED_KEY] = bool(event_auth_required)
     if event_auth_required:
         app[EVENT_AUTH_VERIFIER_KEY] = EventProofVerifier(
@@ -233,6 +238,11 @@ def create_app(
         or Path.home() / ".hermes_feishu_card" / "config.yaml"
     ).expanduser()
     app[OPERATIONS_CONFIG_PATH_KEY] = operations_config
+    app[OPERATIONS_ENV_FILE_KEY] = (
+        Path(operations_env_file).expanduser()
+        if operations_env_file is not None
+        else None
+    )
     app[OPERATIONS_HERMES_ROOT_KEY] = resolve_operations_hermes_root(
         operations_hermes_root, config_path=operations_config
     )
@@ -308,7 +318,9 @@ async def _health(request: web.Request) -> web.Response:
     metrics: SidecarMetrics = request.app[METRICS_KEY]
     diagnostics = request.app[DIAGNOSTICS_KEY]
     response = {
-        "status": "healthy",
+        "status": "degraded" if request.app[NOOP_MODE_KEY] else "healthy",
+        "noop_mode": request.app[NOOP_MODE_KEY],
+        "delivery": {"mode": "noop" if request.app[NOOP_MODE_KEY] else "live"},
         "event_auth_required": request.app[EVENT_AUTH_REQUIRED_KEY],
         "active_sessions": len(sessions),
         "process_pid": os.getpid(),
@@ -952,6 +964,7 @@ async def _build_operations_report(
             profile_id,
             profile_source,
             health,
+            app[OPERATIONS_ENV_FILE_KEY],
         )
         futures.add(future)
         future.add_done_callback(futures.discard)
@@ -991,10 +1004,15 @@ def _build_operations_report_sync(
     profile_id: str,
     profile_source: str,
     health: dict[str, object],
+    env_file: Path | None = None,
 ) -> tuple[DiagnosticReport, HermesDetection]:
     detection = detect_hermes(hermes_root)
     try:
-        config = load_config(config_path)
+        config = (
+            load_config(config_path, env_file=env_file)
+            if env_file is not None
+            else load_config(config_path)
+        )
         recovery_plan = plan_recovery(detection)
         server = config.get("server", {})
         event_url = (
@@ -1777,6 +1795,7 @@ def _hfc_monitor_lines(request: web.Request, event: SidecarEvent) -> list[str]:
         "terminal_drains",
         "terminal_drain_timeouts",
         "feishu_send_attempts",
+        "feishu_noop_attempts",
         "feishu_send_successes",
         "feishu_send_failures",
         "feishu_send_retries",
@@ -2762,6 +2781,16 @@ async def _send_card_for_app(
 ) -> CardDeliveryResult:
     metrics: SidecarMetrics = app[METRICS_KEY]
     metrics.feishu_send_attempts += 1
+    if app[NOOP_MODE_KEY]:
+        result = CardDeliveryResult(
+            message_id=None,
+            outcome="not_sent",
+            error_kind="NoopDeliveryMode",
+        )
+        metrics.feishu_noop_attempts += 1
+        metrics.feishu_send_failures += 1
+        _record_send_error(app, result, bot_id=bot_id)
+        return result
     delivery_uuid = build_delivery_uuid(
         bot_id=bot_id or "default",
         chat_id=chat_id,

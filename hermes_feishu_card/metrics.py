@@ -11,6 +11,7 @@ class SidecarMetrics:
     events_rejected: int = 0
     event_auth_rejections: int = 0
     feishu_send_attempts: int = 0
+    feishu_noop_attempts: int = 0
     feishu_send_successes: int = 0
     feishu_send_failures: int = 0
     feishu_send_retries: int = 0

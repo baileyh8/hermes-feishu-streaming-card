@@ -108,7 +108,7 @@ FEISHU_CONNECTION_MODE=websocket
 FEISHU_HOME_CHANNEL=oc_xxx
 ```
 
-多 bot、群聊绑定、`bindings.chats`、multi profile、profile-aware routing、footer 字段和 no-op client 说明见 [详细使用手册](docs/user-guide.md#配置)。
+`setup` / `start --env-file ...` 会读取显式选中的 env file，优先级为 YAML < 配置同目录 `.env` < 显式 env file < 进程环境；不会无条件回退到全局 `~/.hermes/.env`。缺凭据时 `/health` 标为 `degraded` / `noop`，发卡返回 `not_sent`，不会伪造成功 message id。多 bot、群聊绑定、`bindings.chats`、multi profile、profile-aware routing、footer 字段和 no-op client 说明见 [详细使用手册](docs/user-guide.md#配置)。
 
 ## Hermes 流式配置
 

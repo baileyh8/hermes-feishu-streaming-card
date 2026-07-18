@@ -4,6 +4,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -63,7 +64,7 @@ def read_health(port: int) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_started_event(port: int) -> dict:
+def post_started_event(port: int) -> tuple[int, dict]:
     payload = {
         "schema_version": "1",
         "event": "message.started",
@@ -81,8 +82,11 @@ def post_started_event(port: int) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=2) as response:
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
 def test_sidecar_process_rejects_non_loopback_listener_without_opt_in(tmp_path):
@@ -164,7 +168,7 @@ def test_stop_rejects_matching_token_with_wrong_pid(tmp_path):
         assert result.returncode != 0
         assert "pidfile identity mismatch" in result.stderr
         assert sleeper.poll() is None
-        assert read_health(port)["status"] == "healthy"
+        assert read_health(port)["status"] == "degraded"
     finally:
         if original_pidfile is not None:
             pidfile_path(tmp_path).write_bytes(original_pidfile)
@@ -183,23 +187,32 @@ def test_start_status_and_stop_manage_sidecar_process(tmp_path):
         assert start.returncode == 0, start.stderr
         assert "start ok" in start.stdout
         health = read_health(port)
-        assert health["status"] == "healthy"
+        assert health["status"] == "degraded"
+        assert health["noop_mode"] is True
+        assert health["delivery"] == {"mode": "noop"}
         assert health["process_token_hash"]
         assert "process_token" not in health
-        assert post_started_event(port) == {
-            "ok": True,
-            "applied": True,
-            "delivery": {"outcome": "delivered"},
-        }
+        assert post_started_event(port) == (
+            502,
+            {
+                "ok": False,
+                "error": "feishu send failed",
+                "delivery": {"outcome": "not_sent"},
+            },
+        )
 
         status = run_cli("status", "--config", str(config), env=env)
 
         assert status.returncode == 0
         assert "status: running" in status.stdout
-        assert "active_sessions: 1" in status.stdout
+        assert "health: degraded" in status.stdout
+        assert "delivery.mode: noop" in status.stdout
+        assert "active_sessions: 0" in status.stdout
         assert "events_received: 1" in status.stdout
-        assert "events_applied: 1" in status.stdout
-        assert "feishu_send_successes: 1" in status.stdout
+        assert "events_applied: 0" in status.stdout
+        assert "feishu_noop_attempts: 1" in status.stdout
+        assert "feishu_send_successes: 0" in status.stdout
+        assert "feishu_send_failures: 1" in status.stdout
 
         stop = run_cli("stop", "--config", str(config), env=env)
 
@@ -209,6 +222,35 @@ def test_start_status_and_stop_manage_sidecar_process(tmp_path):
         stopped = run_cli("status", "--config", str(config), env=env)
         assert stopped.returncode == 0
         assert "status: stopped" in stopped.stdout
+    finally:
+        run_cli("stop", "--config", str(config), env=env)
+        time.sleep(0.1)
+
+
+def test_start_loads_credentials_from_selected_env_file(tmp_path):
+    port = free_port()
+    config = write_config(tmp_path, port)
+    selected_env = tmp_path / "selected.env"
+    selected_env.write_text(
+        "FEISHU_APP_ID=selected-app\nFEISHU_APP_SECRET=selected-secret\n",
+        encoding="utf-8",
+    )
+    env = process_env(tmp_path)
+
+    start = run_cli(
+        "start",
+        "--config",
+        str(config),
+        "--env-file",
+        str(selected_env),
+        env=env,
+    )
+    try:
+        assert start.returncode == 0, start.stderr
+        health = read_health(port)
+        assert health["status"] == "healthy"
+        assert health["noop_mode"] is False
+        assert health["delivery"] == {"mode": "live"}
     finally:
         run_cli("stop", "--config", str(config), env=env)
         time.sleep(0.1)

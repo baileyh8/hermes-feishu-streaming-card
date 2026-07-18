@@ -172,7 +172,11 @@ def resolve_operations_hermes_root(
     return Path.home() / ".hermes" / "hermes-agent"
 
 
-def load_config(path: str | Path) -> dict[str, dict[str, Any]]:
+def load_config(
+    path: str | Path,
+    *,
+    env_file: str | Path | None = None,
+) -> dict[str, dict[str, Any]]:
     config = copy.deepcopy(DEFAULT_CONFIG)
     config_path = Path(path).expanduser()
 
@@ -207,6 +211,10 @@ def load_config(path: str | Path) -> dict[str, dict[str, Any]]:
             profile_cfg["card"] = profile_card
 
     _apply_env_file_overrides(config, config_path)
+    if env_file is not None:
+        selected_env_path = Path(env_file).expanduser()
+        if selected_env_path != config_path.parent / ".env":
+            _apply_env_path_overrides(config, selected_env_path)
     _apply_env_overrides(config)
     _normalize_config_text_sizes(config)
     config["server"]["port"] = _normalize_port(config["server"]["port"], "server.port")
@@ -265,7 +273,12 @@ def _apply_env_overrides(config: dict[str, dict[str, Any]]) -> None:
 
 
 def _apply_env_file_overrides(config: dict[str, dict[str, Any]], config_path: Path) -> None:
-    dotenv_path = config_path.parent / ".env"
+    _apply_env_path_overrides(config, config_path.parent / ".env")
+
+
+def _apply_env_path_overrides(
+    config: dict[str, dict[str, Any]], dotenv_path: Path
+) -> None:
     if not dotenv_path.exists() or not dotenv_path.is_file():
         return
     values = _read_dotenv(dotenv_path)

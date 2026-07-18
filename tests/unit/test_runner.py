@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 
 from hermes_feishu_card.bots import FeishuClientFactory
-from hermes_feishu_card.feishu_client import FeishuClient
+from hermes_feishu_card.feishu_client import FeishuAPIError, FeishuClient
 import hermes_feishu_card.runner as runner
 from hermes_feishu_card.runner import (
     NoopFeishuClient,
@@ -16,6 +16,13 @@ def test_build_feishu_client_uses_noop_when_credentials_missing():
     client = build_feishu_client({"feishu": {"app_id": "", "app_secret": ""}})
 
     assert isinstance(client, NoopFeishuClient)
+
+
+async def test_noop_client_never_fabricates_message_id():
+    with pytest.raises(FeishuAPIError) as exc_info:
+        await NoopFeishuClient().send_card("test-chat", {})
+
+    assert exc_info.value.outcome == "not_sent"
 
 
 def test_build_feishu_client_uses_real_client_when_credentials_present():
@@ -96,7 +103,7 @@ def test_main_passes_boundary_to_create_app_when_bot_credentials_exist(monkeypat
     }
     captured = {}
 
-    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(runner, "load_config", lambda path, **_kwargs: config)
 
     def fake_create_app(feishu_client, **kwargs):
         captured["feishu_client"] = feishu_client
@@ -231,7 +238,7 @@ def test_main_rejects_non_boolean_non_loopback_opt_in(monkeypatch):
         main(["--config", "config.yaml"])
 
 
-def test_main_uses_noop_without_any_credentials(monkeypatch):
+def test_main_uses_noop_without_any_credentials(monkeypatch, caplog):
     config = {
         "server": {"host": "127.0.0.1", "port": 0},
         "feishu": {},
@@ -249,11 +256,14 @@ def test_main_uses_noop_without_any_credentials(monkeypatch):
     monkeypatch.setattr(runner, "create_app", fake_create_app)
     monkeypatch.setattr(runner.web, "run_app", lambda app, **kwargs: None)
 
-    assert main(["--config", "config.yaml"]) == 0
+    with caplog.at_level("WARNING"):
+        assert main(["--config", "config.yaml"]) == 0
 
     assert isinstance(captured["feishu_client"], NoopFeishuClient)
     assert captured["kwargs"]["card_config"] == {"title": "Noop Card"}
     assert captured["kwargs"]["bot_router"] is None
+    assert captured["kwargs"]["noop_mode"] is True
+    assert "running in no-op delivery mode" in caplog.text
 
 
 def test_main_passes_config_scoped_hermes_root_to_operations(monkeypatch, tmp_path):
@@ -283,7 +293,7 @@ def test_main_passes_selected_env_file_to_operations_root_resolution(monkeypatch
     config_path.write_text("server: {}\n", encoding="utf-8")
     selected_env.write_text(f"HERMES_DIR={hermes_root}\n", encoding="utf-8")
     captured = {}
-    monkeypatch.setattr(runner, "load_config", lambda path: config)
+    monkeypatch.setattr(runner, "load_config", lambda path, **_kwargs: config)
     monkeypatch.setattr(
         runner, "create_app", lambda _client, **kwargs: captured.update(kwargs) or object()
     )
@@ -291,6 +301,39 @@ def test_main_passes_selected_env_file_to_operations_root_resolution(monkeypatch
 
     assert main(["--config", str(config_path), "--env-file", str(selected_env)]) == 0
     assert captured["operations_hermes_root"] == hermes_root
+
+
+def test_main_loads_feishu_credentials_from_selected_env(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    selected_env = tmp_path / "selected.env"
+    config_path.write_text(
+        "server:\n  host: 127.0.0.1\n  port: 8765\n",
+        encoding="utf-8",
+    )
+    selected_env.write_text(
+        "FEISHU_APP_ID=selected_app\nFEISHU_APP_SECRET=selected_secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("FEISHU_APP_ID", raising=False)
+    monkeypatch.delenv("FEISHU_APP_SECRET", raising=False)
+    captured = {}
+    monkeypatch.setattr(
+        runner,
+        "create_app",
+        lambda client, **kwargs: captured.update(
+            {"client": client, "kwargs": kwargs}
+        )
+        or object(),
+    )
+    monkeypatch.setattr(runner.web, "run_app", lambda *_args, **_kwargs: None)
+
+    assert main(
+        ["--config", str(config_path), "--env-file", str(selected_env)]
+    ) == 0
+
+    assert isinstance(captured["client"], FeishuClientFactory)
+    assert captured["kwargs"]["noop_mode"] is False
+    assert captured["kwargs"]["operations_env_file"] == str(selected_env)
 
 
 def test_main_uses_callback_interactions_for_localhost_auto_mode(monkeypatch):

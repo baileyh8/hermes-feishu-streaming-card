@@ -91,6 +91,7 @@ _CARD_METRICS = {
     "event_auth_rejections",
     "feishu_send_attempts",
     "feishu_send_failures",
+    "feishu_noop_attempts",
     "feishu_send_successes",
     "feishu_update_attempts",
     "feishu_update_failures",

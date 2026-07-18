@@ -17,6 +17,11 @@ class _HealthResponse:
         return b'{"status":"healthy"}'
 
 
+class _DegradedHealthResponse(_HealthResponse):
+    def read(self) -> bytes:
+        return b'{"status":"degraded","noop_mode":true}'
+
+
 def test_process_token_hash_is_stable_and_empty_safe():
     assert process.process_token_hash("") == ""
     assert process.process_token_hash(None) == ""
@@ -304,6 +309,21 @@ def test_fetch_health_bypasses_proxy_for_loopback(monkeypatch):
 
     assert health == {"status": "healthy"}
     assert calls == [("http://127.0.0.1:8765/health", 0.4)]
+
+
+def test_fetch_health_recognizes_degraded_sidecar_as_running(monkeypatch):
+    class _NoProxyOpener:
+        def open(self, _request, timeout):
+            assert timeout == 0.4
+            return _DegradedHealthResponse()
+
+    monkeypatch.setattr(process, "_NO_PROXY_OPENER", _NoProxyOpener(), raising=False)
+
+    health = process.fetch_health(
+        {"server": {"host": "127.0.0.1", "port": 8765}}
+    )
+
+    assert health == {"status": "degraded", "noop_mode": True}
 
 
 def test_pid_is_running_uses_windows_process_probe(monkeypatch):

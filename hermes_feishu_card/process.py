@@ -174,7 +174,7 @@ def fetch_health(config: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
             payload = json.loads(response.read().decode("utf-8"))
     except (OSError, ValueError, urllib.error.URLError):
         return None
-    if isinstance(payload, dict) and payload.get("status") == "healthy":
+    if isinstance(payload, dict) and payload.get("status") in {"healthy", "degraded"}:
         return payload
     return None
 

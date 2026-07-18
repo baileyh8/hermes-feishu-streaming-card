@@ -50,6 +50,7 @@ from hermes_feishu_card.server import (
     SESSIONS_KEY,
     create_app as _create_app,
 )
+from hermes_feishu_card.runner import NoopFeishuClient
 
 
 _REAL_ASYNCIO_SLEEP = asyncio.sleep
@@ -710,6 +711,8 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     assert response.status == 200
     body = await response.json()
     assert body["status"] == "healthy"
+    assert body["noop_mode"] is False
+    assert body["delivery"] == {"mode": "live"}
     assert body["event_auth_required"] is False
     assert body["active_sessions"] == 0
     assert body["metrics"] == {
@@ -719,6 +722,7 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
         "events_rejected": 0,
         "event_auth_rejections": 0,
         "feishu_send_attempts": 0,
+        "feishu_noop_attempts": 0,
         "feishu_send_successes": 0,
         "feishu_send_failures": 0,
         "feishu_send_retries": 0,
@@ -750,6 +754,38 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     assert body["reply_index"] == {"entries": 0, "last_lookup": {}}
     assert body["cron"] == {"cards_sent": 0, "fallbacks": 0}
     assert body["profile_diagnostics"] == {}
+
+
+async def test_noop_mode_reports_degraded_health_and_never_claims_delivery():
+    app = create_app(NoopFeishuClient(), noop_mode=True)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        health = await test_client.get("/health")
+        health_body = await health.json()
+        started = await test_client.post(
+            "/events", json=event_payload("message.started", 0)
+        )
+        started_body = await started.json()
+        metrics_response = await test_client.get("/health")
+        metrics = (await metrics_response.json())["metrics"]
+    finally:
+        await test_client.close()
+
+    assert health.status == 200
+    assert health_body["status"] == "degraded"
+    assert health_body["noop_mode"] is True
+    assert health_body["delivery"] == {"mode": "noop"}
+    assert started.status == 502
+    assert started_body == {
+        "ok": False,
+        "error": "feishu send failed",
+        "delivery": {"outcome": "not_sent"},
+    }
+    assert metrics["feishu_send_attempts"] == 1
+    assert metrics["feishu_noop_attempts"] == 1
+    assert metrics["feishu_send_successes"] == 0
+    assert metrics["feishu_send_failures"] == 1
 
 
 def test_cleanup_runtime_state_removes_related_state_and_counts_once():

@@ -50,6 +50,7 @@
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
 - 初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；不重试 `/events`，也不把这套策略套到 PATCH。
 - `feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings` 与 `last_send_error` 必须保持脱敏；不得记录 UUID、响应正文、URL 或原始标识符。
+- 无凭据的 Noop 模式必须在 `/health` 中标记 `degraded` / `noop_mode`，发送计入 `feishu_noop_attempts` 和 failure；不得生成假 message id 或计入 success。
 - 群聊 `/hfc status` 只做路由诊断和 binding 提示；@机器人触发、白名单和群消息准入属于 Hermes Gateway。
 
 ### `hermes_feishu_card/install/patcher.py`
@@ -93,6 +94,7 @@
 
 - `start_new_session=True` 不能脱离 systemd cgroup，不能作为 Linux Gateway 重启隔离方案。
 - systemd 可重启 sidecar 并改变 PID；status/stop 必须以 token 和记录的 unit 为稳定身份，不能只比较旧 PID。
+- runner 必须真正读取 `setup` / `start` 显式传入的 `--env-file`。配置优先级保持 YAML < 同目录 `.env` < 显式 env file < process env；禁止为了修复 systemd 环境而隐式读取全局 `~/.hermes/.env`。
 - 升级迁移只能停止 PID/token/health 三者一致的旧进程，未知进程保持 fail-closed。
 - 调整 lifecycle 时运行 `tests/unit/test_process.py`、`tests/integration/test_cli_process.py` 和 `tests/unit/test_install_scripts.py`。
 

@@ -213,7 +213,12 @@ def _run_setup(args: argparse.Namespace) -> int:
             },
         )
         created = _ensure_setup_config(config_path)
-        config = load_config(config_path)
+        selected_env_path = route_settings["env_path"]
+        config = (
+            load_config(config_path, env_file=selected_env_path)
+            if selected_env_path != config_path.parent / ".env"
+            else load_config(config_path)
+        )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1557,7 +1562,11 @@ def _truthy(value: object) -> bool:
 
 def _run_start(args: argparse.Namespace) -> int:
     try:
-        config = load_config(args.config)
+        config = (
+            load_config(args.config, env_file=args.env_file)
+            if args.env_file is not None
+            else load_config(args.config)
+        )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -1613,6 +1622,12 @@ def _run_status(args: argparse.Namespace) -> int:
     if status["running"]:
         print("status: running")
         print(f"pid: {status['pid'] or 'unknown'}")
+        health_status = status["health"].get("status")
+        if health_status == "degraded":
+            print("health: degraded")
+        delivery = status["health"].get("delivery")
+        if isinstance(delivery, dict) and delivery.get("mode") == "noop":
+            print("delivery.mode: noop")
         print(f"active_sessions: {status['health'].get('active_sessions', 0)}")
         metrics = status["health"].get("metrics", {})
         if isinstance(metrics, dict):
@@ -1623,6 +1638,7 @@ def _run_status(args: argparse.Namespace) -> int:
                 "events_rejected",
                 "event_auth_rejections",
                 "feishu_send_attempts",
+                "feishu_noop_attempts",
                 "feishu_send_successes",
                 "feishu_send_failures",
                 "feishu_update_attempts",

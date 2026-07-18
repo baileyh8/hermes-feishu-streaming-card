@@ -21,6 +21,7 @@ def test_maintainer_docs_define_reliable_notice_delivery_contract():
         "unknown",
         "feishu_send_retries",
         "feishu_send_unknown_outcomes",
+        "feishu_noop_attempts",
         "notice_native_fallbacks",
         "notice_uncertain_warnings",
     ):
