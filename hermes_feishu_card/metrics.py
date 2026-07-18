@@ -13,6 +13,10 @@ class SidecarMetrics:
     feishu_send_attempts: int = 0
     feishu_send_successes: int = 0
     feishu_send_failures: int = 0
+    feishu_send_retries: int = 0
+    feishu_send_unknown_outcomes: int = 0
+    notice_native_fallbacks: int = 0
+    notice_uncertain_warnings: int = 0
     feishu_update_attempts: int = 0
     feishu_update_successes: int = 0
     feishu_update_failures: int = 0
