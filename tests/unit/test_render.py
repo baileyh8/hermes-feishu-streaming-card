@@ -733,6 +733,67 @@ def test_render_independent_notice_uses_notice_text_size():
     assert main["text_size"] == "small"
 
 
+def test_render_device_text_size_emits_footer_alias():
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.status = "completed"
+    session.answer_text = "正文"
+
+    card = render_card(
+        session,
+        text_sizes={
+            "footer": {
+                "default": "x-small",
+                "pc": "x-small",
+                "mobile": "notation",
+            }
+        },
+    )
+    footer = next(
+        item for item in card["body"]["elements"] if item["element_id"] == "footer"
+    )
+
+    assert card["config"]["style"]["text_size"] == {
+        "hfc_footer": {
+            "default": "x-small",
+            "pc": "x-small",
+            "mobile": "notation",
+        }
+    }
+    assert footer["text_size"] == "hfc_footer"
+
+
+def test_render_text_size_aliases_use_deterministic_role_order():
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.status = "completed"
+    session.answer_text = "正文"
+    mapping = {"default": "normal", "pc": "large", "mobile": "small"}
+
+    card = render_card(
+        session,
+        text_sizes={
+            "footer": mapping,
+            "body": mapping,
+            "reasoning": mapping,
+        },
+    )
+
+    assert list(card["config"]["style"]["text_size"]) == [
+        "hfc_body",
+        "hfc_footer",
+    ]
+    assert "hfc_reasoning" not in card["config"]["style"]["text_size"]
+
+
+def test_render_scalar_only_text_sizes_do_not_emit_style_aliases():
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.status = "completed"
+    session.answer_text = "正文"
+
+    card = render_card(session, text_sizes={"body": "large", "footer": "small"})
+
+    assert "style" not in card["config"]
+
+
 def test_render_long_table_chunks_keep_markdown_table_shape():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     rows = "\n".join(f"| {index} | {'甲' * 80} |" for index in range(80))
