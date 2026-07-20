@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.13 — 2026-07-20
+
+See also: [docs/release-notes-v4.0.13.md](docs/release-notes-v4.0.13.md)
+
+### Added
+- All non-empty Feishu/Lark slash-command feedback now enters a generic command-card context, covering built-ins, aliases, plugin/quick commands, and unknown-command feedback without a fixed allowlist.
+- Manual `/compress` creates an in-place running card before invoking the original Hermes handler, then updates the same card with the unchanged success, no-op, or aborted result.
+
+### Changed
+- The first feedback creates one interactive card; later feedback for the same command is serialized and PATCHed into that card. Long Markdown uses the existing structural splitter, and topic/reply anchors are preserved.
+- Existing `/model`, bare `/resume`, destructive-confirmation, and `/hfc` cards retain priority. Agent turns, native media delivery, and post-restart `/update` status notices keep their established paths.
+
+### Reliability
+- Native gray text is suppressed only after confirmed card create/PATCH success. Any failed card operation returns the exact original Hermes feedback through the native adapter.
+
 ## V4.0.12 — 2026-07-18
 
 See also: [docs/release-notes-v4.0.12.md](docs/release-notes-v4.0.12.md)

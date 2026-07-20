@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前已发布版本为 `4.0.12`。它修复 Issues #133/#136：上下文压缩阶段保持卡片可见，五类文本支持 PC/mobile 字号映射，并让 selected-env 凭据和 Noop 降级状态可验证、可诊断。V3.9.1 已于 2026-07-11 发布，V4.0.11 及更早版本也已发布。
+当前发布版本为 `4.0.13`。它把 built-in、alias、plugin/quick 和 unknown command 的所有非空文本反馈统一卡片化，并让手动 `/compress` 从运行态到原始终态结果都更新同一卡片。V3.9.1 已于 2026-07-11 发布，V4.0.12 及更早版本也已发布。
 
 ## 已具备
 
@@ -144,6 +144,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
 
 `v3.9.0` tag 的 release-assets workflow 会发布 4 个 assets：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。
+
+## V4.0.13 发布门禁
+
+- 全命令上下文、同卡多反馈、并发单 create、长 Markdown、create/PATCH 原文回退与 `/compress` 全分支矩阵：**已通过**。
+- 专用 `/model`、裸 `/resume`、confirmation、`/hfc`、Agent turn、媒体和 `/update` 重启边界回归：**已通过**。
+- 真实 Feishu 客户端命令矩阵和桌面/移动端视觉确认：**本次未执行，不写成已通过**。
+- 最终全量自动化：**已通过（`1482 passed, 4 skipped`）**；`git diff --check`、sdist/wheel 和隔离 Python 3.12 import/CLI smoke 均在 tag 前验证。
 
 ## V4.0.12 发布门禁
 

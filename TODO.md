@@ -6,14 +6,14 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
-### V4.0.13：Hermes 全命令反馈卡片化（实现中）
+### V4.0.13：Hermes 全命令反馈卡片化（发布候选）
 
 - [x] 任意 Feishu/Lark slash command 的非空文本反馈进入统一 command context，不再维护固定命令 allowlist；built-in、alias、plugin/quick 和 unknown-command 提示自动覆盖。
 - [x] 首次反馈创建命令卡，后续反馈串行更新同一卡；长 Markdown 分块，topic/reply anchor 保持不变。
 - [x] create/PATCH 成功才抑制原生灰色文本，失败逐条回退 Hermes 原始反馈。
 - [x] `/model`、裸 `/resume`、destructive confirmation 与 `/hfc` 专用交互卡保持优先；Agent turn 继续进入普通流式卡。
 - [x] 手动 `/compress` 先创建“正在压缩上下文”卡，再以 original handler 的成功、no-op 或 aborted 结果更新同一卡。
-- [ ] 完成全量自动化、真实 Feishu 命令矩阵与发布整理。
+- [x] 全量自动化与发布文档整理完成；真实 Feishu 命令矩阵未执行，不写成已通过。
 
 ### V4.0.12：上下文压缩、字号与凭据可观测性（已发布）
 

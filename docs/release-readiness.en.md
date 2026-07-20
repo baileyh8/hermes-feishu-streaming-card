@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current public release: `4.0.12`. It fixes Issues #133/#136 by keeping context compaction visible, adding PC/mobile mappings for five text-size roles, and making selected-env credentials and Noop degradation verifiable and diagnosable. V3.9.1 was released on 2026-07-11, and V4.0.11 and earlier releases are public.
+Current release: `4.0.13`. It cardifies all non-empty feedback from built-in, alias, plugin/quick, and unknown commands, while keeping manual `/compress` progress and the unchanged terminal result in the same card. V3.9.1 was released on 2026-07-11, and V4.0.12 and earlier releases are also public.
 
 ## Ready
 
@@ -144,6 +144,13 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Verify macOS, Linux, Windows, and checksums assets after tagging.
 
 The `v3.9.0` release-assets workflow publishes four assets: the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
+
+## V4.0.13 Release Gates
+
+- Generic command contexts, same-card multi-feedback, concurrent single-create behavior, long Markdown, exact create/PATCH fallback, and all `/compress` branches: **passed**.
+- Dedicated `/model`, bare `/resume`, confirmation, `/hfc`, Agent-turn, media, and `/update` restart-boundary regressions: **passed**.
+- Real Feishu client command matrix and final desktop/mobile visual acceptance: **not run and not claimed as passed**.
+- Final full automation: **passed (`1482 passed, 4 skipped`)**; `git diff --check`, sdist/wheel, and isolated Python 3.12 import/CLI smoke are verified before tagging.
 
 ## V4.0.12 Release Gates
 

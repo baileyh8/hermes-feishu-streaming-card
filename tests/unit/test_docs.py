@@ -1312,9 +1312,9 @@ def test_v400_release_docs_cover_live_runtime_cards():
     assert "tool.updated.detail" in notes_en
     assert "thinking.delta" in notes_en
     assert "运行态 Header" in readme
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.12}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.13}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.0.12" in doc
+        assert "HFC_VERSION=v4.0.13" in doc
     for event_name in (
         "progress_callback.preview",
         "tool.updated.detail",
@@ -1708,10 +1708,55 @@ def test_v4012_release_docs_cover_compaction_text_sizes_and_noop_credentials():
             assert asset in text
     assert "docs/release-notes-v4.0.12.md" in readme
     assert "docs/release-notes-v4.0.12.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.12}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.13}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.0.12" in doc
+        assert "HFC_VERSION=v4.0.13" in doc
     assert "V4.0.12" in todo
+
+
+def test_v4013_release_docs_cover_all_command_feedback_cards():
+    changelog = read_doc("CHANGELOG.md")
+    notes = read_doc("docs/release-notes-v4.0.13.md")
+    notes_en = read_doc("docs/release-notes-v4.0.13.en.md")
+    readme = read_doc("README.md")
+    readme_en = read_doc("README.en.md")
+    install_doc = read_doc("README-install.md")
+    guide = read_doc("docs/user-guide.md")
+    guide_en = read_doc("docs/user-guide.en.md")
+    compose = read_doc("docker-compose.example.yml")
+    todo = read_doc("TODO.md")
+    readiness = read_doc("docs/release-readiness.md")
+    readiness_en = read_doc("docs/release-readiness.en.md")
+
+    assert "## V4.0.13 — 2026-07-20" in changelog
+    assert "[docs/release-notes-v4.0.13.md](docs/release-notes-v4.0.13.md)" in changelog
+    for text in (notes, notes_en):
+        for marker in (
+            "plugin/quick",
+            "unknown command",
+            "/compress",
+            "/model",
+            "/resume",
+            "/update",
+            "system.notice",
+            "1482 passed, 4 skipped",
+        ):
+            assert marker in text
+        for asset in (
+            "hermes-feishu-card-v4.0.13-macos.tar.gz",
+            "hermes-feishu-card-v4.0.13-linux.tar.gz",
+            "hermes-feishu-card-v4.0.13-windows.zip",
+            "hermes-feishu-card-v4.0.13-checksums.txt",
+        ):
+            assert asset in text
+    assert "docs/release-notes-v4.0.13.md" in readme
+    assert "docs/release-notes-v4.0.13.en.md" in readme_en
+    assert 'HFC_VERSION: "${HFC_VERSION:-v4.0.13}"' in compose
+    for doc in (readme, readme_en, install_doc, guide, guide_en):
+        assert "HFC_VERSION=v4.0.13" in doc
+    assert "V4.0.13" in todo
+    assert "V4.0.13 发布门禁" in readiness
+    assert "V4.0.13 Release Gates" in readiness_en
 
 
 def test_feishu_cli_playbook_is_linked_and_keeps_cli_optional():
