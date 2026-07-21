@@ -69,7 +69,11 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "thinking.delta" in readme
     assert "v2026.4.23" in readme
     assert "Git tag `v2026.4.23+`" in readme
-    assert len(readme.splitlines()) <= 260
+    assert (
+        "</p>\n\n"
+        "![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)"
+    ) in readme
+    assert len(readme.splitlines()) <= 261
     assert (ROOT / "docs/assets/readme-cover.png").exists()
     assert (ROOT / "docs/assets/feishu-card-showcase-v385.png").exists()
     assert (ROOT / "docs/assets/feishu-weather-card.png").exists()

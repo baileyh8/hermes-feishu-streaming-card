@@ -10,6 +10,7 @@
   <img alt="Sidecar only" src="https://img.shields.io/badge/Runtime-Sidecar--only-7C3AED?style=for-the-badge">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/baileyh8/hermes-feishu-streaming-card?style=for-the-badge&color=64748b"></a>
 </p>
+
 ![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)
 
 Hermes 飞书流式卡片插件把 Hermes Agent Gateway 的飞书/Lark 回复变成一张持续更新的交互式卡片。思考过程、工具调用、最终答案、授权确认、选项选择、系统提示和运行统计会收束在卡片内，而不是散落成多条灰色原生消息。<br><br>它面向真实飞书使用场景：流式内容漏字/乱序、长表格和代码块变成 raw markdown、工具过程不可见、approval/clarify 需要手工回复、话题里卡片不更新、多 bot / 多 profile 难排查，以及 Hermes 升级后 hook 兼容不确定。
