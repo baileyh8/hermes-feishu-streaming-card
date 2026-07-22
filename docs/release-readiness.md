@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发布候选为 `4.0.15`。它修复 Issue #141 的工具事件视觉与首事件加载反馈，并让 CLI 主动识别 Hermes 升级覆盖 Gateway hook 的静默失效。V3.9.1 已于 2026-07-11 发布，V4.0.14 及更早版本也已发布。
+当前发布候选为 `4.0.16`。它去除初始加载文案重复，并恢复真实 Hermes 工具耗时显示；V3.9.1 已于 2026-07-11 发布，V4.0.15 及更早版本也已发布。
 
 ## 已具备
 
@@ -144,6 +144,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
 
 `v3.9.0` tag 的 release-assets workflow 会发布 4 个 assets：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。
+
+## V4.0.16 发布门禁
+
+- 初始 Header/正文职责、工具开始后的空正文占位移除，以及最终答案/footer 保持：**已通过 renderer/session/server 回归**。
+- Hermes `kwargs.duration` 提取、`duration_ms` 传递、started/completed 兜底、terminal-only 不伪造及查询参数保留：**已通过真实 callback 结构 smoke 与自动化**。
+- 最终全量自动化：**已通过（`1504 passed, 4 skipped`）**；sdist/wheel、隔离 `site-packages` import `4.0.16`、公开 tagged installer 与本机运行来源在发布流程中复核。
+- 本次不重复宣称飞书客户端视觉复验；V4.0.15 已覆盖真实 Hermes/飞书加载与工具状态路径，本补丁的差异由真实 callback 结构和卡片 JSON smoke 验证。
 
 ## V4.0.15 发布门禁
 

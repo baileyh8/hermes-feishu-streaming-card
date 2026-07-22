@@ -2,6 +2,15 @@
 
 自动化测试不能完全证明 Feishu/Lark 客户端体验。涉及卡片 UX、topic、系统提示、命令卡片的版本，发布前需要真实飞书 smoke。
 
+## V4.0.16 加载态去重与真实工具耗时
+
+- 初始加载卡的 Header 只显示 `Hermes Agent`，正文显示动画“正在加载上下文…”，两处不能重复。
+- 工具开始后，subtitle 显示当前动作；没有模型正文时，不保留加载占位。
+- 工具完成行显示真实耗时；上游显式 duration 优先，兼容兜底只能使用可配对的 started/completed 事件，terminal-only 不得伪造。
+- 查询摘要、参数、最终答案、工具时间线结构与 footer 保持既有行为。
+
+2026-07-22 发布候选证据：本机真实 Hermes `progress_callback` 源码确认 `tool.completed` 通过 `kwargs.duration` 提供耗时；按该 callback 结构执行候选 hook/session/render smoke，得到 `✓ web_search · 1.75s`，查询摘要和参数保留，工具开始后无空正文加载占位。renderer/session/server 与全量自动化通过。本补丁不重复宣称飞书客户端视觉复验；公开版安装后的本机 runtime/hook/sidecar 来源另行复核。
+
 ## V4.0.15 工具事件视觉与加载动画
 
 - 首个模型/工具事件前，同一张卡显示“正在加载上下文…”及可见 spinner；不能发送额外原生灰色消息或第二张卡。

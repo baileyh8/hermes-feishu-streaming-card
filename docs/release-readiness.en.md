@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.0.15`. It fixes Issue #141's tool-event visuals and first-event loading feedback, and makes the CLI detect silent Gateway-hook removal after a Hermes upgrade. V3.9.1 was released on 2026-07-11, and V4.0.14 and earlier releases are public.
+Current release candidate: `4.0.16`. It removes duplicate initial loading text and restores real Hermes tool durations. V3.9.1 was released on 2026-07-11, and V4.0.15 and earlier releases are public.
 
 ## Ready
 
@@ -144,6 +144,13 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Verify macOS, Linux, Windows, and checksums assets after tagging.
 
 The `v3.9.0` release-assets workflow publishes four assets: the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
+
+## V4.0.16 Release Gates
+
+- Initial Header/body responsibilities, removal of the empty body placeholder after tool start, and unchanged final-answer/footer behavior: **passed renderer/session/server regression coverage**.
+- Hermes `kwargs.duration` extraction, `duration_ms` propagation, started/completed fallback, terminal-only non-fabrication, and query/argument preservation: **passed real callback-shape smoke plus automation**.
+- Final full automation: **passed (`1504 passed, 4 skipped`)**; sdist/wheel, isolated `site-packages` import of `4.0.16`, the public tagged installer, and local runtime provenance are rechecked during release.
+- This patch does not claim a new Feishu client visual retest. V4.0.15 covered the real Hermes/Feishu loading and tool-state path; this delta is verified through the real callback shape and card JSON smoke.
 
 ## V4.0.15 Release Gates
 

@@ -132,7 +132,7 @@ For an existing Hermes container:
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.0.15
+export HFC_VERSION=v4.0.16
 bash install-docker.sh
 ```
 
@@ -173,6 +173,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ![Feishu topic reply card continuity and reasoning/tool timeline showcase](docs/assets/feishu-topic-card-showcase-v389.png)
 | Version | Highlights |
 |---|---|
+| [v4.0.16](docs/release-notes-v4.0.16.en.md) | Removes duplicate initial loading text, drops the stale body placeholder once tools start, and restores real tool durations |
 | [v4.0.15](docs/release-notes-v4.0.15.en.md) | Fixes Issue #141 with a compact semantic tool timeline and real loading animation; CLI detects Hermes upgrades that removed the hook |
 | [v4.0.14](docs/release-notes-v4.0.14.en.md) | Fixes Issue #142 so orphaned long-task heartbeats stay running, update one card per original message anchor, and still complete on the final event |
 | [v4.0.13](docs/release-notes-v4.0.13.en.md) | Routes every non-empty Hermes slash-command feedback message through a standalone command card, updates one card for multi-message feedback, keeps manual `/compress` progress/results in place, and falls back to exact native text on failure |
@@ -187,7 +188,6 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 | [v4.0.4](docs/release-notes-v4.0.4.en.md) | Fixes Markdown `MEDIA:` literals, interaction forwarding with an SDK-retained callback, and misleading `5h` labels when Codex exposes one ambiguous limit window |
 | [v4.0.3](docs/release-notes-v4.0.3.en.md) | Fixes duplicate gray answer text when the package is upgraded and restarted while a V4.0.0 completion hook remains; suppresses one exact text copy while preserving native media |
 | [v4.0.2](docs/release-notes-v4.0.2.en.md) | Allows safe upgrades from verified older owned hooks when manifest and backup evidence match; includes the v4.0.1 media-text deduplication fix |
-| [v4.0.1](docs/release-notes-v4.0.1.en.md) | Fixes duplicate native answer text after `MEDIA:` image/file cards; the native path delivers media only and the card hides internal local paths |
 | [v4.0.0](docs/release-notes-v4.0.0.en.md) | The running Header shows the latest Hermes tool preview while public interim output streams independently in the body; waiting, failed, and completed states preserve established Footer and reply boundaries |
 | [v3.10.0](docs/release-notes-v3.10.0.md) | Bare `/resume` uses a native session picker while retaining Hermes' security path; the model footer gains escaped semantic color without changing layout or field order |
 | [v3.9.1](docs/release-notes-v3.9.1.md) | Reliability hotfix: preserve completed answers, serialize interrupted terminal cards, make model-picker callbacks asynchronous, and recover verifiable marker-only installer damage; normal streaming-card footer/layout remains unchanged |

@@ -106,6 +106,8 @@ def render_card(
         primary_text = normalize_stream_text(session.answer_text)
     elif session.thinking_text:
         primary_text = normalize_stream_text(session.thinking_text)
+    elif session.latest_tool_preview or session.tools:
+        primary_text = ""
     else:
         primary_text = _spinner_text("正在加载上下文…")
     attachment_summary = _render_attachment_summary(session)
@@ -123,23 +125,23 @@ def render_card(
             title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
         )
     runtime_summary = _runtime_header_summary(session)
-    if initial_loading:
-        runtime_summary = "正在加载上下文…"
     header_title = (
         configured_title
         if runtime_summary
         else _runtime_header_title(session, configured_title)
     )
     main_role = "notice" if session.delivery_kind == "notice" else "body"
-    elements = _render_main_content_elements(
-        primary_text,
-        text_size=_role_text_size(
-            text_sizes,
-            main_role,
-            default=None,
-            used_roles=used_text_size_roles,
-        ),
-    )
+    elements = []
+    if primary_text:
+        elements = _render_main_content_elements(
+            primary_text,
+            text_size=_role_text_size(
+                text_sizes,
+                main_role,
+                default=None,
+                used_roles=used_text_size_roles,
+            ),
+        )
     timeline_elements: list[Dict[str, Any]] = []
     if show_reasoning:
         timeline_elements = _render_timeline_elements(

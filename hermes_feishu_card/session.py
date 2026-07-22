@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
-from .card_timeline import CardTimeline
+from .card_timeline import CardTimeline, TERMINAL_TOOL_STATUSES
 from .events import SidecarEvent
 from .status import StatusConfig, resolve_display_status
 from .text import StreamingTextNormalizer, normalize_stream_text
@@ -34,6 +34,7 @@ class ToolState:
     name: str
     status: str
     detail: str = ""
+    started_at: float | None = None
 
 
 @dataclass
@@ -190,12 +191,42 @@ class CardSession:
             status = event.data.get("status")
             resolved_name = name if isinstance(name, str) else tool_id
             resolved_status = status if isinstance(status, str) else "running"
-            resolved_detail = _tool_detail_from_event_data(event.data)
+            normalized_status = resolved_status.strip().lower()
+            is_terminal = normalized_status in TERMINAL_TOOL_STATUSES
+            previous_tool = self.tools.get(tool_id)
+            previous_is_terminal = (
+                previous_tool is not None
+                and previous_tool.status.strip().lower() in TERMINAL_TOOL_STATUSES
+            )
+            if previous_tool is None or (previous_is_terminal and not is_terminal):
+                started_at = None if is_terminal else event.created_at
+            else:
+                started_at = previous_tool.started_at
+            detail_data = event.data
+            if (
+                is_terminal
+                and _tool_duration_milliseconds(event.data) is None
+                and started_at is not None
+                and event.created_at >= started_at
+            ):
+                detail_data = dict(event.data)
+                detail_data["duration_ms"] = (event.created_at - started_at) * 1000
+            resolved_detail = _tool_detail_from_event_data(detail_data)
+            if (
+                is_terminal
+                and previous_tool is not None
+                and not _tool_event_has_primary_detail(event.data)
+            ):
+                resolved_detail = _merge_tool_details(
+                    previous_tool.detail,
+                    resolved_detail,
+                )
             self.tools[tool_id] = ToolState(
                 tool_id=tool_id,
                 name=resolved_name,
                 status=resolved_status,
                 detail=resolved_detail,
+                started_at=started_at,
             )
             self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail)
             self._tool_call_count += 1
@@ -468,6 +499,22 @@ def _tool_detail_from_event_data(data: dict[str, Any]) -> str:
         if rendered_error:
             lines.append(f"失败: {rendered_error}")
 
+    return "\n".join(lines)
+
+
+def _tool_event_has_primary_detail(data: dict[str, Any]) -> bool:
+    detail = data.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        return True
+    return _first_tool_value(data, ("arguments", "parameters", "args", "input")) is not None
+
+
+def _merge_tool_details(previous: str, current: str) -> str:
+    lines: list[str] = []
+    for detail in (previous, current):
+        for line in str(detail or "").splitlines():
+            if line and line not in lines:
+                lines.append(line)
     return "\n".join(lines)
 
 

@@ -56,12 +56,46 @@ def test_render_initial_running_card_shows_context_loading_and_empty_timeline():
 
     assert any(frame in main["content"] for frame in _SPINNER_FRAMES)
     assert "正在加载上下文…" in main["content"]
-    assert card["header"]["subtitle"]["content"] == "正在加载上下文…"
+    assert card["header"]["title"]["content"] == "Hermes Agent"
+    assert "subtitle" not in card["header"]
     assert timeline["expanded"] is False
     assert timeline["header"]["title"]["content"] == "思考与工具 · 0 次工具调用"
     assert "tool_summary" not in {
         item.get("element_id") for item in card["body"]["elements"]
     }
+
+
+def test_running_tool_without_model_text_removes_loading_placeholder_from_body():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="tool.updated",
+            conversation_id="chat-1",
+            message_id="msg-1",
+            chat_id="oc_abc",
+            platform="feishu",
+            sequence=1,
+            created_at=10.0,
+            data={
+                "tool_id": "terminal-1",
+                "name": "terminal",
+                "status": "running",
+                "detail": "pytest -q",
+            },
+        )
+    )
+
+    card = render_card(session)
+
+    assert card["header"]["subtitle"]["content"] == "正在执行终端：pytest -q"
+    assert not any(
+        str(item.get("element_id", "")).startswith("main_content")
+        for item in card["body"]["elements"]
+    )
+    assert "正在加载上下文…" not in str(card)
 
 
 def test_v4_running_card_uses_preview_title_and_public_interim_body():

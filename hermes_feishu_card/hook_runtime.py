@@ -5516,15 +5516,20 @@ def _tool_arguments(local_vars: dict[str, Any]) -> Any:
 
 
 def _tool_duration_milliseconds(local_vars: dict[str, Any]) -> int | float | None:
-    for name in ("duration_ms", "elapsed_ms", "tool_duration_ms"):
-        value = _finite_float(local_vars.get(name))
-        if value is not None and value >= 0:
-            return int(value) if value.is_integer() else value
-    for name in ("duration", "elapsed", "tool_duration"):
-        value = _finite_float(local_vars.get(name))
-        if value is not None and value >= 0:
-            milliseconds = value * 1000
-            return int(milliseconds) if milliseconds.is_integer() else milliseconds
+    sources = [local_vars]
+    callback_kwargs = local_vars.get("kwargs")
+    if isinstance(callback_kwargs, dict):
+        sources.append(callback_kwargs)
+    for source in sources:
+        for name in ("duration_ms", "elapsed_ms", "tool_duration_ms"):
+            value = _finite_float(source.get(name))
+            if value is not None and value >= 0:
+                return int(value) if value.is_integer() else value
+        for name in ("duration", "elapsed", "tool_duration"):
+            value = _finite_float(source.get(name))
+            if value is not None and value >= 0:
+                milliseconds = value * 1000
+                return int(milliseconds) if milliseconds.is_integer() else milliseconds
     return None
 
 

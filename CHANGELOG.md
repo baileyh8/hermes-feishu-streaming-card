@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.16 — 2026-07-22
+
+See also: [docs/release-notes-v4.0.16.md](docs/release-notes-v4.0.16.md)
+
+### Fixed
+- Initial loading keeps `Hermes Agent` as the only Header text while the animated `正在加载上下文…` placeholder remains in the body.
+- Once a tool starts, its current action moves to the Header subtitle and an empty model body no longer repeats the loading placeholder.
+- Tool completion now reads Hermes progress-callback `kwargs.duration`, preserves the started-event query and arguments, and renders the duration on the compact tool headline.
+
+### Reliability
+- Explicit upstream duration remains authoritative; a started/completed event-time delta is used only when Hermes omits duration, while terminal-only events never invent elapsed time.
+- Added regression coverage for loading-state transitions, callback duration extraction, detail preservation, explicit-duration precedence, and terminal-only compatibility.
+
+### Tests
+- Full automation passed with `1504 passed, 4 skipped`; release metadata, package build, isolated install, and public tagged-install checks are recorded in the release notes.
+
 ## V4.0.15 — 2026-07-22
 
 See also: [docs/release-notes-v4.0.15.md](docs/release-notes-v4.0.15.md)

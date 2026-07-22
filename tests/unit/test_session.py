@@ -281,6 +281,90 @@ def test_tool_update_builds_compact_detail_from_arguments_duration_and_error():
     assert "失败: timeout" in detail
 
 
+def test_tool_update_computes_duration_from_lifecycle_when_event_omits_it():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "search-1",
+                "name": "web_search",
+                "status": "running",
+                "detail": "DeepSeek V4 official release",
+                "arguments": {"query": "DeepSeek V4 official release", "limit": 5},
+            },
+            created_at=100.0,
+        )
+    )
+    assert session.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "search-1",
+                "name": "web_search",
+                "status": "completed",
+            },
+            created_at=101.75,
+        )
+    )
+
+    detail = session.tools["search-1"].detail
+    assert "DeepSeek V4 official release" in detail
+    assert '参数: {"query": "DeepSeek V4 official release", "limit": 5}' in detail
+    assert "耗时: 1.75s" in detail
+
+
+def test_tool_update_prefers_explicit_duration_over_lifecycle_duration():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {"tool_id": "search-1", "name": "web_search", "status": "running"},
+            created_at=100.0,
+        )
+    )
+    assert session.apply(
+        event(
+            "tool.updated",
+            2,
+            {
+                "tool_id": "search-1",
+                "name": "web_search",
+                "status": "completed",
+                "duration_ms": 250,
+            },
+            created_at=105.0,
+        )
+    )
+
+    assert "耗时: 250ms" in session.tools["search-1"].detail
+    assert "5s" not in session.tools["search-1"].detail
+
+
+def test_terminal_only_tool_update_does_not_invent_duration():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+
+    assert session.apply(
+        event(
+            "tool.updated",
+            1,
+            {
+                "tool_id": "search-1",
+                "name": "web_search",
+                "status": "completed",
+            },
+            created_at=101.75,
+        )
+    )
+
+    assert "耗时:" not in session.tools["search-1"].detail
+
+
 def test_completion_replaces_thinking_with_answer():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     session.apply(event("thinking.delta", 1, {"text": "思考内容。"}))
@@ -637,7 +721,7 @@ def test_timeline_updates_running_tool_until_terminal_status():
 
     assert len(entries) == 1
     assert entries[0].status == "completed"
-    assert entries[0].detail == "读取完成"
+    assert entries[0].detail == "读取完成\n耗时: 1s"
 
 
 def test_session_keeps_current_answer_visible_until_next_answer_block():
@@ -731,7 +815,7 @@ def test_session_timeline_records_pre_tool_preface_tool_answer_order():
         ("tool", "read_file", "completed"),
     ]
     assert entries[0].content == "先看约束。"
-    assert entries[1].detail == "README.md"
+    assert entries[1].detail == "README.md\n耗时: 1s"
     assert session.answer_text == "最终回答开始"
 
 

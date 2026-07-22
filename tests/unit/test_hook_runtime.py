@@ -406,6 +406,23 @@ def test_build_tool_event_carries_arguments_duration_and_error():
     assert payload["data"]["error"] == "exit 1"
 
 
+def test_build_tool_event_extracts_duration_from_progress_callback_kwargs():
+    payload = hook_runtime.build_event(
+        "tool.updated",
+        {
+            "source": SourceObject(),
+            "message_id": "om_tool_duration",
+            "tool_id": "web_search",
+            "name": "web_search",
+            "status": "completed",
+            "kwargs": {"duration": 1.75},
+        },
+    )
+
+    assert payload is not None
+    assert payload["data"]["duration_ms"] == 1750
+
+
 def test_build_event_ignores_non_feishu_platforms():
     assert (
         hook_runtime.build_event(
