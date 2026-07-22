@@ -2,9 +2,16 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13 / V4.0.14 / V4.0.15 / V4.0.16 / V4.0.17
+## V3.8 / V3.9 / V3.10 / V4.0 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13 / V4.0.14 / V4.0.15 / V4.0.16 / V4.0.17 / V4.0.18
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V4.0.18：Hermes Feishu SDK 兼容门禁（发布候选）
+
+- [x] 仅在 Hermes adapter 实际使用 `extra_ua_tags` 时检查 Gateway venv 的 `lark_oapi.ws.Client` 构造签名。
+- [x] `doctor` 输出 `feishu_sdk` 并以 `feishu_sdk_incompatible` 解释“Gateway 存活但飞书不回应”。
+- [x] `setup/install` 对不兼容环境安装已验证的 `lark-oapi==1.6.8`，并在能力复检通过后继续。
+- [x] 真实 Hermes v0.19.0 Gateway 恢复 Feishu WebSocket；全量自动化、文档、包和发布资产进入门禁。
 
 ### V4.0.17：并行同名工具事件关联热修（发布候选）
 

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发布候选为 `4.0.17`。它修复并行同名工具的事件关联、调用计数和重复耗时显示；V3.9.1 已于 2026-07-11 发布，V4.0.16 及更早版本也已发布。
+当前发布候选为 `4.0.18`。它修复 Hermes Feishu adapter 与 Gateway venv 中 `lark-oapi` 的能力错位；V3.9.1 已于 2026-07-11 发布，V4.0.17 及更早版本也已发布。
 
 ## 已具备
 
@@ -144,6 +144,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 - tag 后验证 macOS、Linux、Windows 与 checksums 四个 assets。
 
 `v3.9.0` tag 的 release-assets workflow 会发布 4 个 assets：macOS tarball、Linux tarball、Windows zip 和 checksums 文件，分别为 `hermes-feishu-card-v3.9.0-macos.tar.gz`、`hermes-feishu-card-v3.9.0-linux.tar.gz`、`hermes-feishu-card-v3.9.0-windows.zip`、`hermes-feishu-card-v3.9.0-checksums.txt`。
+
+## V4.0.18 发布门禁
+
+- Hermes adapter 使用 `extra_ua_tags` 时检查真实 SDK 构造签名；旧 adapter 不触发安装，兼容的新 SDK 不强制降级：**已通过 CLI/diagnostics 回归**。
+- `doctor` 只读输出 `feishu_sdk_incompatible`；`setup/install` 安装 `lark-oapi==1.6.8` 后必须复检通过：**已通过红灯/绿灯集成测试**。
+- 真实 Hermes v0.19.0 Gateway 从 `lark-oapi 1.5.3` 修复到 `1.6.8` 后恢复 `✓ feishu connected`，214 个 runtime 包依赖兼容：**已通过**。
+- 最终全量自动化：**已通过（`1511 passed, 4 skipped`）**；sdist/wheel、隔离 `site-packages` import `4.0.18`、公开 tagged installer 与 Release assets 在发布流程中复核。
 
 ## V4.0.17 发布门禁
 

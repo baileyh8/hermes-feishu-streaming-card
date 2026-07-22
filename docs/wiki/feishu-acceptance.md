@@ -2,6 +2,14 @@
 
 自动化测试不能完全证明 Feishu/Lark 客户端体验。涉及卡片 UX、topic、系统提示、命令卡片的版本，发布前需要真实飞书 smoke。
 
+## V4.0.18 Hermes Feishu SDK 兼容门禁
+
+- Hermes Gateway 进程存活不能单独证明 Feishu 在线；日志必须出现 `✓ feishu connected`，且不能持续出现 `extra_ua_tags` 构造错误。
+- Hermes adapter 使用 `extra_ua_tags` 时，`doctor --json/--explain` 必须显示 `feishu_sdk`；不兼容时给出 `feishu_sdk_incompatible`。
+- `setup/install` 修复后必须复检 `lark_oapi.ws.Client` 构造签名，并重启 Gateway 才视为恢复。
+
+2026-07-22 验收结果：真实 Hermes v0.19.0 Gateway 进程仍在运行，但 Feishu connector 因 `lark-oapi 1.5.3` 不接受 `extra_ua_tags` 而持续失败。将 Gateway venv 修复到 `lark-oapi 1.6.8` 后，构造签名检查通过，`uv pip check` 确认 214 个包兼容，Gateway 与 sidecar 保持运行，日志恢复 `✓ feishu connected` 且未再出现新的参数错误。自动化使用同一失败条件完成红灯/绿灯回归。
+
 ## V4.0.17 并行同名工具事件关联
 
 - 两个并行同名工具必须渲染为两条独立事件，不能重复显示任一查询摘要或参数。

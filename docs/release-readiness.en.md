@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.0.17`. It fixes lifecycle correlation, invocation counts, and duplicate duration detail for parallel same-name tools. V3.9.1 was released on 2026-07-11, and V4.0.16 and earlier releases are public.
+Current release candidate: `4.0.18`. It fixes the capability mismatch between the Hermes Feishu adapter and `lark-oapi` in the Gateway venv. V3.9.1 was released on 2026-07-11, and V4.0.17 and earlier releases are public.
 
 ## Ready
 
@@ -144,6 +144,13 @@ Acceptance also exposed an upstream Hermes `cron run` status-reporting bug: a su
 - Verify macOS, Linux, Windows, and checksums assets after tagging.
 
 The `v3.9.0` release-assets workflow publishes four assets: the macOS tarball, Linux tarball, Windows zip, and checksums file: `hermes-feishu-card-v3.9.0-macos.tar.gz`, `hermes-feishu-card-v3.9.0-linux.tar.gz`, `hermes-feishu-card-v3.9.0-windows.zip`, and `hermes-feishu-card-v3.9.0-checksums.txt`.
+
+## V4.0.18 Release Gates
+
+- When the Hermes adapter uses `extra_ua_tags`, the installer checks the real SDK constructor; older adapters do not trigger installation and compatible newer SDKs are not forced backward: **passed CLI/diagnostics regressions**.
+- `doctor` reports `feishu_sdk_incompatible` read-only; `setup/install` must install `lark-oapi==1.6.8` and pass the follow-up capability check: **passed red/green integration coverage**.
+- A real Hermes v0.19.0 Gateway recovered `✓ feishu connected` after moving from `lark-oapi 1.5.3` to `1.6.8`; all 214 runtime packages are dependency-compatible: **passed**.
+- Final full automation: **passed (`1511 passed, 4 skipped`)**; sdist/wheel, isolated `site-packages` import of `4.0.18`, the public tagged installer, and Release assets are rechecked during release.
 
 ## V4.0.17 Release Gates
 

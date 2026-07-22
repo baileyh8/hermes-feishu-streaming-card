@@ -103,6 +103,12 @@
 - 升级迁移只能停止 PID/token/health 三者一致的旧进程，未知进程保持 fail-closed。
 - 调整 lifecycle 时运行 `tests/unit/test_process.py`、`tests/integration/test_cli_process.py` 和 `tests/unit/test_install_scripts.py`。
 
+### Hermes Feishu SDK 能力门禁
+
+- Hermes adapter 出现 `extra_ua_tags` 调用时，Gateway venv 的 `lark_oapi.ws.Client` 必须支持同名参数；不能只看 Gateway 进程是否存活。
+- `doctor` 保持只读并报告 `feishu_sdk`；`setup/install` 仅在 adapter 确实需要该能力且当前 SDK 不兼容时安装 `lark-oapi==1.6.8`，随后以构造签名复检。
+- 修改门禁时运行 `tests/integration/test_cli.py`、`tests/integration/test_cli_install.py` 和 `tests/unit/test_diagnostics.py`。
+
 ## 常见改动对应测试
 
 | 改动 | 先跑 | 发布前还要跑 |

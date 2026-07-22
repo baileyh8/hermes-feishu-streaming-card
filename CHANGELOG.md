@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.0.18 — 2026-07-22
+
+See also: [docs/release-notes-v4.0.18.md](docs/release-notes-v4.0.18.md)
+
+### Fixed
+- Hermes Feishu SDK compatibility now follows the adapter's actual `extra_ua_tags` requirement and the installed `lark_oapi.ws.Client` constructor signature instead of assuming a running Gateway means Feishu is connected.
+- `setup/install` repairs stale Gateway venvs with the verified `lark-oapi==1.6.8` and rechecks the constructor capability before patching Hermes.
+
+### Diagnostics
+- `doctor` reports a dedicated `feishu_sdk` section and `feishu_sdk_incompatible` finding; the operations card includes localized recovery guidance.
+- Older Hermes adapters that do not use `extra_ua_tags` remain untouched, while already-compatible newer SDKs are accepted without forced replacement.
+
+### Tests
+- Added red/green regression coverage for stale SDK repair and read-only doctor reporting.
+- Full automation passed with `1511 passed, 4 skipped`; the real Hermes v0.19.0 Gateway recovered its Feishu WebSocket connection after the SDK correction.
+
 ## V4.0.17 — 2026-07-22
 
 See also: [docs/release-notes-v4.0.17.md](docs/release-notes-v4.0.17.md)
