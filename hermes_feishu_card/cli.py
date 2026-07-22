@@ -56,6 +56,8 @@ MANIFEST_NAME = ".hermes_feishu_card_manifest"
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 COMPOSE_HOST_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,62}$")
+FEISHU_SDK_INSTALL_SPEC = "lark-oapi==1.6.8"
+FEISHU_SDK_REQUIRED_PARAMETER = "extra_ua_tags"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -455,6 +457,11 @@ def _run_doctor(args: argparse.Namespace) -> int:
                 "runtime_import: "
                 f"{runtime_import['status']} - {runtime_import.get('message', '')}"
             )
+            feishu_sdk = _doctor_feishu_sdk_report(detection)
+            print(
+                "feishu_sdk: "
+                f"{feishu_sdk['status']} - {feishu_sdk.get('message', '')}"
+            )
             _print_hermes_streaming_guidance(Path(args.hermes_dir))
         return 0 if detection.supported else 1
     print("hermes: not checked")
@@ -546,6 +553,11 @@ def _doctor_error_report(config_path: Path, exc: Exception) -> dict[str, Any]:
             "status": "skipped",
             "message": "Hermes runtime import was not checked because config loading failed.",
         },
+        "feishu_sdk": {
+            "checked": False,
+            "status": "skipped",
+            "message": "Hermes Feishu SDK was not checked because config loading failed.",
+        },
         "recommendations": [
             {
                 "severity": "error",
@@ -597,6 +609,11 @@ def _build_doctor_report(
             "status": "not_checked",
             "message": "Hermes runtime import was not checked.",
         },
+        "feishu_sdk": {
+            "checked": False,
+            "status": "not_checked",
+            "message": "Hermes Feishu SDK was not checked.",
+        },
         "recommendations": recommendations,
     }
 
@@ -615,6 +632,11 @@ def _build_doctor_report(
             "checked": False,
             "status": "skipped",
             "message": "Hermes runtime import was skipped by request.",
+        }
+        report["feishu_sdk"] = {
+            "checked": False,
+            "status": "skipped",
+            "message": "Hermes Feishu SDK was skipped by request.",
         }
         recommendations.append(
             {
@@ -660,6 +682,11 @@ def _build_doctor_report(
             "status": "skipped",
             "message": "Hermes runtime import was skipped because Hermes is unsupported.",
         }
+        report["feishu_sdk"] = {
+            "checked": False,
+            "status": "skipped",
+            "message": "Hermes Feishu SDK was skipped because Hermes is unsupported.",
+        }
         recommendations.append(
             {
                 "severity": "error",
@@ -692,6 +719,8 @@ def _build_doctor_report(
     runtime_import = _doctor_runtime_import_report(detection)
     report["runtime_import"] = runtime_import
     _append_runtime_import_recommendation(recommendations, runtime_import)
+    feishu_sdk = _doctor_feishu_sdk_report(detection)
+    report["feishu_sdk"] = feishu_sdk
 
     streaming = _doctor_streaming_report(Path(args.hermes_dir))
     report["streaming"] = streaming
@@ -727,6 +756,7 @@ def _build_doctor_report(
     health: dict[str, object] = {
         "streaming": streaming,
         "runtime_import": runtime_import,
+        "feishu_sdk": feishu_sdk,
         "install_state": install_state,
     }
     if route is not None:
@@ -1000,6 +1030,135 @@ def _doctor_runtime_import_report(detection: HermesDetection) -> dict[str, Any]:
     return _check_runtime_hook_import(runtime_python)
 
 
+def _doctor_feishu_sdk_report(detection: HermesDetection) -> dict[str, Any]:
+    if not _hermes_requires_feishu_sdk_capability(detection.root):
+        return {
+            "checked": False,
+            "status": "not_required",
+            "version": None,
+            "supports_extra_ua_tags": None,
+            "message": (
+                "Hermes Feishu adapter does not require the extra_ua_tags SDK capability."
+            ),
+        }
+    runtime_python = _detect_hermes_runtime_python(detection.root)
+    if runtime_python is None:
+        return {
+            "checked": False,
+            "status": "skipped",
+            "version": None,
+            "supports_extra_ua_tags": None,
+            "message": "Hermes runtime venv Python was not found.",
+        }
+    return _check_runtime_feishu_sdk(runtime_python)
+
+
+def _hermes_requires_feishu_sdk_capability(hermes_root: Path | str) -> bool:
+    adapter = (
+        Path(hermes_root).expanduser()
+        / "plugins"
+        / "platforms"
+        / "feishu"
+        / "adapter.py"
+    )
+    try:
+        return FEISHU_SDK_REQUIRED_PARAMETER in adapter.read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        return False
+
+
+def _check_runtime_feishu_sdk(runtime_python: Path) -> dict[str, Any]:
+    code = (
+        "import inspect, json; "
+        "from importlib.metadata import version; "
+        "from lark_oapi.ws import Client; "
+        "print(json.dumps({"
+        "'version': version('lark-oapi'), "
+        "'supports_extra_ua_tags': "
+        "'extra_ua_tags' in inspect.signature(Client.__init__).parameters"
+        "}))"
+    )
+    cwd = _hermes_runtime_cwd(runtime_python)
+    try:
+        result = subprocess.run(
+            [str(runtime_python), "-c", code],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            cwd=str(cwd) if cwd is not None else None,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "checked": True,
+            "status": "failed",
+            "python": str(runtime_python),
+            "version": None,
+            "supports_extra_ua_tags": False,
+            "message": "Hermes Feishu SDK compatibility check timed out.",
+        }
+    except OSError as exc:
+        return {
+            "checked": True,
+            "status": "failed",
+            "python": str(runtime_python),
+            "version": None,
+            "supports_extra_ua_tags": False,
+            "message": (
+                "Hermes Feishu SDK compatibility check could not start: "
+                f"{exc.__class__.__name__}"
+            ),
+        }
+    if result.returncode != 0:
+        return {
+            "checked": True,
+            "status": "failed",
+            "python": str(runtime_python),
+            "version": None,
+            "supports_extra_ua_tags": False,
+            "message": (
+                "Hermes runtime cannot load a compatible lark-oapi SDK: "
+                f"{_summarize_process_output(result)}"
+            ),
+        }
+    try:
+        metadata = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        return {
+            "checked": True,
+            "status": "failed",
+            "python": str(runtime_python),
+            "version": None,
+            "supports_extra_ua_tags": False,
+            "message": "Hermes runtime returned invalid Feishu SDK metadata.",
+        }
+    version = str(metadata.get("version") or "").strip() or None
+    supported = metadata.get("supports_extra_ua_tags") is True
+    if supported:
+        return {
+            "checked": True,
+            "status": "ok",
+            "python": str(runtime_python),
+            "version": version,
+            "supports_extra_ua_tags": True,
+            "message": (
+                f"lark-oapi {version or 'unknown'} supports extra_ua_tags."
+            ),
+        }
+    return {
+        "checked": True,
+        "status": "failed",
+        "python": str(runtime_python),
+        "version": version,
+        "supports_extra_ua_tags": False,
+        "message": (
+            f"lark-oapi {version or 'unknown'} does not support extra_ua_tags."
+        ),
+    }
+
+
 def _append_runtime_import_recommendation(
     recommendations: list[dict[str, str]],
     runtime_import: dict[str, Any],
@@ -1163,6 +1322,49 @@ def _ensure_hermes_runtime_package(detection: HermesDetection) -> None:
         )
     else:
         print(f"runtime package: installed into {runtime_python}")
+
+
+def _ensure_hermes_feishu_sdk(detection: HermesDetection) -> None:
+    if not _hermes_requires_feishu_sdk_capability(detection.root):
+        return
+    runtime_python = _detect_hermes_runtime_python(detection.root)
+    if runtime_python is None:
+        print("feishu sdk: skipped (Hermes venv Python not found)")
+        return
+    report = _check_runtime_feishu_sdk(runtime_python)
+    if report["status"] == "ok":
+        print(
+            "feishu sdk: "
+            f"lark-oapi {report.get('version') or 'unknown'} capability ok "
+            f"({runtime_python})"
+        )
+        return
+
+    previous_version = report.get("version")
+    pip_version = _run_runtime_pip(runtime_python, ["--version"], timeout=20)
+    if pip_version.returncode != 0:
+        raise ValueError(
+            "Hermes runtime Python pip is unavailable: "
+            f"{_summarize_process_output(pip_version)}"
+        )
+    install = _run_runtime_pip(
+        runtime_python,
+        ["install", "--upgrade", FEISHU_SDK_INSTALL_SPEC],
+        timeout=180,
+    )
+    if install.returncode != 0:
+        raise ValueError(
+            "failed to install a compatible Hermes Feishu SDK into runtime "
+            f"Python {runtime_python}: {_summarize_process_output(install)}"
+        )
+    report = _check_runtime_feishu_sdk(runtime_python)
+    if report["status"] != "ok":
+        raise ValueError(report["message"])
+    installed_version = report.get("version") or "unknown"
+    if previous_version:
+        print(f"feishu sdk: upgraded {previous_version} -> {installed_version}")
+    else:
+        print(f"feishu sdk: installed lark-oapi {installed_version}")
 
 
 def _run_runtime_pip(
@@ -1417,6 +1619,13 @@ def _format_doctor_explanation(report: dict[str, Any]) -> str:
         lines.append(
             f"- Runtime import: {runtime_import['status']} - "
             f"{runtime_import.get('message', '')}"
+        )
+
+    feishu_sdk = report.get("feishu_sdk", {})
+    if isinstance(feishu_sdk, dict) and feishu_sdk.get("status"):
+        lines.append(
+            f"- Feishu SDK: {feishu_sdk['status']} - "
+            f"{feishu_sdk.get('message', '')}"
         )
 
     streaming = report["streaming"]
@@ -2054,6 +2263,7 @@ def _run_install(args: argparse.Namespace) -> int:
 
     try:
         _ensure_hermes_runtime_package(detection)
+        _ensure_hermes_feishu_sdk(detection)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

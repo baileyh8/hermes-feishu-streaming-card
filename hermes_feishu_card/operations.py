@@ -26,6 +26,10 @@ _FINDING_COPY = {
     "hermes_unsupported": ("当前 Hermes 版本不受支持", "请使用受支持的 Hermes 版本后重新检测。"),
     "hermes_compatibility_partial": ("Hermes 兼容性不完整", "建议检查兼容性配置后重新检测。"),
     "runtime_import_failed": ("运行环境加载失败", "建议重新安装或检查运行环境。"),
+    "feishu_sdk_incompatible": (
+        "飞书连接 SDK 不兼容",
+        "请重新运行 setup/install，并重启 Hermes Gateway。",
+    ),
     "streaming_disabled": ("流式更新未启用", "建议启用流式更新配置。"),
     "streaming_not_detected": ("未检测到流式配置", "建议检查流式更新配置。"),
     "install_state_clean": ("尚未安装卡片钩子", "如需使用卡片，请完成安装。"),

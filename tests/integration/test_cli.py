@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 import hermes_feishu_card.cli as cli_module
+from hermes_feishu_card import __version__ as PACKAGE_VERSION
 from hermes_feishu_card.cli import main
 from hermes_feishu_card.diagnostics import DiagnosticReport
 
@@ -504,6 +505,58 @@ exit 0
     assert str(runtime_python) not in result.stdout
     assert "hook_runtime" in report["runtime_import"]["message"]
     assert any(item["code"] == "runtime_import_failed" for item in report["recommendations"])
+
+
+def test_module_doctor_json_reports_incompatible_hermes_feishu_sdk(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("server:\n  port: 9018\n", encoding="utf-8")
+    hermes_dir = tmp_path / "hermes"
+    shutil.copytree(FIXTURE, hermes_dir)
+    adapter = hermes_dir / "plugins" / "platforms" / "feishu" / "adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text(
+        "FeishuWSClient(app_id='test', extra_ua_tags=['channel'])\n",
+        encoding="utf-8",
+    )
+    venv_bin = hermes_dir / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    runtime_python = venv_bin / "python"
+    runtime_python.write_text(
+        f"""#!/usr/bin/env bash
+if [ "$1" = "-c" ]; then
+  if [[ "$2" == *"lark_oapi.ws"* ]]; then
+    printf '%s\\n' '{{"version":"1.5.3","supports_extra_ua_tags":false}}'
+  else
+    printf '%s\\n' '{{"version":"{PACKAGE_VERSION}","location":"/runtime/hermes_feishu_card/__init__.py"}}'
+  fi
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+
+    result = run_cli(
+        "doctor",
+        "--config",
+        str(config_path),
+        "--hermes-dir",
+        str(hermes_dir),
+        "--json",
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == "warning"
+    assert report["feishu_sdk"]["checked"] is True
+    assert report["feishu_sdk"]["status"] == "failed"
+    assert report["feishu_sdk"]["version"] == "1.5.3"
+    assert report["feishu_sdk"]["supports_extra_ua_tags"] is False
+    assert any(
+        item["code"] == "feishu_sdk_incompatible"
+        for item in report["recommendations"]
+    )
 
 
 def test_module_doctor_explain_reports_summary_and_next_steps(tmp_path):

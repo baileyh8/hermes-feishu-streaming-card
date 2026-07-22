@@ -217,6 +217,61 @@ exit 0
     assert f"runtime package: {PACKAGE_VERSION} import ok" in result.stdout
 
 
+def test_install_upgrades_incompatible_hermes_feishu_sdk(tmp_path, monkeypatch):
+    hermes_dir = copy_hermes(tmp_path)
+    adapter = hermes_dir / "plugins" / "platforms" / "feishu" / "adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text(
+        "FeishuWSClient(app_id='test', extra_ua_tags=['channel'])\n",
+        encoding="utf-8",
+    )
+    venv_bin = hermes_dir / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    runtime_python = venv_bin / "python"
+    upgraded = tmp_path / "feishu-sdk-upgraded"
+    runtime_log = tmp_path / "runtime-python.log"
+    runtime_python.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> {str(runtime_log)!r}
+if [ "$1" = "-c" ]; then
+  if [[ "$2" == *"lark_oapi.ws"* ]]; then
+    if [ -f {str(upgraded)!r} ]; then
+      printf '%s\\n' '{{"version":"1.6.8","supports_extra_ua_tags":true}}'
+    else
+      printf '%s\\n' '{{"version":"1.5.3","supports_extra_ua_tags":false}}'
+    fi
+  else
+    printf '%s\\n' '{{"version":"{PACKAGE_VERSION}","location":"/runtime/hermes_feishu_card/__init__.py"}}'
+  fi
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "--version" ]; then
+  exit 0
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "install" ]; then
+  if [[ "$*" == *"lark-oapi==1.6.8"* ]]; then
+    touch {str(upgraded)!r}
+  fi
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    runtime_python.chmod(0o755)
+    monkeypatch.delenv("HFC_INSTALL_SPEC", raising=False)
+
+    result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+
+    assert result.returncode == 0, result.stderr
+    assert upgraded.exists()
+    log = runtime_log.read_text(encoding="utf-8")
+    assert "-m pip install --upgrade lark-oapi==1.6.8" in log
+    assert "feishu sdk: upgraded 1.5.3 -> 1.6.8" in result.stdout
+    assert "install ok" in result.stdout.lower()
+
+
 def test_install_does_not_accept_project_cwd_runtime_import_false_positive(
     tmp_path, monkeypatch
 ):
