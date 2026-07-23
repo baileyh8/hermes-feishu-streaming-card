@@ -20,6 +20,7 @@ DEFAULT_STATE_DIR = Path.home() / ".hermes_feishu_card"
 PIDFILE_NAME = "sidecar.pid"
 LOGFILE_NAME = "sidecar.log"
 SYSTEMD_UNIT_NAME = "hermes-feishu-card-sidecar.service"
+SYSTEMD_SYSTEM_UNIT_PATH = Path("/etc/systemd/system") / SYSTEMD_UNIT_NAME
 _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -35,7 +36,7 @@ def status_sidecar(config: dict[str, dict[str, Any]]) -> dict[str, Any]:
     health = fetch_health(config)
     if (
         record is not None
-        and record.get("manager") == "systemd-user"
+        and record.get("manager") in ("systemd-user", "systemd-system")
         and health is not None
         and health.get("process_token_hash") == process_token_hash(record["token"])
         and isinstance(health.get("process_pid"), int)
@@ -58,9 +59,10 @@ def start_sidecar(
 ) -> str:
     health = fetch_health(config)
     systemd_user = _systemd_user_available()
+    systemd_system = _systemd_system_available() if not systemd_user else False
     if health is not None:
         record = read_pid_record()
-        if not _can_migrate_to_systemd(record, health, systemd_user=systemd_user):
+        if not _can_migrate_to_systemd(record, health, systemd_user=systemd_user, systemd_system=systemd_system):
             return "already running"
         stop_pid(record["pid"])
         clear_pid()
@@ -93,6 +95,33 @@ def start_sidecar(
                 return "started"
             time.sleep(0.1)
         _stop_systemd_user_sidecar(SYSTEMD_UNIT_NAME)
+        clear_pid()
+        return "failed: health check timed out"
+
+    if systemd_system:
+        if not _start_systemd_system_sidecar(config_path, env_file=env_file):
+            return "failed: system systemd service could not be started"
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            health = fetch_health(config)
+            if (
+                health is not None
+                and health.get("process_token_hash") == process_token_hash(token)
+                and isinstance(health.get("process_pid"), int)
+            ):
+                try:
+                    write_pid_record(
+                        health["process_pid"],
+                        token,
+                        manager="systemd-system",
+                        unit=SYSTEMD_UNIT_NAME,
+                    )
+                except OSError as exc:
+                    _stop_systemd_system_sidecar()
+                    return f"failed: pidfile could not be written: {exc.__class__.__name__}"
+                return "started"
+            time.sleep(0.1)
+        _stop_systemd_system_sidecar()
         clear_pid()
         return "failed: health check timed out"
 
@@ -137,7 +166,9 @@ def stop_sidecar(config: dict[str, dict[str, Any]]) -> str:
 
     pid = record["pid"]
     health = fetch_health(config)
-    if record.get("manager") == "systemd-user":
+    manager = record.get("manager")
+
+    if manager == "systemd-user":
         if health is not None and (
             health.get("process_token_hash") != process_token_hash(record["token"])
         ):
@@ -147,6 +178,17 @@ def stop_sidecar(config: dict[str, dict[str, Any]]) -> str:
             return "failed: systemd user service could not be stopped"
         clear_pid()
         return "stopped"
+
+    if manager == "systemd-system":
+        if health is not None and (
+            health.get("process_token_hash") != process_token_hash(record["token"])
+        ):
+            return "failed: pidfile identity mismatch"
+        if not _stop_systemd_system_sidecar():
+            return "failed: system systemd service could not be stopped"
+        clear_pid()
+        return "stopped"
+
     if health is None:
         if pid_is_running(pid):
             return "failed: pidfile identity mismatch"
@@ -208,7 +250,7 @@ def read_pid_record() -> dict[str, Any] | None:
         result = {"pid": pid, "token": token}
         manager = record.get("manager")
         unit = record.get("unit")
-        if manager == "systemd-user" and isinstance(unit, str) and unit:
+        if manager in ("systemd-user", "systemd-system") and isinstance(unit, str) and unit:
             result.update({"manager": manager, "unit": unit})
         return result
     return None
@@ -222,7 +264,7 @@ def write_pid_record(
     unit: str = "",
 ) -> None:
     payload = {"pid": pid, "token": token}
-    if manager == "systemd-user" and unit:
+    if manager in ("systemd-user", "systemd-system") and unit:
         payload.update({"manager": manager, "unit": unit})
     pid_path().write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -251,8 +293,13 @@ def _can_migrate_to_systemd(
     health: dict[str, Any],
     *,
     systemd_user: bool,
+    systemd_system: bool = False,
 ) -> bool:
-    if not systemd_user or record is None or record.get("manager") == "systemd-user":
+    if record is None:
+        return False
+    if record.get("manager") in ("systemd-user", "systemd-system"):
+        return False
+    if not systemd_user and not systemd_system:
         return False
     return (
         health.get("process_pid") == record.get("pid")
@@ -268,6 +315,29 @@ def _systemd_user_available() -> bool:
     try:
         result = subprocess.run(
             ["systemctl", "--user", "show-environment"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _systemd_system_available() -> bool:
+    """Check if system-level systemd is available (for root users or containers)."""
+    if not sys.platform.startswith("linux"):
+        return False
+    if shutil.which("systemctl") is None:
+        return False
+    # Check if we can write to system systemd directory
+    if not os.access("/etc/systemd/system", os.W_OK):
+        return False
+    # Check if systemd is running
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", "systemd"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=3,
@@ -305,10 +375,93 @@ def _start_systemd_user_sidecar(command: list[str]) -> bool:
     return result.returncode == 0
 
 
+def _start_systemd_system_sidecar(
+    config_path: str | Path,
+    *,
+    env_file: str | Path | None = None,
+) -> bool:
+    """Start sidecar using system-level systemd service."""
+    try:
+        # Create system systemd service file
+        service_content = f"""[Unit]
+Description=Hermes Feishu Streaming Card Sidecar
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 5
+ExecStart={sys.executable} -m hermes_feishu_card.runner --config {config_path}
+Restart=always
+RestartSec=10
+Environment=HOME={Path.home()}
+
+[Install]
+WantedBy=multi-user.target
+"""
+        SYSTEMD_SYSTEM_UNIT_PATH.write_text(service_content, encoding="utf-8")
+
+        # Reload systemd and enable/start service
+        subprocess.run(
+            ["systemctl", "daemon-reload"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        subprocess.run(
+            ["systemctl", "enable", SYSTEMD_UNIT_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        result = subprocess.run(
+            ["systemctl", "start", SYSTEMD_UNIT_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _stop_systemd_user_sidecar(unit: str) -> bool:
     try:
         result = subprocess.run(
             ["systemctl", "--user", "stop", unit],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _stop_systemd_system_sidecar() -> bool:
+    """Stop system-level systemd service."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "stop", SYSTEMD_UNIT_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        subprocess.run(
+            ["systemctl", "disable", SYSTEMD_UNIT_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+        # Remove service file
+        SYSTEMD_SYSTEM_UNIT_PATH.unlink(missing_ok=True)
+        subprocess.run(
+            ["systemctl", "daemon-reload"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=10,
