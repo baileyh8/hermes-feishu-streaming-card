@@ -2298,6 +2298,8 @@ def _run_install(args: argparse.Namespace) -> int:
                 return 1
             for action in recovery_result.actions:
                 print(action)
+    if detection.hook_strategy == "hermes_cli_gateway":
+        return _generate_bridge_files(detection)
 
     run_py = detection.run_py
     backup_path = _backup_path(run_py)
@@ -2375,6 +2377,65 @@ def _run_install(args: argparse.Namespace) -> int:
     print("install ok")
     if gateway_restart_required:
         print("gateway.restart_required: hermes gateway start")
+    return 0
+
+
+def _generate_bridge_files(detection: "HermesDetection") -> int:
+    """Generate bridge files for hermes_cli gateway (v0.17+).
+
+    Instead of patching gateway/run.py (which is dead code in v0.17+),
+    this creates a launcher script and bridge module that use Python
+    import hooks to patch FeishuAdapter.send at runtime.
+    """
+    import shutil
+
+    hermes_root = detection.root
+    bridge_src = Path(__file__).resolve().parent.parent / "hook_cli_bridge.py"
+    if not bridge_src.exists():
+        print(f"error: bridge module not found at {bridge_src}", file=sys.stderr)
+        return 1
+
+    # Determine user home for writing bridge files
+    user_home = Path(os.environ.get("HOME", str(Path.home())))
+    bridge_dest = user_home / ".hermes" / "feishu_card_bridge.py"
+    launcher_dest = user_home / ".hermes" / "gateway-launcher.py"
+
+    # Install bridge module
+    bridge_dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(bridge_src), str(bridge_dest))
+    bridge_dest.chmod(0o755)
+
+    # Create launcher script
+    launcher_content = f"""\
+#!/usr/bin/env python3
+\"\"\"Gateway launcher for Hermes v0.17+ with sidecar bridge.\"\"\"
+import sys
+import os
+bridge_path = r"{bridge_dest}"
+if bridge_path not in sys.path:
+    sys.path.insert(0, os.path.dirname(bridge_path))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("feishu_card_bridge", bridge_path)
+    if spec and spec.loader:
+        spec.loader.exec_module(importlib.util.module_from_spec(spec))
+
+# Run the real gateway
+from hermes_cli.main import main
+sys.exit(main())
+"""
+    launcher_dest.write_text(launcher_content, encoding="utf-8")
+    launcher_dest.chmod(0o755)
+
+    print(f"bridge module installed: {bridge_dest}")
+    print(f"gateway launcher installed: {launcher_dest}")
+    print()
+    print("Installation for Hermes CLI gateway (v0.17+) requires:")
+    print("  1. Replace `hermes gateway run` with the launcher:")
+    print(f"     {launcher_dest} gateway run --replace")
+    print("  2. Set PYTHONPATH to include user site-packages")
+    print("  3. Ensure the sidecar is running on port 8765")
+    print()
+    print("See the README for post-install steps.")
     return 0
 
 

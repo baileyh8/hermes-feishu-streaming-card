@@ -35,6 +35,8 @@ class HermesDetection:
     supported: bool
     reason: str
     hook_strategy: str = ""
+    hermes_cli_py: Path | None = None
+    hermes_cli_exists: bool = False
     cron_py: Path | None = None
     cron_py_exists: bool = False
     cron_hook_strategy: str = ""
@@ -48,6 +50,7 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     hermes_root = Path(root)
     run_py = hermes_root / "gateway" / "run.py"
     cron_py = hermes_root / "cron" / "scheduler.py"
+    hermes_cli_py = hermes_root / "hermes_cli" / "gateway.py"
     version, version_error, version_source = _read_version(hermes_root / "VERSION")
     if version == "unknown" and version_error is None:
         git_version = _read_git_version(hermes_root)
@@ -72,6 +75,8 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             minimum_version=MIN_SUPPORTED_VERSION,
             run_py=run_py,
             run_py_exists=run_py.exists(),
+            hermes_cli_py=hermes_cli_py,
+            hermes_cli_exists=hermes_cli_py.exists(),
             supported=supported,
             reason=reason,
             hook_strategy=hook_strategy,
@@ -119,6 +124,31 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     if cron_error is not None:
         return result(False, cron_error)
 
+    # If hermes_cli/gateway.py exists, the gateway runs from the CLI module,
+    # not from gateway/run.py. Hooks in run.py would be dead code.
+    # This applies to v0.17+ (version >= 0.17 or version unknown from Docker).
+    if hermes_cli_py.exists():
+        parsed_version = _parse_version(version)
+        if parsed_version is None:
+            # Version unknown (e.g. Docker install without VERSION file).
+            # Assume v0.17+ if hermes_cli exists — the CLI gateway is present.
+            return result(
+                True,
+                "hermes_cli_gateway",
+                hook_strategy="hermes_cli_gateway",
+                compatibility="partial",
+                capabilities={},
+            )
+        if parsed_version >= (0, 17, 0):
+            # v0.17+ always uses hermes_cli gateway — run.py hooks are dead
+            return result(
+                True,
+                "hermes_cli_gateway",
+                hook_strategy="hermes_cli_gateway",
+                compatibility="partial",
+                capabilities={},
+            )
+
     capabilities, capability_error = _detect_capabilities(contents, cron_contents)
     core_ok = all(capabilities.get(name, False) for name in CORE_CAPABILITIES)
     optional_ok = all(capabilities.get(name, False) for name in OPTIONAL_CAPABILITIES)
@@ -129,6 +159,14 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     else:
         compatibility = "unsupported"
     if not core_ok:
+        # Still check hermes_cli as fallback (e.g. version detection failed)
+        if hermes_cli_py.exists():
+            return result(
+                True,
+                "hermes_cli_gateway (fallback)",
+                hook_strategy="hermes_cli_gateway",
+                compatibility="partial",
+            )
         return result(
             False,
             capability_error,

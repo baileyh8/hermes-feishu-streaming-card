@@ -39,13 +39,18 @@ HFC_COMMAND_PATCH_END = "# HERMES_FEISHU_CARD_HFC_COMMAND_PATCH_END"
 _HANDLER_NAME = "_handle_message_with_agent"
 _CRON_DELIVER_NAME = "_deliver_result"
 _NO_FINAL_NEWLINE = "# HERMES_FEISHU_CARD_NO_FINAL_NEWLINE"
-_SUPPORTED_STRATEGIES = {"legacy_gateway_run", "gateway_run_013_plus"}
+_SUPPORTED_STRATEGIES = {"legacy_gateway_run", "gateway_run_013_plus", "hermes_cli_gateway"}
 
 
 def apply_patch(content: str, strategy: str = "legacy_gateway_run") -> str:
     """Insert the Feishu card hook block into a safe Hermes message handler."""
     if strategy not in _SUPPORTED_STRATEGIES:
         raise ValueError(f"unsupported patch strategy: {strategy}")
+    if strategy == "hermes_cli_gateway":
+        # Hermes v0.17+ runs from hermes_cli/gateway.py, not gateway/run.py.
+        # Bridge files (launcher + hook module) are generated separately.
+        # Return content unmodified — run.py is not the active entry point.
+        return content
     content = _apply_start_patch(content, strategy=strategy)
     content = _apply_complete_patch(content, strategy=strategy)
     content = _apply_queued_complete_patch(content)
