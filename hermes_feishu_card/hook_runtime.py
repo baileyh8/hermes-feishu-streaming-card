@@ -8121,6 +8121,8 @@ def _event_data(
             "tokens": _completion_tokens(local_vars, answer),
             "context": _completion_context(local_vars),
         })
+        if _completion_was_displaced(local_vars, source_obj):
+            data["completion_displaced"] = True
         delivery_kind = _first_string(local_vars, ("delivery_kind",))
         if delivery_kind:
             data["delivery_kind"] = delivery_kind
@@ -8162,6 +8164,41 @@ def _event_data(
                 data[reply_key] = value
         return data
     return {}
+
+
+def _completion_was_displaced(
+    local_vars: dict[str, Any], source_obj: Any
+) -> bool:
+    """Return whether a follow-up arrived while this Hermes turn was active."""
+    explicit = local_vars.get("_hfc_completion_displaced")
+    if isinstance(explicit, bool):
+        return explicit
+    session_key = _first_string(local_vars, ("session_key",))
+    owner = local_vars.get("self")
+    if not session_key or owner is None:
+        return False
+    candidates = [owner]
+    resolver = getattr(owner, "_adapter_for_source", None)
+    if callable(resolver):
+        try:
+            adapter = resolver(source_obj)
+        except Exception:
+            adapter = None
+        if adapter is not None:
+            candidates.append(adapter)
+    for candidate in candidates:
+        active_sessions = getattr(candidate, "_active_sessions", None)
+        if not isinstance(active_sessions, dict):
+            continue
+        interrupt_event = active_sessions.get(session_key)
+        is_set = getattr(interrupt_event, "is_set", None)
+        if callable(is_set):
+            try:
+                if is_set():
+                    return True
+            except Exception:
+                continue
+    return False
 
 
 def _native_handoff_event_metadata(

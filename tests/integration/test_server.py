@@ -155,6 +155,7 @@ async def test_after_eof_runs_once_on_successful_repeated_write_eof(monkeypatch)
 class FakeFeishuClient:
     def __init__(self):
         self.sent = []
+        self.sent_texts = []
         self.updated = []
         self.fail_send = False
         self.send_delay = 0.0
@@ -177,6 +178,21 @@ class FakeFeishuClient:
             self.update_failures_remaining -= 1
             raise RuntimeError(self.update_error_message)
         self.updated.append((message_id, card))
+
+    async def send_text(
+        self,
+        chat_id,
+        text,
+        thread_id=None,
+        reply_to_message_id=None,
+        delivery_uuid=None,
+    ):
+        if self.fail_send:
+            raise RuntimeError("send unavailable")
+        self.sent_texts.append(
+            (chat_id, text, thread_id, reply_to_message_id, delivery_uuid)
+        )
+        return SimpleNamespace(message_id=f"feishu-text-{len(self.sent_texts)}")
 
 
 class PermanentFailureClient(FakeFeishuClient):
@@ -1716,6 +1732,91 @@ async def test_terminal_update_removes_its_closed_controller(client):
 
     assert "hermes-message-1" not in test_client.app[FLUSH_CONTROLLERS_KEY]
     assert test_client.app[METRICS_KEY].flush_controllers_collected == 1
+
+
+async def test_terminal_update_without_followup_does_not_send_completion_notice():
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={"flush_interval_ms": 0},
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+        await test_client.post(
+            "/events",
+            json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+        )
+        await wait_for_card_update(feishu_client, "最终答案")
+    finally:
+        await test_client.close()
+
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.sent_texts == []
+
+
+async def test_displaced_terminal_update_sends_completion_notice():
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={"flush_interval_ms": 0},
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {"answer": "最终答案", "completion_displaced": True},
+            ),
+        )
+        await wait_for_card_update(feishu_client, "最终答案")
+        for _ in range(20):
+            if len(feishu_client.sent_texts) == 1:
+                break
+            await _REAL_ASYNCIO_SLEEP(0)
+    finally:
+        await test_client.close()
+
+    assert len(feishu_client.sent) == 1
+    assert len(feishu_client.sent_texts) == 1
+    assert feishu_client.sent_texts[0][1] == "任务已完成，结果已更新至上方任务卡片。"
+
+
+async def test_completion_notice_failure_does_not_fail_terminal_card_update():
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={"flush_interval_ms": 0},
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+        feishu_client.fail_send = True
+        completed = await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {"answer": "最终答案", "completion_displaced": True},
+            ),
+        )
+        await wait_for_card_update(feishu_client, "最终答案")
+        for _ in range(20):
+            if app[METRICS_KEY].feishu_send_failures:
+                break
+            await _REAL_ASYNCIO_SLEEP(0)
+    finally:
+        await test_client.close()
+
+    assert completed.status == 200
+    assert app[METRICS_KEY].feishu_update_successes == 1
+    assert app[METRICS_KEY].feishu_send_failures == 1
 
 
 async def test_terminal_update_fetches_configured_subscription_usage_once(monkeypatch):

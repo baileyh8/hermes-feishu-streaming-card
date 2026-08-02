@@ -181,6 +181,48 @@ def test_build_message_payload_rejects_card_over_exact_delivery_limits():
 
 
 @pytest.mark.asyncio
+async def test_send_text_uses_native_text_message_with_stable_uuid():
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    requests = []
+
+    async def token():
+        return "tenant-token"
+
+    async def request(method, path, **kwargs):
+        requests.append((method, path, kwargs))
+        return {"data": {"message_id": "om_notice"}}
+
+    client._tenant_token = token
+    client._request_json = request
+
+    result = await client.send_text(
+        "oc_abc",
+        "任务已完成",
+        delivery_uuid="hfc_completion_notice",
+    )
+
+    assert result.message_id == "om_notice"
+    assert requests == [
+        (
+            "POST",
+            "/im/v1/messages",
+            {
+                "token": "tenant-token",
+                "params": {"receive_id_type": "chat_id"},
+                "json_body": {
+                    "receive_id": "oc_abc",
+                    "msg_type": "text",
+                    "content": json.dumps(
+                        {"text": "任务已完成"}, ensure_ascii=False
+                    ),
+                    "uuid": "hfc_completion_notice",
+                },
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_update_rejects_unsafe_card_before_token_or_network():
     cfg = FeishuClientConfig(app_id="cli_a", app_secret="sec")
     client = FeishuClient(cfg)
