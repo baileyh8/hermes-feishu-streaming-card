@@ -16,6 +16,9 @@ FIXTURE_ROOT = (
 EXACT_BASE_FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "hermes_exact_base.py"
 )
+EXACT_BASE_V020_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "hermes_exact_base_v020.py"
+)
 TURN_RUNNER_FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "hermes_turn_runner.py"
 )
@@ -32,6 +35,19 @@ def test_detect_hermes_supports_v2026_4_23_fixture():
     assert result.run_py.name == "run.py"
     assert result.supported is True
     assert result.reason == "supported"
+
+
+def test_detect_hermes_supports_v020_async_ledger_contract(tmp_path):
+    root = _write_hermes_root(tmp_path / "hermes", version="v0.20.0")
+    _write_exact_base(root, EXACT_BASE_V020_FIXTURE)
+
+    result = detect_hermes(root)
+
+    assert result.supported is True
+    assert result.reason == "supported"
+    assert result.base_required is True
+    assert result.base_hook_strategy == "exact_base_delivery"
+    assert result.capabilities["exact_base_delivery"] is True
 
 
 def test_detect_legacy_strategy_for_v2026_4_23_fixture():
@@ -1055,10 +1071,13 @@ def _supported_run_py() -> str:
     )
 
 
-def _write_exact_base(root: Path) -> Path:
+def _write_exact_base(
+    root: Path,
+    fixture: Path = EXACT_BASE_FIXTURE,
+) -> Path:
     base_py = root / "gateway" / "platforms" / "base.py"
     base_py.parent.mkdir(parents=True, exist_ok=True)
-    base_py.write_text(EXACT_BASE_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    base_py.write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
     return base_py
 
 
