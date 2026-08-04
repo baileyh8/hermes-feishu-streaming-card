@@ -9,6 +9,9 @@ from hermes_feishu_card.install import patcher
 TURN_RUNNER_FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "hermes_turn_runner.py"
 )
+HERMES_V020_BASE_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "hermes_exact_base_v020.py"
+)
 
 
 def test_apply_patch_accepts_explicit_legacy_strategy():
@@ -2067,6 +2070,27 @@ def test_apply_base_patch_inserts_exact_hooks_at_semantic_boundaries():
     ast.parse(patched)
     assert patcher.apply_base_patch(patched) == patched
     assert patcher.remove_base_patch(patched) == _EXACT_BASE_SOURCE
+
+
+def test_apply_base_patch_accepts_hermes_v020_async_ledger_contract():
+    content = HERMES_V020_BASE_FIXTURE.read_text(encoding="utf-8")
+
+    patched = patcher.apply_base_patch(content)
+
+    assert patched.index(patcher.EXACT_BASE_NO_TEXT_PATCH_BEGIN) < patched.index(
+        "if text_content and not _tts_caption_delivered:"
+    )
+    assert patched.index(
+        "await asyncio.to_thread(\n                                    mark_attempting,"
+    ) < patched.index(
+        "result = await delivery_adapter._send_with_retry("
+    )
+    assert patched.index(patcher.EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN) < patched.index(
+        "result = await delivery_adapter._send_with_retry("
+    )
+    ast.parse(patched)
+    assert patcher.apply_base_patch(patched) == patched
+    assert patcher.remove_base_patch(patched) == content
 
 
 @pytest.mark.parametrize(

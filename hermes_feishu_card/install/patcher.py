@@ -1855,10 +1855,11 @@ def _find_exact_base_patch_locations(tree, lines):
         lambda node: _is_exact_mark_failed_call(node),
     )
 
-    # The ledger operations must finish in one direct child statement before
-    # the send. Merely checking line order would accept a source drift where
-    # `_send_with_retry` moved inside the ledger try, reopening the exact crash
-    # window this patch is meant to close.
+    # Hermes 0.20 keeps the ledger writes in a nested pre-send guard (and
+    # routes the blocking calls through asyncio.to_thread). The important
+    # invariant is that every ledger operation completes before `_send_with_retry`
+    # and that the send is not nested inside the ledger block; requiring all
+    # ledger nodes to precede the send preserves that crash-window boundary.
     send_position = _direct_child_position(text_guard.body, send)
     ledger_positions = {
         _direct_child_position(text_guard.body, node)
@@ -1867,8 +1868,7 @@ def _find_exact_base_patch_locations(tree, lines):
     if (
         send_position is None
         or None in ledger_positions
-        or len(ledger_positions) != 1
-        or next(iter(ledger_positions)) >= send_position
+        or any(position >= send_position for position in ledger_positions)
     ):
         raise ValueError("could not find safe BasePlatformAdapter contract")
 
@@ -1974,7 +1974,28 @@ def _same_expression(node, source: str) -> bool:
     )
 
 
+def _unwrap_asyncio_to_thread_call(call):
+    """Return the wrapped call for Hermes' blocking ledger adapters."""
+    if not isinstance(call, ast.Call):
+        return None
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "asyncio"
+        and call.func.attr == "to_thread"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+    ):
+        return call
+    return ast.Call(
+        func=call.args[0],
+        args=call.args[1:],
+        keywords=call.keywords,
+    )
+
+
 def _call_function(call):
+    call = _unwrap_asyncio_to_thread_call(call)
     if not isinstance(call, ast.Call):
         return None, None
     func = call.func
@@ -2041,7 +2062,9 @@ def _is_exact_constant_assignment(node, *, target: str, value) -> bool:
 def _is_exact_compute_obligation_assignment(node) -> bool:
     if _assignment_target_names(node) != ("_obligation_id",):
         return False
-    call = _assignment_value(node)
+    call = _unwrap_asyncio_to_thread_call(_assignment_value(node))
+    if call is None:
+        return False
     owner, function = _call_function(call)
     return (
         owner is None
@@ -2063,7 +2086,9 @@ def _expression_call(node):
 
 
 def _is_exact_ledger_call(node, *, function: str, required_keywords) -> bool:
-    call = _expression_call(node)
+    call = _unwrap_asyncio_to_thread_call(_expression_call(node))
+    if call is None:
+        return False
     owner, actual_function = _call_function(call)
     if owner is not None or actual_function != function or call.args:
         return False
@@ -2075,7 +2100,9 @@ def _is_exact_ledger_call(node, *, function: str, required_keywords) -> bool:
 
 
 def _is_exact_positional_call(node, *, function: str, args) -> bool:
-    call = _expression_call(node)
+    call = _unwrap_asyncio_to_thread_call(_expression_call(node))
+    if call is None:
+        return False
     owner, actual_function = _call_function(call)
     return (
         owner is None
@@ -2118,7 +2145,9 @@ def _is_exact_final_send_assignment(node) -> bool:
 
 
 def _is_exact_mark_failed_call(node) -> bool:
-    call = _expression_call(node)
+    call = _unwrap_asyncio_to_thread_call(_expression_call(node))
+    if call is None:
+        return False
     owner, function = _call_function(call)
     return (
         owner is None
