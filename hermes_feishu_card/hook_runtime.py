@@ -3653,7 +3653,7 @@ def _hfc_command_result_card(
 
     normalized_content = str(content or "").strip() or "已处理。"
     return {
-        "config": {"wide_screen_mode": True},
+        "config": {"wide_screen_mode": True, "update_multi": True},
         "header": {
             "title": {"content": title, "tag": "plain_text"},
             "template": template,
@@ -5447,7 +5447,7 @@ async def _hfc_send_native_slash_confirm(
     prompt_title = str(title or "").strip() or "确认命令"
     detail = _hfc_slash_confirm_detail(message)
     card = {
-        "config": {"wide_screen_mode": True},
+        "config": {"wide_screen_mode": True, "update_multi": True},
         "header": {
             "title": {"content": prompt_title, "tag": "plain_text"},
             "template": "orange",
@@ -6305,17 +6305,97 @@ def _hfc_handle_native_slash_action(
     data: Any,
     action_value: dict[str, Any],
 ) -> Any:
+    """Resolve a slash-confirm button click without blocking the Feishu callback.
+
+    The Feishu card-action callback has a hard timeout of a few seconds; the
+    confirm handler can be arbitrarily slow (e.g. /reload-mcp runs a full MCP
+    reload).  Resolving synchronously inside the callback would exceed that
+    timeout and the returned result card would be discarded by Feishu, leaving
+    the card visually unresponsive even though the action succeeded.
+
+    Strategy: acknowledge the click immediately (empty callback response),
+    then resolve the confirm on the event loop in the background and push the
+    result card via a message PATCH update.  When the loop/submit helpers are
+    unavailable, fall back to the previous synchronous resolve so the confirm
+    still completes.
+    """
     _hfc_info("inline card action received: slash_confirm")
-    resolved = _hfc_resolve_native_slash_action(adapter, data, action_value)
-    if resolved is None:
+    prepared = _hfc_prepare_native_slash_action(adapter, data, action_value)
+    if prepared is None:
         _hfc_info("inline slash_confirm ignored: unresolved")
         return _hfc_empty_feishu_callback_response(adapter)
+
+    loop = getattr(adapter, "_loop", None)
+    submit = getattr(adapter, "_submit_on_loop", None)
+    if loop is None or not callable(submit):
+        # No event loop to schedule on — resolve synchronously (legacy path)
+        # so the confirmation still takes effect.
+        _hfc_resolve_native_slash_action(adapter, data, action_value)
+        return _hfc_empty_feishu_callback_response(adapter)
+
+    coroutine = _hfc_resolve_slash_confirm_background(adapter, data, action_value)
+    submitted = False
+    try:
+        submitted = bool(submit(loop, coroutine))
+        if not submitted:
+            _hfc_warn("background slash_confirm schedule failed")
+    except Exception as exc:
+        _hfc_warn(
+            "background slash_confirm schedule failed: "
+            f"{_hfc_exception_summary(exc)}"
+        )
+    finally:
+        if not submitted:
+            coroutine.close()
+    return _hfc_empty_feishu_callback_response(adapter)
+
+
+async def _hfc_resolve_slash_confirm_background(
+    adapter: Any,
+    data: Any,
+    action_value: dict[str, Any],
+) -> None:
+    """Resolve a slash-confirm off the Feishu callback path, then update the card.
+
+    After the confirm handler finishes (which may take seconds), the original
+    message card is updated in place via PATCH.  If the card cannot be
+    updated (e.g. message too old or update_multi not supported), a fresh
+    result card is sent as a follow-up message so the user still sees the
+    outcome.
+    """
+    resolved = await _hfc_resolve_native_slash_action_async(adapter, data, action_value)
+    if resolved is None:
+        _hfc_info("background slash_confirm ignored: unresolved")
+        return
     card, message_id = resolved
     _hfc_info(
-        "inline slash_confirm resolved: "
+        "background slash_confirm resolved: "
         f"{_hfc_log_reference('message', message_id)}"
     )
-    return _hfc_raw_feishu_callback_response(adapter, card)
+    if message_id and await _hfc_update_native_command_card(adapter, message_id, card):
+        _hfc_info("background slash_confirm: original card updated")
+        return
+    chat_id = _hfc_action_chat_id(data)
+    if not chat_id:
+        _hfc_warn("background slash_confirm: cannot determine chat_id for result card")
+        return
+    if not hasattr(adapter, "_feishu_send_with_retry"):
+        _hfc_warn("background slash_confirm: adapter has no _feishu_send_with_retry")
+        return
+    try:
+        await adapter._feishu_send_with_retry(
+            chat_id=chat_id,
+            msg_type="interactive",
+            payload=serialize_card_for_delivery(card),
+            reply_to=message_id or None,
+            metadata=_hfc_action_metadata(data),
+        )
+        _hfc_info("background slash_confirm: result card sent")
+    except Exception as exc:
+        _hfc_warn(
+            "background slash_confirm: result card send failed: "
+            f"{_hfc_exception_summary(exc)}"
+        )
 
 
 def _hfc_model_picker_choice_allowed(
