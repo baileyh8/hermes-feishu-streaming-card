@@ -2362,6 +2362,73 @@ def test_managed_pidfile_handshake_requires_exact_detached_pid_and_token(
     assert process.wait_for_managed_pidfile(4444, "owned", timeout=5) is True
 
 
+def test_managed_pidfile_handshake_rebinds_windows_launcher_parent(monkeypatch):
+    record = {"pid": 4444, "token": "owned", "manager": "detached"}
+    writes = []
+
+    def write_record(pid, token, **kwargs):
+        nonlocal record
+        writes.append((pid, token, kwargs))
+        record = {"pid": pid, "token": token, "manager": kwargs["manager"]}
+
+    monkeypatch.setattr(process.sys, "platform", "win32")
+    monkeypatch.setattr(process.os, "getppid", lambda: 4444)
+    monkeypatch.setattr(process, "read_pid_record", lambda: record)
+    monkeypatch.setattr(process, "write_pid_record", write_record)
+    monkeypatch.setattr(process.time, "monotonic", iter((0, 0)).__next__)
+
+    assert process.wait_for_managed_pidfile(5555, "owned", timeout=5) is True
+    assert writes == [(5555, "owned", {"manager": "detached"})]
+
+
+@pytest.mark.parametrize(
+    ("platform", "record", "parent_pid"),
+    (
+        ("linux", {"pid": 4444, "token": "owned", "manager": "detached"}, 4444),
+        ("win32", {"pid": 4444, "token": "wrong", "manager": "detached"}, 4444),
+        (
+            "win32",
+            {
+                "pid": 4444,
+                "token": "owned",
+                "manager": "systemd-user",
+                "unit": process.SYSTEMD_UNIT_NAME,
+            },
+            4444,
+        ),
+        ("win32", {"pid": 4444, "token": "owned", "manager": "detached"}, 3333),
+    ),
+)
+def test_managed_pidfile_handshake_rejects_untrusted_rebind(
+    monkeypatch, platform, record, parent_pid
+):
+    monkeypatch.setattr(process.sys, "platform", platform)
+    monkeypatch.setattr(process.os, "getppid", lambda: parent_pid)
+    monkeypatch.setattr(process, "read_pid_record", lambda: record)
+    monkeypatch.setattr(
+        process,
+        "write_pid_record",
+        lambda *_args, **_kwargs: pytest.fail("untrusted identity must not be rebound"),
+    )
+    monkeypatch.setattr(process.time, "monotonic", iter((0, 0, 6)).__next__)
+    monkeypatch.setattr(process.time, "sleep", lambda _seconds: None)
+
+    assert process.wait_for_managed_pidfile(5555, "owned", timeout=5) is False
+
+
+def test_managed_pidfile_handshake_rejects_unverified_rebind_write(monkeypatch):
+    record = {"pid": 4444, "token": "owned", "manager": "detached"}
+
+    monkeypatch.setattr(process.sys, "platform", "win32")
+    monkeypatch.setattr(process.os, "getppid", lambda: 4444)
+    monkeypatch.setattr(process, "read_pid_record", lambda: record)
+    monkeypatch.setattr(process, "write_pid_record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(process.time, "monotonic", iter((0, 0, 6)).__next__)
+    monkeypatch.setattr(process.time, "sleep", lambda _seconds: None)
+
+    assert process.wait_for_managed_pidfile(5555, "owned", timeout=5) is False
+
+
 def test_detached_pidfile_write_failure_waits_for_managed_child_self_exit(
     monkeypatch, tmp_path
 ):
