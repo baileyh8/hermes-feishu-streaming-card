@@ -7617,6 +7617,12 @@ def _build_event(
         or _first_attr_string(source_obj, ("conversation_id", "thread_id", "session_id"))
         or chat_id
     )
+    # Normalize conversation_id: strip agent profile prefix
+    # so it matches the session created by message.started (which uses plain chat_id).
+    if conversation_id and ":" in conversation_id and conversation_id != chat_id:
+        parts = conversation_id.split(":")
+        if len(parts) >= 3:
+            conversation_id = chat_id
     created_at_value = local_vars.get("created_at")
     created_at = _created_at(created_at_value)
     created_at_lifecycle_token = _created_at_lifecycle_token(created_at_value)
