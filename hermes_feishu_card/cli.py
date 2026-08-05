@@ -1455,7 +1455,7 @@ def _check_runtime_feishu_sdk(runtime_python: Path) -> dict[str, Any]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=8,
+            timeout=30,
             cwd=str(cwd) if cwd is not None else None,
         )
     except subprocess.TimeoutExpired:
@@ -2239,6 +2239,8 @@ def _candidate_hermes_config_paths(hermes_root: Path) -> tuple[Path, ...]:
         hermes_root / "config.yml",
         hermes_root / "configs" / "config.yaml",
         hermes_root / "configs" / "config.yml",
+        hermes_root.parent / "config.yaml",
+        hermes_root.parent / "config.yml",
         Path.home() / ".hermes" / "config.yaml",
         Path.home() / ".hermes" / "config.yml",
     )
@@ -4454,9 +4456,9 @@ def _render_install_manifest(
 ) -> str:
     manifest = {
         "manifest_version": INSTALL_MANIFEST_VERSION,
-        "run_py": str(run_py.relative_to(manifest_path.parent)),
+        "run_py": run_py.relative_to(manifest_path.parent).as_posix(),
         "patched_sha256": _restore_text_sha256(run_contents),
-        "backup": str(backup_path.relative_to(manifest_path.parent)),
+        "backup": backup_path.relative_to(manifest_path.parent).as_posix(),
         "backup_sha256": _restore_text_sha256(run_source),
     }
     if (
@@ -4467,9 +4469,11 @@ def _render_install_manifest(
     ):
         manifest.update(
             {
-                "cron_py": str(cron_py.relative_to(manifest_path.parent)),
+                "cron_py": cron_py.relative_to(manifest_path.parent).as_posix(),
                 "cron_patched_sha256": _restore_text_sha256(cron_contents),
-                "cron_backup": str(cron_backup_path.relative_to(manifest_path.parent)),
+                "cron_backup": cron_backup_path.relative_to(
+                    manifest_path.parent
+                ).as_posix(),
                 "cron_backup_sha256": _restore_text_sha256(cron_source),
             }
         )
@@ -4481,11 +4485,11 @@ def _render_install_manifest(
     ):
         manifest.update(
             {
-                "base_py": str(base_py.relative_to(manifest_path.parent)),
+                "base_py": base_py.relative_to(manifest_path.parent).as_posix(),
                 "base_patched_sha256": _restore_text_sha256(base_contents),
-                "base_backup": str(
-                    base_backup_path.relative_to(manifest_path.parent)
-                ),
+                "base_backup": base_backup_path.relative_to(
+                    manifest_path.parent
+                ).as_posix(),
                 "base_backup_sha256": _restore_text_sha256(base_source),
             }
         )

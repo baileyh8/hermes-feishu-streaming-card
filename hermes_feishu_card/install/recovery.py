@@ -2808,7 +2808,7 @@ def _manifest_hash(manifest: Dict[str, object], key: str) -> str:
 
 def _relative_path(root: Path, path: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
         return ""
 

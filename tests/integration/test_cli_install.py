@@ -5,7 +5,7 @@ import subprocess
 import sys
 from argparse import Namespace
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -46,6 +46,74 @@ def copy_hermes(tmp_path):
     hermes_dir = tmp_path / "hermes"
     shutil.copytree(FIXTURE, hermes_dir)
     return hermes_dir
+
+
+def test_runtime_feishu_sdk_probe_allows_windows_cold_start(monkeypatch):
+    observed = {}
+
+    def fake_run(*_args, **kwargs):
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='{\"version\":\"1.6.8\",\"supports_extra_ua_tags\":true}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    report = cli._check_runtime_feishu_sdk(Path(sys.executable))
+
+    assert report["status"] == "ok"
+    assert observed["timeout"] == 30
+
+
+def test_candidate_hermes_config_paths_include_hermes_home_parent(tmp_path):
+    hermes_root = tmp_path / "hermes" / "hermes-agent"
+
+    candidates = cli._candidate_hermes_config_paths(hermes_root)
+
+    assert hermes_root.parent / "config.yaml" in candidates
+    assert hermes_root.parent / "config.yml" in candidates
+
+
+def test_render_install_manifest_uses_portable_windows_paths(monkeypatch):
+    root = PureWindowsPath("C:/Users/test/AppData/Local/hermes/hermes-agent")
+    manifest_path = root / ".hermes_feishu_card_manifest"
+    monkeypatch.setattr(
+        cli,
+        "build_integrity_provenance",
+        lambda *_args, **_kwargs: {},
+    )
+
+    rendered = cli._render_install_manifest(
+        manifest_path,
+        run_py=root / "gateway" / "run.py",
+        run_contents="patched\n",
+        backup_path=root / "gateway" / "run.py.hermes_feishu_card.bak",
+        run_source="original\n",
+        cron_py=root / "cron" / "scheduler.py",
+        cron_contents="patched cron\n",
+        cron_backup_path=root / "cron" / "scheduler.py.hermes_feishu_card.bak",
+        cron_source="original cron\n",
+        base_py=root / "gateway" / "platforms" / "base.py",
+        base_contents="patched base\n",
+        base_backup_path=(
+            root / "gateway" / "platforms" / "base.py.hermes_feishu_card.bak"
+        ),
+        base_source="original base\n",
+    )
+
+    manifest = json.loads(rendered)
+    for key in (
+        "run_py",
+        "backup",
+        "cron_py",
+        "cron_backup",
+        "base_py",
+        "base_backup",
+    ):
+        assert "\\" not in manifest[key]
 
 
 def stub_setup_runtime(monkeypatch, hermes_dir):

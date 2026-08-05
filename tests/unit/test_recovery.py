@@ -4,7 +4,7 @@ import errno
 import json
 from dataclasses import FrozenInstanceError, replace
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
 import sys
@@ -45,6 +45,13 @@ CRON_FIXTURE = (
 EXACT_BASE_FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "hermes_exact_base.py"
 )
+
+
+def test_relative_path_uses_portable_windows_separator():
+    root = PureWindowsPath("C:/Users/test/AppData/Local/hermes/hermes-agent")
+    target = root / "gateway" / "platforms" / "base.py"
+
+    assert recovery._relative_path(root, target) == "gateway/platforms/base.py"
 
 
 def test_execute_recovery_fails_closed_without_dirfd_support(monkeypatch):
