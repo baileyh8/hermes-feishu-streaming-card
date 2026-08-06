@@ -140,10 +140,12 @@ class CardSession:
         ):
             return False
         is_terminal_event = _is_terminal_session_event(event)
-        if event.sequence <= self.last_sequence and not is_terminal_event:
-            return False
-        if self.status in {"completed", "failed"}:
-            return False
+        is_interaction = event.event in {"interaction.requested", "interaction.completed", "interaction.failed"}
+        if not is_interaction:
+            if event.sequence <= self.last_sequence and not is_terminal_event:
+                return False
+            if self.status in {"completed", "failed"}:
+                return False
         self.last_sequence = max(self.last_sequence, event.sequence)
 
         self.display_status = event.display_status
