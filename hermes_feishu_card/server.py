@@ -4466,6 +4466,17 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
                 )
             if (
                 updated
+                and event.event == "message.completed"
+                and event.data.get("completion_displaced") is True
+            ):
+                await _send_completion_notice(
+                    request.app,
+                    event,
+                    bot_id,
+                    session_key=session_key,
+                )
+            if (
+                updated
                 and is_terminal
                 and render_result.disposition == "native"
             ):
@@ -5089,6 +5100,57 @@ def _card_config_for_client(
         except Exception:
             return dict(base_card)
     return merge_card_config(base_card, profile_card)
+
+
+async def _send_completion_notice(
+    app: web.Application,
+    event: SidecarEvent,
+    bot_id: str | None,
+    *,
+    session_key: str,
+) -> bool:
+    """Best-effort native reminder after an existing task card completes."""
+    metrics: SidecarMetrics = app[METRICS_KEY]
+    metrics.feishu_send_attempts += 1
+    if app[NOOP_MODE_KEY]:
+        metrics.feishu_noop_attempts += 1
+        metrics.feishu_send_failures += 1
+        return False
+    client = _client_for_bot(app, bot_id)
+    send_text = getattr(client, "send_text", None)
+    if not callable(send_text):
+        metrics.feishu_send_failures += 1
+        logger.warning("Feishu completion notice unavailable: client has no send_text")
+        return False
+    thread_id = _thread_id_for_event(event)
+    reply_to_message_id = _reply_to_message_id_for_event(event)
+    delivery_uuid = build_delivery_uuid(
+        bot_id=bot_id or "default",
+        chat_id=event.chat_id,
+        reply_to_message_id=reply_to_message_id or "",
+        session_key=f"{session_key}:completion-notice",
+        delivery_kind="completion-notice",
+    )
+    try:
+        result = await send_text(
+            event.chat_id,
+            "任务已完成，结果已更新至上方任务卡片。",
+            thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
+            delivery_uuid=delivery_uuid,
+        )
+        message_id = str(getattr(result, "message_id", "") or "")
+        if not message_id:
+            raise RuntimeError("completion notice response missing message_id")
+    except Exception as exc:
+        metrics.feishu_send_failures += 1
+        logger.warning(
+            "Feishu completion notice failed: %s",
+            exc.__class__.__name__,
+        )
+        return False
+    metrics.feishu_send_successes += 1
+    return True
 
 
 async def _send_card(

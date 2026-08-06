@@ -28,7 +28,7 @@ Hermes 飞书流式卡片插件把 Hermes Agent Gateway 的飞书/Lark 回复变
 
 ## 你能看到什么
 
-- **一张持续更新的飞书卡片**：`thinking.delta`、`answer.delta`、`tool.updated`、`message.completed` 会合并到同一张卡片。
+- **一张持续更新的飞书卡片**：`thinking.delta`、`answer.delta`、`tool.updated`、`message.completed` 会合并到同一张卡片；仅当运行中收到后续消息、原卡片被推离会话底部时，完成后才发送一条不重复正文的原生短提醒。
 - **运行态 Header 看见当前动作**：Header title 保留用户自定义标题（默认 `Hermes Agent`），subtitle 将工具名与 `tool.updated.detail` 整理为实时动作摘要；完整命令留在 timeline。
 - **主答案和过程分区**：最终答案留在正文区，pre-tool answer、工具调用、系统 notice 进入“思考与工具” timeline。
 - **卡片内交互**：approval / clarify choices 渲染为按钮；`/new`、`/reset`、`/undo`、`/model` 等独立命令使用原生 interactive card。V4 的 `/model` 与 Hermes CLI 使用同一 Provider/模型列表，按 Provider → Model 两级选择，不再把全部模型挤进一个下拉框。

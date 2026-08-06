@@ -180,18 +180,58 @@ class FeishuClient:
         reply_to_message_id: Optional[str] = None,
         delivery_uuid: Optional[str] = None,
     ) -> FeishuSendResult:
-        if delivery_uuid is not None:
-            if not isinstance(delivery_uuid, str) or not delivery_uuid.strip():
-                raise ValueError("delivery_uuid must be a non-empty string")
-            if len(delivery_uuid) > 50:
-                raise ValueError("delivery_uuid must not exceed 50 characters")
-
         payload = self.build_message_payload(
             chat_id,
             card,
             thread_id=thread_id,
             reply_to_message_id=reply_to_message_id,
         )
+        return await self._send_message_delivery(
+            payload,
+            thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
+            delivery_uuid=delivery_uuid,
+        )
+
+    async def send_text(
+        self,
+        chat_id: str,
+        text: str,
+        thread_id: Optional[str] = None,
+        reply_to_message_id: Optional[str] = None,
+        delivery_uuid: Optional[str] = None,
+    ) -> FeishuSendResult:
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("chat_id is required")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text is required")
+        receive_id = thread_id if thread_id and not reply_to_message_id else chat_id
+        payload = {
+            "receive_id": receive_id,
+            "msg_type": "text",
+            "content": json.dumps({"text": text}, ensure_ascii=False),
+        }
+        return await self._send_message_delivery(
+            payload,
+            thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
+            delivery_uuid=delivery_uuid,
+        )
+
+    async def _send_message_delivery(
+        self,
+        payload: Dict[str, str],
+        *,
+        thread_id: Optional[str],
+        reply_to_message_id: Optional[str],
+        delivery_uuid: Optional[str],
+    ) -> FeishuSendResult:
+        if delivery_uuid is not None:
+            if not isinstance(delivery_uuid, str) or not delivery_uuid.strip():
+                raise ValueError("delivery_uuid must be a non-empty string")
+            if len(delivery_uuid) > 50:
+                raise ValueError("delivery_uuid must not exceed 50 characters")
+
         if delivery_uuid is not None and not reply_to_message_id:
             payload["uuid"] = delivery_uuid
 

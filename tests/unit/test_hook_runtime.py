@@ -303,6 +303,33 @@ def test_build_event_extracts_direct_fields():
     assert len(payload["data"]["native_handoff"]["generation"]) == 32
 
 
+@pytest.mark.parametrize(("interrupted", "expected"), [(False, False), (True, True)])
+def test_completed_event_marks_only_turns_displaced_by_active_followup(
+    interrupted, expected
+):
+    class InterruptEvent:
+        def is_set(self):
+            return interrupted
+
+    adapter = SimpleNamespace(
+        _active_sessions={"session-1": InterruptEvent()},
+    )
+    runner = SimpleNamespace(_adapter_for_source=lambda _source: adapter)
+
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "self": runner,
+            "source": SourceObject(),
+            "session_key": "session-1",
+            "message_id": "om_completed",
+            "answer": "done",
+        },
+    )
+
+    assert (payload["data"].get("completion_displaced") is True) is expected
+
+
 @pytest.mark.parametrize(
     ("field", "expected"),
     [
