@@ -508,7 +508,7 @@ def test_render_pending_interaction_as_buttons():
         for element in card["body"]["elements"]
         if element.get("tag") == "button"
     ]
-    assert [item["text"]["content"] for item in buttons] == ["允许一次", "拒绝"]
+    assert [item["text"]["content"] for item in buttons] == ["1. 允许一次", "2. 拒绝"]
     assert buttons[0]["behaviors"][0]["type"] == "callback"
     assert buttons[0]["behaviors"][0]["value"]["interaction_id"] == "approval-1"
     assert buttons[0]["behaviors"][0]["value"]["choice"] == "once"

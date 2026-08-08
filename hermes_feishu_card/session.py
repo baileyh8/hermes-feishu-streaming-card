@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import math
 import re
 import secrets
 import time
@@ -57,6 +58,8 @@ class InteractionState:
     status: str = "pending"
     options: list[InteractionOption] = field(default_factory=list)
     callback_token: str = ""
+    multi_select: bool = False
+    timeout_seconds: float = 300.0
     choice: str = ""
     choice_label: str = ""
     user_name: str = ""
@@ -402,7 +405,19 @@ def _interaction_from_event_data(data: dict[str, Any]) -> InteractionState:
         description=str(data.get("description") or "").strip(),
         options=_interaction_options(data.get("options")),
         callback_token=str(data.get("callback_token") or secrets.token_urlsafe(16)),
+        multi_select=bool(data.get("multi_select", False)),
+        timeout_seconds=_safe_timeout_seconds(data.get("timeout_seconds")),
     )
+
+
+def _safe_timeout_seconds(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 300.0
+    if not math.isfinite(parsed) or parsed < 0:
+        return 300.0
+    return parsed
 
 
 def _interaction_options(value: Any) -> list[InteractionOption]:

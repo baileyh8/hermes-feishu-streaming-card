@@ -710,33 +710,124 @@ async def _card_actions(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "invalid json"}, status=400)
 
     value = _extract_action_value(payload)
-    if str(value.get("hfc_action") or "").strip() == "operations.select":
+    hfc_action = str(value.get("hfc_action") or "").strip()
+    if hfc_action == "interaction.noop":
+        # Selection components inside a clarify form (e.g. multi_select_static)
+        # fire a callback on every local change. There is nothing to do —
+        # the real answer arrives with the form submit. Acknowledge quietly
+        # so the client doesn't surface an error toast.
+        return web.json_response({"ok": True})
+    if hfc_action == "operations.select":
         try:
             return await _operations_action(request, payload, value)
         except (_OperationsDiagnosticCapacityError, asyncio.TimeoutError):
             return web.json_response(
                 {"ok": False, "error": "operations unavailable"}, status=503
             )
+    if not hfc_action:
+        # Form-submit buttons carry NO behaviors (Feishu ignores callbacks on
+        # form_action_type=submit buttons), so the interaction is identified
+        # via the button name: hfc_confirm_<interaction_id> / hfc_other_<id>.
+        form_parsed = _parse_form_action_name(payload)
+        if form_parsed is not None:
+            mode, interaction_id = form_parsed
+            return await _interaction_action(
+                request, payload, value, form_mode=mode, form_interaction_id=interaction_id
+            )
     return await _interaction_action(request, payload, value)
+
+
+def _parse_form_action_name(payload: dict[str, Any]) -> tuple[str, str] | None:
+    """Identify a clarify form submit from the button name.
+
+    Form-submit buttons cannot carry behaviors callbacks, so render.py
+    encodes the interaction id into the button name:
+      hfc_confirm_<interaction_id>  (multi-select confirm / combined submit)
+      hfc_other_<interaction_id>    (free-text Other submit)
+    Returns (mode, interaction_id) or None when the action isn't a clarify
+    form submit.
+    """
+    event = payload.get("event") if isinstance(payload, dict) else None
+    action = event.get("action") if isinstance(event, dict) else None
+    name = str(action.get("name") or "").strip() if isinstance(action, dict) else ""
+    if name.startswith("hfc_confirm_"):
+        return "confirm", name[len("hfc_confirm_"):]
+    if name.startswith("hfc_other_"):
+        return "other", name[len("hfc_other_"):]
+    return None
 
 
 async def _interaction_action(
     request: web.Request,
     payload: dict[str, Any],
     value: dict[str, Any],
+    *,
+    form_mode: str = "",
+    form_interaction_id: str = "",
 ) -> web.Response:
     interaction_id = str(value.get("interaction_id") or "").strip()
     token = str(value.get("token") or "").strip()
-    choice = str(value.get("choice") or "").strip()
-    choice_label = str(value.get("choice_label") or choice).strip()
-    if not interaction_id or not token or not choice:
+    mode = str(value.get("mode") or form_mode or "").strip()
+    if form_interaction_id:
+        # Form-submit path: the button carries no behaviors value, so the
+        # interaction id comes from the button name and there is no token.
+        interaction_id = form_interaction_id
+        token = ""
+    if not interaction_id:
         return web.json_response({"ok": False, "error": "invalid action"}, status=400)
 
     callback_chat_id = _extract_callback_chat_id(payload)
-    found = _find_session_by_interaction(request.app, interaction_id, token, callback_chat_id)
+    found = _find_session_by_interaction(
+        request.app, interaction_id, token, callback_chat_id,
+        allow_empty_token=bool(form_interaction_id),
+    )
     if found is None:
         return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
     session_key, session = found
+
+    form_value = _extract_form_value(payload)
+    if mode == "confirm":
+        # Multi-select form submit: action.form_value.hfc_multi is a list of
+        # selected option values. If the user ALSO typed a custom answer in
+        # hfc_other, both are returned: the typed text is appended as
+        # "[自定义] <text>" so the agent sees the selections AND the note.
+        # Selections serialize as JSON so the gateway-side
+        # clarify_tool._parse_multi_select_response can split reliably.
+        typed = str(form_value.get("hfc_other") or "").strip()
+        raw = form_value.get("hfc_multi")
+        if raw is None:
+            raw = []
+        selected = raw if isinstance(raw, list) else ([raw] if raw != "" else [])
+        selected = [str(s).strip() for s in selected if str(s).strip()]
+        if typed:
+            if selected:
+                combined = selected + [f"[自定义] {typed}"]
+                choice = json.dumps(combined, ensure_ascii=False)
+                choice_label = ", ".join(combined)
+            else:
+                choice = typed
+                choice_label = typed
+        else:
+            choice = json.dumps(selected, ensure_ascii=False)
+            choice_label = ", ".join(selected) if selected else "(未选择)"
+    elif mode == "other":
+        # Free-text 'Other' answer: action.form_value.hfc_other holds the
+        # user's typed input.
+        typed = str(form_value.get("hfc_other") or "").strip()
+        if not typed:
+            return web.json_response(
+                {"ok": False, "error": "empty other answer", "toast": {"type": "warning", "content": "请输入内容后再提交"}},
+                status=400,
+            )
+        choice = typed
+        choice_label = typed
+    else:
+        # Direct single-select button click (legacy path).
+        choice = str(value.get("choice") or "").strip()
+        choice_label = str(value.get("choice_label") or choice).strip()
+        if not choice:
+            return web.json_response({"ok": False, "error": "invalid action"}, status=400)
+
     user_name = _extract_operator_name(payload)
     data = {
         "interaction_id": interaction_id,
@@ -4432,6 +4523,18 @@ async def _apply_event_locked(request: web.Request, event: SidecarEvent) -> tupl
             latest_session = sessions.get(session_key)
             if latest_session is None:
                 return False
+            # Freeze the card while an interaction is pending: Feishu card
+            # updates are full replacements, so any PATCH resets the
+            # multi-select dropdown and the free-text input, wiping the
+            # user's in-progress answer. Only interaction lifecycle events
+            # (completed/failed) may update the card in that state.
+            interaction = latest_session.active_interaction
+            if (
+                interaction is not None
+                and interaction.status == "pending"
+                and not str(event.event or "").startswith("interaction.")
+            ):
+                return False
             latest_card = render_result.card
             if is_terminal and render_result.disposition == "card":
                 await _populate_subscription_usage(request.app, latest_session)
@@ -4631,6 +4734,11 @@ def _card_animation_is_current(
     session_key: str,
     session: CardSession,
 ) -> bool:
+    # Freeze loading/tool animations while an interaction is pending —
+    # periodic PATCHes would reset the user's in-progress selections/input.
+    interaction = session.active_interaction
+    if interaction is not None and interaction.status == "pending":
+        return False
     return app[SESSIONS_KEY].get(session_key) is session and (
         _is_initial_loading(session) or _has_running_tool(session)
     )
@@ -4695,6 +4803,22 @@ def _extract_action_value(payload: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _extract_form_value(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract the form container submission payload.
+
+    When a user submits a card form (form_action_type=submit), Feishu returns
+    ``action.form_value`` — a mapping of every form component's ``name`` to
+    its submitted value (string for input, list for multi_select_static)."""
+    event = payload.get("event") if isinstance(payload, dict) else None
+    action = event.get("action") if isinstance(event, dict) else None
+    form_value = action.get("form_value") if isinstance(action, dict) else None
+    if isinstance(form_value, dict):
+        return form_value
+    action = payload.get("action") if isinstance(payload, dict) else None
+    form_value = action.get("form_value") if isinstance(action, dict) else None
+    return form_value if isinstance(form_value, dict) else {}
+
+
 def _extract_callback_chat_id(payload: dict[str, Any]) -> str:
     event = payload.get("event") if isinstance(payload, dict) else None
     context = event.get("context") if isinstance(event, dict) else None
@@ -4737,6 +4861,8 @@ def _find_session_by_interaction(
     interaction_id: str,
     token: str,
     callback_chat_id: str,
+    *,
+    allow_empty_token: bool = False,
 ) -> tuple[str, CardSession] | None:
     for session_key, session in app[SESSIONS_KEY].items():
         interaction = session.active_interaction
@@ -4744,7 +4870,7 @@ def _find_session_by_interaction(
             continue
         if interaction.interaction_id != interaction_id:
             continue
-        if interaction.callback_token != token:
+        if not allow_empty_token and interaction.callback_token != token:
             return None
         if callback_chat_id and callback_chat_id != session.chat_id:
             return None

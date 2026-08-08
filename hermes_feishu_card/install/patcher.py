@@ -3144,7 +3144,7 @@ def _render_clarify_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"message_id\": event_message_id,{newline}",
         f"{deeper_indent}    \"_hfc_loop\": locals().get(\"_loop_for_step\"),{newline}",
         f"{deeper_indent}    \"kind\": \"clarify\",{newline}",
-        f"{deeper_indent}}}, interaction_id=\"clarify_\" + _hfc_uuid4().hex[:10], question=question, choices=choices){newline}",
+        f"{deeper_indent}}}, interaction_id=\"clarify_\" + _hfc_uuid4().hex[:10], question=question, choices=choices, multi_select=multi_select){newline}",
         f"{deeper_indent}if _hfc_clarify_response is not None:{newline}",
         f"{deeper_indent}    return _hfc_clarify_response{newline}",
         *_render_hook_exception_handler(indent, newline),
