@@ -1,4 +1,4 @@
-aiohttp==3.9.5
+aiohttp==3.14.3
 aiofiles==23.2.1
 pydantic==2.6.1
 pyyaml==6.0.1
