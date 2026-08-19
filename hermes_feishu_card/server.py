@@ -808,8 +808,7 @@ async def _health(request: web.Request) -> web.Response:
         "native_handoffs": _safe_native_handoff_diagnostics(request.app),
     }
     process_token = request.app[PROCESS_TOKEN_KEY]
-    if process_token:
-        response["process_token_hash"] = _full_diagnostic_hash(process_token)
+    response["process_token_hash"] = _full_diagnostic_hash(process_token)
 
     # Multi-profile stats
     boundary = request.app.get(FEISHU_CLIENT_KEY)
