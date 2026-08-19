@@ -27,6 +27,7 @@ import weakref
 from urllib import error as urlerror
 from urllib import parse
 from urllib import request
+from http.client import RemoteDisconnected
 
 from . import __version__
 from .card_limits import serialize_card_for_delivery
@@ -66,6 +67,13 @@ _NOTICE_UNCERTAIN_WARNING = (
 OPERATIONS_ACTION_TIMEOUT_SECONDS = 10.0
 OPERATIONS_ACTION_FORWARD_ATTEMPTS = 2
 OPERATIONS_ACTION_RETRY_DELAY_SECONDS = 0.1
+# Transient transport failures observed when the gateway forwards a
+# card-action click to the sidecar under load (issue #222): retry these only.
+# Application errors (HTTPError with a parsed sidecar body, JSON payload
+# mismatches) are deterministic and must surface, not retry.
+INTERACTION_ACTION_TIMEOUT_SECONDS = 5.0
+INTERACTION_ACTION_FORWARD_ATTEMPTS = 3
+INTERACTION_ACTION_RETRY_DELAY_SECONDS = 0.5
 OPERATIONS_ACTION_WORKERS = 4
 OPERATIONS_ACTION_QUEUE_LIMIT = 64
 COMMAND_FEEDBACK_CONTEXT_TTL_SECONDS = 600.0
@@ -3599,6 +3607,25 @@ def _hfc_log_reference(kind: str, value: Any) -> str:
     return f"{normalized_kind}#{digest}"
 
 
+def _hfc_transient_sidecar_errors() -> tuple[type[BaseException], ...]:
+    """Exception classes worth retrying when POSTing to the sidecar.
+
+    Transport-level failures only: the server closed the connection before
+    responding (``RemoteDisconnected``, seen in issue #222), TCP resets, and
+    connect/read timeouts. ``urlerror.HTTPError`` is deliberately absent —
+    a parsed sidecar error body is an application-level, deterministic
+    result that must surface immediately instead of being retried.
+    """
+    return (
+        RemoteDisconnected,
+        ConnectionError,
+        ConnectionResetError,
+        BrokenPipeError,
+        urlerror.URLError,
+        TimeoutError,
+    )
+
+
 def _hfc_exception_summary(exc: BaseException) -> str:
     details: list[str] = []
     for name in ("status_code", "api_code", "code", "outcome", "retryable"):
@@ -6367,11 +6394,41 @@ def _hfc_handle_interaction_select_action(
         config = load_runtime_config()
         base_url = _summary_base_url(config.event_url)
         url = f"{base_url}/card/actions"
-        result = _post_json_sync_response(url, sidecar_payload, 5.0)
     except Exception as exc:
         _hfc_warn(
-            "interaction.select forward failed: "
+            "interaction.select forward setup failed: "
             f"{_hfc_exception_summary(exc)}"
+        )
+        return _hfc_empty_feishu_callback_response(adapter)
+
+    result: Any = None
+    last_error: BaseException | None = None
+    for attempt in range(INTERACTION_ACTION_FORWARD_ATTEMPTS):
+        try:
+            result = _post_json_sync_response(
+                url,
+                sidecar_payload,
+                INTERACTION_ACTION_TIMEOUT_SECONDS,
+            )
+            last_error = None
+            break
+        except _hfc_transient_sidecar_errors() as exc:
+            last_error = exc
+            if attempt + 1 < INTERACTION_ACTION_FORWARD_ATTEMPTS:
+                time.sleep(INTERACTION_ACTION_RETRY_DELAY_SECONDS)
+                continue
+            break
+        # Non-transient failures (HTTPError with a parsed sidecar body, JSON
+        # decode errors, ValueError from malformed payloads) are deterministic:
+        # retrying them cannot succeed, so let the outer except report once.
+        # -> re-raise via the generic handler below by leaving the loop.
+        except Exception:
+            raise
+
+    if last_error is not None:
+        _hfc_warn(
+            "interaction.select forward failed: "
+            f"{_hfc_exception_summary(last_error)}"
         )
         return _hfc_empty_feishu_callback_response(adapter)
 

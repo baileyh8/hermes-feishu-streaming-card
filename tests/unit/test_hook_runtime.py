@@ -11,6 +11,7 @@ import time
 import types
 from types import SimpleNamespace
 from urllib import error
+from http.client import RemoteDisconnected
 
 import pytest
 
@@ -10456,6 +10457,136 @@ def test_interaction_select_returns_empty_response_when_sidecar_rejects(monkeypa
 
     response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
 
+    assert response.card is None
+
+
+def test_interaction_select_retries_transient_disconnect_then_succeeds(monkeypatch):
+    """Issue #222: a transient RemoteDisconnected must be retried, not dropped.
+
+    The first POST raises RemoteDisconnected (sidecar briefly overloaded);
+    the retry succeeds and the card updates in place. The click must NOT be
+    silently lost as it was before this fix.
+    """
+
+    class FakeCallBackCard:
+        def __init__(self):
+            self.type = None
+            self.data = None
+
+    class FakeP2Response:
+        def __init__(self):
+            self.card = None
+
+    class DummyFeishuAdapter:
+        name = "feishu"
+
+        def _on_card_action_trigger(self, data):
+            return "original"
+
+    DummyFeishuAdapter.__module__ = hook_runtime.__name__
+    monkeypatch.setattr(
+        hook_runtime, "P2CardActionTriggerResponse", FakeP2Response, raising=False
+    )
+    monkeypatch.setattr(hook_runtime, "CallBackCard", FakeCallBackCard, raising=False)
+    monkeypatch.setattr(
+        hook_runtime,
+        "load_runtime_config",
+        lambda: SimpleNamespace(event_url="http://127.0.0.1:8765/events"),
+    )
+
+    calls = {"n": 0}
+    sleeps: list[float] = []
+
+    def fake_post(url, payload, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RemoteDisconnected("sidecar closed the connection")
+        return {"ok": True, "card": {"header": {"template": "green"}, "elements": []}}
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(hook_runtime, "_post_json_sync_response", fake_post)
+    monkeypatch.setattr(hook_runtime.time, "sleep", fake_sleep)
+
+    adapter = DummyFeishuAdapter()
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            action=SimpleNamespace(
+                value={
+                    "hfc_action": "interaction.select",
+                    "interaction_id": "int-1",
+                    "choice": "opt_b",
+                    "choice_label": "Option B",
+                    "token": "tok-1",
+                }
+            ),
+            context=SimpleNamespace(open_chat_id="oc_abc"),
+            operator=SimpleNamespace(open_id="ou_user"),
+        )
+    )
+
+    response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
+
+    assert calls["n"] == 2, "transient disconnect must be retried exactly once more"
+    assert sleeps == [hook_runtime.INTERACTION_ACTION_RETRY_DELAY_SECONDS]
+    assert response.card.type == "raw"
+    assert response.card.data["header"]["template"] == "green"
+
+
+def test_interaction_select_gives_up_after_retry_budget(monkeypatch):
+    """Issue #222: when every attempt hits a transient failure the click ends
+    as an empty callback response (Feishu-side fallback), never a crash."""
+
+    class FakeP2Response:
+        def __init__(self):
+            self.card = None
+
+    class DummyFeishuAdapter:
+        name = "feishu"
+
+        def _on_card_action_trigger(self, data):
+            raise AssertionError("interaction.select should be handled by HFC")
+
+    DummyFeishuAdapter.__module__ = hook_runtime.__name__
+    monkeypatch.setattr(
+        hook_runtime, "P2CardActionTriggerResponse", FakeP2Response, raising=False
+    )
+    monkeypatch.setattr(
+        hook_runtime,
+        "load_runtime_config",
+        lambda: SimpleNamespace(event_url="http://127.0.0.1:8765/events"),
+    )
+
+    calls = {"n": 0}
+
+    def fake_post(url, payload, timeout):
+        calls["n"] += 1
+        raise RemoteDisconnected("sidecar closed the connection")
+
+    monkeypatch.setattr(hook_runtime, "_post_json_sync_response", fake_post)
+    monkeypatch.setattr(hook_runtime.time, "sleep", lambda seconds: None)
+
+    adapter = DummyFeishuAdapter()
+    data = SimpleNamespace(
+        event=SimpleNamespace(
+            action=SimpleNamespace(
+                value={
+                    "hfc_action": "interaction.select",
+                    "interaction_id": "int-1",
+                    "choice": "opt_b",
+                    "choice_label": "Option B",
+                    "token": "tok-1",
+                }
+            ),
+            context=SimpleNamespace(open_chat_id="oc_abc"),
+            operator=SimpleNamespace(open_id="ou_user"),
+        )
+    )
+
+    response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
+
+    assert calls["n"] == hook_runtime.INTERACTION_ACTION_FORWARD_ATTEMPTS
     assert response.card is None
 
 
