@@ -1608,6 +1608,30 @@ async def test_health_reports_package_and_domain_separated_python_identity_witho
     assert identity != hashlib.sha256(executable.encode("utf-8")).hexdigest()
 
 
+async def test_health_reports_empty_process_token_hash_when_no_token():
+    app = create_app(FakeFeishuClient())
+    request = make_mocked_request("GET", "/health", app=app)
+    response = await sidecar_server._health(request)
+    body = json.loads(response.body)
+
+    assert response.status == 200
+    assert body["process_token_hash"] == ""
+
+
+async def test_health_reports_hashed_process_token_without_echoing_it():
+    process_token = "private-process-token"
+    app = create_app(FakeFeishuClient(), process_token=process_token)
+    request = make_mocked_request("GET", "/health", app=app)
+    response = await sidecar_server._health(request)
+    body = json.loads(response.body)
+
+    assert response.status == 200
+    assert body["process_token_hash"] == (
+        hashlib.sha256(process_token.encode("utf-8")).hexdigest()
+    )
+    assert process_token not in json.dumps(body)
+
+
 async def test_shutdown_control_requires_matching_process_token_and_never_echoes_it(
     monkeypatch,
 ):

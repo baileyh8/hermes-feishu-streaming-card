@@ -292,11 +292,15 @@ def _normalize_inputs(
         or any(character in expected_package_version for character in "\r\n\0")
     ):
         raise ValueError("package version is invalid")
+    _hfc_identity_prefix = "python-sha256:"
     if (
         type(expected_python_identity) is not str
-        or not expected_python_identity.startswith("sha256:")
-        or len(expected_python_identity) != 71
-        or any(character not in "0123456789abcdef" for character in expected_python_identity[7:])
+        or not expected_python_identity.startswith(_hfc_identity_prefix)
+        or len(expected_python_identity) != len(_hfc_identity_prefix) + 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in expected_python_identity[len(_hfc_identity_prefix):]
+        )
     ):
         raise ValueError("Python identity is invalid")
     return {
@@ -334,7 +338,7 @@ def _render_unit(inputs: Mapping[str, str]) -> bytes:
         "[Service]\n"
         "Type=simple\n"
         f"Environment={_systemd_quote(state_assignment)}\n"
-        f"WorkingDirectory={_systemd_quote(inputs['state_dir'])}\n"
+        f"WorkingDirectory={inputs['state_dir'].replace('%', '%%')}\n"
         f"ExecStart={exec_start}\n"
         "Restart=on-failure\n"
         "RestartSec=2s\n"

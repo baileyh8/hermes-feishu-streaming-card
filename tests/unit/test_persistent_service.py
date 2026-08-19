@@ -45,7 +45,7 @@ def _healthy():
         "process_pid": 4321,
         "process_token_hash": "",
         "package_version": "4.3.0",
-        "python_identity": "sha256:" + "a" * 64,
+        "python_identity": "python-sha256:" + "a" * 64,
     }
 
 
@@ -68,7 +68,7 @@ def test_enable_refuses_missing_linger_without_mutation(monkeypatch, tmp_path):
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     )
 
     assert result == "failed: systemd user linger is disabled; run loginctl enable-linger"
@@ -110,7 +110,7 @@ def test_enable_writes_bound_unit_and_manifest_then_starts(monkeypatch, tmp_path
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     )
 
     assert result == "enabled"
@@ -123,6 +123,8 @@ def test_enable_writes_bound_unit_and_manifest_then_starts(monkeypatch, tmp_path
     unit_text = unit.read_text(encoding="utf-8")
     assert "[Install]\nWantedBy=default.target" in unit_text
     assert "Restart=on-failure" in unit_text
+    assert 'WorkingDirectory="' not in unit_text
+    assert "\nWorkingDirectory=/" in unit_text
     assert "--managed-pidfile" not in unit_text
     assert "--token" not in unit_text
     assert str(python) in unit_text
@@ -134,7 +136,7 @@ def test_enable_writes_bound_unit_and_manifest_then_starts(monkeypatch, tmp_path
     assert payload["protocol"] == "hfc-systemd-user-service-v1"
     assert payload["unit_sha256"].startswith("sha256:")
     assert payload["expected_package_version"] == "4.3.0"
-    assert payload["expected_python_identity"] == "sha256:" + "a" * 64
+    assert payload["expected_python_identity"] == "python-sha256:" + "a" * 64
 
 
 def test_enable_is_idempotent_for_exact_active_unit(monkeypatch, tmp_path):
@@ -157,7 +159,7 @@ def test_enable_is_idempotent_for_exact_active_unit(monkeypatch, tmp_path):
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     )
     assert persistent_service.enable_persistent_sidecar(**kwargs) == "enabled"
     first_unit = unit.read_bytes()
@@ -193,7 +195,7 @@ def test_enable_rolls_back_owned_files_when_systemctl_fails(monkeypatch, tmp_pat
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     )
 
     assert result == "failed: persistent systemd user service could not be enabled"
@@ -227,7 +229,7 @@ def test_enable_preserves_ownership_when_failed_start_cannot_be_stopped(
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     )
 
     assert result == "failed: persistent systemd user service could not be enabled"
@@ -253,7 +255,7 @@ def test_disable_refuses_unit_drift_without_systemctl_or_deletion(monkeypatch, t
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     ) == "enabled"
     unit.write_text(unit.read_text(encoding="utf-8") + "# user drift\n", encoding="utf-8")
     commands = []
@@ -294,7 +296,7 @@ def test_disable_stops_removes_and_reloads_exact_owned_unit(monkeypatch, tmp_pat
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     ) == "enabled"
     commands.clear()
 
@@ -319,7 +321,7 @@ def test_enable_refuses_non_user_service_manager(monkeypatch, tmp_path, manager)
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     ) == "failed: persistent service requires service.manager=auto or systemd-user"
 
 
@@ -337,7 +339,7 @@ def test_enable_refuses_active_unowned_transient_unit(monkeypatch, tmp_path):
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     ) == "failed: an unmanaged sidecar unit is active; stop it before enable"
     assert not state.exists()
     assert not unit.exists()
@@ -383,7 +385,7 @@ def test_cli_enable_uses_verified_runtime_binding(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr(
         cli,
         "_resolve_start_runtime_identity",
-        lambda root: (python, "sha256:" + "a" * 64),
+        lambda root: (python, "python-sha256:" + "a" * 64),
     )
     monkeypatch.setattr(
         cli,
@@ -412,7 +414,7 @@ def test_cli_enable_uses_verified_runtime_binding(monkeypatch, tmp_path, capsys)
             "hermes_dir": hermes,
             "python_executable": python,
             "expected_package_version": cli.PACKAGE_VERSION,
-            "expected_python_identity": "sha256:" + "a" * 64,
+            "expected_python_identity": "python-sha256:" + "a" * 64,
         }
     ]
 
@@ -432,7 +434,7 @@ def test_cli_start_noops_for_exact_persistent_service(monkeypatch, tmp_path, cap
     monkeypatch.setattr(
         cli,
         "_resolve_start_runtime_identity",
-        lambda root: (python, "sha256:" + "b" * 64),
+        lambda root: (python, "python-sha256:" + "b" * 64),
     )
     monkeypatch.setattr(cli, "persistent_sidecar_matches", lambda **kwargs: True)
     monkeypatch.setattr(
@@ -477,7 +479,7 @@ def test_active_requires_exact_owned_unit_and_systemd_state(monkeypatch, tmp_pat
         hermes_dir=hermes,
         python_executable=python,
         expected_package_version="4.3.0",
-        expected_python_identity="sha256:" + "a" * 64,
+        expected_python_identity="python-sha256:" + "a" * 64,
     ) == "enabled"
 
     assert persistent_service.persistent_sidecar_active() is True
