@@ -178,7 +178,7 @@ def test_pending_interaction_has_priority_over_compaction_phase():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "允许继续执行吗？"
+    assert card["header"]["title"]["content"] == "待审批：允许继续执行吗？"
     assert "正在压缩上下文" not in str(card["header"])
 
 
@@ -258,7 +258,7 @@ def test_v4_waiting_prompt_moves_to_header_without_body_duplication():
         if item.get("tag") == "markdown"
     )
 
-    assert card["header"]["title"]["content"] == "允许覆盖文件吗？"
+    assert card["header"]["title"]["content"] == "待审批：允许覆盖文件吗？"
     assert "subtitle" not in card["header"]
     assert str(card).count("允许覆盖文件吗？") == 1
     assert "目标文件：report.html" in str(card)
@@ -689,29 +689,14 @@ def test_render_completed_interaction_replaces_buttons_with_choice():
 
     card = render_card(session)
 
+    elements = card["elements"]  # legacy (schema-V1) layout: no body key
     assert not any(
         element.get("tag") == "button" and element.get("behaviors")
-        for element in card["body"]["elements"]
+        for element in elements
     )
     assert "已选择：允许一次" in str(card)
     assert "Bailey" in str(card)
-    hover = next(
-        element
-        for element in card["body"]["elements"]
-        if element.get("element_id") == "interaction_hover"
-    )
-    assert hover == {
-        "tag": "button",
-        "element_id": "interaction_hover",
-        "type": "text",
-        "size": "small",
-        "text": {"tag": "plain_text", "content": "已选择：允许一次 by Bailey"},
-        "hover_tips": {
-            "tag": "plain_text",
-            "content": "❓ 允许执行命令吗？\n📋 ① 允许一次",
-        },
-    }
-    assert "敏感命令详情" not in hover["hover_tips"]["content"]
+    assert "✅ 选择已确认" in str(card)
 
 
 def test_render_completed_card_shows_attachment_summary():

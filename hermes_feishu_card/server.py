@@ -21,7 +21,13 @@ from typing import Any, Callable, Dict
 from aiohttp import ClientSession, ClientTimeout, web
 
 from .bots import RouteResult
-from .config import load_config, merge_card_config, resolve_operations_hermes_root
+from .config import (
+    card_completion_mention_enabled,
+    card_interaction_mention_enabled,
+    load_config,
+    merge_card_config,
+    resolve_operations_hermes_root,
+)
 from .delivery_policy import (
     CARD_DISPOSITION,
     ChatDeliveryDecision,
@@ -5512,10 +5518,12 @@ async def _maybe_send_completion_notify(
     session.completion_notify_state = "sending"
     duration_text = _format_duration(session.duration) if session.duration > 0 else ""
     suffix = f"（用时 {duration_text}）" if duration_text else ""
-    text = (
+    mention_prefix = (
         f'<at user_id="{session.sender_open_id}"></at> '
-        f"✅ 任务已完成{suffix}"
+        if card_completion_mention_enabled(card_config)
+        else ""
     )
+    text = f"{mention_prefix}✅ 任务已完成{suffix}"
     try:
         await send_text(
             session.chat_id,
@@ -6346,6 +6354,10 @@ def _render_session_card_result_for_app(
             else None
         ),
         table_overflow_mode=table_overflow_mode,
+        mentions_enabled=card_interaction_mention_enabled(
+            card_config,
+            kind=getattr(session.active_interaction, "kind", "") or "",
+        ),
     )
 
 

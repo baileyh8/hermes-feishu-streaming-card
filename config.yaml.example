@@ -49,6 +49,10 @@ card:
   # @mentions the initiating Feishu user. Card edits themselves do not notify.
   completion_notify:
     enabled: false
+  # Default-on: render @ mentions of the Feishu user inside interaction cards
+  # (approval / clarify) and in the completion notification. Set to false to
+  # disable the @ mention feature entirely. Absent key = enabled.
+  mentions_in_cards: true
   # Optional role-based CardKit text sizes. Roles: body, reasoning, tool,
   # notice, footer. Values may be scalar or default/pc/mobile mappings.
   # card width/height are controlled by the Feishu/Lark client.
