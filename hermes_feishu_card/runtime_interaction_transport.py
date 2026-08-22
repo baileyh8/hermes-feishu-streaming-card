@@ -114,7 +114,7 @@ class RuntimeInteractionListener:
                 target=server.serve_forever,
                 kwargs={"poll_interval": 0.02},
                 name=f"hfc-runtime-interaction-{port}",
-                daemon=False,
+                daemon=True,
             )
             self._server = server
             self._thread = thread
