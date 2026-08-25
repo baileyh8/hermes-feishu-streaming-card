@@ -1,5 +1,6 @@
 import json
 
+import aiohttp
 import pytest
 
 from hermes_feishu_card.card_limits import CardLimitExceeded, serialize_card_json
@@ -262,3 +263,75 @@ async def test_update_rejects_unsafe_card_before_token_or_network():
 
     with pytest.raises(CardLimitExceeded, match="json_bytes"):
         await client.update_card_message("om_test", oversized)
+
+
+async def _captured_session_kwargs(monkeypatch, base_url=None):
+    captured: dict[str, object] = {}
+
+    class _FakeResponse:
+        status = 200
+        headers: dict[str, str] = {}
+
+        async def json(self, content_type=None):
+            return {"code": 0, "data": {}}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+    class _FakeSession:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        def request(self, *args, **kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _FakeSession)
+    overrides = {"base_url": base_url} if base_url is not None else {}
+    client = FeishuClient(
+        FeishuClientConfig(app_id="cli_a", app_secret="sec", **overrides)
+    )
+
+    await client._request_json("POST", "/im/v1/messages")
+
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_request_json_trusts_proxy_environment_for_remote_endpoint(monkeypatch):
+    """Hosts without direct egress reach open.feishu.cn only via HTTP(S)_PROXY.
+
+    aiohttp ignores the proxy environment unless the session opts in with
+    trust_env, so without it every card delivery times out and the hook reports
+    an unknown outcome.
+    """
+
+    captured = await _captured_session_kwargs(monkeypatch)
+
+    assert captured.get("trust_env") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8080/open-apis",
+        "http://localhost:8080/open-apis",
+        "http://10.1.2.3/open-apis",
+        "http://[::1]:8080/open-apis",
+    ],
+)
+async def test_request_json_bypasses_proxy_for_local_endpoint(monkeypatch, base_url):
+    """A loopback or intranet endpoint must not be routed through the proxy."""
+
+    captured = await _captured_session_kwargs(monkeypatch, base_url=base_url)
+
+    assert captured.get("trust_env") is False

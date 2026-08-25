@@ -6,6 +6,7 @@ import math
 import time
 from dataclasses import dataclass
 from hashlib import sha256
+from ipaddress import ip_address
 from numbers import Real
 from typing import Any, Dict, Literal, Optional, Union
 from urllib.parse import quote, urlparse
@@ -20,6 +21,22 @@ _SEND_MAX_ATTEMPTS = 3
 _SEND_RETRY_DELAYS_SECONDS = (0.4, 1.2)
 _MAX_RETRY_AFTER_SECONDS = 2.0
 _sleep = asyncio.sleep
+
+
+def _should_bypass_proxy(base_url: str) -> bool:
+    host = (urlparse(base_url).hostname or "").strip().lower()
+    if host == "localhost":
+        return True
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return False
+    return (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_unspecified
+    )
 
 
 def _safe_api_code(value: Any) -> int | str | None:
@@ -131,6 +148,11 @@ class FeishuClientConfig:
 class FeishuClient:
     def __init__(self, config: FeishuClientConfig):
         self.config = config
+        # A remote Feishu endpoint may only be reachable through HTTP(S)_PROXY,
+        # which aiohttp ignores unless the session trusts the environment.  A
+        # loopback or intranet endpoint must stay direct, matching how the
+        # sidecar's own urllib callers bypass the proxy.
+        self._trust_env = not _should_bypass_proxy(config.base_url)
         self._tenant_access_token: str | None = None
         self._tenant_access_token_expires_at = 0.0
 
@@ -370,7 +392,9 @@ class FeishuClient:
 
         timeout = aiohttp.ClientTimeout(total=float(self.config.timeout_seconds))
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(
+                timeout=timeout, trust_env=self._trust_env
+            ) as session:
                 async with session.request(
                     method,
                     url,
