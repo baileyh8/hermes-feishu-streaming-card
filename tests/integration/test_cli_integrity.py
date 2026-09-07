@@ -8,6 +8,8 @@ import subprocess
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 from hermes_feishu_card import cli as card_cli
 from hermes_feishu_card.runtime_control import (
     RuntimeIntegrityFenceBinding,
@@ -291,10 +293,25 @@ def test_integrity_acknowledge_review_refuses_wrong_or_unsafe_legacy_binding(
         assert str(state_root) not in result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("layout", ["git-monolithic", "archive-monolithic", "archive-decomposed"])
 def test_integrity_acknowledge_review_migrates_verified_same_target_plan_transition(
-    tmp_path,
+    tmp_path, layout,
 ):
-    root, _manifest_path = _legacy_git_install(tmp_path)
+    if layout == "archive-decomposed":
+        from hermes_feishu_card.install import decomposed
+        from hermes_feishu_card.install.detect import detect_hermes
+        root = tmp_path / "hermes"
+        shutil.copytree(FIXTURE.parent / "hermes_decomposed", root)
+        (root / "VERSION").write_text("0.21.0\n")
+        decomposed.install(detect_hermes(root))
+        manifest_path = root / decomposed.MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text())
+        manifest.pop("integrity")
+        manifest_path.write_text(json.dumps(manifest))
+    else:
+        root, _manifest_path = _legacy_git_install(tmp_path)
+        if layout == "archive-monolithic":
+            shutil.rmtree(root / ".git")
     config = tmp_path / "config.yaml"
     config.write_text(
         "server:\n  host: 127.0.0.1\n  port: 65531\n", encoding="utf-8"

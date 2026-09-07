@@ -26,6 +26,10 @@
    - 区分 multiplex 逐消息路由与多进程固定身份，配置无需名为 `default` 的 profile。
 9. [审批与思考阅读方式](card-readability.md)
    - 配置展开的思考代码块，并了解完整审批内容的展示和大小限制。
+10. [Docker / s6 启动](docker-s6-startup.md)
+    - 同运行用户、共享认证目录与保留诊断输出的启动示例。
+11. [Hermes 最新源码与完整性迁移](hermes-decomposed-patcher.md)
+    - 固定正式版/主分支兼容基线，无 Git 快照证据与安全迁移边界。
 
 ## 当前核心能力
 

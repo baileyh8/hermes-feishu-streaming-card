@@ -239,6 +239,18 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             base_contents, base_error = _read_text(
                 base_py, "gateway/platforms/base.py"
             )
+    if decomposed:
+        from . import decomposed as decomposed_ownership
+        if decomposed_ownership.is_managed(hermes_root):
+            try:
+                _, originals, _, _ = decomposed_ownership._inspect(hermes_root, render_hooks=False)
+                # Full manifest/file/backup hashes authorize recovering an old
+                # hook template. Assess today's anchors on verified sources.
+                gateway_sources = {name: originals[name].decode("utf-8") for name in gateway_sources}
+                cron_contents = originals[cron_py.relative_to(hermes_root).as_posix()].decode("utf-8")
+                base_contents = originals["gateway/platforms/base.py"].decode("utf-8")
+            except (OSError, ValueError, UnicodeError, KeyError):
+                return result(False, "decomposed ownership cannot be verified")
     verified_ledger_signals = _has_exact_delivery_ledger_signals(base_contents)
     base_required = decomposed or version_requires_base or verified_ledger_signals
     exact_base_delivery = False

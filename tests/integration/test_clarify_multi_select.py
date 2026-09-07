@@ -214,7 +214,7 @@ async def test_single_select_request_renders_buttons_plus_other_form(client):
 
     buttons = find_elements(elements, "button")
     labels = [b["text"]["content"] for b in buttons]
-    assert labels[:2] == ["1. 选项A", "2. 选项B"]
+    assert labels[:2] == ["1", "2"]
     assert "✏️ 提交自定义答案" in labels
     assert "✅ 确认选择" not in labels
 

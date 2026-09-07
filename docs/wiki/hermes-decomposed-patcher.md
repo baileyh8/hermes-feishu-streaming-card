@@ -23,7 +23,8 @@
 `status_callback` 仍是 optional，缺失时支持安装并显示 partial。
 
 TurnRunner 的 `stream_delta_cb` / `interim_assistant_cb` 使用 `ctx` 传递本轮 source、
-message ID、Gateway loop 和 session；approval 保留空选择时的原生回退。
+message ID、Gateway loop 和 session；approval 未被 sidecar 接管时保留原生回退，
+已经接管但失败/超时则返回拒绝，避免在原话题外再次开启原生审批。
 completion 从调用方复制 `_turn_seconds`，不修改原始 `agent_result` 对象。
 
 ## Exact Base 边界
@@ -73,8 +74,27 @@ Windows 显式 install 复用既有 portable writer，验证目录、文件 iden
 
 固定 tag V3 还拥有 Hermes plugin 配置，必须先用其专用 installer 验证/还原，不能用
 V1/V2 的源码迁移方式跳过配置 ownership。
-`integrity.mode=safe` 的 Git provenance 自动修复仍要求原有严格证据；当前 V4 没有
-这份 provenance，必须拒绝自动升级修复，不能把普通多文件 fingerprint 当成授权。
+分解布局的新安装记录 `verified_owned_snapshot`，绑定全部原始/注入文件的 hash。
+这证明当前安装可逆，不证明 Git ancestry，也不允许自动接受上游源码替换。
+无 `.git` 的单文件 Docker 安装同样记录本地 ownership 快照；有 Git 的单文件安装
+继续使用原来的 Git provenance。两种证据不可相互冒充。
+
+从旧 HFC 升级后，若 hook 已安装但仍提示 `integrity_migration_required`，先停止
+受管 sidecar，再对同一个 Hermes 目录与 sidecar 配置执行：
+
+```bash
+hermes-feishu-card integrity migrate-safe --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent --yes
+hermes-feishu-card integrity acknowledge-review --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent --state-dir /path/to/shared-hfc-state --yes
+```
+
+迁移逐文件验证 manifest、backup、当前源码和 patch/remove 往返；事务提交前后重验，
+发生漂移即拒绝或回滚。`acknowledge-review` 仍校验既有 fence 的目标身份与状态，
+不能用卡片发送成功替代这些证据，也不应手工删除 fence。
+
+Docker 建议依次完成：安装 HFC 包与 hook、必要的完整性迁移、启动 sidecar 并确认
+健康接口可达、最后启动或重启 Gateway。已经运行的 Python 进程不会因磁盘源码
+写入 hook 而自动加载新代码。Gateway 和 sidecar 还必须共享认证状态目录；细节见
+[单进程多 profile 排障](shared-profile-routing.md)。
 
 ## 验证与后续维护
 
@@ -91,3 +111,19 @@ git diff --check
 
 此适配吸收 PR #257 的拆分布局实现；维护时应继续比较上游锚点、renderer 和 manifest
 迁移行为。上游或用户的独立 timeout 设置不属于该补丁的 ownership。
+
+## 最新上游验证基线（2026-09-07）
+
+| 上游 | 固定提交 | 实际布局 |
+| --- | --- | --- |
+| 正式版 `v2026.8.31` / Hermes 0.21.0 | `29112bef099274229cadff79cdff7bf7b99c4b77` | 单文件 Gateway |
+| 当日 `main` / Hermes 0.21.0 | `a7198a8855ad98681114ff5138eb01fe132a62e7` | facade / mixin |
+
+相同 `0.21.0` 版本字符串可能对应不同源码布局，必须检测实际锚点。
+`tests/fixtures/hermes_upstream_sources.json` 记录上述源码逐文件 SHA-256；
+`tests/integration/test_upstream_hermes_compat.py` 在无 Git 的副本中执行真实 CLI
+安装、重复安装、编译、ownership/完整性诊断与逐字卸载还原。只替换 package/SDK
+provisioning，不启动 Hermes 服务、不使用飞书凭据。CI 在 Python 3.12/3.13 上
+检出上述固定提交执行此门禁；本地可通过 `HFC_UPSTREAM_STABLE_ROOT` 和
+`HFC_UPSTREAM_MAIN_ROOT` 提供对应源码。缺少源码会明确 skip，不能计为兼容验证通过。
+上游之后的提交需要重新验证，不以“最新版”标签替代固定源码证据。

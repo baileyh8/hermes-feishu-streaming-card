@@ -20,6 +20,39 @@ env:
   HFC_FIXED_TAG_COMMIT: 3c27eb6234bf91b8ceee9e9071591b31e9b148cb
 
 jobs:
+  upstream-hermes-compat:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Checkout latest verified Hermes release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 29112bef099274229cadff79cdff7bf7b99c4b77
+          path: .upstream/stable
+      - name: Checkout latest verified Hermes main snapshot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: a7198a8855ad98681114ff5138eb01fe132a62e7
+          path: .upstream/main
+      - name: Install test dependencies
+        run: python -m pip install -e ".[test]"
+      - name: Verify source-only install, repeat, diagnosis and exact restore
+        env:
+          HFC_UPSTREAM_STABLE_ROOT: ${{ github.workspace }}/.upstream/stable
+          HFC_UPSTREAM_MAIN_ROOT: ${{ github.workspace }}/.upstream/main
+        run: python -m pytest tests/integration/test_upstream_hermes_compat.py -q
+
   fixed-hermes-fixture:
     runs-on: ubuntu-latest
 

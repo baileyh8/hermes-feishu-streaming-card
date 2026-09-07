@@ -2976,6 +2976,14 @@ def _run_integrity(args: argparse.Namespace) -> int:
             env_text,
             {"HERMES_FEISHU_CARD_INTEGRITY_MODE": "safe"},
         )
+        def validate_migration_snapshot():
+            if render_integrity_manifest_migration(detection, manifest_text) != (_provenance, manifest_contents):
+                raise ValueError("integrity evidence changed; rerun diagnosis")
+
+        def validate_migration_commit():
+            if render_integrity_manifest_migration(detection, manifest_contents) != (_provenance, manifest_contents):
+                raise ValueError("integrity evidence changed; rerun diagnosis")
+
         _write_targets_transactionally(
             [
                 (manifest_path, manifest_contents),
@@ -2989,6 +2997,8 @@ def _run_integrity(args: argparse.Namespace) -> int:
                 manifest_path.parent: manifest_binding.parent_identity,
                 env_path.parent: env_binding.parent_identity,
             },
+            pre_commit_validate=validate_migration_snapshot,
+            validate=validate_migration_commit,
         )
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -4819,6 +4829,8 @@ def _write_targets_transactionally(
     expected_identities: dict[Path, _RestoreEvidenceSnapshot | None] | None = None,
     expected_directories: dict[Path, _RestoreIdentity | None] | None = None,
     preserve_earlier_writes_on_rollback_failure: bool = False,
+    pre_commit_validate: Callable[[], None] | None = None,
+    validate: Callable[[], None] | None = None,
 ) -> None:
     if not _cli_dirfd_binding_supported():
         raise ValueError(
@@ -4863,6 +4875,8 @@ def _write_targets_transactionally(
                 )
             )
 
+        if pre_commit_validate is not None:
+            pre_commit_validate()
         written: list[Path] = []
         post_write_snapshots: dict[Path, _RestoreEvidenceSnapshot] = {}
         try:
@@ -4887,6 +4901,8 @@ def _write_targets_transactionally(
                     != post_write_snapshots[path]
                 ):
                     raise ValueError("restore transaction lost write ownership")
+            if validate is not None:
+                validate()
         except (OSError, UnicodeError, ValueError) as exc:
             rollback_failed = False
             snapshot_by_path = dict(snapshots)

@@ -12934,3 +12934,58 @@ async def test_interrupt_abandon_does_not_affect_completed_sessions(client):
         assert mid != "feishu-message-1", (
             "Already-completed session should not get extra updates on abandon"
         )
+
+
+async def test_topic_approval_expiry_updates_current_card_without_main_stream_send(client):
+    test_client, feishu_client = client
+    routing = {"reply_in_thread": True, "reply_to_message_id": "om_topic_anchor"}
+    await test_client.post("/events", json=event_payload("message.started", 0, routing))
+    await test_client.post("/events", json=event_payload("interaction.requested", 1, {
+        **routing,
+        "interaction_id": "topic-expiry", "kind": "approval", "prompt": "授权",
+        "options": [{"label": "允许一次", "value": "once"}], "timeout_seconds": 300,
+    }))
+    session = next(iter(test_client.app[SESSIONS_KEY].values()))
+    session.active_interaction.requested_at = 100.0
+    current_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY][session.message_id]
+    sent_count = len(feishu_client.sent)
+    assert all(item[3] == "om_topic_anchor" for item in feishu_client.sent)
+    assert all(feishu_client.sent_reply_in_thread)
+    assert await sidecar_server._expire_pending_interactions(test_client.app, now=400.0) == 1
+    updated_id, card = await wait_for_card_update(feishu_client, "交互已过期")
+    assert updated_id == current_card_id
+    assert len(feishu_client.sent) == sent_count
+    assert not feishu_client.texts
+    assert not interaction_buttons(card)
+
+
+@pytest.mark.parametrize("existing_session", [False, True])
+async def test_oversized_interaction_declines_before_claiming_or_sending(client, existing_session):
+    test_client, feishu_client = client
+    if existing_session:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+    sent_count = len(feishu_client.sent)
+    response = await test_client.post("/events", json=event_payload("interaction.requested", 1, {
+        "interaction_id": "too-large-choice", "kind": "approval", "prompt": "授权",
+        "options": [{"label": "完整说明" * 4000, "value": "once"}],
+    }))
+    assert response.status == 200
+    assert await response.json() == {"ok": True, "applied": False, "reason": "interaction_card_limit"}
+    assert len(feishu_client.sent) == sent_count
+    assert all(session.active_interaction is None for session in test_client.app[SESSIONS_KEY].values())
+    assert "too-large-choice" not in test_client.app[INTERACTION_RESULTS_KEY]
+
+
+async def test_approval_preflight_uses_compact_card_even_after_long_answer(client):
+    test_client, feishu_client = client
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    session = next(iter(test_client.app[SESSIONS_KEY].values()))
+    session.answer_text = "历史正文" * 10000
+    response = await test_client.post("/events", json=event_payload("interaction.requested", 1, {
+        "interaction_id": "compact-approval", "kind": "approval", "prompt": "授权",
+        "options": [{"label": "允许一次", "value": "once"}],
+    }))
+    assert response.status == 200
+    assert (await response.json())["applied"] is True
+    assert interaction_buttons(feishu_client.sent[-1][1])[0]["value"]["choice"] == "once"
+    assert not feishu_client.texts

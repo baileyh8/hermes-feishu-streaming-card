@@ -637,3 +637,38 @@ def test_integrity_plan_refuses_owned_backup_mismatch(git_installed_state):
 
     assert plan.executable is False
     assert plan.reason in {"owned_backup_mismatch", "recovery_evidence_not_executable"}
+
+
+def test_gitless_monolithic_install_and_migration_prove_snapshot_only(git_installed_state, monkeypatch):
+    root, detection, run_source, cron_source = git_installed_state
+    shutil.rmtree(root / ".git")
+    def refuse_git(*_args, **_kwargs):
+        raise AssertionError("snapshot verification must not invoke Git")
+    monkeypatch.setattr(integrity_module, "_run_git", refuse_git)
+    _write_manifest(root, detection, run_source, cron_source)
+    manifest_path = root / integrity_module.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["integrity"]["kind"] == "verified_owned_snapshot"
+    assert "git_head" not in manifest["integrity"]
+    assert plan_integrity_repair(detection).reason == "recovery_not_required"
+    manifest.pop("integrity")
+    manifest_path.write_text(json.dumps(manifest))
+    evidence = migrate_integrity_manifest(detection)
+    assert evidence["layout"] == "gateway-monolithic"
+    plan = plan_integrity_repair(detection)
+    assert integrity_acknowledgement_eligible(detection, plan_recovery(detection), plan)
+    detection.run_py.write_text(run_source + "\n# source archive upgraded\n")
+    detection.cron_py.write_text(cron_source + "\n# source archive upgraded\n")
+    plan = plan_integrity_repair(detection)
+    assert not plan.executable and plan.reason == "git_history_unavailable"
+
+
+def test_gitless_snapshot_still_refuses_backup_drift(git_installed_state):
+    root, detection, run_source, cron_source = git_installed_state
+    shutil.rmtree(root / ".git")
+    _write_manifest(root, detection, run_source, cron_source)
+    backup = detection.run_py.with_name(detection.run_py.name + integrity_module.BACKUP_SUFFIX)
+    backup.write_text(run_source + "\n# edited backup\n")
+    assert not plan_integrity_repair(detection).executable
+    with pytest.raises(IntegrityRepairRefused):
+        migrate_integrity_manifest(detection)
