@@ -45,7 +45,7 @@ HFC 的 `/events` 端口与飞书事件订阅、卡片回调端口是不同职�
 
 V4.4.1 的逐消息 profile 修复与实际 Gateway 进程的安装、环境和认证状态是不同证据。
 不能只凭之前反馈中的版本号断言用户仍运行 V4.4.0，也不能凭本地回归通过认定其
-远端 V4.4.1 已恢复。当前已修复 named-only adapter 漏装和选择错误的缺口；真实
+远端 V4.4.1 已恢复。V4.4.2 修复 named-only adapter 漏装和选择错误的缺口；真实
 multiplex 飞书环境仍须验证。最新 Hermes 将 named bot 放在 `_profile_adapters`，
 HFC 同时安装这些 adapter，并通过 Hermes 的 `_adapter_for_source` 保留经过验证的
 transport ownership；未知或连接失败的 named profile 不借用 default bot。

@@ -6,6 +6,12 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
+### V4.4.2：完整性迁移与 multiplex
+
+- [x] 完整 ownership 校验、源码安装快照与迁移回滚。
+- [x] 次级 profile adapter、审批超时与选项展示修复。
+- [ ] 报告者实际 Docker/multiplex 与飞书客户端复验。
+
 ### V4.4.1：Hermes 0.21、多 profile 与话题兼容修复（发布候选）
 
 - [x] PR #257 / Issues #254/#255/#256：按已验证 facade/mixin 契约安装，保留多文件 ownership 与可逆恢复。
