@@ -22,6 +22,10 @@
    - 适合判断异常时应退回 Hermes 原生路径，还是必须拒绝启动、请求或修复。
 7. [V4.1 安全控制与排障](v4.1-safety-controls.md)
    - 适合配置 per-chat native policy、表格预算、runtime integrity 与 sidecar manager，并排查升级后的 readiness。
+8. [单进程多 profile 与共享 sidecar](shared-profile-routing.md)
+   - 区分 multiplex 逐消息路由与多进程固定身份，配置无需名为 `default` 的 profile。
+9. [审批与思考阅读方式](card-readability.md)
+   - 配置展开的思考代码块，并了解完整审批内容的展示和大小限制。
 
 ## 当前核心能力
 

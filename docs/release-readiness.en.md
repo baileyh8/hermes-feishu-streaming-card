@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.4.0`. This cycle targets Hermes `v2026.8.27` / `0.20.6` and forward-validates against `main@4f225435`: Feishu `/commands` becomes a live native capability center, safe quick actions return to Hermes' original handlers, common command results gain KPI visualization, and real backlog depth plus extreme-Markdown fail-safes are added. Full automation and real Feishu private/group smoke are complete. The release PR, exact merge SHA, public tag/install, and Release assets are marked passed only after completion; automation is not represented as platform acceptance.
+Current release candidate: `4.4.1`. This cycle addresses Hermes 0.21 facade decomposition, topic follow-up replies, single-process profile routing, complete approval scope, reasoning presentation, and CodeQL updates. Focused automation has passed; full-suite, regular-wheel, and GitHub CI results belong to this release's validation record. Real Feishu/Lark client retesting has not been performed for this candidate; earlier release smoke does not constitute current acceptance. The release PR, exact merge SHA, public tag/install, and Release assets are marked passed only after completion; automation is not represented as platform acceptance.
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
 
@@ -82,6 +82,12 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 ```
 
 Real Feishu integration must use local config or environment variables for `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Do not commit App Secret, tenant token, real chat_id, or sensitive screenshots. Public screenshots must be checked for secrets and private conversation content before being added to the repository.
+
+## V4.4.1 Release Gates
+
+- Focused render/config/hook-runtime tests: `726 passed`; renderer and mention compatibility retest: `221 passed`; server reasoning configuration integration: `2 passed`.
+- Documentation and version metadata: `101 passed`. Regular-wheel, full-suite, GitHub CI, and release-asset outcomes are recorded at the final release gate.
+- Real Feishu/Lark private/group, topic restart recovery, multiplex profiles, and mobile/desktop approval readability require retesting. V4.4.0 smoke is not reused as evidence for the current candidate.
 
 ## V4.4.0 Release Gates
 

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发布候选为 `4.4.0`。本轮以 Hermes `v2026.8.27` / `0.20.6` 为正式基线，并向前验证 `main@4f225435`：飞书 `/commands` 升级为动态原生能力中心，安全快捷动作仍交回 Hermes 原 handler，常用命令结果增加 KPI 可视化，同时补齐真实 backlog depth 与极端 Markdown fail-safe。完整自动化与真实飞书私聊/群聊 smoke 已完成；release PR、exact merge SHA、public tag/install 与 Release assets 只有完成后才会标记通过。自动化不冒充平台验收。
+当前发布候选为 `4.4.1`。本轮处理 Hermes 0.21 facade 拆分兼容、话题后续回复、单进程多 profile 路由、审批完整性和思考展示，并更新 CodeQL。聚焦自动化已通过；当前候选的完整测试、普通 wheel 验证及 GitHub CI 以本轮发布记录为准。真实 Feishu/Lark 客户端复测尚未执行，旧版本的真实 smoke 不代表本轮验收。release PR、exact merge SHA、public tag/install 与 Release assets 只有完成后才会标记通过。自动化不冒充平台验收。
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。
 
@@ -82,6 +82,12 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 ```
 
 真实飞书联调只能使用本机配置或环境变量提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret、tenant token 或真实 chat_id 提交到仓库。公开演示截图入库前需要确认不包含敏感凭据和不可公开的会话内容。
+
+## V4.4.1 发布门禁
+
+- 聚焦 render/config/hook-runtime：`726 passed`；renderer 与 mention 兼容复测：`221 passed`；server reasoning 配置接线：`2 passed`。
+- 文档与版本元数据：`101 passed`；普通 wheel、完整 pytest、GitHub CI 和发布资产结果由本轮最终验证补充。
+- 真实 Feishu/Lark 私聊、群聊、话题重启恢复、多 profile、审批手机/桌面阅读：待复测；不复用 V4.4.0 的 smoke 作为当前候选证据。
 
 ## V4.4.0 发布门禁
 

@@ -60,6 +60,12 @@ def validate_install_manifest_version(manifest: Mapping[str, object]) -> int:
     if "manifest_version" not in manifest:
         return 1
     version = manifest.get("manifest_version")
+    # V4 describes one explicit Legacy layout, not arbitrary future ownership.
+    # A bare version number must retain the existing fail-closed behavior.
+    if (type(version) is int and version == 4
+            and manifest.get("layout") == "gateway-decomposed-v1"
+            and manifest.get("integration_mode") == "legacy-patch"):
+        return version
     if type(version) is int and version in {
         *LEGACY_INSTALL_MANIFEST_VERSIONS,
         CURRENT_INSTALL_MANIFEST_VERSION,
@@ -70,6 +76,10 @@ def validate_install_manifest_version(manifest: Mapping[str, object]) -> int:
 
 def validate_install_manifest(manifest: Mapping[str, object]) -> int:
     version = validate_install_manifest_version(manifest)
+    if version == 4:
+        from .decomposed import validate_manifest
+        validate_manifest(manifest)
+        return version
     if version == 3:
         _validate_v3_manifest(manifest)
         return version

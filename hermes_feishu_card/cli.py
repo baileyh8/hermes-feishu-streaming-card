@@ -452,14 +452,6 @@ def _run_setup(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser()
     try:
         route_settings = _resolve_route_settings(args, config_path)
-        update_hfc_env(
-            route_settings["env_path"],
-            {
-                "HERMES_FEISHU_CARD_PROFILE_ID": route_settings["profile_id"],
-                "HERMES_FEISHU_CARD_EVENT_URL": route_settings["event_url"],
-                "HERMES_DIR": str(Path(args.hermes_dir).expanduser()),
-            },
-        )
         created = _ensure_setup_config(config_path)
         selected_env_path = route_settings["env_path"]
         config = (
@@ -467,11 +459,30 @@ def _run_setup(args: argparse.Namespace) -> int:
             if selected_env_path != config_path.parent / ".env"
             else load_config(config_path)
         )
+        profiles = config.get("profiles")
+        if (profiles and getattr(args, "profile_id", None) is None
+                and route_settings["profile_id"] == "default" and "default" not in profiles):
+            # This selection validates setup only; events retain their own identity.
+            route_settings["profile_id"] = next(iter(profiles))
+            route_settings["profile_source"] = "config"
+        update_hfc_env(
+            route_settings["env_path"],
+            {
+                "HERMES_FEISHU_CARD_PROFILE_ID": (
+                    "" if profiles and route_settings["profile_source"] in {"config", "fallback_default"}
+                    else route_settings["profile_id"]
+                ),
+                "HERMES_FEISHU_CARD_EVENT_URL": route_settings["event_url"],
+                "HERMES_DIR": str(Path(args.hermes_dir).expanduser()),
+            },
+        )
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
     print(f"config: {'created' if created else 'existing'} {config_path}")
+    if profiles:
+        print("routing: shared sidecar; runtime profile comes from each Hermes event")
     detection = detect_hermes(args.hermes_dir)
     diagnostic_args = argparse.Namespace(
         hermes_dir=args.hermes_dir,
@@ -1495,6 +1506,7 @@ def _doctor_hermes_report(detection: HermesDetection) -> dict[str, Any]:
         "cron_hook_strategy": detection.cron_hook_strategy,
         "compatibility": detection.compatibility,
         "anchors": dict(detection.capabilities),
+        "anchor_locations": dict(detection.capability_locations),
         "reason": detection.reason,
         "suggested_root": (
             str(detection.suggested_root)
@@ -2060,6 +2072,26 @@ def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
+    from .install import decomposed
+    if detection.decomposed or decomposed.is_managed(detection.root):
+        plan = decomposed.plan(detection)
+        report = {"checked": True, "status": plan.state,
+                "manifest_exists": (detection.root / MANIFEST_NAME).exists(),
+                "manual_action_required": plan.state in {"refused", "stale_unpatched"},
+                "automatic_repair_available": plan.executable,
+                "message": "Decomposed ownership: " + plan.state}
+        if plan.state == "stale_unpatched":
+            accepted = decomposed.plan(detection, accept_hermes_upgrade=True)
+            if accepted.executable:
+                report["message"] = (
+                    "Hermes source changed and HFC hooks need reinstalling; an updater/autostash "
+                    "may have removed them. Review the upgrade, run the explicit repair command, "
+                    "then restart Gateway.")
+                report["repair_command"] = shlex.join([
+                    "hermes-feishu-card", "install", "--hermes-dir", str(detection.root),
+                    "--accept-hermes-upgrade", "--yes"])
+                report["restart_command"] = "hermes gateway start"
+        return report
     run_py = detection.run_py
     backup_path = _backup_path(run_py)
     manifest_path = _manifest_path(detection.root)
@@ -2299,7 +2331,12 @@ def _append_install_state_recommendation(
         )
         return
     code = "install_state_changed" if status == "changed" else "install_state_incomplete"
-    if install_state.get("automatic_repair_available"):
+    if install_state.get("repair_command"):
+        next_step = (
+            f"Run {install_state['repair_command']}, then "
+            f"{install_state.get('restart_command', 'hermes gateway start')}."
+        )
+    elif install_state.get("automatic_repair_available"):
         next_step = (
             "Run repair --hermes-dir PATH --yes to rebuild known-safe "
             "backup/manifest state, then rerun doctor."
@@ -2444,7 +2481,8 @@ def _format_hermes_detection(detection: HermesDetection) -> str:
     ]
     for capability, found in detection.capabilities.items():
         anchor_status = "found" if found else "missing"
-        lines.append(f"  {capability}: {anchor_status}")
+        locations = ", ".join(detection.capability_locations.get(capability, ()))
+        lines.append(f"  {capability}: {anchor_status}" + (f" ({locations})" if locations else ""))
     lines.append(f"reason: {detection.reason}")
     return "\n".join(lines)
 
@@ -3628,6 +3666,20 @@ def _run_install(args: argparse.Namespace) -> int:
     if fixed_tag_result is not None:
         return fixed_tag_result
 
+    if detection.decomposed:
+        from .install.decomposed import install as install_decomposed
+        try:
+            changed = install_decomposed(
+                detection, no_repair=bool(getattr(args, "no_repair", False)),
+                accept_hermes_upgrade=bool(getattr(args, "accept_hermes_upgrade", False)))
+        except (OSError, UnicodeError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print("install ok" if changed else "install ok (already installed)")
+        if changed:
+            print("gateway.restart_required: hermes gateway start")
+        return 0
+
     accept_hermes_upgrade = bool(
         getattr(args, "accept_hermes_upgrade", False)
     )
@@ -4193,6 +4245,11 @@ def _repair_action_message(action: str) -> str:
 
 
 def _restore(hermes_root: Path) -> None:
+    from .install import decomposed
+    detection = detect_hermes(hermes_root)
+    if detection.decomposed or decomposed.is_managed(hermes_root):
+        decomposed.restore(detection)
+        return
     run_py = hermes_root / "gateway" / "run.py"
     cron_py = hermes_root / "cron" / "scheduler.py"
     base_py = hermes_root / "gateway" / "platforms" / "base.py"

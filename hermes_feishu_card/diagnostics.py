@@ -317,6 +317,7 @@ def build_diagnostic_report(
         "cron_hook_strategy": detection.cron_hook_strategy,
         "compatibility": detection.compatibility,
         "anchors": dict(detection.capabilities),
+        "anchor_locations": dict(detection.capability_locations),
         "reason": detection.reason,
         "suggested_root": str(detection.suggested_root or ""),
         "suggestion_reason": detection.suggestion_reason,
@@ -563,6 +564,11 @@ def format_diagnostic_text(report: DiagnosticReport, explain: bool) -> str:
         exact_contract = hermes.get("exact_delivery_contract")
         if exact_contract:
             lines.append(f"- Exact delivery contract: {exact_contract}")
+        locations = _mapping(hermes.get("anchor_locations"))
+        for name, found in _mapping(hermes.get("anchors")).items():
+            paths = locations.get(name) or ()
+            suffix = " (" + ", ".join(paths) + ")" if paths else ""
+            lines.append(f"- Anchor {name}: {'found' if found else 'missing'}{suffix}")
     else:
         lines.append(f"- Hermes: {hermes_status}")
 

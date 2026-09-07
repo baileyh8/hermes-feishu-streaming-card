@@ -1168,13 +1168,13 @@ def test_install_docker_sh_uses_container_defaults_and_hermes_venv(tmp_path):
     doctor_cmd = (
         "hermes_feishu_card.cli doctor "
         f"--config {data_dir / 'config.yaml'} --hermes-dir {hermes_dir} "
-        f"--hermes-home {hermes_dir.parent} --profile-id default --explain"
+        f"--hermes-home {hermes_dir.parent} --explain"
     )
     setup_cmd = (
         f"hermes_feishu_card.cli setup --hermes-dir {hermes_dir} "
         f"--hermes-home {hermes_dir.parent} "
         f"--config {data_dir / 'config.yaml'} --env-file {env_file} "
-        "--profile-id default --event-url http://127.0.0.1:8765/events "
+        "--event-url http://127.0.0.1:8765/events "
         "--yes --skip-start"
     )
     assert doctor_cmd in log
@@ -1565,12 +1565,53 @@ printf 'normalized=%s|%s|%s|%s|%s|%s\n' \
   "${HERMES_FEISHU_CARD_EVENT_URL:-}" "${HFC_NO_REPAIR:-}" \
   >> "$FAKE_PYTHON_LOG"
 printf 'args=%s\n' "$*" >> "$FAKE_PYTHON_LOG"
+if [ "${1:-}" = "-c" ] && [ -n "${REAL_PYTHON:-}" ]; then
+  exec "$REAL_PYTHON" "$@"
+fi
 exit 0
 """,
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
     return path
+
+
+@pytest.mark.parametrize("script_name", ["install.sh", "install-docker.sh"])
+@pytest.mark.parametrize("inherited_profile", ["", "default", "ai-secretary"])
+def test_named_only_installers_use_config_credentials_without_pinning_profile(script_name, inherited_profile, tmp_path):
+    hermes = tmp_path / "hermes"
+    (hermes / "gateway").mkdir(parents=True)
+    (hermes / "gateway/run.py").write_text("# fixture\n")
+    runtime = make_argument_capture_python(hermes / "venv/bin/python")
+    config = tmp_path / "config.yaml"
+    config.write_text("profiles:\n  ai-secretary:\n    feishu:\n      app_id: fixture-app\n      app_secret: fixture-secret\n")
+    selected_env = tmp_path / ".env"
+    selected_env.write_text("")
+    env = dict(os.environ)
+    for name in ("FEISHU_APP_ID", "FEISHU_APP_SECRET", "HERMES_FEISHU_CARD_PROFILE_ID"):
+        env.pop(name, None)
+    env.update({"HERMES_DIR": str(hermes), "HFC_CONFIG": str(config), "HFC_ENV_FILE": str(selected_env),
+                "HFC_VERSION": "v4.4.1", "HFC_SKIP_START": "1", "HFC_NO_PROMPT": "1", "PYTHON": str(runtime),
+                "HFC_PYTHON": str(runtime), "REAL_PYTHON": sys.executable, "FAKE_PYTHON_LOG": str(tmp_path / "python.log")})
+    if inherited_profile:
+        env["HERMES_FEISHU_CARD_PROFILE_ID"] = inherited_profile
+    result = subprocess.run(["bash", script_name], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    log = (tmp_path / "python.log").read_text()
+    setup = next(line for line in log.splitlines() if line.startswith("args=-m hermes_feishu_card.cli setup "))
+    assert "--profile-id" not in setup
+    assert f"|v4.4.1|{inherited_profile}|" in log
+    assert "FEISHU_APP_SECRET=" not in selected_env.read_text()
+    assert "fixture-secret" not in result.stdout + result.stderr
+
+
+def test_powershell_preserves_implicit_profile_and_checks_config_credentials():
+    script = (ROOT / "install.ps1").read_text()
+    assert '$ProfileIdExplicit = $PSBoundParameters.ContainsKey("ProfileId")' in script
+    assert 'if ($ProfileIdExplicit)' in script
+    assert '$ProfileId = if ($ProfileId) { $ProfileId } else { "default" }' not in script
+    assert '_has_feishu_credentials(c,p)' in script
+    assert 'if ($LASTEXITCODE -eq 0) { return }' in script
 
 
 @pytest.mark.parametrize("script_name", ["install.sh", "install-docker.sh"])
@@ -1695,8 +1736,10 @@ def test_installers_resolve_profile_arguments_with_shared_precedence(
         "-m hermes_feishu_card.cli setup "
         f"--hermes-dir {hermes_dir} --hermes-home {hermes_dir.parent} "
         f"--config {config} --env-file {selected_env} "
-        f"--profile-id {profile} --event-url {event_url} --yes --skip-start"
     )
+    if source == "args":
+        setup += f"--profile-id {profile} "
+    setup += f"--event-url {event_url} --yes --skip-start"
     if no_repair == "1":
         setup += " --no-repair"
     elif script_name == "install.sh":

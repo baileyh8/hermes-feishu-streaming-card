@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.1
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.4.1](docs/release-notes-v4.4.1.md) | Hermes 0.21 facade 拆分安装兼容、话题后续回复、单进程多 profile、完整审批命令与可选思考代码块、实际 provider 页脚、CodeQL 更新 |
 | [v4.4.0](docs/release-notes-v4.4.0.md) | 基于新版 Hermes `COMMAND_REGISTRY` 的飞书原生能力中心、分类/详情/安全快捷命令与 KPI 可视化；支持 `/bg`、`/btw`、`/plan` 等新契约，并加入真实 backlog 指标和极端 Markdown 安全折叠 |
 | [v4.3.8](docs/release-notes-v4.3.8.md) | `setup` 能力就绪时默认启用开机常驻、不可用时明确 transient 风险；修复 batch clarify 下一题 sequence 竞态，并让远程 Feishu/Lark HTTP 请求遵循 proxy 环境变量而本机/私网继续绕过 |
 | [v4.3.7](docs/release-notes-v4.3.7.md) | 兼容 Hermes 2026-08-25 core 的 session-scoped delivery filters；安装器严格接受 `session_key=session_key` 新调用，同时保留旧调用并拒绝其他关键字形态 |
@@ -270,6 +271,14 @@ Hermes Gateway
 - V4.1 安全控制与排障：[docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## 贡献者
+
+### V4.4.1
+
+- [liooil](https://github.com/liooil)：[PR #257](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/257) 提供 Hermes facade 拆分适配实现；[Clarence-G](https://github.com/Clarence-G)：[PR #251](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/251) 提供话题后续投递、queue/redirect 与 cron 相关修复。原始代码提交和作者身份予以保留。
+- [mouyong](https://github.com/mouyong)：[#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83)、[#252](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/252)、[#253](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/253)、[#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258)、[#259](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/259) 的单进程 profile、话题和阅读体验反馈；[shiboyumm](https://github.com/shiboyumm)：[#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83) 最初的配置问题；[Boer2333](https://github.com/Boer2333)：[#250](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/250) 的 provider 展示需求。
+- [sp960817](https://github.com/sp960817)：[#254](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254)、[Kevin32623](https://github.com/Kevin32623)：[#255](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/255)、[shichenshuo-star](https://github.com/shichenshuo-star)：[#256](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/256) 的 Hermes 0.21 兼容性报告；[hnzwx](https://github.com/hnzwx) 与 [leavrcn](https://github.com/leavrcn)：[#254 的复现与兼容性审查](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254)；[micah928](https://github.com/micah928)：[#73](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/73) 的历史无卡片诊断证据，该环境仍待新版复测。
+- Dependabot 提供 [PR #247](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/247) 和 [PR #248](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/248) 的 CodeQL 依赖更新。
+- 历史署名补全：[lanx214](https://github.com/lanx214) 在 [Issue #240](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/240) 提供 Linux 复现（[V4.3.7](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.3.7)）；[Lite-G](https://github.com/Lite-G) 报告、复现、测试并实现 [PR #235](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/235) 的 Feishu edit fallback 修复（[V4.3.5](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.3.5)）；[lyp88997](https://github.com/lyp88997) 提供 toast-only `200673` 修复方向及跨环境更新观察（[V4.3.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.3.2)）。这些是此前版本的贡献，本轮恢复遗漏的历史署名。
 
 这里同时记录代码、PR 方案、Issue 复现和真实环境复测贡献。GitHub 的 [Contributors](https://github.com/baileyh8/hermes-feishu-streaming-card/graphs/contributors) 图按进入 Git 历史的 commit 统计；只提供 Issue、评论、日志或复测证据的贡献者可能不会出现在图中，但仍在这里保留署名。
 

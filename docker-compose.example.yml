@@ -4,7 +4,7 @@ x-hfc-environment: &hfc-environment
   HERMES_HOME: /opt
   HFC_CONFIG: /opt/data/config.yaml
   HFC_ENV_FILE: /opt/data/.env
-  HFC_VERSION: "${HFC_VERSION:-v4.4.0}"
+  HFC_VERSION: "${HFC_VERSION:-v4.4.1}"
   HFC_NO_PROMPT: "1"
   HERMES_FEISHU_CARD_PROFILE_ID: "${HERMES_FEISHU_CARD_PROFILE_ID:-default}"
   HERMES_FEISHU_CARD_EVENT_URL: http://sidecar:8765/events

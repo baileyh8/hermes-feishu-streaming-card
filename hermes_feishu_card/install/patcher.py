@@ -16,12 +16,20 @@ from .patch_descriptors import (
 )
 
 
+TURN_TIMING_PATCH_BEGIN = "# HERMES_FEISHU_CARD_TURN_TIMING_PATCH_BEGIN"
+TURN_TIMING_PATCH_END = "# HERMES_FEISHU_CARD_TURN_TIMING_PATCH_END"
 PATCH_BEGIN = "# HERMES_FEISHU_CARD_PATCH_BEGIN"
 PATCH_END = "# HERMES_FEISHU_CARD_PATCH_END"
 COMPLETE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN"
 COMPLETE_PATCH_END = "# HERMES_FEISHU_CARD_COMPLETE_PATCH_END"
 QUEUED_COMPLETE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_COMPLETE_PATCH_BEGIN"
 QUEUED_COMPLETE_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_COMPLETE_PATCH_END"
+QUEUED_FOLLOWUP_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FOLLOWUP_PATCH_BEGIN"
+QUEUED_FOLLOWUP_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FOLLOWUP_PATCH_END"
+QUEUED_FINAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_BEGIN"
+QUEUED_FINAL_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_END"
+REDIRECT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_REDIRECT_PATCH_BEGIN"
+REDIRECT_PATCH_END = "# HERMES_FEISHU_CARD_REDIRECT_PATCH_END"
 TOOL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_TOOL_PATCH_BEGIN"
 TOOL_PATCH_END = "# HERMES_FEISHU_CARD_TOOL_PATCH_END"
 STABLE_TOOL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_STABLE_TOOL_PATCH_BEGIN"
@@ -149,7 +157,9 @@ def apply_patch(
     content = _apply_start_patch(content, strategy=strategy)
     content = _apply_complete_patch(content, strategy=strategy)
     content = _apply_queued_complete_patch(content)
+    content = _apply_queued_followup_patch(content)
     if strategy == "gateway_run_013_plus":
+        content = _apply_redirect_patch(content)
         content = _apply_cron_patch(content)
         content = _apply_command_card_startup_patch(content)
         content = _apply_native_redelivery_patch(content)
@@ -157,6 +167,12 @@ def apply_patch(
         content = _apply_hfc_command_patch(content)
         content = _apply_platform_notice_patch(content)
         content = _apply_slash_confirm_patch(content)
+    return _apply_turn_callbacks(content, strategy=strategy)
+
+
+def _apply_turn_callbacks(content: str, *, strategy: str) -> str:
+    from .provider_route import apply_provider_route_patch
+    content = apply_provider_route_patch(content)
     content = _apply_stable_tool_lifecycle_patch(content)
     content = _apply_callback_patch(
         content,
@@ -295,13 +311,17 @@ def apply_base_patch(
     newline = _detect_newline(content)
     no_text_index, no_text_indent = no_text_location
     final_index, final_indent = final_location
-    no_text_hook = _render_exact_base_no_text_hook_block(no_text_indent, newline)
-    final_hook = _render_exact_base_final_delivery_hook_block(final_indent, newline)
+    no_text_renderer = (_render_decomposed_base_no_text_hook_block
+                        if _has_decomposed_base(tree) else _render_exact_base_no_text_hook_block)
+    no_text_hook = no_text_renderer(no_text_indent, newline)
+    final_renderer = (_render_decomposed_base_final_hook_block
+                      if _has_decomposed_base(tree) else _render_exact_base_final_delivery_hook_block)
+    final_hook = final_renderer(final_indent, newline)
 
     # Insert bottom-up so the earlier location is not shifted by the later
     # block. Both anchors are guaranteed to belong to the same exact pipeline.
-    lines = lines[:final_index] + final_hook + lines[final_index:]
-    lines = lines[:no_text_index] + no_text_hook + lines[no_text_index:]
+    for index, hook in sorted(((final_index, final_hook), (no_text_index, no_text_hook)), reverse=True):
+        lines[index:index] = hook
     return "".join(lines)
 
 
@@ -359,7 +379,9 @@ def _apply_start_patch(content: str, *, strategy: str) -> str:
 
 def _apply_complete_patch(content: str, *, strategy: str = "legacy_gateway_run") -> str:
     renderer = (
-        _render_complete_hook_block_with_reply_anchor
+        _render_decomposed_complete_hook_block
+        if _find_decomposed_completion_node(_parse_content(content)) is not None
+        else _render_complete_hook_block_with_reply_anchor
         if strategy == "gateway_run_013_plus"
         else _render_complete_hook_block
     )
@@ -426,6 +448,140 @@ def _apply_queued_complete_patch(content: str) -> str:
         indent = _leading_whitespace(_strip_line_ending(line))
         newline = _line_ending(line) or _detect_newline(content)
         hook = _render_queued_complete_hook_block(indent, newline)
+        return "".join(lines[:index] + hook + lines[index:])
+
+    current_target = "if _intentional_silence:"
+    for index, line in enumerate(lines):
+        if _strip_line_ending(line).strip() not in {
+            current_target,
+            "if self._is_intentional_silence(_delivery_result, first_response):",
+        }:
+            continue
+        lookback = lines[max(0, index - 48) : index]
+        if not any("first_response = _delivery_result.get(" in item for item in lookback):
+            continue
+        if not any("_delivery_result = response if isinstance(response, dict)" in item for item in lookback):
+            continue
+        indent = _leading_whitespace(_strip_line_ending(line))
+        newline = _line_ending(line) or _detect_newline(content)
+        hook = _render_queued_complete_hook_block(indent, newline)
+        return "".join(lines[:index] + hook + lines[index:])
+    return content
+
+
+def _apply_queued_followup_patch(content: str) -> str:
+    content = _apply_queued_final_patch(content)
+    owned_block = _find_simple_marker_block(
+        content,
+        QUEUED_FOLLOWUP_PATCH_BEGIN,
+        QUEUED_FOLLOWUP_PATCH_END,
+        "queued follow-up patch markers",
+    )
+    if owned_block is not None:
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_queued_followup_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
+
+    tree = _parse_content(content)
+    target = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target_node = node.targets[0]
+        if isinstance(target_node, ast.Name) and target_node.id == "followup_result":
+            target = node
+            break
+    if target is None or target.lineno is None or target.end_lineno is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    insert_at = target.lineno - 1
+    indent = _leading_whitespace(_strip_line_ending(lines[insert_at]))
+    newline = _line_ending(lines[insert_at]) or _detect_newline(content)
+    hook = _render_queued_followup_hook_block(indent, newline)
+    return "".join(lines[:insert_at] + hook + lines[insert_at:])
+
+
+def _apply_queued_final_patch(content: str) -> str:
+    owned = _find_simple_marker_block(content, QUEUED_FINAL_PATCH_BEGIN,
+                                      QUEUED_FINAL_PATCH_END, "queued final patch markers")
+    lines = content.splitlines(keepends=True)
+    if owned is not None:
+        begin, end = owned
+        indent = _leading_whitespace(_strip_line_ending(lines[begin]))
+        newline = _line_ending(lines[begin]) or _detect_newline(content)
+        return "".join(lines[:begin] + _render_queued_final_hook_block(indent, newline) + lines[end + 1:])
+    for node in ast.walk(_parse_content(content)):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "followup_result"
+                and isinstance(node.value, ast.Await) and isinstance(node.value.value, ast.Call)
+                and isinstance(node.value.value.func, ast.Attribute)
+                and node.value.value.func.attr == "_run_agent"):
+            indent = _leading_whitespace(_strip_line_ending(lines[node.lineno - 1]))
+            newline = _line_ending(lines[node.lineno - 1]) or _detect_newline(content)
+            return "".join(lines[:node.end_lineno] + _render_queued_final_hook_block(indent, newline) + lines[node.end_lineno:])
+    return content
+
+
+def _apply_redirect_patch(content: str) -> str:
+    owned_block = _find_simple_marker_block(
+        content,
+        REDIRECT_PATCH_BEGIN,
+        REDIRECT_PATCH_END,
+        "redirect patch markers",
+    )
+    if owned_block is not None:
+        lines = content.splitlines(keepends=True)
+        begin_index, end_index = owned_block
+        indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
+        newline = _line_ending(lines[begin_index]) or _detect_newline(content)
+        expected = _render_redirect_hook_block(indent, newline)
+        if lines[begin_index : end_index + 1] == expected:
+            return content
+        return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
+
+    lines = content.splitlines(keepends=True)
+    # Hermes 0.21 moved redirect into its own outcome-returning helper.
+    for owner in ast.walk(_parse_content(content)):
+        if not isinstance(owner, ast.AsyncFunctionDef) or owner.name != "_resolve_busy_steer_or_redirect":
+            continue
+        proven_redirect = any(
+            isinstance(node, ast.Assign) and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "redirected"
+            and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "_try_agent_verb" and len(node.value.args) == 4
+            and isinstance(node.value.args[0], ast.Name) and node.value.args[0].id == "running_agent"
+            and isinstance(node.value.args[1], ast.Constant) and node.value.args[1].value == "redirect"
+            for node in ast.walk(owner)
+        )
+        if not proven_redirect:
+            continue
+        targets = [node for node in owner.body if isinstance(node, ast.Return)
+                   and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute)
+                   and node.value.func.attr == "_BusySteerOutcome"
+                   and any(kw.arg == "redirected" and isinstance(kw.value, ast.Name)
+                           and kw.value.id == "redirected" for kw in node.value.keywords)]
+        if len(targets) == 1:
+            index = targets[0].lineno - 1
+            indent = _leading_whitespace(_strip_line_ending(lines[index]))
+            newline = _line_ending(lines[index]) or _detect_newline(content)
+            return "".join(lines[:index] + _render_redirect_hook_block(indent, newline) + lines[index:])
+    for index, line in enumerate(lines):
+        stripped = _strip_line_ending(line).strip()
+        if stripped not in {"if not steered and not redirected:", "if not redirected:"}:
+            continue
+        lookback = lines[max(0, index - 80) : index]
+        if not any("running_agent.redirect(" in item for item in lookback):
+            continue
+        if not any("redirected = False" in item for item in lookback):
+            continue
+        indent = _leading_whitespace(_strip_line_ending(line))
+        newline = _line_ending(line) or _detect_newline(content)
+        hook = _render_redirect_hook_block(indent, newline)
         return "".join(lines[:index] + hook + lines[index:])
     return content
 
@@ -494,7 +650,7 @@ def _apply_command_card_adapter_patch(content: str) -> str:
     if end is None:
         end = len(lines)
     for index in range(start, min(end, len(lines))):
-        if _strip_line_ending(lines[index]).strip() != "source = event.source":
+        if _strip_line_ending(lines[index]).strip() not in {"source = event.source", "event, source, is_internal = _admitted"}:
             continue
         indent = _leading_whitespace(_strip_line_ending(lines[index]))
         newline = _line_ending(lines[index]) or _detect_newline(content)
@@ -522,10 +678,12 @@ def _apply_command_card_startup_patch(content: str) -> str:
             return _apply_command_card_startup_patch(stripped)
 
     tree = _parse_content(content)
-    func = _find_gateway_runner_method(tree, "start")
+    func = (_find_gateway_runner_method(tree, "_start_finish_wiring")
+            or _find_gateway_runner_method(tree, "start"))
     if func is None:
         return content
-    anchor = _find_redelivery_startup_call(func) or _find_recovered_watcher_drain(func)
+    anchor = (_find_startup_boot_send(func) or _find_redelivery_startup_call(func)
+              or _find_recovered_watcher_drain(func))
     if anchor is None or anchor.lineno is None:
         return content
 
@@ -555,7 +713,8 @@ def _apply_native_redelivery_patch(content: str) -> str:
         return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
 
     tree = _parse_content(content)
-    func = _find_gateway_runner_method(tree, "_redeliver_pending_obligations")
+    func = (_find_gateway_runner_method(tree, "_redeliver_claimed_obligations")
+            or _find_gateway_runner_method(tree, "_redeliver_pending_obligations"))
     if func is None:
         return content
     send = _find_redelivery_adapter_send(func)
@@ -640,6 +799,11 @@ def _apply_hfc_command_patch(content: str) -> str:
 
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
+    from .provider_route import remove_provider_route_patch
+    content = remove_provider_route_patch(content)
+    content = _remove_simple_owned_patch(
+        content, TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END,
+        _render_turn_timing_hook_block, "turn timing patch markers")
     content = _remove_cron_patch(content)
     content = _remove_simple_owned_patch(
         content,
@@ -734,6 +898,27 @@ def remove_patch(content: str) -> str:
     )
     content = _remove_simple_owned_patch(
         content,
+        QUEUED_FINAL_PATCH_BEGIN,
+        QUEUED_FINAL_PATCH_END,
+        _render_queued_final_hook_block,
+        "queued final patch markers",
+    )
+    content = _remove_simple_owned_patch(
+        content,
+        QUEUED_FOLLOWUP_PATCH_BEGIN,
+        QUEUED_FOLLOWUP_PATCH_END,
+        _render_queued_followup_hook_block,
+        "queued follow-up patch markers",
+    )
+    content = _remove_simple_owned_patch(
+        content,
+        REDIRECT_PATCH_BEGIN,
+        REDIRECT_PATCH_END,
+        _render_redirect_hook_block,
+        "redirect patch markers",
+    )
+    content = _remove_simple_owned_patch(
+        content,
         QUEUED_COMPLETE_PATCH_BEGIN,
         QUEUED_COMPLETE_PATCH_END,
         _render_queued_complete_hook_block,
@@ -774,6 +959,7 @@ def remove_patch_lenient(content: str) -> str:
         content = "".join(lines[:begin_index] + lines[end_index + 1 :])
 
     for begin_marker, end_marker in (
+        (TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END),
         (STABLE_TOOL_PATCH_BEGIN, STABLE_TOOL_PATCH_END),
         (TOOL_PATCH_BEGIN, TOOL_PATCH_END),
         (ANSWER_DELTA_PATCH_BEGIN, ANSWER_DELTA_PATCH_END),
@@ -1018,6 +1204,9 @@ def _find_completion_return_location(tree, lines):
     if handler is None:
         return None
 
+    decomposed = _find_decomposed_completion_node(tree)
+    if decomposed is not None:
+        handler = decomposed
     already_sent_location = _find_already_sent_early_return_location(handler, lines)
     if already_sent_location is not None:
         return already_sent_location
@@ -1198,14 +1387,20 @@ def _find_turn_runner_callback_body_location(
     if turn_runner is None:
         return None
 
-    if callback_name == "_status_callback_sync":
+    direct_context = any(isinstance(n, ast.FunctionDef) and n.name == callback_name
+                         and _binds_turn_context(n) for n in turn_runner.body)
+    if direct_context:
         candidates = [
             node
             for node in turn_runner.body
             if isinstance(node, ast.FunctionDef) and node.name == callback_name
         ]
     else:
-        run_sync = _find_direct_class_function_node(turn_runner, "run_sync")
+        run_sync = _find_direct_class_function_node(turn_runner, "_setup_stream_consumer")
+        if run_sync is not None:
+            callback_name = {"_stream_delta_cb": "stream_delta_cb", "_interim_assistant_cb": "interim_assistant_cb"}.get(callback_name, callback_name)
+        else:
+            run_sync = _find_direct_class_function_node(turn_runner, "run_sync")
         if run_sync is None or not _binds_turn_context(run_sync):
             return None
         candidates = [
@@ -1219,7 +1414,7 @@ def _find_turn_runner_callback_body_location(
         for node in candidates
         if set(required_callback_args).issubset(_function_argument_names(node))
     ]
-    if callback_name == "_status_callback_sync":
+    if direct_context:
         candidates = [node for node in candidates if _binds_turn_context(node)]
     if required_callback_calls:
         preferred = [
@@ -1231,9 +1426,9 @@ def _find_turn_runner_callback_body_location(
             candidates = preferred
         elif len(candidates) != 1:
             return None
-    if not candidates:
+    if len(candidates) != 1:
         return None
-    if callback_name == "_status_callback_sync":
+    if direct_context:
         return _turn_context_binding_location(candidates[0], lines)
     return _body_location(candidates[0], lines)
 
@@ -1259,7 +1454,8 @@ def _find_turn_runner_stable_tool_lifecycle_location(tree, lines):
     turn_runner = _find_turn_runner_node(tree)
     if turn_runner is None:
         return None
-    run_sync = _find_direct_class_function_node(turn_runner, "run_sync")
+    run_sync = (_find_direct_class_function_node(turn_runner, "_wire_turn_agent_callbacks")
+                or _find_direct_class_function_node(turn_runner, "run_sync"))
     if run_sync is None or not _binds_turn_context(run_sync):
         return None
     if "agent" not in _function_scope_names(run_sync):
@@ -1590,6 +1786,7 @@ def _find_owned_complete_block(content: str):
     )
     actual = lines[begin_index : end_index + 1]
     if actual not in (
+        _render_decomposed_complete_hook_block(indent, newline),
         expected_with_anchor,
         expected,
         v400,
@@ -1750,7 +1947,7 @@ def _find_async_function(tree, name: str):
 
 def _find_gateway_runner_method(tree, name: str):
     for node in tree.body:
-        if not isinstance(node, ast.ClassDef) or node.name != "GatewayRunner":
+        if not isinstance(node, ast.ClassDef) or node.name not in {"GatewayRunner", "GatewayStartupMixin"}:
             continue
         for child in node.body:
             if isinstance(child, ast.AsyncFunctionDef) and child.name == name:
@@ -1768,6 +1965,8 @@ def _parse_exact_base_content(content: str):
 
 def _find_exact_base_patch_locations(tree, lines):
     """Return the two insertion locations after validating Hermes' pipeline."""
+    if _has_decomposed_base(tree):
+        return _find_decomposed_base_patch_locations(tree, lines)
     method = _find_exact_base_process_method(tree)
     method_nodes = list(ast.walk(method))
 
@@ -2373,6 +2572,10 @@ def _find_simple_owned_patch(
     newline = _line_ending(lines[begin_index]) or _detect_newline(content)
     expected = renderer(indent, newline)
     expected_blocks = [expected]
+    if renderer is _render_approval_hook_block:
+        previous_context = _render_turn_context_hook_block(renderer, indent, newline)
+        expected_blocks.append([line for line in previous_context
+                                if not line.strip().startswith('_approval_session_key = ctx.session_key')])
     if renderer is _render_command_card_adapter_hook_block:
         expected_blocks.append(_render_legacy_command_card_adapter_hook_block(indent, newline))
     if renderer in (
@@ -2432,8 +2635,6 @@ def _find_owned_exact_base_blocks(content: str, *, strict: bool):
     if no_text is None or final is None:
         raise ValueError("corrupt exact base patch markers")
 
-    if no_text[1] >= final[0]:
-        raise ValueError("corrupt exact base patch markers")
     if strict:
         lines = content.splitlines(keepends=True)
         no_text_indent = _leading_whitespace(
@@ -2442,14 +2643,14 @@ def _find_owned_exact_base_blocks(content: str, *, strict: bool):
         no_text_newline = _line_ending(lines[no_text[0]]) or _detect_newline(content)
         final_indent = _leading_whitespace(_strip_line_ending(lines[final[0]]))
         final_newline = _line_ending(lines[final[0]]) or _detect_newline(content)
-        if lines[no_text[0] : no_text[1] + 1] != _render_exact_base_no_text_hook_block(
-            no_text_indent,
-            no_text_newline,
+        if lines[no_text[0] : no_text[1] + 1] not in (
+            _render_exact_base_no_text_hook_block(no_text_indent, no_text_newline),
+            _render_decomposed_base_no_text_hook_block(no_text_indent, no_text_newline),
         ):
             raise ValueError("corrupt exact base patch markers")
-        if lines[final[0] : final[1] + 1] != _render_exact_base_final_delivery_hook_block(
-            final_indent,
-            final_newline,
+        if lines[final[0] : final[1] + 1] not in (
+            _render_exact_base_final_delivery_hook_block(final_indent, final_newline),
+            _render_decomposed_base_final_hook_block(final_indent, final_newline),
         ):
             raise ValueError("corrupt exact base patch markers")
     return no_text, final
@@ -2723,6 +2924,16 @@ def _render_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"max_tokens\": agent_result.get(\"context_length\", 0),{newline}",
         f"{deeper_indent}}},{newline}",
         f"{inner_indent}}}{newline}",
+        f"{inner_indent}if agent_result.get(\"_hfc_queued_final_attempted\") is True and agent_result.get(\"_hfc_queued_final_delivered\") is not True:{newline}",
+        # The outer handler still owns the original turn. A failed queued
+        # final must fall back with its complete response, including media,
+        # rather than completing that old, already-terminal card again.
+        f"{deeper_indent}return response{newline}",
+        f"{inner_indent}if agent_result.get(\"_hfc_queued_final_delivered\") is True:{newline}",
+        f"{deeper_indent}_hfc_queued_preview = _hfc_build_event(\"message.completed\", _hfc_completed_locals, preview=True){newline}",
+        f"{deeper_indent}if _hfc_queued_preview and _hfc_queued_preview.get(\"data\", {{}}).get(\"native_delivery\") == \"required\":{newline}",
+        f"{deepest_indent}return _hfc_media_only(response){newline}",
+        f"{deeper_indent}return None{newline}",
         f"{inner_indent}_hfc_exact_staged = False{newline}",
         f"{inner_indent}if _hfc_can_stage_exact(_hfc_completed_locals):{newline}",
         f"{deeper_indent}_hfc_exact_staged = await _hfc_stage_exact(_hfc_completed_locals){newline}",
@@ -2904,8 +3115,13 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
             f"import native_media_only_response as _hfc_media_only{newline}"
         ),
         f"{inner_indent}if first_response and not _already_streamed:{newline}",
+        f"{deeper_indent}_hfc_turn_ctx = locals().get(\"turn_ctx\"){newline}",
+        f"{deeper_indent}_hfc_source = locals().get(\"source\") or getattr(_hfc_turn_ctx, \"source\", None){newline}",
+        f"{deeper_indent}_hfc_message_id = locals().get(\"event_message_id\") or getattr(_hfc_turn_ctx, \"event_message_id\", None){newline}",
         f"{deeper_indent}_hfc_completed_locals = {{{newline}",
         f"{deeper_indent}    **locals(),{newline}",
+        f"{deeper_indent}    \"source\": _hfc_source,{newline}",
+        f"{deeper_indent}    \"message_id\": _hfc_message_id,{newline}",
         f"{deeper_indent}    \"answer\": first_response,{newline}",
         f"{deeper_indent}    \"duration\": result.get(\"duration\", 0.0) if isinstance(result, dict) else 0.0,{newline}",
         f"{deeper_indent}    \"model\": result.get(\"model\", \"\") if isinstance(result, dict) else \"\",{newline}",
@@ -2926,13 +3142,103 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}    _hfc_attachments = _hfc_completed_data.get(\"attachments\", []){newline}",
         f"{deeper_indent}    _hfc_native_delivery = _hfc_completed_data.get(\"native_delivery\", \"required\" if _hfc_attachments else \"allowed\"){newline}",
         f"{deeper_indent}_hfc_card_delivered = await _hfc_emit_async(_hfc_completed_locals, event_name=\"message.completed\"){newline}",
-        f"{deeper_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
+        f"{deeper_indent}_hfc_platform = getattr(getattr(_hfc_source, \"platform\", None), \"value\", getattr(_hfc_source, \"platform\", None)){newline}",
         f"{deeper_indent}if str(_hfc_platform).lower() == \"feishu\" and _hfc_card_delivered and _hfc_native_delivery == \"required\":{newline}",
         f"{deeper_indent}    first_response = _hfc_media_only(first_response){newline}",
         f"{deeper_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery):{newline}",
         f"{deeper_indent}    _already_streamed = True{newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{QUEUED_COMPLETE_PATCH_END}{newline}",
+    ]
+
+
+def _render_queued_followup_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    deepest_indent = _child_indent(deeper_indent)
+    return [
+        f"{indent}{QUEUED_FOLLOWUP_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals_async as _hfc_emit_async{newline}"
+        ),
+        f"{inner_indent}if pending_event is not None:{newline}",
+        f"{deeper_indent}_hfc_turn_ctx = locals().get(\"turn_ctx\"){newline}",
+        f"{deeper_indent}_hfc_followup_message_id = str(getattr(pending_event, \"message_id\", \"\") or \"\"){newline}",
+        f"{deeper_indent}_hfc_original_message_id = str(locals().get(\"event_message_id\") or getattr(_hfc_turn_ctx, \"event_message_id\", None) or \"\"){newline}",
+        f"{deeper_indent}_hfc_was_interrupted = bool(locals().get(\"was_interrupted\") or (result.get(\"interrupted\") if isinstance(result, dict) else False)){newline}",
+        f"{deeper_indent}if _hfc_was_interrupted and _hfc_original_message_id:{newline}",
+        (
+            f"{deepest_indent}await _hfc_emit_async({{"
+            f"\"source\": source, \"chat_id\": getattr(source, \"chat_id\", None), "
+            f"\"message_id\": _hfc_original_message_id, \"error\": \"用户已打断当前任务\"}}, event_name=\"message.failed\"){newline}"
+        ),
+        f"{deeper_indent}if _hfc_followup_message_id:{newline}",
+        f"{deepest_indent}from copy import copy as _hfc_copy{newline}",
+        f"{deepest_indent}next_source = _hfc_copy(next_source){newline}",
+        (
+            f"{deepest_indent}await _hfc_emit_async({{"
+            f"\"source\": next_source, \"event\": pending_event, \"message\": pending_event, "
+            f"\"chat_id\": getattr(next_source, \"chat_id\", None), "
+            f"\"message_id\": _hfc_followup_message_id, "
+            f"\"reply_to_message_id\": getattr(pending_event, \"reply_to_message_id\", \"\") or _hfc_followup_message_id"
+            f"}}, event_name=\"message.started\"){newline}"
+        ),
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{QUEUED_FOLLOWUP_PATCH_END}{newline}",
+    ]
+
+
+def _render_queued_final_hook_block(indent: str, newline: str):
+    inner = _child_indent(indent)
+    deeper = _child_indent(inner)
+    return [
+        f"{indent}{QUEUED_FINAL_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import emit_from_hermes_locals_async as _hfc_emit_async{newline}",
+        f"{inner}if pending_event is not None and isinstance(followup_result, dict) and not followup_result.get(\"_hfc_queued_final_delivered\") and not followup_result.get(\"_hfc_queued_final_attempted\"):{newline}",
+        f"{deeper}followup_result = {{**followup_result, \"_hfc_queued_final_attempted\": True}}{newline}",
+        f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": followup_result.get(\"final_response\", \"\"), \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result}}{newline}",
+        f"{deeper}_hfc_final_event_name = \"message.failed\" if followup_result.get(\"failed\") or followup_result.get(\"interrupted\") else \"message.completed\"{newline}",
+        f"{deeper}if await _hfc_emit_async(_hfc_final_locals, event_name=_hfc_final_event_name):{newline}",
+        f"{deeper}    followup_result = {{**followup_result, \"_hfc_queued_final_delivered\": True}}{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{QUEUED_FINAL_PATCH_END}{newline}",
+    ]
+
+
+def _render_redirect_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    deepest_indent = _child_indent(deeper_indent)
+    return [
+        f"{indent}{REDIRECT_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals_async as _hfc_emit_async{newline}"
+        ),
+        f"{inner_indent}if bool(locals().get(\"redirected\")):{newline}",
+        f"{deeper_indent}_hfc_redirect_message_id = str(getattr(event, \"message_id\", \"\") or \"\"){newline}",
+        f"{deeper_indent}from hermes_feishu_card.hook_runtime import redirect_turn_id_for_agent as _hfc_redirect_turn{newline}",
+        f"{deeper_indent}_hfc_redirect_from_turn_id = _hfc_redirect_turn(locals().get(\"running_agent\"), event.source){newline}",
+        # Unknown callback ownership must retain the current card. Emitting a
+        # fresh started event would abandon it and strand its future callbacks.
+        f"{deeper_indent}if _hfc_redirect_message_id and _hfc_redirect_from_turn_id:{newline}",
+        f"{deepest_indent}from copy import copy as _hfc_copy{newline}",
+        f"{deepest_indent}_hfc_redirect_source = _hfc_copy(event.source){newline}",
+        (
+            f"{deepest_indent}await _hfc_emit_async({{"
+            f"\"source\": _hfc_redirect_source, \"event\": event, \"message\": event, "
+            f"\"chat_id\": getattr(event.source, \"chat_id\", None), "
+            f"\"message_id\": _hfc_redirect_message_id, "
+            f"\"reply_to_message_id\": getattr(event, \"reply_to_message_id\", \"\") or _hfc_redirect_message_id, "
+            f"\"redirect_from_turn_id\": _hfc_redirect_from_turn_id, "
+            f"\"redirect_followup\": True}}, event_name=\"message.started\"){newline}"
+        ),
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{REDIRECT_PATCH_END}{newline}",
     ]
 
 
@@ -3018,6 +3324,7 @@ def _render_turn_context_hook_block(renderer, indent: str, newline: str):
     """Adapt a legacy closure hook to Hermes' ``TurnRunner`` context seam."""
     block = renderer(indent, newline)
     replacements = (
+        ("_hfc_bind_agent_turn(agent, source)", "_hfc_bind_agent_turn(agent, _hfc_turn_ctx.source)"),
         ("_run_still_current()", "_hfc_turn_ctx._run_still_current()"),
         ('"source": source,', '"source": _hfc_turn_ctx.source,'),
         (
@@ -3045,6 +3352,8 @@ def _render_turn_context_hook_block(renderer, indent: str, newline: str):
             line = line.replace(old, new)
         adapted.append(line)
     adapted.insert(1, f"{indent}_hfc_turn_ctx = ctx{newline}")
+    if renderer is _render_approval_hook_block:
+        adapted.insert(2, f"{indent}_approval_session_key = ctx.session_key or \"\"{newline}")
     return adapted
 
 
@@ -3105,6 +3414,8 @@ def _render_stable_tool_lifecycle_hook_block(indent: str, newline: str):
         f"{indent}_hfc_stable_tool_callbacks_available = [False]{newline}",
         f"{indent}_hfc_pending_tool_previews = {{}}{newline}",
         f"{indent}try:{newline}",
+        f"{inner_indent}from hermes_feishu_card.hook_runtime import bind_agent_turn_identity as _hfc_bind_agent_turn{newline}",
+        f"{inner_indent}_hfc_bind_agent_turn(agent, source){newline}",
         (
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import emit_from_hermes_locals_threadsafe as _hfc_emit_stable_threadsafe{newline}"
@@ -3673,3 +3984,220 @@ HYBRID_PATCH_REGISTRY = PatchDescriptorRegistry(
     descriptors=HYBRID_PATCH_DESCRIPTORS,
     required_groups=HYBRID_PATCH_GROUPS,
 )
+
+
+# September 2026 facade layout. Keep this separate from the fixed-tag Hybrid
+# descriptor registry: source layout is not evidence of native hook support.
+DECOMPOSED_GATEWAY_TARGETS = (
+    "gateway/run_turn.py", "gateway/run_turn_runner.py", "gateway/run_inbound.py",
+    "gateway/run_busy.py", "gateway/run_startup.py", "gateway/run_notifications.py",
+)
+DECOMPOSED_TARGETS = (*DECOMPOSED_GATEWAY_TARGETS,
+                      "cron/scheduler_delivery.py", "gateway/platforms/base.py")
+
+
+def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_013_plus") -> str:
+    """Render one routed legacy fragment; never infer an integration mode."""
+    if target not in ("gateway/run.py", *DECOMPOSED_GATEWAY_TARGETS):
+        raise ValueError("unknown Gateway patch target")
+    tree = _parse_content(content)
+    if _find_handler_node(tree) is not None:
+        content = _apply_start_patch(content, strategy=strategy)
+        content = _apply_complete_patch(content, strategy=strategy)
+        content = _apply_turn_timing_patch(content)
+    content = _apply_queued_complete_patch(content)
+    content = _apply_queued_followup_patch(content)
+    content = _apply_redirect_patch(content)
+    for apply in (_apply_command_card_adapter_patch, _apply_hfc_command_patch,
+                  _apply_slash_confirm_patch, _apply_command_card_startup_patch,
+                  _apply_native_redelivery_patch, _apply_platform_notice_patch):
+        content = apply(content)
+    return _apply_turn_callbacks(content, strategy=strategy)
+
+
+def _find_startup_boot_send(func):
+    if func.name != "_start_finish_wiring":
+        return None
+    return next((node for node in func.body if isinstance(node, ast.Expr)
+                 and isinstance(node.value, ast.Await)
+                 and isinstance(node.value.value, ast.Call)
+                 and _same_expression(node.value.value.func, "self._await_startup_boot_sends")), None)
+
+
+def _find_decomposed_completion_node(tree):
+    handler = _find_handler_node(tree)
+    owners = [node for node in tree.body if isinstance(node, ast.ClassDef)
+              and handler in node.body]
+    if handler is None or len(owners) != 1:
+        return None
+    methods = []
+    for name, parameters in (
+        ("_hmwa_deliver_turn_response", ("self", "event", "source", "session_entry", "session_key",
+                                        "run_generation", "agent_result", "agent_messages", "response",
+                                        "_footer_line", "_intentional_silence")),
+        ("_hmwa_post_turn_hooks", ("self", "hook_ctx", "agent_result", "response")),
+    ):
+        candidates = [node for node in owners[0].body
+                      if isinstance(node, ast.AsyncFunctionDef) and node.name == name]
+        if len(candidates) != 1:
+            return None
+        args = candidates[0].args
+        if (tuple(arg.arg for arg in (*args.posonlyargs, *args.args)) != parameters
+                or args.kwonlyargs or args.vararg is not None or args.kwarg is not None):
+            return None
+        methods.append(candidates[0])
+    delivery, post = methods
+    # Both seams must actually be called by the handler, with the same result
+    # and response; a facade import or a similarly named dead method is not enough.
+    expected_return = ast.parse('return await self._hmwa_deliver_turn_response(event, source, session_entry, session_key, run_generation, agent_result, agent_messages, response, _footer_line, _intentional_silence)').body[0]
+    expected_post = ast.parse('await self._hmwa_post_turn_hooks(hook_ctx, agent_result, response)').body[0]
+    same = lambda a, b: ast.dump(a) == ast.dump(b)
+    returns = [n for n in ast.walk(handler) if same(n, expected_return)]
+    posts = [n for n in ast.walk(handler) if same(n, expected_post)]
+    emits = [n for n in ast.walk(post) if isinstance(n, ast.Await)
+             and isinstance(n.value, ast.Call)
+             and _same_expression(n.value.func, 'self.hooks.emit')
+             and n.value.args and _same_expression(n.value.args[0], '"agent:end"')]
+    if len(returns) != 1 or len(posts) != 1 or len(emits) != 1 or posts[0].lineno >= returns[0].lineno:
+        return None
+    return delivery
+
+
+def _render_decomposed_complete_hook_block(indent, newline):
+    # Timing is copied from the caller without mutating its original result.
+    return [line.replace('"duration": _response_time,', '"duration": agent_result.get("_hfc_turn_seconds"),')
+            for line in _render_complete_hook_block_with_reply_anchor(indent, newline)]
+
+
+def _has_decomposed_base(tree):
+    return any(isinstance(c, ast.ClassDef) and c.name == "BasePlatformAdapter"
+               and any(isinstance(n, ast.AsyncFunctionDef) and n.name == "_send_final_text" for n in c.body)
+               for c in tree.body)
+
+
+def _find_decomposed_base_patch_locations(tree, lines):
+    """Verify the extracted methods AND their exact call/argument boundaries."""
+    error = "could not find safe BasePlatformAdapter contract"
+    process = _find_exact_base_process_method(tree)
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "BasePlatformAdapter")
+    def method(name):
+        matches = [n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == name]
+        if len(matches) != 1:
+            raise ValueError(error)
+        return matches[0]
+    extract, send, record, finish = (method(n) for n in (
+        "_extract_response_content", "_send_final_text", "_record_delivery_obligation", "_finalize_delivery_obligation"))
+    # Positional calls are only safe when the callee binds the same values.
+    # Matching names somewhere in the body does not prove that boundary.
+    for node, positional, keyword_only in (
+        (process, ("self", "event", "session_key"), ()),
+        (extract, ("self", "response", "event", "session_key"), ("is_ephemeral_response",)),
+        (send, ("self", "event", "session_key", "text_content", "metadata",
+                "is_ephemeral_response", "ephemeral_ttl", "record_delivery"), ()),
+        (record, ("self", "event", "session_key", "text_content", "delivery_adapter",
+                  "is_ephemeral_response"), ()),
+        (finish, ("self", "obligation_id", "result", "event", "delivery_adapter"), ()),
+    ):
+        args = node.args
+        if (tuple(a.arg for a in (*args.posonlyargs, *args.args)) != positional
+                or tuple(a.arg for a in args.kwonlyargs) != keyword_only
+                or args.vararg is not None or args.kwarg is not None):
+            raise ValueError(error)
+    def exact(scope, source):
+        expected = ast.parse(source).body[0]
+        return _unique_exact_base_node(ast.walk(scope), lambda n: ast.dump(n) == ast.dump(expected))
+    def ordered(nodes):
+        if any(a.lineno >= b.lineno for a, b in zip(nodes, nodes[1:])):
+            raise ValueError(error)
+    extracted = exact(process, 'extracted = await self._extract_response_content(response, event, session_key, is_ephemeral_response=is_ephemeral_response)')
+    assigned = exact(process, 'text_content, media_files = extracted.text_content, extracted.media_files')
+    metadata = exact(process, '_final_thread_metadata = _mark_notify_metadata(_thread_metadata)')
+    tts_default = exact(process, '_tts_caption_delivered = False')
+    guard = _unique_exact_base_node(ast.walk(process), lambda n: isinstance(n, ast.If) and _same_expression(n.test, 'text_content and not _tts_caption_delivered'))
+    delegated = exact(guard, 'await self._send_final_text(event, session_key, text_content, _final_thread_metadata, is_ephemeral_response, _ephemeral_ttl, _record_delivery)')
+    if guard.body != [delegated]:
+        raise ValueError(error)
+    attachments = exact(process, 'await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)')
+    ordered([extracted, assigned, metadata, tts_default, guard, attachments])
+    # All three stages must be siblings in the response branch.
+    branches = [n for n in ast.walk(process) if isinstance(n, ast.If)
+                and all(part in n.orelse for part in (extracted, assigned, metadata, tts_default, guard, attachments))]
+    if len(branches) != 1 or not _same_expression(branches[0].test, 'not response'):
+        raise ValueError(error)
+    em = exact(extract, 'media_files, response = self.extract_media(response)')
+    fm = _unique_exact_base_node(ast.walk(extract), _is_exact_media_filter_assignment)
+    ei = exact(extract, 'images, text_content = self.extract_images(response)')
+    strip = exact(extract, 'text_content = _strip_media_directives(text_content).strip()')
+    el = exact(extract, 'local_files, text_content = self.extract_local_files(text_content)')
+    fl = _unique_exact_base_node(ast.walk(extract), _is_exact_local_filter_assignment)
+    recovered = exact(extract, '_recovered = _strip_media_directives(response).strip()')
+    restored = exact(extract, 'text_content = _recovered')
+    result = exact(extract, 'return _ExtractedResponse(text_content=text_content, images=images, media_files=media_files, local_files=local_files, force_document_attachments=force_document, pre_extract=pre_extract)')
+    ordered([em, fm, ei, strip, el, fl, recovered, restored, result])
+    adapter = exact(send, 'delivery_adapter = self._final_delivery_adapter(event.source)')
+    ledger = exact(send, '_obligation_id = await self._record_delivery_obligation(event, session_key, text_content, delivery_adapter, is_ephemeral_response)')
+    final_send = exact(send, 'result = await delivery_adapter._send_with_retry(chat_id=event.source.chat_id, content=text_content, reply_to=_reply_anchor_for_event(event), metadata=metadata)')
+    delivered = exact(send, 'record_delivery(result)')
+    finalized = exact(send, 'if _obligation_id is not None:\n    await self._finalize_delivery_obligation(_obligation_id, result, event, delivery_adapter)')
+    if not all(n in send.body for n in (adapter, ledger, final_send, delivered, finalized)):
+        raise ValueError(error)
+    ordered([adapter, ledger, final_send, delivered, finalized])
+    source = exact(record, 'source = event.source')
+    computed = exact(record, 'obligation_id = compute_obligation_id(session_key, str(getattr(event, "message_id", "") or ""), text_content)')
+    recorded = exact(record, 'await asyncio.to_thread(record_obligation, obligation_id=obligation_id, session_key=session_key, platform=str(getattr(source.platform, "value", source.platform)), chat_id=source.chat_id, thread_id=getattr(source, "thread_id", None), content=text_content, adapter_profile=getattr(delivery_adapter, "_owner_profile", None))')
+    attempting = exact(record, 'await asyncio.to_thread(mark_attempting, obligation_id)')
+    returned = exact(record, 'return obligation_id')
+    ordered([source, computed, recorded, attempting, returned])
+    tries = [n for n in record.body if isinstance(n, ast.Try) and all(x in n.body for x in (source, computed, recorded, attempting, returned))]
+    if len(tries) != 1:
+        raise ValueError(error)
+    exact(finish, 'if getattr(result, "success", False):\n    await asyncio.to_thread(mark_delivered, obligation_id)\n    return')
+    exact(finish, 'await asyncio.to_thread(mark_failed, obligation_id, error)')
+    return ((guard.lineno - 1, _line_indent(lines, guard.lineno - 1)),
+            (final_send.lineno - 1, _line_indent(lines, final_send.lineno - 1)))
+
+
+def _render_decomposed_base_final_hook_block(indent, newline):
+    block = _render_exact_base_final_delivery_hook_block(indent, newline)
+    block = [line.replace("prepare_exact_base_final_delivery as", "prepare_decomposed_base_final_delivery as")
+             .replace("_final_thread_metadata", "metadata") for line in block]
+    block.insert(2, f'{_child_indent(indent)}_reply_anchor = _reply_anchor_for_event(event){newline}')
+    return block
+
+
+def _render_decomposed_base_no_text_hook_block(indent, newline):
+    block = _render_exact_base_no_text_hook_block(indent, newline)
+    inner = _child_indent(indent)
+    block[2:2] = [
+        f'{inner}from hermes_feishu_card.hook_runtime import capture_decomposed_base_context as _hfc_capture_base{newline}',
+        f'{inner}images, local_files = extracted.images, extracted.local_files{newline}',
+        f'{inner}_hfc_capture_base(locals()){newline}',
+    ]
+    return block
+
+
+
+def _render_turn_timing_hook_block(indent, newline):
+    return [f"{indent}{TURN_TIMING_PATCH_BEGIN}{newline}",
+            f"{indent}try:{newline}",
+            f'{_child_indent(indent)}agent_result = {{**agent_result, "_hfc_turn_seconds": _turn_seconds}}{newline}',
+            *_render_hook_exception_handler(indent, newline),
+            f"{indent}{TURN_TIMING_PATCH_END}{newline}"]
+
+
+def _apply_turn_timing_patch(content):
+    content = _remove_simple_owned_patch(content, TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END,
+                                         _render_turn_timing_hook_block, "turn timing patch markers")
+    tree = _parse_content(content)
+    if _find_decomposed_completion_node(tree) is None:
+        return content
+    handler = _find_handler_node(tree)
+    if "_turn_seconds" not in _function_scope_names(handler):
+        raise ValueError("decomposed completion timing missing")
+    target = next(n for n in ast.walk(handler) if isinstance(n, ast.Return)
+                  and isinstance(n.value, ast.Await) and isinstance(n.value.value, ast.Call)
+                  and _same_expression(n.value.value.func, "self._hmwa_deliver_turn_response"))
+    lines = content.splitlines(keepends=True)
+    index = target.lineno - 1
+    lines[index:index] = _render_turn_timing_hook_block(_line_indent(lines, index), _detect_newline(content))
+    return "".join(lines)

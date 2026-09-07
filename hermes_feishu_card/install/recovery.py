@@ -276,6 +276,16 @@ def execute_recovery(
     accept_hermes_upgrade: bool = False,
 ) -> RecoveryResult:
     _require_secure_dirfd_transactions()
+    from . import decomposed
+    if detection.decomposed or decomposed.is_managed(detection.root):
+        fresh = decomposed.plan(detection, accept_hermes_upgrade=accept_hermes_upgrade)
+        if expected_fingerprint and fresh.fingerprint != expected_fingerprint:
+            raise RecoveryRefused("recovery evidence changed; rerun diagnosis")
+        if not fresh.executable:
+            raise RecoveryRefused("decomposed recovery is not executable")
+        decomposed.install(detection, expected_fingerprint=fresh.fingerprint,
+                           accept_hermes_upgrade=accept_hermes_upgrade)
+        return RecoveryResult("repaired", fresh, fresh.actions, None, "Owned hooks restored; Gateway restart required.")
     with _root_lock(detection.root):
         manifest = _read_manifest_evidence(detection.root / MANIFEST_NAME)
         if manifest is not None and manifest.get(_MANIFEST_ERROR) == "unsupported_version":
@@ -1873,6 +1883,9 @@ def plan_recovery(
     *,
     accept_hermes_upgrade: bool = False,
 ) -> RecoveryPlan:
+    from . import decomposed
+    if detection.decomposed or decomposed.is_managed(detection.root):
+        return decomposed.plan(detection, accept_hermes_upgrade=accept_hermes_upgrade)
     return _plan_from_evidence(
         detection,
         _read_evidence(detection),

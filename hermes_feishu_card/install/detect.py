@@ -57,6 +57,9 @@ class HermesDetection:
     base_required: bool = False
     compatibility: str = "unsupported"
     capabilities: dict[str, bool] = field(default_factory=dict)
+    capability_locations: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    gateway_files: tuple[str, ...] = ()
+    decomposed: bool = False
     suggested_root: Path | None = None
     suggestion_reason: str = ""
 
@@ -109,6 +112,10 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     run_py = hermes_root / "gateway" / "run.py"
     cron_py = hermes_root / "cron" / "scheduler.py"
     base_py = hermes_root / "gateway" / "platforms" / "base.py"
+    gateway_sources = {}
+    capability_locations = {}
+    decomposed = any((hermes_root / name).exists() for name in patcher.DECOMPOSED_GATEWAY_TARGETS)
+    cron_sources = {}
     version, version_error, version_source = _read_version(hermes_root / "VERSION")
     if version == "unknown" and version_error is None:
         package_version = _read_static_package_version(
@@ -154,6 +161,9 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             base_required=base_required,
             compatibility=compatibility,
             capabilities=capabilities or {},
+            capability_locations=capability_locations,
+            gateway_files=tuple(gateway_sources),
+            decomposed=decomposed,
             suggested_root=suggested_root,
             suggestion_reason=suggestion_reason,
         )
@@ -182,16 +192,35 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     if run_py_error is not None:
         return result(False, run_py_error)
 
+    gateway_sources["gateway/run.py"] = contents
+    for name in patcher.DECOMPOSED_GATEWAY_TARGETS:
+        path = hermes_root / name
+        if path.is_symlink():
+            return result(False, f"{name} must not be a symlink")
+        if path.exists():
+            source, error = _read_text(path, name)
+            if error:
+                return result(False, error)
+            gateway_sources[name] = source
+
     cron_contents = ""
     cron_error = None
-    if cron_py.exists():
-        if cron_py.is_symlink():
-            cron_error = "cron/scheduler.py must not be a symlink"
-        else:
-            cron_contents, cron_error = _read_text(cron_py, "cron/scheduler.py")
-
-    if cron_error is not None:
-        return result(False, cron_error)
+    for name in ("cron/scheduler.py", "cron/scheduler_delivery.py"):
+        path = hermes_root / name
+        if path.is_symlink():
+            return result(False, f"{name} must not be a symlink")
+        if path.exists():
+            source, cron_error = _read_text(path, name)
+            if cron_error is not None:
+                return result(False, cron_error)
+            cron_sources[name] = source
+    cron_anchors = [name for name, source in cron_sources.items()
+                    if _find_deliver_result_in_contents(source)]
+    if len(cron_anchors) > 1:
+        return result(False, "ambiguous cron delivery anchors: " + ", ".join(cron_anchors))
+    if cron_anchors:
+        cron_py = hermes_root / cron_anchors[0]
+    cron_contents = cron_sources.get(cron_py.relative_to(hermes_root).as_posix(), "")
 
     parsed_version = _parse_version(version)
     version_requires_base = bool(
@@ -211,7 +240,7 @@ def detect_hermes(root: str | Path) -> HermesDetection:
                 base_py, "gateway/platforms/base.py"
             )
     verified_ledger_signals = _has_exact_delivery_ledger_signals(base_contents)
-    base_required = version_requires_base or verified_ledger_signals
+    base_required = decomposed or version_requires_base or verified_ledger_signals
     exact_base_delivery = False
     exact_base_error = ""
     if base_contents and base_error is None:
@@ -223,7 +252,12 @@ def detect_hermes(root: str | Path) -> HermesDetection:
     elif base_required:
         exact_base_error = "gateway/platforms/base.py missing for exact delivery contract"
 
-    capabilities, capability_error = _detect_capabilities(contents, cron_contents)
+    if decomposed:
+        capabilities, capability_locations, capability_error = _detect_layout_capabilities(gateway_sources, cron_contents, cron_py.relative_to(hermes_root).as_posix())
+    else:
+        capabilities, capability_error = _detect_capabilities(contents, cron_contents)
+        capability_locations = {key: ((cron_py.relative_to(hermes_root).as_posix(),) if key == "cron_delivery" and _find_deliver_result_in_contents(cron_contents) else ("gateway/run.py",)) for key, found in capabilities.items() if found}
+    capability_locations["exact_base_delivery"] = ("gateway/platforms/base.py",) if exact_base_delivery else ()
     capabilities["exact_base_delivery"] = exact_base_delivery
     core_ok = all(capabilities.get(name, False) for name in CORE_CAPABILITIES)
     optional_ok = all(capabilities.get(name, False) for name in OPTIONAL_CAPABILITIES)
@@ -848,3 +882,66 @@ def _is_hooks_emit(func: ast.expr) -> bool:
         and isinstance(receiver.value, ast.Name)
         and receiver.value.id == "self"
     )
+
+
+_LAYOUT_MARKERS = {
+    "message_handler": patcher.PATCH_BEGIN,
+    "completion_return": patcher.COMPLETE_PATCH_BEGIN,
+    "tool_callback": patcher.STABLE_TOOL_PATCH_BEGIN,
+    "answer_delta_callback": patcher.ANSWER_DELTA_PATCH_BEGIN,
+    "thinking_delta_callback": patcher.THINKING_DELTA_PATCH_BEGIN,
+    "status_callback": patcher.STATUS_PATCH_BEGIN,
+    "clarify_callback": patcher.CLARIFY_PATCH_BEGIN,
+    "approval_callback": patcher.APPROVAL_PATCH_BEGIN,
+    "command_card": patcher.COMMAND_CARD_PATCH_BEGIN,
+    "hfc_command": patcher.HFC_COMMAND_PATCH_BEGIN,
+    "slash_confirm": patcher.SLASH_CONFIRM_PATCH_BEGIN,
+    "startup": patcher.COMMAND_CARD_STARTUP_PATCH_BEGIN,
+    "redelivery": patcher.NATIVE_REDELIVERY_PATCH_BEGIN,
+    "platform_notice": patcher.PLATFORM_NOTICE_PATCH_BEGIN,
+}
+
+
+def _detect_layout_capabilities(sources, cron_contents, cron_target):
+    locations = {name: [] for name in (*_LAYOUT_MARKERS, "run_agent", "reply_context", "attachment_delivery", "cron_delivery")}
+    errors = []
+    for target, content in sources.items():
+        try:
+            clean = patcher.remove_patch(content)
+            tree = ast.parse(clean)
+            rendered = patcher.apply_gateway_fragment(clean, target)
+            for name, marker in _LAYOUT_MARKERS.items():
+                if marker in rendered:
+                    locations[name].append(target)
+            if _find_run_agent(tree) is not None:
+                locations["run_agent"].append(target)
+            if any(isinstance(node, ast.Attribute) and node.attr in {
+                "reply_to_message_id", "_reply_anchor_for_event"
+            } for node in ast.walk(tree)):
+                locations["reply_context"].append(target)
+            if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr in {"extract_media", "_deliver_media_from_response"}
+                   for node in ast.walk(tree)):
+                locations["attachment_delivery"].append(target)
+            handler = patcher._find_handler_node(tree)
+            if handler is not None and patcher._find_decomposed_completion_node(tree) is None:
+                errors.append(f"{target}: decomposed completion/agent:end contract missing")
+        except (ValueError, SyntaxError) as exc:
+            errors.append(f"{target}: unsafe anchors or ownership ({exc})")
+    try:
+        if patcher.CRON_PATCH_BEGIN in patcher.apply_cron_patch(cron_contents):
+            locations["cron_delivery"].append(cron_target)
+        else:
+            errors.append(f"{cron_target}: missing cron delivery anchor")
+    except ValueError:
+        errors.append(f"{cron_target}: unsafe cron anchors")
+    for name in _LAYOUT_MARKERS:
+        if len(locations[name]) > 1:
+            errors.append(f"{name}: ambiguous anchors in {', '.join(locations[name])}")
+    capabilities = {key: bool(value) for key, value in locations.items()}
+    # Status remains optional exactly as on the legacy layout. All other
+    # decomposed delivery/interaction seams are required to preserve features.
+    missing = [key for key in _LAYOUT_MARKERS if key != "status_callback" and not capabilities[key]]
+    if missing:
+        errors.append("missing decomposed anchors: " + ", ".join(missing))
+    return capabilities, {key: tuple(value) for key, value in locations.items()}, "; ".join(errors) or "supported"

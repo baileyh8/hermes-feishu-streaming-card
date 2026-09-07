@@ -1299,6 +1299,31 @@ profiles:
     assert "child-secret" not in captured.out
 
 
+@pytest.mark.parametrize("stale_default", [False, True])
+def test_setup_named_profiles_without_default_does_not_pin_gateway(tmp_path, monkeypatch, capsys, stale_default):
+    hermes_dir = copy_hermes(tmp_path)
+    stub_setup_runtime(monkeypatch, hermes_dir)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "profiles:\n  ai-secretary:\n    feishu:\n      app_id: test\n      app_secret: test\n"
+        "  engineering:\n    feishu:\n      app_id: test-eng\n      app_secret: test-eng\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("HERMES_FEISHU_CARD_PROFILE_ID", raising=False)
+    if stale_default:
+        (tmp_path / ".env").write_text("HERMES_FEISHU_CARD_PROFILE_ID=default\n")
+    monkeypatch.setattr(cli, "_run_install", lambda args: 0)
+    exit_code = cli.main([
+        "setup", "--hermes-dir", str(hermes_dir), "--config", str(config_path),
+        "--yes", "--skip-start",
+    ])
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "config_profile: ai-secretary" in captured.out
+    assert "HERMES_FEISHU_CARD_PROFILE_ID=\n" in (tmp_path / ".env").read_text()
+    assert "profile_unknown" not in captured.err
+
+
 def test_setup_starts_sidecar_with_selected_env_file(tmp_path, monkeypatch, capsys):
     hermes_dir = copy_hermes(tmp_path)
     runtime_python, runtime_identity = stub_setup_runtime(monkeypatch, hermes_dir)

@@ -66,6 +66,8 @@ V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文
 
 ## V4.4.0 新版 Hermes 原生能力中心
 
+V4.4.1 增加 Hermes 0.21 facade 拆分兼容、多 profile 与话题后续回复修复。审批命令保留完整范围，超出卡片预算时交回原生审批；可使用 `card.reasoning_format: code` 直接展示思考片段，默认 `panel` 保持折叠布局。详见 [V4.4.1 说明](release-notes-v4.4.1.md) 和 [卡片阅读配置](wiki/card-readability.md)。
+
 V4.4.0 以 Hermes `v2026.8.27` / `0.20.6` 为正式兼容基线，并用 `main@4f225435` 验证向前兼容。新版 Hermes 已把命令统一到 `hermes_cli.commands.COMMAND_REGISTRY`，因此飞书 `/commands` 不再显示 HFC 维护的固定列表，而是从当前运行时读取命令名称、分类、alias、参数、subcommand、argument mode、busy policy，以及 plugin/skill commands。Hermes 新增或调整 `/bg`、`/btw`、`/plan`、`/busy` 后，能力中心可以自动跟随。
 
 能力中心支持首页、分类和命令详情三层浏览。`/status`、`/context`、`/usage`、`/agents`、`/sessions`、`/profile`、`/version` 以及已有 `/model`、`/resume` 原生 picker 可以从卡片快捷启动；HFC 会复制原 `MessageEvent` 并重新进入 Hermes adapter，因此权限检查、busy policy、plugin hook 和原 handler 仍由 Hermes 决定。群聊快捷动作只允许原发起人点击；`/update`、`/new`、`/stop`、`/undo` 等会改变状态的命令不会提供一键执行。
@@ -584,7 +586,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.4.0`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.4.1`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -592,7 +594,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.4.0
+export HFC_VERSION=v4.4.1
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -735,6 +737,8 @@ card:
 ```
 
 **多 Profile**
+
+单进程 multiplex、仅包含 `ai-secretary` 等命名 profile 的配置，以及多个独立进程共享端口的方法，见[共享 sidecar 路由](wiki/shared-profile-routing.md)。
 
 ```yaml
 server:

@@ -38,6 +38,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "title": "Hermes Agent",
         "interaction_mode": "auto",
         "show_reasoning": True,
+        "reasoning_format": "panel",
         "timeline_expanded": False,
         "max_timeline_items": 12,
         "max_reasoning_chars": 1200,
@@ -434,6 +435,11 @@ def _normalize_card_config(value: object, *, path: str) -> None:
         value["table_overflow_mode"] = normalize_table_overflow_mode(
             value["table_overflow_mode"], path=f"{path}.table_overflow_mode"
         )
+    if "reasoning_format" in value:
+        raw_format = value["reasoning_format"]
+        if not isinstance(raw_format, str) or raw_format.strip().lower() not in {"panel", "code"}:
+            raise ValueError(f"{path}.reasoning_format must be panel or code")
+        value["reasoning_format"] = raw_format.strip().lower()
     if "mentions_in_cards" in value and value["mentions_in_cards"] is not None:
         value["mentions_in_cards"] = _normalize_boolean(
             value["mentions_in_cards"], f"{path}.mentions_in_cards"

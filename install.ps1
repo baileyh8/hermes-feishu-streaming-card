@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$ProfileIdExplicit = $PSBoundParameters.ContainsKey("ProfileId")
 
 $Repo = if ($env:HFC_REPO) { $env:HFC_REPO } else { "baileyh8/hermes-feishu-streaming-card" }
 $HermesDir = if ($env:HERMES_DIR) { $env:HERMES_DIR } else { Join-Path $HOME ".hermes/hermes-agent" }
@@ -191,6 +192,12 @@ function Read-PlainSecret {
 }
 
 function Ensure-HfcCredentials {
+    if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
+        $probe = 'import sys; from hermes_feishu_card.config import load_config; from hermes_feishu_card.cli import _has_feishu_credentials; c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or "default"; ps=c.get("profiles"); p=next(iter(ps)) if ps and p=="default" and p not in ps and sys.argv[4]!="1" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)'
+        $probeProfile = if ($ProfileId) { $ProfileId } else { "default" }
+        & $PythonBin -c $probe $ConfigPath $EnvFile $probeProfile ([int]$ProfileIdExplicit) *> $null
+        if ($LASTEXITCODE -eq 0) { return }
+    }
     if ($env:FEISHU_APP_ID -and $env:FEISHU_APP_SECRET) {
         Set-HfcEnvValue "FEISHU_APP_ID" $env:FEISHU_APP_ID
         Set-HfcEnvValue "FEISHU_APP_SECRET" $env:FEISHU_APP_SECRET
@@ -244,8 +251,12 @@ function Invoke-HfcSetup {
         "--hermes-dir", $HermesDir,
         "--hermes-home", $HermesHome,
         "--config", $ConfigPath,
-        "--env-file", $EnvFile,
-        "--profile-id", $ProfileId,
+        "--env-file", $EnvFile
+    )
+    if ($ProfileIdExplicit) {
+        $args += @("--profile-id", $ProfileId)
+    }
+    $args += @(
         "--event-url", $EventUrl,
         "--yes"
     )
@@ -288,7 +299,6 @@ $NoRepairValue = if ($NoRepair.IsPresent) {
 $Config = if ($Config) { $Config } else { Join-Path $HOME ".hermes/config.yaml" }
 $ConfigPath = $Config
 $Version = if ($Version) { $Version } else { "latest" }
-$ProfileId = if ($ProfileId) { $ProfileId } else { "default" }
 $EventUrl = if ($EventUrl) { $EventUrl } else { "http://127.0.0.1:8765/events" }
 $ResolvedVersion = Resolve-HfcVersion
 $ResolvedInstallSpec = Get-HfcInstallSpec `
@@ -310,14 +320,19 @@ foreach ($key in @(
 [Environment]::SetEnvironmentVariable("HFC_CONFIG", $ConfigPath, "Process")
 [Environment]::SetEnvironmentVariable("HFC_ENV_FILE", $EnvFile, "Process")
 [Environment]::SetEnvironmentVariable("HFC_VERSION", $ResolvedVersion, "Process")
-[Environment]::SetEnvironmentVariable("HERMES_FEISHU_CARD_PROFILE_ID", $ProfileId, "Process")
+if ($ProfileId) {
+    [Environment]::SetEnvironmentVariable("HERMES_FEISHU_CARD_PROFILE_ID", $ProfileId, "Process")
+}
 [Environment]::SetEnvironmentVariable("HERMES_FEISHU_CARD_EVENT_URL", $EventUrl, "Process")
 [Environment]::SetEnvironmentVariable("HFC_NO_REPAIR", $NoRepairValue, "Process")
 
-Ensure-HfcCredentials
-Install-HfcPackage `
-    -InstallSpec $ResolvedInstallSpec `
-    -ResolvedVersion $ResolvedVersion
+if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
+    Install-HfcPackage -InstallSpec $ResolvedInstallSpec -ResolvedVersion $ResolvedVersion
+    Ensure-HfcCredentials
+} else {
+    Ensure-HfcCredentials
+    Install-HfcPackage -InstallSpec $ResolvedInstallSpec -ResolvedVersion $ResolvedVersion
+}
 Invoke-HfcSetup
 Write-HfcLog "done"
 Write-HfcLog "status: $PythonBin -m hermes_feishu_card.cli status --config `"$ConfigPath`""

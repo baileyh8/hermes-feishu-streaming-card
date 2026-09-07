@@ -139,6 +139,7 @@ class CardSession:
     tools: Dict[str, ToolState] = field(default_factory=dict)
     tokens: Dict[str, Any] = field(default_factory=dict)
     model: str = "Unknown"
+    provider: str = ""
     context: Dict[str, Any] = field(default_factory=dict)
     duration: float = 0.0
     subscription_usage: str = ""
@@ -428,6 +429,8 @@ class CardSession:
             self.tokens = dict(tokens) if isinstance(tokens, dict) else {}
             model = event.data.get("model")
             self.model = model if isinstance(model, str) and model.strip() else "Unknown"
+            provider = event.data.get("provider")
+            self.provider = provider.strip() if isinstance(provider, str) else ""
             context = event.data.get("context", {})
             self.context = dict(context) if isinstance(context, dict) else {}
             try:

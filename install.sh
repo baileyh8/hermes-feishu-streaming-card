@@ -8,6 +8,7 @@ HERMES_HOME_DIR="${HERMES_HOME:-}"
 CONFIG_PATH="${HFC_CONFIG:-}"
 ENV_FILE="${HFC_ENV_FILE:-}"
 PROFILE_ID="${HERMES_FEISHU_CARD_PROFILE_ID:-}"
+PROFILE_ID_EXPLICIT=0
 EVENT_URL="${HERMES_FEISHU_CARD_EVENT_URL:-}"
 NO_REPAIR="${HFC_NO_REPAIR:-}"
 PYTHON_BIN="${HFC_PYTHON:-}"
@@ -35,7 +36,7 @@ parse_args() {
           --config) CONFIG_PATH="$2" ;;
           --env-file) ENV_FILE="$2" ;;
           --version) VERSION="$2" ;;
-          --profile-id) PROFILE_ID="$2" ;;
+          --profile-id) PROFILE_ID="$2"; PROFILE_ID_EXPLICIT=1 ;;
           --event-url) EVENT_URL="$2" ;;
           --hermes-home) HERMES_HOME_DIR="$2" ;;
         esac
@@ -187,6 +188,9 @@ upsert_env() {
 }
 
 prompt_credentials() {
+  if [ -f "$CONFIG_PATH" ] && "$PYTHON_BIN" -c 'import sys; from hermes_feishu_card.config import load_config; from hermes_feishu_card.cli import _has_feishu_credentials; c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or "default"; ps=c.get("profiles"); p=next(iter(ps)) if ps and p=="default" and p not in ps and sys.argv[4]!="1" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)' "$CONFIG_PATH" "$ENV_FILE" "$PROFILE_ID" "$PROFILE_ID_EXPLICIT" >/dev/null 2>&1; then
+    return 0
+  fi
   if { [ -z "${FEISHU_APP_ID:-}" ] || [ -z "${FEISHU_APP_SECRET:-}" ]; } && \
       { [ "${HFC_NO_PROMPT:-0}" = "1" ] || [ ! -t 0 ]; }; then
     fail "FEISHU_APP_ID/FEISHU_APP_SECRET are missing. Set them or write them to $ENV_FILE."
@@ -303,7 +307,11 @@ run_setup() {
     --hermes-home "$HERMES_HOME_DIR"
     --config "$CONFIG_PATH"
     --env-file "$ENV_FILE"
-    --profile-id "$PROFILE_ID"
+  )
+  if [ "$PROFILE_ID_EXPLICIT" = "1" ]; then
+    setup_args+=(--profile-id "$PROFILE_ID")
+  fi
+  setup_args+=(
     --event-url "$EVENT_URL"
     --yes
   )
@@ -330,7 +338,6 @@ main() {
 
   VERSION="${VERSION:-latest}"
   CONFIG_PATH="${CONFIG_PATH:-$HOME/.hermes/config.yaml}"
-  PROFILE_ID="${PROFILE_ID:-default}"
   EVENT_URL="${EVENT_URL:-http://127.0.0.1:8765/events}"
   NO_REPAIR="${NO_REPAIR:-0}"
   HERMES_DIR="$(expand_path "$HERMES_DIR")"
@@ -352,11 +359,18 @@ main() {
   export HFC_CONFIG="$CONFIG_PATH"
   export HFC_ENV_FILE="$ENV_FILE"
   export HFC_VERSION="$VERSION"
-  export HERMES_FEISHU_CARD_PROFILE_ID="$PROFILE_ID"
+  if [ -n "$PROFILE_ID" ]; then
+    export HERMES_FEISHU_CARD_PROFILE_ID="$PROFILE_ID"
+  fi
   export HERMES_FEISHU_CARD_EVENT_URL="$EVENT_URL"
   export HFC_NO_REPAIR="$NO_REPAIR"
-  prompt_credentials
-  install_package "$resolved_install_spec" "$resolved_version"
+  if [ -f "$CONFIG_PATH" ]; then
+    install_package "$resolved_install_spec" "$resolved_version"
+    prompt_credentials
+  else
+    prompt_credentials
+    install_package "$resolved_install_spec" "$resolved_version"
+  fi
   run_setup
 
   log "done"

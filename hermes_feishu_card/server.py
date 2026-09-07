@@ -136,6 +136,7 @@ FEISHU_CLIENT_KEY = web.AppKey("feishu_client", Any)
 SESSIONS_KEY = web.AppKey("sessions", dict)
 FEISHU_MESSAGE_IDS_KEY = web.AppKey("feishu_message_ids", dict)
 SESSION_ALIASES_KEY = web.AppKey("session_aliases", dict)
+REDIRECT_SESSION_ALIASES_KEY = web.AppKey("redirect_session_aliases", dict)
 CARD_SUMMARIES_KEY = web.AppKey("card_summaries", dict)
 CARD_SUMMARY_SESSION_KEYS_KEY = web.AppKey("card_summary_session_keys", dict)
 INTERACTION_RESULTS_KEY = web.AppKey("interaction_results", dict)
@@ -491,6 +492,7 @@ def create_app(
     app[SESSIONS_KEY] = {}
     app[FEISHU_MESSAGE_IDS_KEY] = {}
     app[SESSION_ALIASES_KEY] = {}
+    app[REDIRECT_SESSION_ALIASES_KEY] = {}
     # TODO: replace this short-lived in-process index with bounded shared storage.
     app[CARD_SUMMARIES_KEY] = {}
     app[CARD_SUMMARY_SESSION_KEYS_KEY] = {}
@@ -4380,6 +4382,14 @@ def _active_session_key(app: web.Application, session_key: str) -> str | None:
 def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
     direct_key = _session_key(event)
     if event.turn_id:
+        if event.event == "message.started":
+            return direct_key
+        redirect_aliases: Dict[str, str] = app.get(REDIRECT_SESSION_ALIASES_KEY) or {}
+        redirect_key = redirect_aliases.get(direct_key)
+        if redirect_key:
+            active_key = _active_session_key(app, redirect_key)
+            if active_key is not None:
+                return active_key
         return direct_key
     active_key = _active_session_key(app, direct_key)
     if active_key is not None:
@@ -4405,7 +4415,11 @@ def _register_session_aliases(
     canonical_key: str,
 ) -> None:
     aliases: Dict[str, str] = app[SESSION_ALIASES_KEY]
-    keys = {_session_key(event), *_session_alias_keys_for_event(event)}
+    keys = {
+        _session_key(event),
+        _session_key_for_message_id(event, event.message_id),
+        *_session_alias_keys_for_event(event),
+    }
     for alias_key in keys:
         if alias_key and alias_key != canonical_key:
             aliases[alias_key] = canonical_key
@@ -4429,10 +4443,12 @@ def _cleanup_failed_session_state(
     if sessions.get(session_key) is not None:
         return
 
-    aliases: Dict[str, str] = app[SESSION_ALIASES_KEY]
-    for alias_key, canonical_key in tuple(aliases.items()):
-        if canonical_key == session_key and aliases.get(alias_key) == session_key:
-            aliases.pop(alias_key, None)
+    for aliases_key in (SESSION_ALIASES_KEY, REDIRECT_SESSION_ALIASES_KEY):
+        aliases: Dict[str, str] = app.get(aliases_key) or {}
+        for alias_key, canonical_key in tuple(aliases.items()):
+            if canonical_key == session_key and aliases.get(alias_key) == session_key:
+                aliases.pop(alias_key, None)
+        aliases.pop(session_key, None)
 
     owned_state = (
         (CARD_SUMMARIES_KEY, CARD_SUMMARY_SESSION_KEYS_KEY),
@@ -4871,7 +4887,13 @@ async def _apply_event_locked(
         # where a new message arrives with its own explicit message_id (e.g.
         # after /stop or a generation-bump interrupt).
         await _abandon_stale_sessions_for_chat(
-            request.app, event.chat_id, session_key, event,
+            request.app,
+            event.chat_id,
+            session_key,
+            event,
+            alias_to_session_key=(
+                session_key if _is_redirect_followup_event(event) else None
+            ),
         )
         session = CardSession(
             conversation_id=event.conversation_id,
@@ -4963,7 +4985,13 @@ async def _apply_event_locked(
             # card would be stuck at "生成中" forever.
             if not _is_independent_notice_event(event):
                 await _abandon_stale_sessions_for_chat(
-                    request.app, event.chat_id, session_key, event,
+                    request.app,
+                    event.chat_id,
+                    session_key,
+                    event,
+                    alias_to_session_key=(
+                        session_key if _is_redirect_followup_event(event) else None
+                    ),
                 )
             session = CardSession(
                 conversation_id=event.conversation_id,
@@ -6262,6 +6290,11 @@ def _is_independent_notice_event(event: SidecarEvent) -> bool:
     return scope == "independent" or delivery_kind == "notice"
 
 
+def _is_redirect_followup_event(event: SidecarEvent) -> bool:
+    data = event.data if isinstance(event.data, dict) else {}
+    return event.event == "message.started" and data.get("redirect_followup") is True
+
+
 def _is_compaction_session_start(event: SidecarEvent) -> bool:
     if event.event != "system.notice":
         return False
@@ -6396,6 +6429,7 @@ def _render_session_card_result_for_app(
         interaction_mode=interaction_mode,
         interaction_profile_id=interaction_profile_id,
         show_reasoning=_safe_bool(card_config.get("show_reasoning"), True),
+        reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
         max_timeline_items=_safe_positive_int(
             card_config.get("max_timeline_items"), 12
@@ -6837,6 +6871,12 @@ def _reset_session_for_new_turn(app: web.Application, session_key: str) -> None:
     app[FEISHU_MESSAGE_IDS_KEY].pop(session_key, None)
     app[MESSAGE_BOT_IDS_KEY].pop(session_key, None)
     app[SESSION_CARD_CONFIGS_KEY].pop(session_key, None)
+    for aliases_key in (SESSION_ALIASES_KEY, REDIRECT_SESSION_ALIASES_KEY):
+        aliases: Dict[str, str] = app.get(aliases_key) or {}
+        aliases.pop(session_key, None)
+        for alias_key, canonical_key in tuple(aliases.items()):
+            if canonical_key == session_key:
+                aliases.pop(alias_key, None)
     controllers: Dict[str, FlushController] = app[FLUSH_CONTROLLERS_KEY]
     controller = controllers.pop(session_key, None)
     if controller is not None:
@@ -6851,6 +6891,8 @@ async def _abandon_stale_sessions_for_chat(
     chat_id: str,
     new_session_key: str,
     event: "SidecarEvent",
+    *,
+    alias_to_session_key: str | None = None,
 ) -> None:
     """Mark stale active sessions for the same chat+conversation as completed.
 
@@ -6870,6 +6912,21 @@ async def _abandon_stale_sessions_for_chat(
     # Extract profile_id prefix from new_session_key (format: "profile:msg_id")
     new_profile = new_session_key.split(":", 1)[0] if ":" in new_session_key else ""
     new_conversation_id = event.conversation_id
+    # A redirect may move callbacks for one explicitly identified source turn.
+    # Conversation membership (or a quoted message) alone is not evidence that
+    # every historical turn belongs to this redirect.
+    redirect_source_key = None
+    if alias_to_session_key:
+        data = event.data if isinstance(event.data, dict) else {}
+        source_turn = data.get("redirect_from_turn_id")
+        source_message = data.get("redirect_from_message_id")
+        source_id = source_turn or source_message
+        if isinstance(source_id, str) and source_id.strip():
+            redirect_source_key = _session_key_for_message_id(event, source_id.strip())
+            if not source_turn:
+                redirect_source_key = app[SESSION_ALIASES_KEY].get(
+                    redirect_source_key, redirect_source_key
+                )
 
     stale_keys = []
     for key, sess in sessions.items():
@@ -6879,7 +6936,7 @@ async def _abandon_stale_sessions_for_chat(
             continue
         if sess.conversation_id != new_conversation_id:
             continue
-        if sess.status in {"completed", "failed"}:
+        if sess.status in {"completed", "failed"} and key != redirect_source_key:
             continue
         if sess.delivery_kind == "notice":
             continue
@@ -6892,6 +6949,15 @@ async def _abandon_stale_sessions_for_chat(
     for key in stale_keys:
         sess = sessions.get(key)
         if sess is None:
+            continue
+        already_terminal = sess.status in {"completed", "failed"}
+        if alias_to_session_key and key == redirect_source_key:
+            app[SESSION_ALIASES_KEY][key] = alias_to_session_key
+            app[REDIRECT_SESSION_ALIASES_KEY][key] = alias_to_session_key
+            for alias_key, canonical_key in tuple(app[SESSION_ALIASES_KEY].items()):
+                if canonical_key == key:
+                    app[SESSION_ALIASES_KEY][alias_key] = alias_to_session_key
+        if already_terminal:
             continue
         sess.timeline.complete()
         sess.status = "completed"

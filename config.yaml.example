@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V4.4.0 sidecar configuration
+# Hermes Feishu Streaming Card V4.4.1 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -40,6 +40,13 @@ card:
   # callback: explicitly keep native CardKit callback buttons.
   # text: explicitly render numbered text choices and let Hermes handle the reply.
   interaction_mode: auto
+  # panel (default) keeps reasoning in the collapsible execution timeline.
+  # code displays reasoning as visible fenced text blocks; tools stay in the panel.
+  reasoning_format: panel
+  # Applies to both formats; false hides reasoning and the tool timeline.
+  show_reasoning: true
+  timeline_expanded: false
+  max_reasoning_chars: 1200
   max_wait_ms: 800
   max_chars: 240
   # compact preserves rows from table 6 onward as readable field lists.

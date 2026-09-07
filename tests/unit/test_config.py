@@ -57,6 +57,7 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
             "title": "Hermes Agent",
             "interaction_mode": "auto",
             "show_reasoning": True,
+            "reasoning_format": "panel",
             "timeline_expanded": False,
             "max_timeline_items": 12,
             "max_reasoning_chars": 1200,
@@ -294,6 +295,7 @@ card:
         "title": "Hermes Agent",
         "interaction_mode": "auto",
         "show_reasoning": True,
+        "reasoning_format": "panel",
         "timeline_expanded": False,
         "max_timeline_items": 12,
         "max_reasoning_chars": 1200,
@@ -335,6 +337,28 @@ card:
             "mobile": "notation",
         },
     }
+
+
+def test_load_config_normalizes_reasoning_format_for_profiles_and_bots(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "card:\n  reasoning_format: CODE\n"
+        "profiles:\n  work:\n    card:\n      reasoning_format: panel\n"
+        "    bots:\n      items:\n        work:\n          card:\n            reasoning_format: code\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config["card"]["reasoning_format"] == "code"
+    assert config["profiles"]["work"]["card"]["reasoning_format"] == "panel"
+    assert config["profiles"]["work"]["bots"]["items"]["work"]["card"]["reasoning_format"] == "code"
+
+
+@pytest.mark.parametrize("value", ["unknown", "true", "1", "null"])
+def test_load_config_rejects_invalid_reasoning_format(tmp_path, value):
+    path = tmp_path / "config.yaml"
+    path.write_text(f"card:\n  reasoning_format: {value}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="card.reasoning_format must be panel or code"):
+        load_config(path)
 
 
 def test_load_config_defaults_table_overflow_mode_to_compact(tmp_path):

@@ -37,6 +37,22 @@ def test_render_thinking_card_keeps_runtime_status_only_in_footer():
     assert "思考与工具 · 1 次工具调用" in content
 
 
+@pytest.mark.parametrize(
+    ("provider", "model", "expected"),
+    [("fallback", "model-1", "fallback/model-1"), ("fallback", "fallback/model-1", "fallback/model-1"), ("fallback", "", "Unknown"), ("", "model-1", "model-1"), ("<unsafe>", "model-1", "&lt;unsafe&gt;/model-1")],
+)
+def test_footer_uses_reported_provider_without_duplicate_prefix(provider, model, expected):
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.status = "completed"
+    session.provider = provider
+    session.model = model
+    card = render_card(session, footer_fields=["model"])
+    footer = next(item for item in card["body"]["elements"] if item.get("element_id") == "footer")
+    assert expected in footer["content"]
+    assert "fallback/fallback/" not in footer["content"]
+    assert "<unsafe>" not in footer["content"]
+
+
 def test_render_card_accepts_custom_header_title():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
 
@@ -1525,6 +1541,58 @@ def test_render_keeps_pre_tool_answer_in_main_while_tool_runs():
     assert main["content"] == "好的，我先做分析再动手。"
     assert "好的，我先做分析再动手。" not in str(timeline)
     assert "terminal" in str(timeline)
+
+
+def test_reasoning_code_is_visible_outside_collapsed_tool_panel():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    base = dict(schema_version="1", conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc", platform="feishu", created_at=0.0)
+    reasoning = "Check literal ```code``` before running."
+    session.apply(SidecarEvent(event="answer.delta", sequence=1, data={"text": reasoning}, **base))
+    session.apply(SidecarEvent(event="tool.updated", sequence=2, data={"tool_id": "t", "name": "terminal", "status": "completed"}, **base))
+    session.apply(SidecarEvent(event="message.completed", sequence=3, data={"answer": "done"}, **base))
+    result = render_card_result(session, reasoning_format="code")
+    assert result.disposition == "card"
+    elements = result.card["body"]["elements"]
+    direct_reasoning = next(item for item in elements if "reasoningentry" in item.get("element_id", ""))
+    assert f"````text\n{reasoning}\n````" in direct_reasoning["content"]
+    panel = next(item for item in elements if item.get("tag") == "collapsible_panel")
+    assert panel["expanded"] is False
+    assert reasoning not in str(panel)
+    assert "terminal" in str(panel)
+    assert not any("reasoningentry" in item.get("element_id", "") for item in render_card(session)["body"]["elements"])
+    assert reasoning not in str(render_card(session, show_reasoning=False, reasoning_format="code"))
+
+
+@pytest.mark.parametrize("interaction_mode", ["callback", "text"])
+def test_pending_approval_keeps_complete_scope_and_choices_without_old_output(interaction_mode):
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "old answer " * 4000
+    session.active_interaction = InteractionState(
+        interaction_id="approval-1", kind="approval", prompt="允许执行？",
+        description="complete command " + "x" * 3500 + " LAST_ARGUMENT",
+    )
+    result = render_card_result(session, interaction_mode=interaction_mode)
+    assert result.disposition == "card"
+    elements = result.card.get("body", result.card)["elements"]
+    description = next(item for item in elements if item.get("content", "").startswith("complete command"))
+    assert description["content"].endswith("LAST_ARGUMENT")
+    assert "old answer" not in str(result.card)
+    assert not any(item.get("tag") == "collapsible_panel" for item in elements)
+
+
+def test_reasoning_code_preserves_card_limit_handoff():
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    base = dict(schema_version="1", conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc", platform="feishu", created_at=0.0)
+    session.apply(SidecarEvent(event="answer.delta", sequence=1, data={"text": "思考" * 9000}, **base))
+    session.apply(SidecarEvent(event="tool.updated", sequence=2, data={"tool_id": "t", "name": "terminal", "status": "completed"}, **base))
+    session.apply(SidecarEvent(event="message.completed", sequence=3, data={"answer": "done"}, **base))
+    result = render_card_result(session, reasoning_format="code", max_reasoning_chars=30000)
+    assert result.disposition == "native"
+    assert inspect_card_limits(result.card).safe
 
 
 def test_render_timeline_styles_reasoning_and_tools_with_compact_hierarchy():

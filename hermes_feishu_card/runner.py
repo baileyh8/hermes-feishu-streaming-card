@@ -141,7 +141,7 @@ def _build_multi_profile_boundary(
         if isinstance(data, dict):
             profile_id = str(data.get("profile_id") or "default")
         if profile_id not in factories:
-            profile_id = "default"
+            raise ValueError("profile_unknown: no configured profile for this event")
         registry = factories[profile_id].registry
         data = getattr(event, "data", {})
         if not isinstance(data, dict):

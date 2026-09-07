@@ -2,9 +2,20 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
-## V3.8 / V3.9 / V3.10 / V4 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13 / V4.0.14 / V4.0.15 / V4.0.16 / V4.0.17 / V4.0.18 / V4.0.19 / V4.0.20 / V4.0.21 / V4.1.0 / V4.1.1 / V4.1.2 / V4.1.3 / V4.1.4 / V4.2.0 / V4.2.1 / V4.2.2 / V4.2.3 / V4.2.4 / V4.2.5 / V4.2.6 / V4.2.7 / V4.2.8 / V4.2.9 / V4.2.10 / V4.2.11 / V4.2.12 / V4.3.0 / V4.3.1 / V4.3.2 / V4.3.3 / V4.3.4 / V4.3.5 / V4.3.6 / V4.3.7 / V4.3.8 / V4.4.0
+## V3.8 / V3.9 / V3.10 / V4 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13 / V4.0.14 / V4.0.15 / V4.0.16 / V4.0.17 / V4.0.18 / V4.0.19 / V4.0.20 / V4.0.21 / V4.1.0 / V4.1.1 / V4.1.2 / V4.1.3 / V4.1.4 / V4.2.0 / V4.2.1 / V4.2.2 / V4.2.3 / V4.2.4 / V4.2.5 / V4.2.6 / V4.2.7 / V4.2.8 / V4.2.9 / V4.2.10 / V4.2.11 / V4.2.12 / V4.3.0 / V4.3.1 / V4.3.2 / V4.3.3 / V4.3.4 / V4.3.5 / V4.3.6 / V4.3.7 / V4.3.8 / V4.4.0 / V4.4.1
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
+
+### V4.4.1：Hermes 0.21、多 profile 与话题兼容修复（发布候选）
+
+- [x] PR #257 / Issues #254/#255/#256：按已验证 facade/mixin 契约安装，保留多文件 ownership 与可逆恢复。
+- [x] PR #251 / Issue #252：话题后续、queue/redirect 与 cron 回复锚点；显式 turn 身份保持隔离。
+- [x] Issues #83/#259：单进程多 profile 身份与缺少字面 `default` 的路由处理。
+- [x] Issues #253/#258：可选 reasoning code、审批完整范围与超限原生回退；Issue #250：实际 provider 页脚归属。
+- [x] PRs #247/#248：CodeQL init/analyze 与测试同步更新；保留全部历史贡献者。
+- [ ] 当前候选普通 wheel、完整 pytest、GitHub CI、exact release merge、annotated tag 与 Release assets/checksums 按最终结果登记。
+- [ ] 真实 Feishu/Lark 私聊、群聊、话题重启后 queue/interrupt、审批手机/桌面阅读、多 profile 复测。
+- [ ] Issue #73：等待新版环境诊断，不能从旧版本报告推断已解决。
 
 ### V4.4.0：新版 Hermes 原生能力中心与可视化交互（发布候选）
 

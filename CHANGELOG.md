@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.4.1 — 2026-09-07
+
+See also: [Chinese release notes](docs/release-notes-v4.4.1.md) and [English release notes](docs/release-notes-v4.4.1.en.md).
+
+### Fixed
+- PR #257 / Issues #254, #255, #256: support Hermes 0.21 facade/mixin source layouts with validated multi-file ownership, reversible patching, and conservative handling of stale or edited installations.
+- PR #251 / Issue #252: preserve topic reply anchors for follow-up, queued, redirected, and cron messages while keeping explicit turn identity authoritative.
+- Issues #83 and #259: preserve message-level profile identity for single-process multiplexing and avoid assuming that every configuration contains a profile named `default`.
+- Issue #258: remove silent 3,000-character approval-command truncation, escape command markup, use wrapping text, and return oversized authorization requests to native Hermes approval before creating a card.
+- PRs #247 and #248: update CodeQL init/analyze together and align the workflow contract tests.
+
+### Added
+- Issue #253: opt-in `card.reasoning_format: code` displays recorded reasoning outside the collapsed tool panel; the default `panel` layout and card limits are retained.
+- Issue #250: footer model labels include the provider reported by the runtime, preserving fallback attribution and avoiding duplicate prefixes.
+
+### Validation
+- Focused renderer/config/runtime tests and server rendering integration passed. Full-suite and built-wheel results are recorded during the release gate; no current real Feishu/Lark client acceptance is claimed.
+- Historical Issue #73 still requires the reporter's current environment evidence; do not infer its exact cause or close it solely from compatibility tests.
+
 ## V4.4.0 — 2026-08-31
 
 See also: [docs/release-notes-v4.4.0.md](docs/release-notes-v4.4.0.md)

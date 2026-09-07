@@ -66,6 +66,8 @@ Since V3.8.2, the final answer stays in the primary content area while pre-tool 
 
 ## V4.4.0 Native Capability Center for Current Hermes
 
+V4.4.1 adds Hermes 0.21 facade compatibility, profile routing, and topic follow-up fixes. Approval commands retain the complete scope and oversized requests return to native approval. Set `card.reasoning_format: code` for visible reasoning blocks; the default `panel` retains the existing layout. See [V4.4.1 notes](release-notes-v4.4.1.en.md) and [card readability configuration](wiki/card-readability.md).
+
 V4.4.0 uses Hermes `v2026.8.27` / `0.20.6` as its released compatibility baseline and forward-validates against `main@4f225435`. Current Hermes centralizes commands in `hermes_cli.commands.COMMAND_REGISTRY`, so Feishu `/commands` now reads the running registry instead of displaying an HFC-maintained fixed list. Names, categories, aliases, argument hints, subcommands, argument modes, busy policies, and plugin/skill commands follow the active Hermes runtime, including newer `/bg`, `/btw`, `/plan`, and gateway `/busy` contracts.
 
 The capability center provides overview, category, and command-detail views. `/status`, `/context`, `/usage`, `/agents`, `/sessions`, `/profile`, `/version`, and the existing native `/model` and `/resume` pickers can be launched as safe quick actions. HFC copies the original `MessageEvent` and re-enters the Hermes adapter, so access control, busy policy, plugin hooks, and original handlers stay authoritative. Group actions are bound to the initiating operator. State-changing commands such as `/update`, `/new`, `/stop`, and `/undo` are never one-click actions.
@@ -555,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.4.0`.
+The Compose example defaults `HFC_VERSION` to `v4.4.1`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.4.0
+export HFC_VERSION=v4.4.1
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

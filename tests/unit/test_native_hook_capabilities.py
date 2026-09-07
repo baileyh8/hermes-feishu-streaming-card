@@ -16,6 +16,7 @@ import tempfile
 
 import pytest
 
+from hermes_feishu_card import __version__ as PACKAGE_VERSION
 from hermes_feishu_card.install import detect
 from hermes_feishu_card.install import native_hooks
 from hermes_feishu_card.install.native_hooks import (
@@ -984,7 +985,7 @@ def test_release_git_tag_install_provenance_is_verified(installed_fixed_runtime)
             "vcs_info": {
                 "vcs": "git",
                 "commit_id": "b13fccbf72f912890d452ec0cfc126b0adc07c88",
-                    "requested_revision": "v4.4.0",
+                "requested_revision": f"v{PACKAGE_VERSION}",
             },
         },
     )
@@ -999,6 +1000,14 @@ def test_release_git_tag_install_provenance_is_verified(installed_fixed_runtime)
 @pytest.mark.parametrize(
     "direct_url",
     [
+        {
+            "url": "https://github.com/baileyh8/hermes-feishu-streaming-card.git",
+            "vcs_info": {
+                "vcs": "git",
+                "commit_id": "b13fccbf72f912890d452ec0cfc126b0adc07c88",
+                "requested_revision": "v0.0.0",
+            },
+        },
         {
             "url": "https://github.com/example/hermes-feishu-streaming-card.git",
             "vcs_info": {

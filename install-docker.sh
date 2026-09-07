@@ -8,6 +8,7 @@ HERMES_HOME_DIR="${HERMES_HOME:-}"
 CONFIG_PATH="${HFC_CONFIG:-}"
 ENV_FILE="${HFC_ENV_FILE:-}"
 PROFILE_ID="${HERMES_FEISHU_CARD_PROFILE_ID:-}"
+PROFILE_ID_EXPLICIT=0
 EVENT_URL="${HERMES_FEISHU_CARD_EVENT_URL:-}"
 NO_REPAIR="${HFC_NO_REPAIR:-}"
 NO_PROMPT="${HFC_NO_PROMPT:-1}"
@@ -43,7 +44,7 @@ parse_args() {
           --config) CONFIG_PATH="$2" ;;
           --env-file) ENV_FILE="$2" ;;
           --version) VERSION="$2" ;;
-          --profile-id) PROFILE_ID="$2" ;;
+          --profile-id) PROFILE_ID="$2"; PROFILE_ID_EXPLICIT=1 ;;
           --event-url) EVENT_URL="$2" ;;
           --hermes-home) HERMES_HOME_DIR="$2" ;;
         esac
@@ -267,6 +268,9 @@ require_credentials() {
     log "credential-free no-op delivery enabled for local-source smoke"
     return 0
   fi
+  if [ -f "$CONFIG_PATH" ] && "$1" -c 'import sys; from hermes_feishu_card.config import load_config; from hermes_feishu_card.cli import _has_feishu_credentials; c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or "default"; ps=c.get("profiles"); p=next(iter(ps)) if ps and p=="default" and p not in ps and sys.argv[4]!="1" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)' "$CONFIG_PATH" "$ENV_FILE" "$PROFILE_ID" "$PROFILE_ID_EXPLICIT" >/dev/null 2>&1; then
+    return 0
+  fi
   if [ -n "${FEISHU_APP_ID:-}" ] && [ -n "${FEISHU_APP_SECRET:-}" ]; then
     upsert_env "FEISHU_APP_ID" "$FEISHU_APP_ID"
     upsert_env "FEISHU_APP_SECRET" "$FEISHU_APP_SECRET"
@@ -322,12 +326,16 @@ install_package() {
 run_doctor() {
   local python_bin="$1"
   log "running doctor"
-  "$python_bin" -m hermes_feishu_card.cli doctor \
-    --config "$CONFIG_PATH" \
-    --hermes-dir "$HERMES_DIR" \
-    --hermes-home "$HERMES_HOME_DIR" \
-    --profile-id "$PROFILE_ID" \
-    --explain
+  local doctor_args=(
+    -m hermes_feishu_card.cli doctor
+    --config "$CONFIG_PATH"
+    --hermes-dir "$HERMES_DIR"
+    --hermes-home "$HERMES_HOME_DIR"
+  )
+  if [ "$PROFILE_ID_EXPLICIT" = "1" ]; then
+    doctor_args+=(--profile-id "$PROFILE_ID")
+  fi
+  "$python_bin" "${doctor_args[@]}" --explain
 }
 
 run_setup() {
@@ -352,7 +360,11 @@ run_setup() {
     --hermes-home "$HERMES_HOME_DIR"
     --config "$CONFIG_PATH"
     --env-file "$ENV_FILE"
-    --profile-id "$PROFILE_ID"
+  )
+  if [ "$PROFILE_ID_EXPLICIT" = "1" ]; then
+    setup_args+=(--profile-id "$PROFILE_ID")
+  fi
+  setup_args+=(
     --event-url "$EVENT_URL"
     --yes
   )
@@ -374,7 +386,6 @@ main() {
 
   VERSION="${VERSION:-latest}"
   CONFIG_PATH="${CONFIG_PATH:-/opt/data/config.yaml}"
-  PROFILE_ID="${PROFILE_ID:-default}"
   EVENT_URL="${EVENT_URL:-http://127.0.0.1:8765/events}"
   NO_REPAIR="${NO_REPAIR:-0}"
   HERMES_DIR="$(expand_path "$HERMES_DIR")"
@@ -407,7 +418,9 @@ main() {
   export HFC_CONFIG="$CONFIG_PATH"
   export HFC_ENV_FILE="$ENV_FILE"
   export HFC_VERSION="$resolved_version"
-  export HERMES_FEISHU_CARD_PROFILE_ID="$PROFILE_ID"
+  if [ -n "$PROFILE_ID" ]; then
+    export HERMES_FEISHU_CARD_PROFILE_ID="$PROFILE_ID"
+  fi
   export HERMES_FEISHU_CARD_EVENT_URL="$EVENT_URL"
   export HERMES_FEISHU_CARD_SERVICE_MANAGER="$SERVICE_MANAGER"
   export HERMES_FEISHU_CARD_STATE_DIR="$STATE_DIR"
@@ -417,10 +430,15 @@ main() {
 
   validate_paths
   prepare_private_state
-  require_credentials
   log "using Hermes Python: $python_bin"
-  install_package "$python_bin" "$resolved_install_spec" "$resolved_version"
-  run_doctor "$python_bin"
+  if [ -f "$CONFIG_PATH" ]; then
+    install_package "$python_bin" "$resolved_install_spec" "$resolved_version"
+    require_credentials "$python_bin"
+  else
+    require_credentials "$python_bin"
+    install_package "$python_bin" "$resolved_install_spec" "$resolved_version"
+  fi
+  run_doctor "$python_bin" || log "doctor reported issues; setup will validate the selected profile and installation"
   run_setup "$python_bin"
   log "done"
   if [ "$SKIP_START" = "1" ]; then

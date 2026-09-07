@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.1
 bash install-docker.sh
 ```
 
@@ -180,6 +180,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.4.1](docs/release-notes-v4.4.1.en.md) | Hermes 0.21 facade-decomposition compatibility, topic follow-ups, single-process profiles, complete approval scope, optional reasoning code blocks, actual provider attribution, and CodeQL updates |
 | [v4.4.0](docs/release-notes-v4.4.0.en.md) | Adds a Feishu-native capability center driven by the latest Hermes `COMMAND_REGISTRY`, category/detail navigation, safe quick actions, KPI cards, `/bg`/`/btw`/`/plan` compatibility, real backlog metrics, and extreme-Markdown safe folds |
 | [v4.3.8](docs/release-notes-v4.3.8.en.md) | Makes guided setup persistent when capabilities are ready and explicit about transient reboot risk otherwise, fixes the next-prompt sequence race in batch clarify, and honors proxy environment variables for remote Feishu/Lark HTTP while keeping local/private bypass |
 | [v4.3.7](docs/release-notes-v4.3.7.en.md) | Supports Hermes 2026-08-25 core session-scoped delivery filters: the installer accepts the exact new `session_key=session_key` call while preserving the legacy call and rejecting every other keyword shape |
@@ -271,6 +272,14 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 - V4.1 safety controls and troubleshooting: [docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## Contributors
+
+### V4.4.1
+
+- [liooil](https://github.com/liooil) contributed the Hermes facade-decomposition implementation in [PR #257](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/257); [Clarence-G](https://github.com/Clarence-G) contributed topic follow-up, queue/redirect, and cron delivery work in [PR #251](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/251). Original code commits and authorship are retained.
+- [mouyong](https://github.com/mouyong) supplied multiplex-profile, topic, and readability feedback in [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83), [#252](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/252), [#253](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/253), [#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258), and [#259](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/259); [shiboyumm](https://github.com/shiboyumm) opened the original [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83) configuration question; [Boer2333](https://github.com/Boer2333) requested provider attribution in [#250](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/250).
+- [sp960817](https://github.com/sp960817), [Kevin32623](https://github.com/Kevin32623), and [shichenshuo-star](https://github.com/shichenshuo-star) reported Hermes 0.21 incompatibility in [#254](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254), [#255](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/255), and [#256](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/256); [hnzwx](https://github.com/hnzwx) and [leavrcn](https://github.com/leavrcn) supplied additional reproduction and compatibility evidence in [#254](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254). [micah928](https://github.com/micah928) supplied historical no-card evidence in [#73](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/73), whose current environment still needs retesting.
+- Dependabot supplied the CodeQL updates in [PR #247](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/247) and [PR #248](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/248).
+- Restored historical acknowledgements: [lanx214](https://github.com/lanx214) supplied the Linux reproduction in [Issue #240](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/240) ([V4.3.7](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.3.7)); [Lite-G](https://github.com/Lite-G) reported, reproduced, tested, and implemented the Feishu edit-fallback fix in [PR #235](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/235) ([V4.3.5](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.3.5)); [lyp88997](https://github.com/lyp88997) supplied the toast-only `200673` fix direction and observations of updates across environments ([V4.3.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.3.2)). These contributions belong to earlier releases; this cycle restores their missing historical attribution.
 
 This list preserves code, PR proposals, issue reproductions, and real-environment retesting. GitHub's [Contributors](https://github.com/baileyh8/hermes-feishu-streaming-card/graphs/contributors) graph is commit-based; people who contributed only issue reports, comments, logs, or acceptance evidence may not appear in that graph and are still credited here.
 

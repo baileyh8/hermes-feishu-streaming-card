@@ -93,6 +93,7 @@
 - 新 hook block 必须有 patcher 单测和 remove/restore 覆盖。
 - Hermes 0.20 将同步 delivery-ledger 写入包装为 `await asyncio.to_thread(...)`；只可在已验证的 ledger anchor 内解包这一精确结构，未 `await`、其他 wrapper 或全局 call 解包必须继续拒绝。
 - `_status_callback_sync` 是 optional `status_callback` capability；缺失时保持其他安装路径可用并由 doctor 报 partial compatibility。
+- Hermes `79445a496c` facade 拆分的路由、Base helper 契约与 V4 ownership 边界见 [拆分适配说明](hermes-decomposed-patcher.md)。源码布局不得被用作 native hook 能力证明。
 
 ### `hermes_feishu_card/install/recovery.py` and operations execution
 

@@ -190,7 +190,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v4.4.0
+          HFC_VERSION: v4.4.1
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
