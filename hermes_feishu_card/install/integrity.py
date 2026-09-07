@@ -180,6 +180,10 @@ def build_integrity_provenance(
     base_py: str | Path | None = None,
     base_source: str | None = None,
 ) -> dict[str, Any]:
+    if not (Path(root) / ".git").exists():
+        return _monolithic_snapshot_provenance(
+            run_source=run_source, cron_source=cron_source, base_source=base_source,
+        )
     root_path = _exact_git_root(Path(root))
     head = _git_head(root_path)
     run_relative = _relative_regular_path(root_path, Path(run_py))
@@ -220,6 +224,36 @@ def plan_integrity_repair(detection: HermesDetection) -> IntegrityRepairPlan:
 
     manifest = _read_manifest(detection.root / MANIFEST_NAME)
     integrity = manifest.get("integrity") if manifest is not None else None
+    if manifest is not None and manifest.get("manifest_version") == 4:
+        from .decomposed import verified_snapshot_provenance
+        # A local snapshot proves only this installation. It does not grant
+        # permission to mutate an upstream upgrade, with or without Git.
+        if base_plan.state != "installed":
+            return _plan(base_plan, False, "decomposed_upgrade_requires_explicit_install", evidence)
+        try:
+            expected = verified_snapshot_provenance(detection.root)
+        except (OSError, ValueError, UnicodeError):
+            return _plan(base_plan, False, "integrity_evidence_invalid", evidence)
+        evidence["integrity"] = _canonical_hash(integrity)
+        if integrity != expected:
+            return _plan(base_plan, False, "integrity_migration_required", evidence)
+        return _plan(base_plan, False, "recovery_not_required", evidence)
+
+    if isinstance(integrity, dict) and integrity.get("kind") == "verified_owned_snapshot":
+        evidence["integrity"] = _canonical_hash(integrity)
+        if base_plan.state != "installed":
+            return _plan(base_plan, False, "git_history_unavailable", evidence)
+        try:
+            sources = _verified_monolithic_sources(detection)
+            expected = _monolithic_snapshot_provenance(
+                run_source=sources["run_source"], cron_source=sources["cron_source"],
+                base_source=sources["base_source"],
+            )
+        except (OSError, ValueError, UnicodeError):
+            return _plan(base_plan, False, "integrity_evidence_invalid", evidence)
+        reason = "recovery_not_required" if integrity == expected else "integrity_migration_required"
+        return _plan(base_plan, False, reason, evidence)
+
     if not _valid_integrity_manifest(
         integrity, cron_py is not None, base_py is not None
     ):
@@ -450,9 +484,21 @@ def migrate_integrity_manifest(detection: HermesDetection) -> dict[str, Any]:
             detection,
             _read_text(manifest_path),
         )
+        before = _read_text(manifest_path)
+
+        def validate_migration_snapshot():
+            if _render_integrity_manifest_migration(detection, before) != (provenance, contents):
+                raise IntegrityRepairRefused("integrity evidence changed; rerun diagnosis")
+
+        def validate_migration_commit():
+            if _render_integrity_manifest_migration(detection, contents) != (provenance, contents):
+                raise IntegrityRepairRefused("integrity evidence changed; rerun diagnosis")
+
         _atomic_replace_many(
             [(manifest_path, contents)],
             controlled_root=detection.root,
+            pre_commit_validate=validate_migration_snapshot,
+            validate=validate_migration_commit,
         )
         return provenance
 
@@ -477,7 +523,38 @@ def _render_integrity_manifest_migration(
         raise IntegrityRepairRefused(
             "integrity migration requires a manifest"
         ) from exc
+    if _read_text(detection.root / MANIFEST_NAME) != manifest_text:
+        raise IntegrityRepairRefused("integrity evidence changed; rerun diagnosis")
     manifest = dict(manifest)
+    if manifest.get("manifest_version") == 4:
+        from .decomposed import verified_snapshot_provenance
+        try:
+            provenance = verified_snapshot_provenance(detection.root)
+        except (OSError, ValueError, UnicodeError) as exc:
+            raise IntegrityRepairRefused("decomposed ownership is not reversible") from exc
+        # Bind the caller's manifest snapshot as well as every sibling target.
+        if _read_text(detection.root / MANIFEST_NAME) != manifest_text:
+            raise IntegrityRepairRefused("integrity evidence changed; rerun diagnosis")
+        manifest["integrity"] = provenance
+        return provenance, json.dumps(manifest, sort_keys=True) + "\n"
+    provenance = build_integrity_provenance(
+        detection.root, **_verified_monolithic_sources(detection),
+    )
+    manifest["integrity"] = provenance
+    return provenance, json.dumps(manifest, sort_keys=True) + "\n"
+
+
+def _monolithic_snapshot_provenance(*, run_source, cron_source=None, base_source=None):
+    result = {"version": 3, "kind": "verified_owned_snapshot",
+              "layout": "gateway-monolithic", "run_blob_sha256": _text_sha256(run_source)}
+    if cron_source is not None:
+        result["cron_blob_sha256"] = _text_sha256(cron_source)
+    if base_source is not None:
+        result["base_blob_sha256"] = _text_sha256(base_source)
+    return result
+
+
+def _verified_monolithic_sources(detection):
     if detection.run_py.is_symlink():
         raise IntegrityRepairRefused("gateway source must be a regular file")
     run_current = _read_text(detection.run_py)
@@ -522,17 +599,9 @@ def _render_integrity_manifest_migration(
         if base_backup.is_symlink() or _read_text(base_backup) != base_source:
             raise IntegrityRepairRefused("exact Base backup is not verified")
 
-    provenance = build_integrity_provenance(
-        detection.root,
-        run_py=detection.run_py,
-        run_source=run_source,
-        cron_py=cron_py,
-        cron_source=cron_source,
-        base_py=base_py,
-        base_source=base_source,
-    )
-    manifest["integrity"] = provenance
-    return provenance, json.dumps(manifest, sort_keys=True) + "\n"
+    return dict(run_py=detection.run_py, run_source=run_source,
+                cron_py=cron_py, cron_source=cron_source,
+                base_py=base_py, base_source=base_source)
 
 
 def _install_manifest(

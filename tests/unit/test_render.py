@@ -581,7 +581,7 @@ def test_render_pending_interaction_as_buttons():
         if element.get("tag") == "action"
     )
     buttons = action["actions"]
-    assert [item["text"]["content"] for item in buttons] == ["1. 允许一次", "2. 拒绝"]
+    assert [item["text"]["content"] for item in buttons] == ["1", "2"]
     assert "behaviors" not in buttons[0]
     assert buttons[0]["value"]["hfc_action"] == "interaction.select"
     assert buttons[0]["value"]["interaction_id"] == "approval-1"

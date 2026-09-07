@@ -4878,6 +4878,26 @@ async def _apply_event_locked(
         metrics.events_ignored += 1
         return web.json_response({"ok": True, "applied": False}), None
 
+    if event.event == "interaction.requested":
+        # Never claim a decision while showing only a card-limit placeholder.
+        # Preflight a copy before recording any pending state or sending a card.
+        preview = copy.deepcopy(session) if session is not None else CardSession(
+            conversation_id=event.conversation_id,
+            message_id=event.message_id,
+            chat_id=event.chat_id,
+        )
+        if preview.apply(event, advance_sequence=advance_sequence):
+            preview_result = _render_session_card_result_for_app(
+                request.app, preview, session_key=session_key,
+            )
+            if preview_result.disposition != "card":
+                metrics.events_ignored += 1
+                return web.json_response({
+                    "ok": True,
+                    "applied": False,
+                    "reason": "interaction_card_limit",
+                }), None
+
     if event.event == "message.started":
         if session is not None:
             metrics.events_ignored += 1

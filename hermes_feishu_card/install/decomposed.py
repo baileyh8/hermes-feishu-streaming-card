@@ -107,6 +107,30 @@ def render(sources, strategy="gateway_run_013_plus"):
     return rendered
 
 
+def snapshot_provenance(originals, rendered):
+    """Local ownership evidence, never Git ancestry or automatic upgrade authority."""
+    return {
+        "version": 3,
+        "kind": "verified_owned_snapshot",
+        "layout": "gateway-decomposed-v1",
+        "targets": {
+            name: {"original_sha256": sha256(raw).hexdigest(),
+                   "patched_sha256": sha256(rendered[name]).hexdigest()}
+            for name, raw in originals.items()
+        },
+    }
+
+
+def verified_snapshot_provenance(root):
+    snapshot, originals, rendered, state = _inspect(root)
+    if state != "installed":
+        raise ValueError("integrity migration requires healthy decomposed ownership")
+    for name, raw in rendered.items():
+        if snapshot[name] != raw or _remove_target(name, raw) != originals[name]:
+            raise ValueError("decomposed hook is not reversible")
+    return snapshot_provenance(originals, rendered)
+
+
 def _remove_target(target, raw):
     text = raw.decode("utf-8")
     if target == "gateway/platforms/base.py":
@@ -277,6 +301,7 @@ def install(detection, *, no_repair=False, expected_fingerprint=None, accept_her
                                 "patched_sha256": sha256(rendered[name]).hexdigest()}
                         for name, raw in originals.items()},
         }
+        manifest["integrity"] = snapshot_provenance(originals, rendered)
         validate_manifest(manifest)
         changes = [(detection.root / name, raw.decode("utf-8")) for name, raw in rendered.items()
                    if snapshot[name] != raw]

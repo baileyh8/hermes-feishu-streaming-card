@@ -535,3 +535,110 @@ def test_explicit_install_uses_verified_portable_writer_without_dirfd(hermes, mo
     assert not decomposed.install(detect_hermes(hermes))
     with pytest.raises(ValueError, match="directory-relative"):
         decomposed.restore(detect_hermes(hermes))
+
+
+def test_old_owned_template_is_detectable_and_repairable(hermes):
+    before = sources(hermes)
+    decomposed.install(detect_hermes(hermes))
+    target = "gateway/run_turn.py"
+    path = hermes / target
+    # A previous owned hook body need not be recognized by today's remover.
+    raw = path.read_bytes().replace(b"_hfc_exact_staged = False", b"_hfc_exact_staged = bool(0)")
+    path.write_bytes(raw)
+    manifest_path = hermes / decomposed.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    manifest["targets"][target]["patched_sha256"] = sha256(raw).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="corrupt"):
+        patcher.remove_patch(raw.decode())
+    detection = detect_hermes(hermes)
+    assert detection.supported
+    assert recovery.plan_recovery(detection).state == "owned_incomplete"
+    assert decomposed.install(detection)
+    decomposed.restore(detect_hermes(hermes))
+    assert sources(hermes) == before
+
+
+def test_no_git_install_has_verified_snapshot_without_upgrade_authority(hermes):
+    from hermes_feishu_card.install.integrity import plan_integrity_repair
+    assert not (hermes / ".git").exists()
+    decomposed.install(detect_hermes(hermes))
+    manifest = json.loads((hermes / decomposed.MANIFEST_NAME).read_text())
+    assert manifest["integrity"]["kind"] == "verified_owned_snapshot"
+    assert "git_head" not in manifest["integrity"]
+    assert set(manifest["integrity"]["targets"]) == set(sources(hermes))
+    plan = plan_integrity_repair(detect_hermes(hermes))
+    assert plan.reason == "recovery_not_required" and not plan.executable
+    target = hermes / "gateway/run_turn.py"
+    backup = target.with_name(target.name + decomposed.BACKUP_SUFFIX)
+    target.write_bytes(backup.read_bytes() + b"\n# upstream update\n")
+    plan = plan_integrity_repair(detect_hermes(hermes))
+    assert not plan.executable
+    assert plan.reason == "decomposed_upgrade_requires_explicit_install"
+
+
+def test_decomposed_migration_all_targets_permits_fence_acknowledgement(hermes):
+    from hermes_feishu_card.install.integrity import (
+        migrate_integrity_manifest, plan_integrity_repair, integrity_acknowledgement_eligible,
+    )
+    decomposed.install(detect_hermes(hermes))
+    installed = sources(hermes)
+    manifest_path = hermes / decomposed.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["targets"]["gateway/run.py"]["original_sha256"] == manifest["targets"]["gateway/run.py"]["patched_sha256"]
+    manifest.pop("integrity")
+    manifest_path.write_text(json.dumps(manifest))
+    detection = detect_hermes(hermes)
+    assert plan_integrity_repair(detection).reason == "integrity_migration_required"
+    evidence = migrate_integrity_manifest(detection)
+    assert set(evidence["targets"]) == set(installed)
+    assert sources(hermes) == installed
+    plan = plan_integrity_repair(detection)
+    assert integrity_acknowledgement_eligible(detection, recovery.plan_recovery(detection), plan)
+
+
+@pytest.mark.parametrize("kind", ["source", "backup", "missing", "symlink"])
+def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
+    from hermes_feishu_card.install.integrity import migrate_integrity_manifest, IntegrityRepairRefused
+    decomposed.install(detect_hermes(hermes))
+    target = hermes / "gateway/run_turn.py"
+    if kind == "backup":
+        target = target.with_name(target.name + decomposed.BACKUP_SUFFIX)
+    if kind == "missing":
+        target.unlink()
+    elif kind == "symlink":
+        target.unlink()
+        target.symlink_to(hermes / "gateway/run.py")
+    else:
+        target.write_bytes(target.read_bytes() + b"\n# user edit\n")
+    manifest = (hermes / decomposed.MANIFEST_NAME).read_bytes()
+    with pytest.raises(IntegrityRepairRefused):
+        migrate_integrity_manifest(detect_hermes(hermes))
+    assert (hermes / decomposed.MANIFEST_NAME).read_bytes() == manifest
+
+
+def test_decomposed_migration_rechecks_sibling_before_manifest_commit(hermes, monkeypatch):
+    from hermes_feishu_card.install import integrity
+    decomposed.install(detect_hermes(hermes))
+    manifest_path = hermes / decomposed.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("integrity")
+    manifest_path.write_text(json.dumps(manifest))
+    before = manifest_path.read_bytes()
+    stage = integrity._stage_text
+    changed = False
+
+    def edit_sibling_after_render(*args, **kwargs):
+        nonlocal changed
+        result = stage(*args, **kwargs)
+        if not changed:
+            changed = True
+            target = hermes / "gateway/run_turn.py"
+            target.write_bytes(target.read_bytes() + b"\n# concurrent user edit\n")
+        return result
+
+    monkeypatch.setattr(integrity, "_stage_text", edit_sibling_after_render)
+    with pytest.raises(integrity.IntegrityRepairRefused):
+        integrity.migrate_integrity_manifest(detect_hermes(hermes))
+    assert manifest_path.read_bytes() == before
+    assert (hermes / "gateway/run_turn.py").read_bytes().endswith(b"# concurrent user edit\n")

@@ -44,7 +44,7 @@ def test_clarify_pending_legacy_card_includes_mention():
     card = render_card(session)
 
     elements = _card_elements(card)
-    assert elements[0] == {
+    assert elements[1] == {
         "tag": "markdown",
         "content": '<at id="ou_clarify_123"></at> 请选择一个选项',
     }
@@ -121,7 +121,7 @@ def test_clarify_mention_multiselect_legacy_precedes_form():
 
     elements = _card_elements(card)
     assert (
-        elements[0]["content"]
+        elements[1]["content"]
         == '<at id="ou_clarify_123"></at> 请选择（可多选）'
     )
     assert any(

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.4.2 — 2026-09-08
+
+See [release notes](docs/release-notes-v4.4.2.md) and [English notes](docs/release-notes-v4.4.2.en.md).
+
+### Fixed
+- PR #267: complete ownership verification, decomposed integrity migration and conservative source-only snapshots, including metadata rollback on source drift.
+- Wrap secondary multiplex adapters while retaining Hermes transport ownership.
+- Number interaction buttons, retain full option descriptions, deny expired accepted approvals, and reject oversized requests before admission.
+- Add pinned upstream Hermes compatibility gates on Python 3.12/3.13 and Docker/s6 deployment guidance.
+
+### Credits
+- [ywarmy](https://github.com/ywarmy): [#261](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/261), Hermes 0.21 completion-marker report.
+- [Ricadre](https://github.com/Ricadre): [#265](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/265), stale integrity migration reproduction.
+- [mouyong](https://github.com/mouyong): [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83), [#263](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/263), [#264](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/264), [#266](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/266), Docker/source-only and multiplex evidence; [#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258), approval readability feedback.
+
 ## V4.4.1 — 2026-09-07
 
 See also: [Chinese release notes](docs/release-notes-v4.4.1.md) and [English release notes](docs/release-notes-v4.4.1.en.md).

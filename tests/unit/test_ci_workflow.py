@@ -134,11 +134,21 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
     ]
 
     assert checkout_steps
-    assert all(
-        step.get("with", {}).get("ref")
-        == "${{ inputs.checkout_ref || github.sha }}"
-        for step in checkout_steps
-    )
+    import json
+
+    sources = json.loads((ROOT / "tests/fixtures/hermes_upstream_sources.json").read_text())
+    upstream_checkouts = {}
+    for step in checkout_steps:
+        inputs = step.get("with", {})
+        if "repository" not in inputs:
+            assert inputs.get("ref") == "${{ inputs.checkout_ref || github.sha }}"
+        else:
+            assert inputs["repository"] == "NousResearch/hermes-agent"
+            upstream_checkouts[inputs.get("path")] = inputs.get("ref")
+    assert upstream_checkouts == {
+        f".upstream/{baseline}": evidence["commit"]
+        for baseline, evidence in sources.items()
+    }
 
 
 def test_official_actions_are_sha_pinned_to_node24_capable_releases():

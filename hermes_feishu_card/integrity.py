@@ -37,6 +37,7 @@ _OPERATOR_INTEGRITY_REASONS = frozenset(
         "integrity_migration_required",
         "recovery_not_required",
         "recovery_evidence_not_executable",
+        "decomposed_upgrade_requires_explicit_install",
         "git_history_not_descendant",
         "owned_backup_invalid",
         "owned_backup_mismatch",

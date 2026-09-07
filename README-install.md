@@ -322,6 +322,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 ## Docker Containers
 
+For source-only official images and s6 startup, see the
+[same-user startup and shared authentication directory example](docs/wiki/docker-s6-startup.md).
+For verified installation snapshots and migration after an HFC upgrade, see
+[Hermes source layout and integrity recovery](docs/wiki/hermes-decomposed-patcher.md).
+
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
@@ -336,7 +341,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.4.1
+export HFC_VERSION=v4.4.2
 bash install-docker.sh
 ```
 

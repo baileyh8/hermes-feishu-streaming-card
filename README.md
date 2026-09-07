@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.1
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.2
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.4.2](docs/release-notes-v4.4.2.md) | Hermes 0.21 完整性迁移、无 Git 元数据源码安装、multiplex adapter 与审批交互修复 |
 | [v4.4.1](docs/release-notes-v4.4.1.md) | Hermes 0.21 facade 拆分安装兼容、话题后续回复、单进程多 profile、完整审批命令与可选思考代码块、实际 provider 页脚、CodeQL 更新 |
 | [v4.4.0](docs/release-notes-v4.4.0.md) | 基于新版 Hermes `COMMAND_REGISTRY` 的飞书原生能力中心、分类/详情/安全快捷命令与 KPI 可视化；支持 `/bg`、`/btw`、`/plan` 等新契约，并加入真实 backlog 指标和极端 Markdown 安全折叠 |
 | [v4.3.8](docs/release-notes-v4.3.8.md) | `setup` 能力就绪时默认启用开机常驻、不可用时明确 transient 风险；修复 batch clarify 下一题 sequence 竞态，并让远程 Feishu/Lark HTTP 请求遵循 proxy 环境变量而本机/私网继续绕过 |
@@ -271,6 +272,12 @@ Hermes Gateway
 - V4.1 安全控制与排障：[docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## 贡献者
+
+### V4.4.2
+
+- [ywarmy](https://github.com/ywarmy): [#261](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/261), Hermes 0.21 completion-marker report.
+- [Ricadre](https://github.com/Ricadre): [#265](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/265), stale integrity migration reproduction.
+- [mouyong](https://github.com/mouyong): [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83), [#263](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/263), [#264](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/264), [#266](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/266), Docker/source-only and multiplex evidence; [#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258), approval readability feedback.
 
 ### V4.4.1
 
