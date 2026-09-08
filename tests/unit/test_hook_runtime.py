@@ -9375,6 +9375,65 @@ async def test_adapter_metadata_reply_anchor_preserves_topic_thread_placement():
     ]
 
 
+def test_gateway_synthetic_feishu_route_preserves_reply_anchor_for_topic():
+    class DummyRunner:
+        def __init__(self, adapter):
+            self.adapters = {"feishu": adapter}
+
+        def _thread_metadata_for_target(
+            self,
+            platform,
+            chat_id,
+            thread_id,
+            *,
+            chat_type=None,
+            reply_to_message_id=None,
+            adapter=None,
+        ):
+            del platform, chat_id, chat_type, reply_to_message_id, adapter
+            return {"thread_id": thread_id} if thread_id else None
+
+    adapter = _NativeAckAdapter()
+    runner = DummyRunner(adapter)
+
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner)
+    metadata = runner._thread_metadata_for_target(
+        SimpleNamespace(value="feishu"),
+        "oc_parent",
+        "omt_topic",
+        reply_to_message_id="om_topic_message",
+        adapter=adapter,
+    )
+
+    assert metadata == {
+        "thread_id": "omt_topic",
+        "reply_to_message_id": "om_topic_message",
+    }
+
+
+def test_gateway_synthetic_route_wrapper_keeps_non_feishu_metadata_unchanged():
+    class DummyRunner:
+        def __init__(self, adapter):
+            self.adapters = {"feishu": adapter}
+
+        def _thread_metadata_for_target(self, platform, chat_id, thread_id, **kwargs):
+            del platform, chat_id, kwargs
+            return {"thread_id": thread_id, "trace": "preserved"}
+
+    adapter = _NativeAckAdapter()
+    runner = DummyRunner(adapter)
+
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner)
+    metadata = runner._thread_metadata_for_target(
+        SimpleNamespace(value="slack"),
+        "C123",
+        "T123",
+        reply_to_message_id="M123",
+    )
+
+    assert metadata == {"thread_id": "T123", "trace": "preserved"}
+
+
 def test_build_started_event_preserves_redirect_followup_marker():
     payload = hook_runtime.build_event(
         "message.started",

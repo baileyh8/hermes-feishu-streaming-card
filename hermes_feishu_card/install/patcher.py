@@ -4032,7 +4032,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
 
 
 def _find_startup_boot_send(func):
-    if func.name != "_start_finish_wiring":
+    if func.name not in {"_start_finish_wiring", "start"}:
         return None
     return next((node for node in func.body if isinstance(node, ast.Expr)
                  and isinstance(node.value, ast.Await)

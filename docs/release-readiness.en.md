@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.4.3`. This cycle handles Hermes upgrades carrying older owned hooks, explicit integrity migration with local source customization, and empty timeline omission. Focused automation, local production Hermes 0.21.0, a real Feishu DM smoke, and an actual inbound turn have passed. Full-suite, regular-wheel, GitHub CI, exact-merge, and Release-asset results remain part of the final gate. The available production Gateway has only the `default` profile, so this evidence is not represented as real multi-bot multiplex acceptance.
+Current release candidate: `4.4.4`. This cycle fixes Hermes shutdown/restart notices falling out of a Feishu topic into the parent chat and installs HFC's route wrapper before boot notifications on current Hermes `start()`. Focused automation, local production Hermes, real Feishu topic acceptance, full-suite, regular-wheel, GitHub CI, exact merge, and Release assets are recorded by the final release gate.
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
 
@@ -82,6 +82,16 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 ```
 
 Real Feishu integration must use local config or environment variables for `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Do not commit App Secret, tenant token, real chat_id, or sensitive screenshots. Public screenshots must be checked for secrets and private conversation content before being added to the repository.
+
+## V4.4.4 Release Gates
+
+- Current Hermes `start()` ordering, Feishu topic reply anchors, and unchanged non-Feishu metadata: **focused regressions passed**.
+- Patch relocation, idempotent reinstallation, and byte-reversible removal against local production Hermes source: **read-only roundtrip passed**.
+- Focused hot-file regressions: **`943 passed, 1 skipped`**; documentation/package metadata: **`101 passed`**; full pytest: **`3533 passed, 9 skipped in 752.17s`**; `git diff --check`: **passed**.
+- PEP 517 sdist/wheel, plus a fresh Python 3.12 regular-wheel install with `site-packages` package/distribution `4.4.4`, one Hermes plugin entrypoint, all 24 provenance slices, and CLI help: **passed**.
+- Local production Hermes 0.21.0 loaded 4.4.4 from its runtime venv. After the official patcher install, only managed `gateway/run.py` changed as expected; the restarted sidecar/Gateway reached `runtime_ready / integrity=safe`: **passed**.
+- On 2026-09-08, a real Feishu group-topic `/restart` kept its success notice in the original topic without posting to the parent chat's main stream: **passed**. The exact active-work shutdown notice remains covered by the same metadata-wrapper automation.
+- GitHub CI, exact merge, annotated tag, public tagged install, and Release assets/checksums: **pending final gate evidence**.
 
 ## V4.4.3 Release Gates
 
