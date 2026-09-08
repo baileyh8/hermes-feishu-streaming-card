@@ -27,8 +27,11 @@ from .patcher import (
     apply_cron_patch,
     apply_patch,
     remove_base_patch,
+    remove_base_patch_lenient,
     remove_cron_patch,
+    remove_cron_patch_lenient,
     remove_patch,
+    remove_patch_lenient,
 )
 
 
@@ -154,6 +157,9 @@ class _TargetBinding:
         self.parent_fd = -1
 
 _ACTION_MESSAGES = {
+    "adopt_lenient_upgrade_source": (
+        "owned hooks: removed from accepted Hermes upgrade source"
+    ),
     "restore_verified_backup": "run.py: restored verified backup",
     "reapply_current_hook": "run.py: reapplied current hook",
     "rebuild_backup": "backup: recreated",
@@ -399,7 +405,27 @@ def _apply_recovery_action(
     action: str,
     quarantine_sources: List[Tuple[Path, str]],
 ) -> None:
-    if action == "restore_verified_backup":
+    if action == "adopt_lenient_upgrade_source":
+        cleaned_run = remove_patch_lenient(state.run_text)
+        if cleaned_run == state.run_text:
+            raise RecoveryRefused("Accepted upgrade has no owned Gateway hook.")
+        quarantine_sources.append((detection.run_py, state.run_text))
+        state.run_text = cleaned_run
+        if state.cron_text is not None:
+            cleaned_cron = remove_cron_patch_lenient(state.cron_text)
+            if cleaned_cron != state.cron_text and detection.cron_py is not None:
+                quarantine_sources.append((detection.cron_py, state.cron_text))
+            state.cron_text = cleaned_cron
+        if state.base_text is not None:
+            cleaned_base = remove_base_patch_lenient(state.base_text)
+            if cleaned_base != state.base_text and detection.base_py is not None:
+                quarantine_sources.append((detection.base_py, state.base_text))
+            state.base_text = cleaned_base
+        state.backup_text = None
+        state.cron_backup_text = None
+        state.base_backup_text = None
+        state.clear_install_state = True
+    elif action == "restore_verified_backup":
         if state.backup_text is None:
             raise RecoveryRefused("Verified gateway backup is unavailable.")
         if evidence.marker_error and not any(
@@ -1492,6 +1518,15 @@ def _classify_evidence(
     if read_findings:
         return _classification("refused", False, (), read_findings, parts)
 
+    accepted_upgrade = _classify_lenient_owned_upgrade(
+        detection,
+        evidence,
+        parts,
+        accept_hermes_upgrade=accept_hermes_upgrade,
+    )
+    if accepted_upgrade is not None:
+        return accepted_upgrade
+
     gateway = _classify_gateway_evidence(
         detection,
         evidence,
@@ -1510,6 +1545,86 @@ def _classify_evidence(
         accept_hermes_upgrade=accept_hermes_upgrade,
     )
     return _merge_classifications(gateway, cron, base, parts)
+
+
+def _classify_lenient_owned_upgrade(
+    detection: HermesDetection,
+    evidence: RecoveryEvidence,
+    parts: Dict[str, str],
+    *,
+    accept_hermes_upgrade: bool,
+) -> Optional[RecoveryClassification]:
+    """Accept carried-forward owned blocks only with explicit upgrade consent."""
+    if (
+        not accept_hermes_upgrade
+        or not detection.supported
+        or evidence.marker_error != "corrupt_patch_markers"
+    ):
+        return None
+    gateway_manifest = _check_manifest(detection, evidence, "corrupt_owned")
+    gateway_backup = _check_backup(evidence)
+    if not (
+        gateway_manifest.valid
+        and gateway_manifest.backup_matches
+        and gateway_backup.valid
+    ):
+        return None
+    try:
+        run_source = remove_patch_lenient(evidence.current_text)
+    except ValueError:
+        return None
+    if (
+        run_source == evidence.current_text
+        or _validate_reapplication(detection, run_source)
+    ):
+        return None
+
+    cron_source = evidence.cron_current_text
+    if cron_source is not None:
+        try:
+            cleaned_cron = remove_cron_patch_lenient(cron_source)
+        except ValueError:
+            return None
+        if cleaned_cron != cron_source:
+            cron_manifest = _check_cron_manifest(
+                detection,
+                evidence,
+                require_current_hash_match=False,
+            )
+            cron_backup = _check_cron_backup(evidence)
+            if not (
+                cron_manifest.valid
+                and cron_manifest.backup_matches
+                and cron_backup.valid
+                and not _validate_cron_reapplication(cleaned_cron)
+            ):
+                return None
+
+    base_source = evidence.base_current_text
+    if base_source is not None:
+        try:
+            cleaned_base = remove_base_patch_lenient(base_source)
+        except ValueError:
+            return None
+        if cleaned_base != base_source:
+            base_manifest = _check_base_manifest(detection, evidence)
+            base_backup = _check_base_backup(evidence)
+            if not (
+                base_manifest.valid
+                and base_manifest.backup_matches
+                and base_backup.valid
+            ):
+                return None
+        if detection.base_required and _validate_base_reapplication(cleaned_base):
+            return None
+
+    return _classification(
+        "corrupt_owned",
+        True,
+        ("adopt_lenient_upgrade_source",),
+        (_finding("hermes_upgrade_owned_markers_accepted", "warning"),),
+        parts,
+    )
 
 
 def _classify_base_evidence(
@@ -2853,6 +2968,9 @@ def _safe_message(code: str) -> str:
         "backup_read_error": "The owned hook backup could not be read.",
         "backup_source_mismatch": "Backup source does not match the owned hook source.",
         "current_hash_mismatch": "Current hook evidence does not match the install manifest.",
+        "hermes_upgrade_owned_markers_accepted": (
+            "Owned hook blocks on the accepted Hermes upgrade source will be migrated."
+        ),
         "current_patch_mismatch": "The current owned hook cannot be reproduced safely.",
         "current_read_error": "Current hook source could not be read.",
         "cron_backup_hash_mismatch": "Cron backup evidence does not match the install manifest.",

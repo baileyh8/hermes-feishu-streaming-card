@@ -25,5 +25,15 @@
       "gateway/platforms/base.py": "548da77a5593a292344ef89c5bbfb9fc9ef2d4e3c710de8d1868ab51efaf2057",
       "hermes_cli/__init__.py": "28e5537b48fc6cc1d34dada0bbf676a6e4b6ecf7b233986f42b266475e2f8ebd"
     }
+  },
+  "production": {
+    "commit": "180291162ff4df0d42b5dc4fecd08005cf7cebf9",
+    "source": "https://github.com/NousResearch/hermes-agent",
+    "sha256": {
+      "gateway/run.py": "5822b9eb600a3e12230bb95e97ac32fa8088fb2f65650d1fbf8406267f62b5c3",
+      "cron/scheduler.py": "8260a2becbd9915384035ffaa40c16a439a8d62c53083d1500c91d7333e1ddec",
+      "gateway/platforms/base.py": "8a484a522256d23bef86d09b5664a6077f18bcf5cdfdc5b4c7dc283707dfd5b0",
+      "hermes_cli/__init__.py": "fd84470016147d1ed16b8655a60fd5e5c118c26a1a9816d1276933d32c337ff5"
+    }
   }
 }

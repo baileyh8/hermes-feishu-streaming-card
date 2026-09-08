@@ -754,6 +754,25 @@ def test_remove_patch_lenient_removes_previous_async_completion_hook_block():
     assert "    return response\n" in restored
 
 
+def test_remove_patch_lenient_removes_previous_primary_hook_block():
+    content = """
+async def _handle_message_with_agent(message):
+    response = await run_agent(message)
+    return response
+"""
+    patched = patcher.apply_patch(content)
+    previous = patched.replace(
+        "        _hfc_emit(locals())\n",
+        "        _hfc_emit({**locals(), \"legacy\": True})\n",
+    )
+    assert previous != patched
+
+    with pytest.raises(ValueError, match="patch markers"):
+        patcher.remove_patch(previous)
+
+    assert patcher.remove_patch_lenient(previous) == content
+
+
 def test_remove_patch_removes_legacy_completion_hook_block():
     content = (
         "async def _handle_message_with_agent(message):\n"

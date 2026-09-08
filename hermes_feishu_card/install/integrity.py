@@ -537,9 +537,26 @@ def _render_integrity_manifest_migration(
             raise IntegrityRepairRefused("integrity evidence changed; rerun diagnosis")
         manifest["integrity"] = provenance
         return provenance, json.dumps(manifest, sort_keys=True) + "\n"
-    provenance = build_integrity_provenance(
-        detection.root, **_verified_monolithic_sources(detection),
-    )
+    verified_sources = _verified_monolithic_sources(detection)
+    try:
+        provenance = build_integrity_provenance(
+            detection.root, **verified_sources,
+        )
+    except IntegrityRepairRefused as exc:
+        if str(exc) not in {
+            "gateway source does not match Git HEAD",
+            "cron source does not match Git HEAD",
+            "exact Base source does not match Git HEAD",
+        }:
+            raise
+        # An explicit migration may bind a healthy, exactly reversible local
+        # customization to this installation.  Snapshot provenance never grants
+        # authority to repair a later Hermes upgrade, even when .git is present.
+        provenance = _monolithic_snapshot_provenance(
+            run_source=verified_sources["run_source"],
+            cron_source=verified_sources["cron_source"],
+            base_source=verified_sources["base_source"],
+        )
     manifest["integrity"] = provenance
     return provenance, json.dumps(manifest, sort_keys=True) + "\n"
 

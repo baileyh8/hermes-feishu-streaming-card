@@ -1,7 +1,8 @@
 """Install real, hash-bound Hermes sources, without importing or starting Hermes.
 
-CI supplies both exact upstream checkouts. Local runs may opt in with
-HFC_UPSTREAM_STABLE_ROOT / HFC_UPSTREAM_MAIN_ROOT; no network runs inside pytest.
+CI supplies exact upstream checkouts. Local runs may opt in with
+HFC_UPSTREAM_STABLE_ROOT / HFC_UPSTREAM_MAIN_ROOT /
+HFC_UPSTREAM_PRODUCTION_ROOT; no network runs inside pytest.
 """
 from hashlib import sha256
 import json
@@ -20,7 +21,7 @@ SOURCES = json.loads(
 )
 
 
-@pytest.mark.parametrize("baseline", ["stable", "main"])
+@pytest.mark.parametrize("baseline", ["stable", "main", "production"])
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):
     configured = os.environ.get(f"HFC_UPSTREAM_{baseline.upper()}_ROOT")
     if not configured:
