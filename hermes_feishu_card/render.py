@@ -307,7 +307,7 @@ def _render_card_unchecked(
             }
         )
     elements.append({"tag": "hr", "element_id": "main_divider"})
-    if not timeline_elements and not pending_approval:
+    if not timeline_elements and not pending_approval and session.tool_count:
         tool_summary = {
             "tag": "markdown",
             "element_id": "tool_summary",
@@ -1164,25 +1164,10 @@ def _render_timeline_elements(
     if not getattr(session, "timeline", None):
         return []
     all_entries = session.timeline.snapshot()
+    if not all_entries:
+        return []
     entries = _select_timeline_entries(all_entries, max_items=max_items)
     folded = max(0, len(all_entries) - len(entries))
-    if not entries and not folded:
-        empty_content = (
-            '<font color="grey">等待工具事件…</font>'
-            if _is_initial_loading(session)
-            else '<font color="grey">暂无可展示的思考或工具记录。</font>'
-        )
-        panel_elements = _timeline_markdown_elements(
-            empty_content,
-            "auxiliary_timeline_loading",
-            text_size=_role_text_size(
-                text_sizes,
-                "tool",
-                default="x-small",
-                used_roles=used_text_size_roles,
-            ),
-        )
-        return [_timeline_panel(session, panel_elements, expanded=expanded)]
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
     if folded:

@@ -3871,6 +3871,42 @@ def test_reinstall_migrates_manifestless_legacy_owned_patch(tmp_path):
     assert manifest_path(hermes_dir).exists()
 
 
+def test_reinstall_accepts_carried_forward_legacy_patch_on_supported_upgrade(
+    tmp_path,
+):
+    hermes_dir = copy_hermes(tmp_path)
+    install_result = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert install_result.returncode == 0, install_result.stderr
+    upgraded_source = backup_path(hermes_dir).read_text(encoding="utf-8") + (
+        "\n# supported Hermes upgrade\n"
+    )
+    carried = patcher.apply_patch(upgraded_source).replace(
+        "        _hfc_emit(locals())\n",
+        "        _hfc_emit({**locals(), \"legacy\": True})\n",
+    )
+    assert carried != upgraded_source
+    run_py(hermes_dir).write_text(carried, encoding="utf-8")
+
+    refused = run_cli("install", "--hermes-dir", str(hermes_dir), "--yes")
+    assert refused.returncode != 0
+
+    accepted = run_cli(
+        "install",
+        "--hermes-dir",
+        str(hermes_dir),
+        "--yes",
+        "--accept-hermes-upgrade",
+    )
+
+    assert accepted.returncode == 0, accepted.stderr
+    assert "owned hooks: removed from accepted Hermes upgrade source" in accepted.stdout
+    current = run_py(hermes_dir).read_text(encoding="utf-8")
+    assert patcher.remove_patch(current) == upgraded_source
+    assert backup_path(hermes_dir).read_text(encoding="utf-8") == upgraded_source
+    assert manifest_path(hermes_dir).exists()
+    assert list((hermes_dir / "gateway").glob("run.py.hfc-corrupt-*"))
+
+
 def test_reinstall_migrates_manifestless_legacy_patch_without_dirfd_support(
     tmp_path, monkeypatch, capsys
 ):

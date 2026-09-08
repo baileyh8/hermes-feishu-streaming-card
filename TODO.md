@@ -6,6 +6,14 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
+### V4.4.3：生产升级与空 timeline 热修
+
+- [x] 显式接受 Hermes 升级时验证并移除遗留的 owned primary hook block。
+- [x] 允许健康、逐字可逆的本机 Git 源码定制迁移为仅限当前安装的 ownership 快照。
+- [x] 零思考、零工具且无 timeline 条目时不渲染空面板或零工具摘要。
+- [x] 本机生产 Hermes 0.21.0、真实飞书 DM smoke 与实际入站事件完成候选验证。
+- [ ] #268 报告者真实多 bot multiplex 环境复验。
+
 ### V4.4.2：完整性迁移与 multiplex
 
 - [x] 完整 ownership 校验、源码安装快照与迁移回滚。

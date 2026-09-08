@@ -118,3 +118,93 @@ async def test_upstream_multiplex_ingress_installs_named_adapter_and_emits_profi
     assert event.source.profile == "secretary"
     assert len(sent) == 1
     assert sent[0]["data"]["profile_id"] == "secretary"
+
+
+@pytest.mark.asyncio
+async def test_two_named_bots_keep_distinct_profile_and_topic_identity(monkeypatch):
+    ns = {}
+    fixture = Path(__file__).parents[1] / "fixtures/hermes_latest/profile_ingress.py"
+    exec(compile(fixture.read_text(), str(fixture), "exec"), ns)
+
+    @asynccontextmanager
+    async def scope(home):
+        yield
+
+    monkeypatch.setitem(
+        sys.modules,
+        "gateway.run",
+        SimpleNamespace(_async_profile_runtime_scope=scope),
+    )
+    monkeypatch.setenv("HERMES_FEISHU_CARD_PROFILE_ID", "default")
+    sent = []
+
+    async def send(url, payload, timeout):
+        sent.append(payload)
+        return True
+
+    monkeypatch.setattr(hook_runtime, "_send_fail_open_ordered", send)
+    monkeypatch.setattr(
+        hook_runtime,
+        "_fetch_delivery_policy_sync",
+        lambda *a, **kw: {"ok": True, "disposition": "card", "ttl_ms": 1000},
+    )
+
+    class Runner(ns["HermesProfileIngress"]):
+        config = SimpleNamespace(multiplex_profiles=True)
+        adapters = {}
+        _profile_adapters = {
+            "secretary": {"feishu": adapter_type()()},
+            "engineering": {"feishu": adapter_type()()},
+        }
+
+        def _profile_home_or_none(self, name):
+            return "/test/profiles/" + name
+
+        async def _handle_message(self, event):
+            assert hook_runtime.install_feishu_command_card_adapter_methods(
+                self, event=event
+            )
+            assert hook_runtime.emit_from_hermes_locals(
+                {"self": self, "event": event, "source": event.source},
+                "message.started",
+            )
+
+    runtime = Runner()
+    events = [
+        SimpleNamespace(
+            source=SimpleNamespace(
+                platform="feishu",
+                profile=None,
+                chat_id="test-chat-secretary",
+                thread_id="omt_secretary",
+            ),
+            message_id="om_secretary",
+            text="secretary",
+        ),
+        SimpleNamespace(
+            source=SimpleNamespace(
+                platform="feishu",
+                profile=None,
+                chat_id="test-chat-engineering",
+                thread_id="omt_engineering",
+            ),
+            message_id="om_engineering",
+            text="engineering",
+        ),
+    ]
+    await runtime._make_profile_message_handler("secretary")(events[0])
+    await runtime._make_profile_message_handler("engineering")(events[1])
+    await asyncio.sleep(0)
+
+    assert [payload["data"]["profile_id"] for payload in sent] == [
+        "secretary",
+        "engineering",
+    ]
+    assert [payload["thread_id"] for payload in sent] == [
+        "omt_secretary",
+        "omt_engineering",
+    ]
+    assert [payload["conversation_id"] for payload in sent] == [
+        "omt_secretary",
+        "omt_engineering",
+    ]

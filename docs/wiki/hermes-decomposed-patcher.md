@@ -77,7 +77,10 @@ V1/V2 的源码迁移方式跳过配置 ownership。
 分解布局的新安装记录 `verified_owned_snapshot`，绑定全部原始/注入文件的 hash。
 这证明当前安装可逆，不证明 Git ancestry，也不允许自动接受上游源码替换。
 无 `.git` 的单文件 Docker 安装同样记录本地 ownership 快照；有 Git 的单文件安装
-继续使用原来的 Git provenance。两种证据不可相互冒充。
+默认继续使用原来的 Git provenance。若受管源文件还包含用户明确保留的本机修改，
+显式 `integrity migrate-safe --yes` 可在 manifest、backup、当前 patch/remove 往返全部
+逐字一致时降级为仅限当前安装的 `verified_owned_snapshot`。该快照不授予 Git ancestry
+或自动升级修复权限；后续源码变化仍须重新显式验证。两种证据不可相互冒充。
 
 从旧 HFC 升级后，若 hook 已安装但仍提示 `integrity_migration_required`，先停止
 受管 sidecar，再对同一个 Hermes 目录与 sidecar 配置执行：

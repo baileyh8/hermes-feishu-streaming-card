@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.2
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.3
 bash install-docker.sh
 ```
 
@@ -180,6 +180,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.4.3](docs/release-notes-v4.4.3.en.md) | Hermes upgrades carrying older owned hooks, integrity snapshots that preserve local source customization, and omission of an empty zero-reasoning/zero-tool timeline |
 | [v4.4.2](docs/release-notes-v4.4.2.en.md) | Hermes 0.21 integrity migration, source-only ownership, multiplex adapters, and approval interactions |
 | [v4.4.1](docs/release-notes-v4.4.1.en.md) | Hermes 0.21 facade-decomposition compatibility, topic follow-ups, single-process profiles, complete approval scope, optional reasoning code blocks, actual provider attribution, and CodeQL updates |
 | [v4.4.0](docs/release-notes-v4.4.0.en.md) | Adds a Feishu-native capability center driven by the latest Hermes `COMMAND_REGISTRY`, category/detail navigation, safe quick actions, KPI cards, `/bg`/`/btw`/`/plan` compatibility, real backlog metrics, and extreme-Markdown safe folds |
@@ -273,6 +274,10 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 - V4.1 safety controls and troubleshooting: [docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## Contributors
+
+### V4.4.3
+
+- [mouyong](https://github.com/mouyong): the multiplex production report in [#268](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/268) and the empty-timeline feedback in [#269](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/269). The reporter's real multi-bot environment still needs retesting for #268.
 
 ### V4.4.2
 

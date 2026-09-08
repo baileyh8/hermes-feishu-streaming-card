@@ -973,6 +973,40 @@ def test_plan_recovery_allows_marker_only_damage_with_original_manifest_hash(
     }
 
 
+def test_accept_upgrade_migrates_carried_forward_legacy_owned_blocks(
+    installed_state,
+):
+    detection, original, patched, manifest_path = installed_state
+    upgraded_source = original + "\n# Hermes upgrade\n"
+    carried = apply_patch(
+        upgraded_source,
+        strategy=detection.hook_strategy,
+    ).replace(
+        "        _hfc_emit(locals())\n",
+        "        _hfc_emit({**locals(), \"legacy\": True})\n",
+    )
+    assert carried != patched
+    detection.run_py.write_text(carried, encoding="utf-8")
+
+    refused = plan_recovery(detection)
+    accepted = plan_recovery(detection, accept_hermes_upgrade=True)
+
+    assert refused.executable is False
+    assert accepted.executable is True
+    assert accepted.actions == ("adopt_lenient_upgrade_source",)
+
+    execute_recovery(
+        detection,
+        expected_fingerprint=accepted.fingerprint,
+        accept_hermes_upgrade=True,
+    )
+
+    assert detection.run_py.read_text(encoding="utf-8") == upgraded_source
+    assert not detection.run_py.with_name("run.py.hermes_feishu_card.bak").exists()
+    assert not manifest_path.exists()
+    assert list(detection.run_py.parent.glob("run.py.hfc-corrupt-*"))
+
+
 def test_plan_recovery_refuses_corrupt_markers_after_user_edit(installed_state):
     detection, _original, patched, _manifest_path = installed_state
     detection.run_py.write_text(

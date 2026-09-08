@@ -61,7 +61,7 @@ def test_render_card_accepts_custom_header_title():
     assert card["header"]["title"]["content"] == "研发助手"
 
 
-def test_render_initial_running_card_shows_context_loading_and_empty_timeline():
+def test_render_initial_running_card_shows_context_loading_without_empty_timeline():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
 
     card = render_card(session)
@@ -71,43 +71,26 @@ def test_render_initial_running_card_shows_context_loading_and_empty_timeline():
         for item in card["body"]["elements"]
         if item.get("element_id") == "main_content"
     )
-    timeline = next(
-        item
-        for item in card["body"]["elements"]
-        if item.get("element_id") == "auxiliary_timeline"
-    )
-
     assert any(frame in main["content"] for frame in _SPINNER_FRAMES)
     assert "正在加载上下文…" in main["content"]
     assert card["header"]["title"]["content"] == "Hermes Agent"
     assert "subtitle" not in card["header"]
-    assert timeline["expanded"] is False
-    assert timeline["header"]["title"]["content"] == "思考与工具 · 0 次工具调用"
-    assert "tool_summary" not in {
+    assert {"auxiliary_timeline", "tool_summary"}.isdisjoint({
         item.get("element_id") for item in card["body"]["elements"]
-    }
+    })
 
 
-def test_render_completed_card_keeps_collapsed_zero_tool_timeline():
+def test_render_completed_card_omits_zero_tool_timeline():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     session.status = "completed"
     session.answer_text = "最终答案"
     session.thinking_text = "不会公开的 raw thinking"
 
     card = render_card(session)
-    timeline = next(
-        item
-        for item in card["body"]["elements"]
-        if item.get("element_id") == "auxiliary_timeline"
-    )
-
-    assert timeline["expanded"] is False
-    assert timeline["header"]["title"]["content"] == "思考与工具 · 0 次工具调用"
-    assert "暂无可展示的思考或工具记录。" in str(timeline)
     assert "不会公开的 raw thinking" not in str(card)
-    assert "tool_summary" not in {
+    assert {"auxiliary_timeline", "tool_summary"}.isdisjoint({
         item.get("element_id") for item in card["body"]["elements"]
-    }
+    })
 
 
 def test_running_tool_without_model_text_removes_loading_placeholder_from_body():
@@ -419,7 +402,6 @@ def test_v3818_normal_completed_card_keeps_element_order_and_configured_footer()
 
     assert [element["element_id"] for element in card["body"]["elements"]] == [
         "main_content",
-        "auxiliary_timeline",
         "main_divider",
         "footer",
     ]
@@ -440,7 +422,6 @@ def test_v3818_normal_failed_card_keeps_element_order_and_footer():
 
     assert [element["element_id"] for element in card["body"]["elements"]] == [
         "main_content",
-        "auxiliary_timeline",
         "main_divider",
         "footer",
     ]
@@ -481,7 +462,6 @@ def test_model_footer_color_preserves_layout_order_and_configured_fields():
 
     assert [element["element_id"] for element in card["body"]["elements"]] == [
         "main_content",
-        "auxiliary_timeline",
         "main_divider",
         "footer",
     ]
@@ -1449,8 +1429,8 @@ def test_render_answer_stays_primary_over_public_interim_text():
     main = next(item for item in card["body"]["elements"] if item.get("element_id") == "main_content")
 
     assert main["content"] == "这是主回答。"
-    assert "思考与工具 · 0 次工具调用" in str(card)
-    assert "暂无可展示的思考或工具记录。" in str(card)
+    assert "auxiliary_timeline" not in str(card)
+    assert "工具调用 0 次" not in str(card)
     assert "先分析约束。" not in str(card)
 
 
@@ -1512,8 +1492,8 @@ def test_render_keeps_pre_tool_answer_in_main_while_tool_runs():
     card = render_card(session, timeline_expanded=True)
     main = next(item for item in card["body"]["elements"] if item.get("element_id") == "main_content")
     assert main["content"] == "好的，我先做分析再动手。"
-    assert "思考与工具 · 0 次工具调用" in str(card)
-    assert "暂无可展示的思考或工具记录。" in str(card)
+    assert "auxiliary_timeline" not in str(card)
+    assert "工具调用 0 次" not in str(card)
 
     session.apply(
         SidecarEvent(
@@ -2348,8 +2328,8 @@ def test_render_thinking_without_answer_uses_public_interim_main_content():
     assert main["content"] == "这是公开的阶段性输出。"
     assert "正在思考" not in str(card)
     assert "这是公开的阶段性输出。" in str(card)
-    assert "思考与工具 · 0 次工具调用" in str(card)
-    assert "暂无可展示的思考或工具记录。" in str(card)
+    assert "auxiliary_timeline" not in str(card)
+    assert "工具调用 0 次" not in str(card)
 
 
 def test_render_tool_summary_keeps_tool_names_when_reasoning_hidden():

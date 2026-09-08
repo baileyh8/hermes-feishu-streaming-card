@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.4.2`. This cycle addresses Hermes 0.21 facade decomposition, topic follow-up replies, single-process profile routing, complete approval scope, reasoning presentation, and CodeQL updates. Focused automation has passed; full-suite, regular-wheel, and GitHub CI results belong to this release's validation record. Real Feishu/Lark client retesting has not been performed for this candidate; earlier release smoke does not constitute current acceptance. The release PR, exact merge SHA, public tag/install, and Release assets are marked passed only after completion; automation is not represented as platform acceptance.
+Current release candidate: `4.4.3`. This cycle handles Hermes upgrades carrying older owned hooks, explicit integrity migration with local source customization, and empty timeline omission. Focused automation, local production Hermes 0.21.0, a real Feishu DM smoke, and an actual inbound turn have passed. Full-suite, regular-wheel, GitHub CI, exact-merge, and Release-asset results remain part of the final gate. The available production Gateway has only the `default` profile, so this evidence is not represented as real multi-bot multiplex acceptance.
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
 
@@ -83,11 +83,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 
 Real Feishu integration must use local config or environment variables for `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. Do not commit App Secret, tenant token, real chat_id, or sensitive screenshots. Public screenshots must be checked for secrets and private conversation content before being added to the repository.
 
-## V4.4.2 Release Gates
+## V4.4.3 Release Gates
 
-- Focused render/config/hook-runtime tests: `726 passed`; renderer and mention compatibility retest: `221 passed`; server reasoning configuration integration: `2 passed`.
-- Documentation and version metadata: `101 passed`. Regular-wheel, full-suite, GitHub CI, and release-asset outcomes are recorded at the final release gate.
-- Real Feishu/Lark private/group, topic restart recovery, multiplex profiles, and mobile/desktop approval readability require retesting. V4.4.0 smoke is not reused as evidence for the current candidate.
+- Expanded integrity, recovery, patcher, and CLI-install regressions passed; the fixed Hermes source test requires its explicit snapshot path.
+- Empty-timeline renderer regressions passed (`109 passed`), as did the executable two named bot/profile/topic Hermes-handler suite (`12 passed`).
+- The candidate wheel loaded in local production Hermes 0.21.0. Hook recovery, the safe integrity snapshot, and sidecar/Gateway restart passed; sidecar reached `healthy / runtime_ready / integrity=safe`.
+- A real Feishu DM smoke and an actual Hermes inbound turn passed with no observed send or event-application failure. Real multi-bot multiplex and mobile/desktop approval readability still require their corresponding environments.
+- Full pytest: **`3530 passed, 9 skipped in 843.13s`**; `git diff --check`: **passed**. The PEP 517 sdist/wheel, fresh Python 3.12 `site-packages` package/distribution `4.4.3`, single Hermes plugin entrypoint, 24 provenance slices, and CLI help also passed. The remaining release gate records GitHub CI, exact merge, tag, and Release assets.
 
 ## V4.4.0 Release Gates
 
