@@ -8570,6 +8570,33 @@ def _hfc_install_policy_adapter_method(
     return True
 
 
+def _hfc_thread_metadata_for_target_with_feishu_reply_anchor(
+    self: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    original = getattr(
+        type(self),
+        "_hfc_original_thread_metadata_for_target",
+        None,
+    )
+    if not callable(original):
+        return None
+    metadata = original(self, *args, **kwargs)
+    platform = kwargs.get("platform", args[0] if len(args) > 0 else None)
+    thread_id = kwargs.get("thread_id", args[2] if len(args) > 2 else None)
+    reply_to_message_id = kwargs.get("reply_to_message_id")
+    platform_name = str(getattr(platform, "value", platform) or "").strip().lower()
+    thread = str(thread_id or "").strip()
+    reply_anchor = str(reply_to_message_id or "").strip()
+    if platform_name != "feishu" or not thread or not reply_anchor:
+        return metadata
+    routed = dict(metadata) if isinstance(metadata, dict) else {}
+    routed.setdefault("thread_id", thread)
+    routed.setdefault("reply_to_message_id", reply_anchor)
+    return routed
+
+
 def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) -> bool:
     try:
         _remember_gateway_runner(runner)
@@ -8585,6 +8612,13 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
             _HFC_FEISHU_DELIVERY_CONTEXT.set(None)
             return False
         runner_type = type(runner)
+        if callable(getattr(runner_type, "_thread_metadata_for_target", None)):
+            _hfc_install_policy_adapter_method(
+                runner_type,
+                method_name="_thread_metadata_for_target",
+                wrapper=_hfc_thread_metadata_for_target_with_feishu_reply_anchor,
+                original_name="_hfc_original_thread_metadata_for_target",
+            )
         _hfc_install_resume_picker_handler(runner_type)
         _hfc_install_compress_command_handler(runner_type)
         _hfc_install_update_command_handler(runner_type)

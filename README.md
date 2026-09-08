@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.3
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.4
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.4.4](docs/release-notes-v4.4.4.md) | 修复 Hermes 重启/关闭通知从飞书话题错投父群主会话，并让启动期路由 hook 在 boot 通知前生效 |
 | [v4.4.3](docs/release-notes-v4.4.3.md) | 兼容携带旧 owned hook 的 Hermes 升级、保留本机源码定制的完整性快照，并隐藏零思考/零工具的空 timeline |
 | [v4.4.2](docs/release-notes-v4.4.2.md) | Hermes 0.21 完整性迁移、无 Git 元数据源码安装、multiplex adapter 与审批交互修复 |
 | [v4.4.1](docs/release-notes-v4.4.1.md) | Hermes 0.21 facade 拆分安装兼容、话题后续回复、单进程多 profile、完整审批命令与可选思考代码块、实际 provider 页脚、CodeQL 更新 |
@@ -191,8 +192,6 @@ bash install-docker.sh
 | [v4.3.3](docs/release-notes-v4.3.3.md) | 首回复建 thread 时固定 reply anchor 与 `reply_in_thread` placement；completion notification 保持同一 thread，显式 thread 回复缺 anchor 则 fail-closed，绝不退回群聊顶层文本 |
 | [v4.3.2](docs/release-notes-v4.3.2.md) | 修复 Issue #227：schema 2.0 流式卡与 legacy 交互卡保持稳定双轨，避免 clarify/approval 完成后触发 `230099/200800`；Gateway 拒绝把 schema 2.0 卡作为 callback raw card，避免 `200673` |
 | [v4.3.1](docs/release-notes-v4.3.1.md) | 修复 Hermes 0.20 / 飞书 WebSocket 下 clarify/approval 点击后 runtime 已继续但卡片流式更新消失的问题；修复 text fallback 首次回复不唤醒；修复 v4.3.0 persistent service identity、systemd 工作目录与 tokenless health 对账 |
-| [v4.3.0](docs/release-notes-v4.3.0.md) | Hermes `v2026.8.3` 使用源码能力证明的 Hybrid Plugin/patch 集成；V3 installer 可幂等安装与逐字恢复，runtime interaction 只有一个卡片 owner，并提供 linger 校验的 systemd 开机常驻 |
-| [v4.2.12](docs/release-notes-v4.2.12.md) | 审批卡按 Hermes 能力只展示可用授权范围并拒绝未声明输入；零工具调用的卡片在启用 reasoning timeline 时保持稳定折叠入口 |
 | [v4.2.11](docs/release-notes-v4.2.11.md) | 修复 Issue #202：新交互卡发送成功后，旧流式卡会冻结为绿色“已转入交互卡片”历史快照；旧卡 PATCH 失败保持 fail-open，只有最新卡继续接收选择与后续更新 |
 | [v4.2.10](docs/release-notes-v4.2.10.md) | 非回环 sidecar 的回调/结果读取使用 method/path/body 绑定 HMAC；交互绝对过期会拒绝晚到按钮与表单并刷新原卡；跨平台 CI、CodeQL、Dependabot 和 Node 24 Action SHA 门禁同步落地，上一版见 [v4.2.9](docs/release-notes-v4.2.9.md) |
 | [v4.2.8](docs/release-notes-v4.2.8.md) | 修复 `install.sh`、`install-docker.sh` 与 `install.ps1` 只在当前进程使用环境凭据、未持久化到私有 `.env` 的安装契约缺口 |
@@ -273,6 +272,7 @@ Hermes Gateway
 - V4.1 安全控制与排障：[docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## 贡献者
+
 ### V4.4.3
 
 - [mouyong](https://github.com/mouyong)：[#268](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/268) 的 multiplex 生产反馈与 [#269](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/269) 的空 timeline 体验建议。#268 尚待报告者真实多 bot 环境复验。
