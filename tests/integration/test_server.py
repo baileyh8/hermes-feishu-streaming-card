@@ -885,6 +885,36 @@ async def test_serial_and_concurrent_conflict_reject_before_session_mutation(cli
     assert len(feishu_client.sent) == 1
 
 
+@pytest.mark.parametrize("flags", [
+    {"failed": True}, {"interrupted": True}, {"completed": False},
+])
+async def test_gateway_unsuccessful_completion_renders_terminal_without_success(client, flags):
+    test_client, feishu_client = client
+    test_client.app[sidecar_server.BASE_CARD_CONFIG_KEY]["completion_notify"] = {
+        "enabled": True, "mention": False,
+    }
+    context = {
+        "chat_id": "oc_abc", "conversation_id": "conversation-1",
+        "message_id": "hermes-message-1", "profile_id": "default",
+        "answer": "已取得部分结果", "agent_result": flags,
+    }
+    started = hook_runtime.build_event("message.started", context)
+    await test_client.post("/events", json=started)
+    payload = hook_runtime.build_event("message.completed", context)
+    response = await test_client.post("/events", json=payload)
+    assert response.status == 200
+    assert (await response.json())["applied"] is True
+    await wait_for_card_update(feishu_client, "本轮")
+    matching = [s for s in test_client.app[SESSIONS_KEY].values()
+                if "本轮" in s.answer_text]
+    assert len(matching) == 1
+    assert matching[0].status == "failed"
+    assert matching[0].completion_notify_state == "idle"
+    assert "已取得部分结果" in matching[0].answer_text
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.texts == []
+
+
 async def test_redirect_followup_aliases_interrupted_card_to_new_card(client):
     test_client, feishu_client = client
     old_started = event_payload(

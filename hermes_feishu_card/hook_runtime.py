@@ -9811,6 +9811,17 @@ def _event_data(
         return data
     if event_name == "message.completed":
         answer = _completion_answer(local_vars)
+        # The completion envelope also carries failed/partial Gateway returns.
+        # Keep its delivery/attachment contract, but do not lose exact outcome
+        # flags or infer task success from the presence of response text.
+        result = local_vars.get("agent_result")
+        if isinstance(result, dict):
+            if result.get("interrupted") is True:
+                data["turn_outcome"] = "interrupted"
+            elif result.get("failed") is True:
+                data["turn_outcome"] = "failed"
+            elif result.get("completed") is False or result.get("partial") is True:
+                data["turn_outcome"] = "incomplete"
         attachments = _extract_attachments(answer, local_vars)
         data.update({
             "answer": _card_visible_answer(answer),
