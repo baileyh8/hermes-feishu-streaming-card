@@ -4289,6 +4289,21 @@ def _find_decomposed_base_patch_locations(tree, lines):
     def exact(scope, source):
         expected = ast.parse(source).body[0]
         return _unique_exact_base_node(ast.walk(scope), lambda n: ast.dump(n) == ast.dump(expected))
+    def exact_any(scope, sources):
+        """Accept any known-good spelling of one anchored statement.
+
+        Hermes may add orthogonal keyword arguments to a call we anchor on — e.g.
+        ``record_delivery=_record_delivery`` on ``_deliver_attachments``. A drift like
+        that is compatible, so accept either spelling instead of failing the install.
+        """
+        for source in sources:
+            expected = ast.parse(source).body[0]
+            matches = [n for n in ast.walk(scope) if ast.dump(n) == ast.dump(expected)]
+            if len(matches) == 1:
+                return matches[0]
+        raise ValueError(error)
+
+
     def ordered(nodes):
         if any(a.lineno >= b.lineno for a, b in zip(nodes, nodes[1:])):
             raise ValueError(error)
@@ -4300,7 +4315,10 @@ def _find_decomposed_base_patch_locations(tree, lines):
     delegated = exact(guard, 'await self._send_final_text(event, session_key, text_content, _final_thread_metadata, is_ephemeral_response, _ephemeral_ttl, _record_delivery)')
     if guard.body != [delegated]:
         raise ValueError(error)
-    attachments = exact(process, 'await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)')
+    attachments = exact_any(process, (
+        'await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)',
+        'await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered, record_delivery=_record_delivery)',
+    ))
     ordered([extracted, assigned, metadata, tts_default, guard, attachments])
     # All three stages must be siblings in the response branch.
     branches = [n for n in ast.walk(process) if isinstance(n, ast.If)
@@ -4417,6 +4435,22 @@ def _find_split_decomposed_base_patch_locations(tree, lines):
             ast.walk(scope), lambda node: ast.dump(node) == ast.dump(expected)
         )
 
+    def exact_any(scope, sources):
+        """Accept any known-good spelling of one anchored statement.
+
+        Hermes may add orthogonal keyword arguments to a call we anchor on — e.g.
+        ``record_delivery=_record_delivery`` on ``_deliver_attachments``. A drift like
+        that is compatible, so accept either spelling instead of failing the install.
+        """
+        for source in sources:
+            expected = ast.parse(source).body[0]
+            matches = [n for n in ast.walk(scope) if ast.dump(n) == ast.dump(expected)]
+            if len(matches) == 1:
+                return matches[0]
+        raise ValueError(error)
+
+
+
     def ordered(nodes):
         if any(a.lineno >= b.lineno for a, b in zip(nodes, nodes[1:])):
             raise ValueError(error)
@@ -4445,9 +4479,12 @@ def _find_split_decomposed_base_patch_locations(tree, lines):
     )
     if guard.body != [delegated]:
         raise ValueError(error)
-    attachments = exact(
+    attachments = exact_any(
         process,
-        "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)",
+        (
+            "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)",
+            "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered, record_delivery=_record_delivery)",
+        ),
     )
     ordered([extracted, assigned, metadata, tts_default, guard, attachments])
     branches = [

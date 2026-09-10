@@ -30,6 +30,41 @@ def test_split_ledger_contract_rejects_the_old_inline_ledger_shape() -> None:
         patcher.apply_base_patch(broken)
 
 
+ATTACHMENT_KWARG_TAIL = "anything_sent=delivery_attempted or _tts_caption_delivered)"
+ATTACHMENT_KWARG_TAIL_EXTENDED = (
+    "anything_sent=delivery_attempted or _tts_caption_delivered, "
+    "record_delivery=_record_delivery)"
+)
+
+
+def test_split_ledger_accepts_record_delivery_kwarg_on_attachment_anchor() -> None:
+    """Hermes passes ``record_delivery=...`` to ``_deliver_attachments``.
+
+    That keyword is orthogonal to the exact-delivery contract, so the anchor must
+    still bind and stay reversible instead of failing the whole install.
+    """
+    original = FIXTURE.read_text(encoding="utf-8")
+    assert original.count(ATTACHMENT_KWARG_TAIL) == 1
+    extended = original.replace(ATTACHMENT_KWARG_TAIL, ATTACHMENT_KWARG_TAIL_EXTENDED)
+    installed = patcher.apply_base_patch(extended)
+    assert patcher.apply_base_patch(installed) == installed
+    assert patcher.EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN in installed
+    compile(installed, str(FIXTURE), "exec")
+    assert patcher.remove_base_patch(installed) == extended
+
+
+def test_split_ledger_still_rejects_unknown_attachment_kwarg() -> None:
+    """Only known spellings are tolerated; a renamed keyword is still drift."""
+    original = FIXTURE.read_text(encoding="utf-8")
+    assert ATTACHMENT_KWARG_TAIL in original
+    drifted = original.replace(
+        ATTACHMENT_KWARG_TAIL,
+        ATTACHMENT_KWARG_TAIL.replace("anything_sent=", "anything_sent_renamed="),
+    )
+    with pytest.raises(ValueError, match="safe BasePlatformAdapter contract"):
+        patcher.apply_base_patch(drifted)
+
+
 @pytest.mark.parametrize(('before', 'after'), [
     ('metadata=metadata)', 'metadata=metadata, **extra)'),
     ('obligation_id, result, event, delivery_adapter)', 'obligation_id, result, event, delivery_adapter, extra=True)'),
