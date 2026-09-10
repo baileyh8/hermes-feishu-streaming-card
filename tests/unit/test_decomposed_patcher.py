@@ -82,6 +82,29 @@ def test_decomposed_contract_drift_fails_closed(hermes, target, old, new):
     assert not detect_hermes(hermes).supported
 
 
+def test_decomposed_accepts_record_delivery_kwarg_end_to_end(hermes):
+    """A build that passes ``record_delivery=...`` to ``_deliver_attachments`` stays installable.
+
+    Hermes adds that keyword to the exact final-delivery pipeline; it is orthogonal
+    to the delivery contract, so detection must stay supported and the patched tree
+    must round-trip byte-exact.
+    """
+    path = hermes / "gateway/platforms/base.py"
+    old = "anything_sent=delivery_attempted or _tts_caption_delivered)"
+    new = ("anything_sent=delivery_attempted or _tts_caption_delivered, "
+           "record_delivery=_record_delivery)")
+    content = path.read_text()
+    assert content.count(old) == 1
+    path.write_text(content.replace(old, new))
+    detection = detect_hermes(hermes)
+    assert detection.supported, detection.reason
+    before = sources(hermes)
+    decomposed.install(detection)
+    assert sources(hermes) != before
+    decomposed.restore(detect_hermes(hermes))
+    assert sources(hermes) == before
+
+
 @pytest.mark.parametrize("target", patcher.DECOMPOSED_TARGETS)
 def test_each_owned_file_is_required_for_restore(hermes, target):
     detection = detect_hermes(hermes)
