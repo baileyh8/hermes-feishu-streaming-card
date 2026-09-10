@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.4.4`.
+The Compose example defaults `HFC_VERSION` to `v4.4.5`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.4.4
+export HFC_VERSION=v4.4.5
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

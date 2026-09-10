@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.4
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.5
 bash install-docker.sh
 ```
 
@@ -180,6 +180,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.4.5](docs/release-notes-v4.4.5.en.md) | Preserve unsuccessful and superseded turn outcomes; support the verified split-ledger contract with stronger stability regressions |
 | [v4.4.4](docs/release-notes-v4.4.4.en.md) | Keeps Hermes restart/shutdown notices inside the originating Feishu topic and activates the startup routing hook before boot notifications |
 | [v4.4.3](docs/release-notes-v4.4.3.en.md) | Hermes upgrades carrying older owned hooks, integrity snapshots that preserve local source customization, and omission of an empty zero-reasoning/zero-tool timeline |
 | [v4.4.2](docs/release-notes-v4.4.2.en.md) | Hermes 0.21 integrity migration, source-only ownership, multiplex adapters, and approval interactions |

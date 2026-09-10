@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.4
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.5
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.4.5](docs/release-notes-v4.4.5.md) | 修复失败与被替代任务误报完成；支持已验证的拆分账本契约，补强稳定性测试规则 |
 | [v4.4.4](docs/release-notes-v4.4.4.md) | 修复 Hermes 重启/关闭通知从飞书话题错投父群主会话，并让启动期路由 hook 在 boot 通知前生效 |
 | [v4.4.3](docs/release-notes-v4.4.3.md) | 兼容携带旧 owned hook 的 Hermes 升级、保留本机源码定制的完整性快照，并隐藏零思考/零工具的空 timeline |
 | [v4.4.2](docs/release-notes-v4.4.2.md) | Hermes 0.21 完整性迁移、无 Git 元数据源码安装、multiplex adapter 与审批交互修复 |
@@ -268,8 +269,7 @@ Hermes Gateway
 - 端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)
 - 发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
 - 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)
-- 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)
-- V4.1 安全控制与排障：[docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
+- 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md)
 
 ## 贡献者
 
