@@ -195,3 +195,7 @@ When the root `VERSION` file is absent, version detection reads only a literal
 top-level `hermes_cli.__version__` assignment without importing Hermes before
 falling back to Git tags. This keeps 0.20+ doctor and update results from
 reporting an older nearest tag.
+
+## 稳定性回归准入
+
+修复前后的失败证据、真实流程覆盖和发版阻断条件见 [稳定性测试规则](stability-test-policy.md)。新兼容契约必须验证错误参数、错误 adapter、错误控制流被拒绝，并实际执行补丁后的投递顺序；失去上游完成证据的旧轮不得被测试固化为成功。

@@ -98,3 +98,7 @@ Project-public knowledge belongs in `docs/wiki/`.
 
 When adding durable project knowledge, update both the repo wiki and Bailey's
 Obsidian LLM Wiki mirror if it should be reusable across future Codex sessions.
+
+## Stability regression requirements
+
+Follow `docs/wiki/stability-test-policy.md` for stability fixes. Each bug needs a failing reproduction where feasible and assertions on user-visible results, including failure and late/duplicate events. Patcher compatibility must test rejection of contract drift and execute the patched delivery bracket, not only match markers. Report missing fixtures, failed checks and unrun real-client acceptance explicitly. Test totals alone do not establish release readiness.

@@ -91,7 +91,7 @@ def test_v438_setup_sequence_and_proxy_release_contract():
     todo = read_doc("TODO.md")
 
     assert "## V4.3.8 — 2026-08-29" in changelog
-    assert "## Unreleased" not in changelog
+    # Historical release assertions must allow a new unreleased candidate.
     for text in (changelog, notes, notes_en, readiness, readiness_en, todo):
         for marker in ("Issue #244", "Issue #245", "PR #242"):
             assert marker in text

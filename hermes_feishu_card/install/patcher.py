@@ -314,8 +314,15 @@ def apply_base_patch(
     no_text_renderer = (_render_decomposed_base_no_text_hook_block
                         if _has_decomposed_base(tree) else _render_exact_base_no_text_hook_block)
     no_text_hook = no_text_renderer(no_text_indent, newline)
-    final_renderer = (_render_decomposed_base_final_hook_block
-                      if _has_decomposed_base(tree) else _render_exact_base_final_delivery_hook_block)
+    final_renderer = (
+        _render_decomposed_split_base_final_hook_block
+        if _has_split_exact_base(tree) and _has_decomposed_base(tree)
+        else _render_split_base_final_delivery_hook_block
+        if _has_split_exact_base(tree)
+        else _render_decomposed_base_final_hook_block
+        if _has_decomposed_base(tree)
+        else _render_exact_base_final_delivery_hook_block
+    )
     final_hook = final_renderer(final_indent, newline)
 
     # Insert bottom-up so the earlier location is not shifted by the later
@@ -1981,6 +1988,11 @@ def _parse_exact_base_content(content: str):
 
 def _find_exact_base_patch_locations(tree, lines):
     """Return the two insertion locations after validating Hermes' pipeline."""
+    if _has_split_exact_base(tree):
+        if _has_decomposed_base(tree):
+            return _find_split_decomposed_base_patch_locations(tree, lines)
+        # Only the reported decomposed layout has a verified split contract.
+        raise ValueError("could not find safe BasePlatformAdapter contract")
     if _has_decomposed_base(tree):
         return _find_decomposed_base_patch_locations(tree, lines)
     method = _find_exact_base_process_method(tree)
@@ -2201,6 +2213,131 @@ def _find_exact_base_patch_locations(tree, lines):
     return (
         (no_text_index, _line_indent(lines, no_text_index)),
         (send_index, _line_indent(lines, send_index)),
+    )
+
+
+def _is_split_record_obligation_call(node) -> bool:
+    if not isinstance(node, ast.Assign):
+        return False
+    if _assignment_target_names(node) != ("obligation_id",):
+        return False
+    value = _assignment_value(node)
+    if not isinstance(value, ast.Await) or not isinstance(value.value, ast.Call):
+        return False
+    call = value.value
+    owner, function = _call_function(call)
+    return (
+        owner == "self"
+        and function == "_record_delivery_obligation"
+        and not call.keywords
+        and len(call.args) == 5
+        and all(
+            _same_expression(actual, expected)
+            for actual, expected in zip(
+                call.args,
+                (
+                    "event",
+                    "session_key",
+                    "text_content",
+                    "delivery_adapter",
+                    "is_ephemeral_response",
+                ),
+            )
+        )
+    )
+
+
+def _has_split_exact_base(tree) -> bool:
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "BasePlatformAdapter"
+    ]
+    return len(classes) == 1 and sum(
+        isinstance(node, ast.AsyncFunctionDef) and node.name == "send_final_ledgered"
+        for node in classes[0].body
+    ) == 1
+
+
+def _validate_split_ledger_bracket(ledger):
+    """Require an executable, contiguous ledger bracket, not just ordered AST hits."""
+    expected = ast.parse("""
+delivery_adapter = self._final_delivery_adapter(event.source)
+obligation_id = await self._record_delivery_obligation(event, session_key, text_content, delivery_adapter, is_ephemeral_response)
+result = await delivery_adapter._send_with_retry(chat_id=event.source.chat_id, content=text_content, reply_to=reply_to, metadata=metadata)
+if obligation_id is not None:
+    await self._finalize_delivery_obligation(obligation_id, result, event, delivery_adapter)
+return result, delivery_adapter
+""").body
+    body = []
+    for index, node in enumerate(ledger.body):
+        if index == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            continue
+        # The upstream informational log between adapter selection and recording
+        # is the only non-contract statement accepted at this seam.
+        if (len(body) == 1 and isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and _call_function(node.value) == ("logger", "info")):
+            continue
+        owned_hooks = (
+            _render_split_base_final_delivery_hook_block("", "\n"),
+            _render_decomposed_split_base_final_hook_block("", "\n"),
+        )
+        if len(body) == 2 and any(
+            ast.dump(node) == ast.dump(ast.parse("".join(block)).body[0])
+            for block in owned_hooks
+        ):
+            continue
+        body.append(node)
+    args = ledger.args
+    if (args.vararg or args.kwarg or args.posonlyargs
+            or [ast.dump(n) for n in body] != [ast.dump(n) for n in expected]):
+        raise ValueError("could not find safe BasePlatformAdapter contract")
+
+
+def _is_split_final_send_assignment(node) -> bool:
+    if _assignment_target_names(node) != ("result",):
+        return False
+    value = _assignment_value(node)
+    if not isinstance(value, ast.Await) or not isinstance(value.value, ast.Call):
+        return False
+    call = value.value
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_send_with_retry"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "delivery_adapter"
+        and not call.args
+    ):
+        return False
+    expected = {
+        "chat_id": "event.source.chat_id",
+        "content": "text_content",
+        "reply_to": "reply_to",
+        "metadata": "metadata",
+    }
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg}
+    return len(call.keywords) == len(expected) and set(keywords) == set(expected) and all(
+        _same_expression(keywords[name], expression)
+        for name, expression in expected.items()
+    )
+
+
+def _is_split_finalize_obligation_call(node) -> bool:
+    if not isinstance(node, ast.Await) or not isinstance(node.value, ast.Call):
+        return False
+    call = node.value
+    return (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_finalize_delivery_obligation"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and not call.keywords
+        and len(call.args) == 4
+        and _same_expression(call.args[0], "obligation_id")
+        and _same_expression(call.args[1], "result")
+        and _same_expression(call.args[2], "event")
+        and _same_expression(call.args[3], "delivery_adapter")
     )
 
 
@@ -2666,7 +2803,9 @@ def _find_owned_exact_base_blocks(content: str, *, strict: bool):
             raise ValueError("corrupt exact base patch markers")
         if lines[final[0] : final[1] + 1] not in (
             _render_exact_base_final_delivery_hook_block(final_indent, final_newline),
+            _render_split_base_final_delivery_hook_block(final_indent, final_newline),
             _render_decomposed_base_final_hook_block(final_indent, final_newline),
+            _render_decomposed_split_base_final_hook_block(final_indent, final_newline),
         ):
             raise ValueError("corrupt exact base patch markers")
     return no_text, final
@@ -2783,6 +2922,34 @@ def _render_exact_base_final_delivery_hook_block(indent: str, newline: str):
         f"{inner_indent}    \"obligation_id\": _obligation_id,{newline}",
         f"{inner_indent}    \"reply_to\": _reply_anchor,{newline}",
         f"{inner_indent}    \"metadata\": _final_thread_metadata,{newline}",
+        f"{inner_indent}}}){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{EXACT_BASE_FINAL_DELIVERY_PATCH_END}{newline}",
+    ]
+
+
+def _render_split_base_final_delivery_hook_block(indent: str, newline: str):
+    """Render the final hook at Hermes' extracted ledger helper seam."""
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}{EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import prepare_exact_base_final_delivery as "
+            f"_hfc_prepare_exact_base_final_delivery{newline}"
+        ),
+        (
+            f"{inner_indent}delivery_adapter, text_content, reply_to, metadata "
+            f"= await _hfc_prepare_exact_base_final_delivery({{{newline}"
+        ),
+        f"{inner_indent}    **locals(),{newline}",
+        f"{inner_indent}    \"source\": event.source,{newline}",
+        f"{inner_indent}    \"delivery_adapter\": delivery_adapter,{newline}",
+        f"{inner_indent}    \"content\": text_content,{newline}",
+        f"{inner_indent}    \"obligation_id\": obligation_id,{newline}",
+        f"{inner_indent}    \"reply_to\": reply_to,{newline}",
+        f"{inner_indent}    \"metadata\": metadata,{newline}",
         f"{inner_indent}}}){newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{EXACT_BASE_FINAL_DELIVERY_PATCH_END}{newline}",
@@ -4173,12 +4340,230 @@ def _find_decomposed_base_patch_locations(tree, lines):
             (final_send.lineno - 1, _line_indent(lines, final_send.lineno - 1)))
 
 
+def _find_split_decomposed_base_patch_locations(tree, lines):
+    """Verify decomposed Hermes after its ledger helper was extracted."""
+    error = "could not find safe BasePlatformAdapter contract"
+    process = _find_exact_base_process_method(tree)
+    cls = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "BasePlatformAdapter"
+    )
+
+    def method(name):
+        matches = [
+            node
+            for node in cls.body
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == name
+        ]
+        if len(matches) != 1:
+            raise ValueError(error)
+        return matches[0]
+
+    extract, send, ledger, record, finish = (
+        method(name)
+        for name in (
+            "_extract_response_content",
+            "_send_final_text",
+            "send_final_ledgered",
+            "_record_delivery_obligation",
+            "_finalize_delivery_obligation",
+        )
+    )
+    _validate_split_ledger_bracket(ledger)
+    signatures = (
+        (process, ("self", "event", "session_key"), ()),
+        (
+            extract,
+            ("self", "response", "event", "session_key"),
+            ("is_ephemeral_response",),
+        ),
+        (
+            send,
+            ("self", "event", "session_key", "text_content", "metadata",
+             "is_ephemeral_response", "ephemeral_ttl", "record_delivery"),
+            (),
+        ),
+        (
+            ledger,
+            ("self", "event", "session_key", "text_content", "metadata"),
+            ("reply_to", "is_ephemeral_response"),
+        ),
+        (
+            record,
+            ("self", "event", "session_key", "text_content", "delivery_adapter",
+             "is_ephemeral_response"),
+            (),
+        ),
+        (
+            finish,
+            ("self", "obligation_id", "result", "event", "delivery_adapter"),
+            (),
+        ),
+    )
+    for node, positional, keyword_only in signatures:
+        args = node.args
+        if (
+            tuple(arg.arg for arg in (*args.posonlyargs, *args.args)) != positional
+            or tuple(arg.arg for arg in args.kwonlyargs) != keyword_only
+            or args.vararg is not None
+            or args.kwarg is not None
+        ):
+            raise ValueError(error)
+
+    def exact(scope, source):
+        expected = ast.parse(source).body[0]
+        return _unique_exact_base_node(
+            ast.walk(scope), lambda node: ast.dump(node) == ast.dump(expected)
+        )
+
+    def ordered(nodes):
+        if any(a.lineno >= b.lineno for a, b in zip(nodes, nodes[1:])):
+            raise ValueError(error)
+
+    extracted = exact(
+        process,
+        "extracted = await self._extract_response_content(response, event, session_key, is_ephemeral_response=is_ephemeral_response)",
+    )
+    assigned = exact(
+        process,
+        "text_content, media_files = extracted.text_content, extracted.media_files",
+    )
+    metadata = exact(
+        process,
+        "_final_thread_metadata = _mark_notify_metadata(_thread_metadata)",
+    )
+    tts_default = exact(process, "_tts_caption_delivered = False")
+    guard = _unique_exact_base_node(
+        ast.walk(process),
+        lambda node: isinstance(node, ast.If)
+        and _same_expression(node.test, "text_content and not _tts_caption_delivered"),
+    )
+    delegated = exact(
+        guard,
+        "await self._send_final_text(event, session_key, text_content, _final_thread_metadata, is_ephemeral_response, _ephemeral_ttl, _record_delivery)",
+    )
+    if guard.body != [delegated]:
+        raise ValueError(error)
+    attachments = exact(
+        process,
+        "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)",
+    )
+    ordered([extracted, assigned, metadata, tts_default, guard, attachments])
+    branches = [
+        node
+        for node in ast.walk(process)
+        if isinstance(node, ast.If)
+        and all(
+            part in node.orelse
+            for part in (extracted, assigned, metadata, tts_default, guard, attachments)
+        )
+    ]
+    if len(branches) != 1 or not _same_expression(branches[0].test, "not response"):
+        raise ValueError(error)
+
+    em = exact(extract, "media_files, response = self.extract_media(response)")
+    fm = _unique_exact_base_node(ast.walk(extract), _is_exact_media_filter_assignment)
+    ei = exact(extract, "images, text_content = self.extract_images(response)")
+    strip = exact(extract, "text_content = _strip_media_directives(text_content).strip()")
+    el = exact(extract, "local_files, text_content = self.extract_local_files(text_content)")
+    fl = _unique_exact_base_node(ast.walk(extract), _is_exact_local_filter_assignment)
+    recovered = exact(extract, "_recovered = _strip_media_directives(response).strip()")
+    restored = exact(extract, "text_content = _recovered")
+    result = exact(
+        extract,
+        "return _ExtractedResponse(text_content=text_content, images=images, media_files=media_files, local_files=local_files, force_document_attachments=force_document, pre_extract=pre_extract)",
+    )
+    ordered([em, fm, ei, strip, el, fl, recovered, restored, result])
+
+    delegated_call = exact(
+        send,
+        "result, delivery_adapter = await self.send_final_ledgered(event, session_key, text_content, metadata, reply_to=_reply_anchor_for_event(event), is_ephemeral_response=is_ephemeral_response)",
+    )
+    delivered = exact(send, "record_delivery(result)")
+    if delegated_call.lineno >= delivered.lineno:
+        raise ValueError(error)
+    record_source = exact(record, "source = event.source")
+    ledger_id = exact(
+        record, "_ledger_id = getattr(event, \"ledger_message_id\", None)"
+    )
+    ledger_fallback = exact(
+        record,
+        "if _ledger_id is None:\n    _ledger_id = getattr(event, \"message_id\", \"\")",
+    )
+    computed = _unique_exact_base_node(
+        ast.walk(record),
+        lambda node: _is_split_compute_obligation_assignment(node),
+    )
+    recorded = exact(
+        record,
+        "await asyncio.to_thread(record_obligation, obligation_id=obligation_id, session_key=session_key, platform=str(getattr(source.platform, \"value\", source.platform)), chat_id=source.chat_id, thread_id=getattr(source, \"thread_id\", None), content=text_content, adapter_profile=getattr(delivery_adapter, \"_owner_profile\", None))",
+    )
+    attempting = exact(record, "await asyncio.to_thread(mark_attempting, obligation_id)")
+    returned = exact(record, "return obligation_id")
+    ordered([record_source, ledger_id, ledger_fallback, computed, recorded, attempting, returned])
+    tries = [
+        node
+        for node in record.body
+        if isinstance(node, ast.Try)
+        and all(x in node.body for x in (record_source, ledger_id, ledger_fallback,
+                                          computed, recorded, attempting, returned))
+    ]
+    if len(tries) != 1:
+        raise ValueError(error)
+
+    ledger_nodes = list(ast.walk(method("send_final_ledgered")))
+    ledger_record = _unique_exact_base_node(ledger_nodes, _is_split_record_obligation_call)
+    final_send = _unique_exact_base_node(ledger_nodes, _is_split_final_send_assignment)
+    finalized = _unique_exact_base_node(ledger_nodes, _is_split_finalize_obligation_call)
+    ledger_return = exact(
+        method("send_final_ledgered"), "return result, delivery_adapter"
+    )
+    ordered([ledger_record, final_send, finalized, ledger_return])
+    return (
+        (guard.lineno - 1, _line_indent(lines, guard.lineno - 1)),
+        (final_send.lineno - 1, _line_indent(lines, final_send.lineno - 1)),
+    )
+
+
+def _is_split_compute_obligation_assignment(node) -> bool:
+    if _assignment_target_names(node) != ("obligation_id",):
+        return False
+    call = _assignment_value(node)
+    if not isinstance(call, ast.Call):
+        return False
+    owner, function = _call_function(call)
+    return (
+        owner is None
+        and function == "compute_obligation_id"
+        and not call.keywords
+        and len(call.args) == 3
+        and _same_expression(call.args[0], "session_key")
+        and (
+            _same_expression(call.args[1], "str(_ledger_id or \"\")")
+            or _same_expression(call.args[1], "_ledger_id")
+        )
+        and _same_expression(call.args[2], "text_content")
+    )
+
+
 def _render_decomposed_base_final_hook_block(indent, newline):
     block = _render_exact_base_final_delivery_hook_block(indent, newline)
     block = [line.replace("prepare_exact_base_final_delivery as", "prepare_decomposed_base_final_delivery as")
              .replace("_final_thread_metadata", "metadata") for line in block]
     block.insert(2, f'{_child_indent(indent)}_reply_anchor = _reply_anchor_for_event(event){newline}')
     return block
+
+
+def _render_decomposed_split_base_final_hook_block(indent, newline):
+    """Render the split ledger hook while preserving decomposed context."""
+    return [
+        line.replace(
+            "prepare_exact_base_final_delivery as",
+            "prepare_decomposed_base_final_delivery as",
+        )
+        for line in _render_split_base_final_delivery_hook_block(indent, newline)
+    ]
 
 
 def _render_decomposed_base_no_text_hook_block(indent, newline):

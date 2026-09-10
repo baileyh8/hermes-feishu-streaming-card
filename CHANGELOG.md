@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## Unreleased
+
+### Fixed
+- Preserve unsuccessful Gateway outcomes in the final card and suppress success notifications for failed, interrupted or incomplete turns.
+- End superseded cards without claiming that the interrupted task completed; retain partial content and keep late events isolated from the new turn.
+- Recognize the reported decomposed Hermes split-ledger contract, with strict delivery-order, adapter, arguments and reversible ownership checks. Based on tidytorch's PR #286, with additional rejection and execution regressions.
+
+### Maintenance
+- Require scenario-based stability evidence, failure/late-event regressions and explicit real-client acceptance boundaries in the maintainer policy and PR template.
+
 ## V4.4.4 — 2026-09-08
 
 See [release notes](docs/release-notes-v4.4.4.md) and [English notes](docs/release-notes-v4.4.4.en.md).

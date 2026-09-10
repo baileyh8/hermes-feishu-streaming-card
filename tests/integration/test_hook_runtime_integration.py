@@ -307,8 +307,10 @@ async def test_quoted_turn_identity_survives_hook_to_sidecar_end_to_end(
     b_wire = [item for item in posted if item.get("turn_id") == "om_turn_b"]
     assert [item["sequence"] for item in a_wire] == [0, 1, 2]
     assert [item["sequence"] for item in b_wire] == [0, 1]
-    assert a_status == "completed"
-    assert a_answer == "A FIRST"
+    assert a_status == "failed"
+    assert a_answer.startswith("A FIRST")
+    assert "本轮已被新对话替代" in a_answer
+    assert "A FINAL" not in a_answer
     assert "B LIVE" in b_answer
     assert "A FINAL" not in b_answer
     assert health["metrics"]["policy_queries"] == 2
