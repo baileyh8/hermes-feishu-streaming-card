@@ -6,6 +6,14 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
+### V4.4.5：终态与安装稳定性修复
+
+- [x] Gateway 失败、中断和未完成状态不再显示成功或发送成功通知。
+- [x] 新轮替代旧轮时保留内容并明确尚未确认完成。
+- [x] 已验证的 decomposed split-ledger 契约支持、危险漂移拒绝与执行回归。
+- [x] 稳定性测试规则与 PR 验证模板。
+- [ ] #282 授权首次点击、#283 空卡、#275/#278 Topic 问题的真实环境根因验证。
+
 ### V4.4.4：飞书话题重启通知路由热修
 
 - [x] #270：活跃话题的关闭/重启通知保留原消息 reply anchor，继续落在同一 Topic。

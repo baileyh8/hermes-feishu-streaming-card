@@ -437,3 +437,7 @@ V3.8.9 notice suppress smoke: please run terminal command date, then reply exact
   `site-packages` import origin, installed hooks, and ready sidecar/Gateway.
 - Any tracked non-HFC edit or incomplete Git operation must show unavailable
   and leave Hermes unchanged. Untracked user files must remain intact.
+
+## 稳定性回归补充
+
+按 [稳定性测试规则](stability-test-policy.md) 验证失败任务不会显示成功或发送成功通知；工具执行中发新消息后，旧卡保留内容并明确未确认完成，新卡继续独立更新。授权须记录首次点击到实际恢复执行的结果，不能仅凭按钮变绿判定成功。Topic 命令须同时核对回复位置与重复消息数。

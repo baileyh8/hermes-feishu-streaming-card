@@ -8250,6 +8250,25 @@ def test_extract_real_platform():
     assert hook_runtime._extract_real_platform(None) == ""
 
 
+@pytest.mark.parametrize("result,outcome", [
+    ({"failed": True}, "failed"),
+    ({"interrupted": True, "completed": True}, "interrupted"),
+    ({"completed": False}, "incomplete"),
+    ({"partial": True, "completed": True}, "incomplete"),
+    ({"completed": True, "failed": False}, None),
+    ({"failed": "true", "completed": 0}, None),
+    ({}, None),
+])
+def test_completion_carries_explicit_unsuccessful_outcome(result, outcome):
+    payload = hook_runtime.build_event("message.completed", {
+        "chat_id": "oc_abc", "message_id": "msg_outcome",
+        "answer": "partial response", "agent_result": result,
+    }, preview=True)
+    assert payload["event"] == "message.completed"
+    assert payload["data"].get("turn_outcome") == outcome
+    assert payload["data"]["answer"] == "partial response"
+
+
 def test_build_completed_event_uses_agent_result_token_fallbacks():
     payload = hook_runtime.build_event(
         "message.completed",

@@ -6914,12 +6914,12 @@ async def _abandon_stale_sessions_for_chat(
     *,
     alias_to_session_key: str | None = None,
 ) -> None:
-    """Mark stale active sessions for the same chat+conversation as completed.
+    """Mark stale active sessions for the same chat+conversation as unsuccessful.
 
     When the gateway interrupts a running turn and starts a new one (e.g. user
     sends a new message mid-turn), no message.completed is sent for the old turn.
     The old card stays stuck at "生成中" forever.  This function finds such
-    orphaned sessions and marks them completed so their cards render properly.
+    orphaned sessions and ends them without claiming successful execution.
 
     Only abandons sessions that share the same chat_id AND conversation_id AND
     profile_id prefix (to avoid cross-profile or cross-thread interference),
@@ -6980,7 +6980,11 @@ async def _abandon_stale_sessions_for_chat(
         if already_terminal:
             continue
         sess.timeline.complete()
-        sess.status = "completed"
+        sess.status = "failed"
+        sess.answer_text = (
+            sess.answer_text.rstrip()
+            + "\n\n> 本轮已被新对话替代，任务尚未确认完成。"
+        ).lstrip()
         sess.updated_at = time.time()
         card_config = app[SESSION_CARD_CONFIGS_KEY].get(
             key, app[BASE_CARD_CONFIG_KEY]

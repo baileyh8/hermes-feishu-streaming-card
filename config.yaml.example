@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V4.4.4 sidecar configuration
+# Hermes Feishu Streaming Card V4.4.5 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 

@@ -885,6 +885,36 @@ async def test_serial_and_concurrent_conflict_reject_before_session_mutation(cli
     assert len(feishu_client.sent) == 1
 
 
+@pytest.mark.parametrize("flags", [
+    {"failed": True}, {"interrupted": True}, {"completed": False},
+])
+async def test_gateway_unsuccessful_completion_renders_terminal_without_success(client, flags):
+    test_client, feishu_client = client
+    test_client.app[sidecar_server.BASE_CARD_CONFIG_KEY]["completion_notify"] = {
+        "enabled": True, "mention": False,
+    }
+    context = {
+        "chat_id": "oc_abc", "conversation_id": "conversation-1",
+        "message_id": "hermes-message-1", "profile_id": "default",
+        "answer": "已取得部分结果", "agent_result": flags,
+    }
+    started = hook_runtime.build_event("message.started", context)
+    await test_client.post("/events", json=started)
+    payload = hook_runtime.build_event("message.completed", context)
+    response = await test_client.post("/events", json=payload)
+    assert response.status == 200
+    assert (await response.json())["applied"] is True
+    await wait_for_card_update(feishu_client, "本轮")
+    matching = [s for s in test_client.app[SESSIONS_KEY].values()
+                if "本轮" in s.answer_text]
+    assert len(matching) == 1
+    assert matching[0].status == "failed"
+    assert matching[0].completion_notify_state == "idle"
+    assert "已取得部分结果" in matching[0].answer_text
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.texts == []
+
+
 async def test_redirect_followup_aliases_interrupted_card_to_new_card(client):
     test_client, feishu_client = client
     old_started = event_payload(
@@ -927,8 +957,8 @@ async def test_redirect_followup_aliases_interrupted_card_to_new_card(client):
     assert test_client.app[SESSION_ALIASES_KEY]["om_old_turn"] == "om_redirect_turn"
     old_session = test_client.app[SESSIONS_KEY]["om_old_turn"]
     new_session = test_client.app[SESSIONS_KEY]["om_redirect_turn"]
-    assert old_session.status == "completed"
-    assert old_session.answer_text == ""
+    assert old_session.status == "failed"
+    assert old_session.answer_text == "> 本轮已被新对话替代，任务尚未确认完成。"
     assert "redirected answer" in new_session.answer_text
     assert len(feishu_client.sent) == 2
 
@@ -984,8 +1014,8 @@ async def test_redirect_followup_aliases_interrupted_turn_id_stream_to_new_card(
     )
     old_session = test_client.app[SESSIONS_KEY]["turn-old-runtime"]
     new_session = test_client.app[SESSIONS_KEY]["om_redirect_turn"]
-    assert old_session.status == "completed"
-    assert old_session.answer_text == ""
+    assert old_session.status == "failed"
+    assert old_session.answer_text == "> 本轮已被新对话替代，任务尚未确认完成。"
     assert "redirected answer" in new_session.answer_text
 
 
@@ -1848,7 +1878,7 @@ async def test_new_turn_abandons_interrupted_session_in_same_conversation(client
         json=event_payload("answer.delta", 0, {"text": "follow-up"}, **second),
     )
 
-    assert test_client.app[SESSIONS_KEY]["message-interrupted"].status == "completed"
+    assert test_client.app[SESSIONS_KEY]["message-interrupted"].status == "failed"
     assert test_client.app[SESSIONS_KEY]["message-follow-up"].status == "thinking"
 
 
@@ -1898,7 +1928,8 @@ async def test_interrupted_terminal_update_cannot_be_overwritten_by_stale_delta(
         for message_id, card in feishu_client.updated
         if message_id == "feishu-message-1"
     ]
-    assert "已完成" in str(old_card_updates[-1])
+    assert "本轮已被新对话替代" in str(old_card_updates[-1])
+    assert "已完成" not in str(old_card_updates[-1])
 
 
 async def test_interrupted_session_log_does_not_expose_chat_id(client, caplog):
@@ -11217,7 +11248,8 @@ async def test_independent_background_notices_do_not_abandon_active_cards(client
         ),
     )
 
-    assert sessions["main-turn-1"].status == "completed"
+    assert sessions["main-turn-1"].status == "failed"
+    assert "本轮已被新对话替代" in sessions["main-turn-1"].answer_text
     assert sessions["notice-process-one"].status == "running"
     assert sessions["notice-process-two"].status == "running"
 
@@ -12528,7 +12560,7 @@ async def test_session_key_explicit_empty_profile_uses_default_composite_key():
 async def test_interrupt_abandons_stale_session_via_session_creating_event(client):
     """When a new session is created via SESSION_CREATING_EVENTS (e.g. answer.delta
     after an interrupt with no message.started), the old active session for the
-    same chat+conversation should be marked completed and its card updated."""
+    same chat+conversation should be marked unsuccessful and its card updated."""
     test_client, feishu_client = client
 
     # First turn: message.started + some streaming
@@ -12562,7 +12594,7 @@ async def test_interrupt_abandons_stale_session_via_session_creating_event(clien
     assert len(updates_for_old) >= 2
     # The last update should contain the completed marker (subtitle)
     last_card = str(updates_for_old[-1])
-    assert "已完成" in last_card
+    assert "本轮已被新对话替代" in last_card
 
 
 async def test_interrupt_abandons_stale_session_via_message_started(client):
@@ -12590,7 +12622,7 @@ async def test_interrupt_abandons_stale_session_via_message_started(client):
         card for mid, card in feishu_client.updated if mid == "feishu-message-1"
     ]
     assert len(updates_for_old) >= 2
-    assert "已完成" in str(updates_for_old[-1])
+    assert "本轮已被新对话替代" in str(updates_for_old[-1])
 
 
 async def test_late_terminal_with_turn_id_does_not_complete_new_quoted_turn(client):
@@ -12863,7 +12895,7 @@ async def test_interrupt_does_not_abandon_different_conversation(client):
 
 async def test_terminal_event_on_abandoned_session_returns_applied_true(client):
     """When message.completed arrives for a session that was already abandoned
-    (status=completed), the sidecar should return applied=True so the gateway
+    (status=failed), the sidecar should return applied=True so the gateway
     hook suppresses the native plain-text delivery."""
     test_client, feishu_client = client
 
@@ -12881,7 +12913,7 @@ async def test_terminal_event_on_abandoned_session_returns_applied_true(client):
         "/events",
         json=event_payload("answer.delta", 0, {"text": "新回答"}, **msg2),
     )
-    await wait_for_card_update(feishu_client, "已完成")
+    await wait_for_card_update(feishu_client, "本轮已被新对话替代")
     old_updates_before_late_terminal = len(
         [
             card

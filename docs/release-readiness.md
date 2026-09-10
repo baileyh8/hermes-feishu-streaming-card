@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发布候选为 `4.4.4`。本轮修复 Hermes 关闭/重启通知从飞书 Topic 错投父群主会话，并让当前 Hermes `start()` 在 boot 通知前安装 HFC 路由 wrapper。聚焦自动化、本机生产 Hermes、真实飞书 Topic、完整测试、普通 wheel、GitHub CI、exact merge 与 Release assets 以最终发布记录为准。
+当前发布候选为 `4.4.5`。本轮修复失败与被替代任务的成功误报，支持已验证的 decomposed split-ledger 契约，并补强稳定性回归规则。真实生产、跨平台 CI、精确合并提交和发布资产以最终发布记录为准。
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。
 
@@ -83,13 +83,13 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 
 真实飞书联调只能使用本机配置或环境变量提供 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`。不要把 App Secret、tenant token 或真实 chat_id 提交到仓库。公开演示截图入库前需要确认不包含敏感凭据和不可公开的会话内容。
 
-## V4.4.4 发布门禁
+## V4.4.5 发布门禁
 
 - 当前 Hermes `start()` 启动顺序、Feishu Topic reply anchor、非 Feishu 元数据保持不变：**聚焦回归通过**。
 - 本机生产 Hermes 源码的 patch 迁移、幂等重装与逐字恢复：**只读往返验证通过**。
 - 聚焦 hot-file 回归：**`943 passed, 1 skipped`**；文档与包元数据：**`101 passed`**；完整 pytest：**`3533 passed, 9 skipped in 752.17s`**；`git diff --check`：**通过**。
-- PEP 517 sdist/wheel、全新 Python 3.12 venv 的普通 wheel `site-packages` 包/distribution `4.4.4`、唯一 Hermes plugin entrypoint、24 个 provenance slices 与 CLI help：**通过**。
-- 本机生产 Hermes 0.21.0 runtime venv 加载 4.4.4，官方 patcher 安装后仅 managed `gateway/run.py` 发生预期变化；sidecar/Gateway 重启并达到 `runtime_ready / integrity=safe`：**通过**。
+- PEP 517 sdist/wheel、全新 Python 3.12 venv 的普通 wheel `site-packages` 包/distribution `4.4.5`、唯一 Hermes plugin entrypoint、24 个 provenance slices 与 CLI help：**通过**。
+- 本机生产 Hermes 0.21.0 runtime venv 加载 4.4.5，官方 patcher 安装后仅 managed `gateway/run.py` 发生预期变化；sidecar/Gateway 重启并达到 `runtime_ready / integrity=safe`：**通过**。
 - 2026-09-08 真实飞书群 Topic `/restart` 的成功通知留在原 Topic，未落入父群主会话：**通过**。精确的活跃任务 shutdown 通知仍由同一 metadata wrapper 自动化覆盖。
 - GitHub CI、exact merge、annotated tag、public tagged install 与 Release assets/checksums：**待最终门禁登记**。
 

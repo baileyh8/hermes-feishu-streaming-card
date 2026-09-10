@@ -25,6 +25,31 @@ def event(name, sequence, data, **overrides):
     return SidecarEvent.from_dict(payload)
 
 
+@pytest.mark.parametrize("outcome", ["failed", "interrupted", "incomplete"])
+def test_unsuccessful_completion_keeps_answer_and_metadata_without_success(outcome):
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("message.completed", 1, {
+        "answer": "已有部分结果", "turn_outcome": outcome,
+        "tokens": {"input_tokens": 42}, "duration": 12,
+    }))
+    assert session.status == "failed"
+    assert "已有部分结果" in session.answer_text
+    assert "本轮" in session.answer_text
+    assert session.tokens == {"input_tokens": 42}
+    assert session.duration == 12
+    assert not session.apply(event("answer.delta", 2, {"text": "late"}))
+
+
+@pytest.mark.parametrize("outcome", [None, "unknown", {}, []])
+def test_unknown_completion_outcome_retains_legacy_behavior(outcome):
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("message.completed", 1, {
+        "answer": "普通答案", "turn_outcome": outcome,
+    }))
+    assert session.status == "completed"
+    assert session.answer_text == "普通答案"
+
+
 def test_thinking_accumulates_and_strips_tags():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 1, {"text": "<think>先分析"}))

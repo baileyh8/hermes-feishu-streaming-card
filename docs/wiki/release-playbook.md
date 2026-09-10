@@ -109,3 +109,7 @@ gh run list --workflow release-assets.yml --limit 3
 - 如果需要用户再验证，列出最小验证步骤。
 
 不要把未验证的问题写成已解决。
+
+## 稳定性候选的额外证据
+
+按 [稳定性测试规则](stability-test-policy.md) 给出涉及场景、自动化结果和真实边界验收。缺 fixture 或环境相关失败必须解决或明确阻断；局部绿灯不能替代完整 CI，也不能关闭尚未复现的用户 Issue。
