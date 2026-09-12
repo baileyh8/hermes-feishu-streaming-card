@@ -1996,6 +1996,9 @@ def _find_exact_base_patch_locations(tree, lines):
     if _has_decomposed_base(tree):
         return _find_decomposed_base_patch_locations(tree, lines)
     method = _find_exact_base_process_method(tree)
+    # Hermes 0.21+ uses send_final_ledgered with a different structure.
+    if method.name == "send_final_ledgered":
+        return _find_send_final_ledgered_patch_locations(method, lines)
     method_nodes = list(ast.walk(method))
 
     extract_media = _unique_exact_base_node(
@@ -2216,6 +2219,69 @@ def _find_exact_base_patch_locations(tree, lines):
     )
 
 
+def _find_send_final_ledgered_patch_locations(method, lines):
+    """Hermes 0.21+ send_final_ledgered anchor detection.
+
+    Structure:
+        delivery_adapter = self._final_delivery_adapter(event.source)
+        obligation_id = await self._record_delivery_obligation(...)
+        result = await delivery_adapter._send_with_retry(...)
+        if obligation_id is not None:
+            await self._finalize_delivery_obligation(...)
+    """
+    method_nodes = list(ast.walk(method))
+
+    delivery_adapter = _unique_exact_base_node(
+        method_nodes,
+        lambda node: _is_exact_assignment_call(
+            node,
+            targets=("delivery_adapter",),
+            owner="self",
+            function="_final_delivery_adapter",
+            args=("event.source",),
+        ),
+    )
+    record_obligation = _unique_exact_base_node(
+        method_nodes,
+        lambda node: _is_exact_assignment_call(
+            node,
+            targets=("obligation_id",),
+            owner="self",
+            function="_record_delivery_obligation",
+            args=("event", "session_key", "text_content", "delivery_adapter", "is_ephemeral_response"),
+        ),
+    )
+    send = _unique_exact_base_node(
+        method_nodes,
+        lambda node: _is_exact_assignment_call(
+            node,
+            targets=("result",),
+            owner="delivery_adapter",
+            function="_send_with_retry",
+            args=(),
+        ),
+    )
+    finalize = _unique_exact_base_node(
+        method_nodes,
+        lambda node: isinstance(node, ast.If)
+        and _same_expression(node.test, "obligation_id is not None"),
+    )
+
+    ordered = (delivery_adapter, record_obligation, send, finalize)
+    if any(getattr(node, "lineno", None) is None for node in ordered):
+        raise ValueError("could not find safe BasePlatformAdapter contract")
+    line_numbers = [node.lineno for node in ordered]
+    if line_numbers != sorted(line_numbers) or len(set(line_numbers)) != len(line_numbers):
+        raise ValueError("could not find safe BasePlatformAdapter contract")
+
+    no_text_index = method.lineno - 1
+    send_index = send.lineno - 1
+    return (
+        (no_text_index, _line_indent(lines, no_text_index)),
+        (send_index, _line_indent(lines, send_index)),
+    )
+
+
 def _is_split_record_obligation_call(node) -> bool:
     if not isinstance(node, ast.Assign):
         return False
@@ -2349,15 +2415,18 @@ def _find_exact_base_process_method(tree):
     ]
     if len(classes) != 1:
         raise ValueError("could not find safe BasePlatformAdapter contract")
-    methods = [
-        node
-        for node in classes[0].body
-        if isinstance(node, ast.AsyncFunctionDef)
-        and node.name == "_process_message_background"
-    ]
-    if len(methods) != 1:
-        raise ValueError("could not find safe BasePlatformAdapter contract")
-    return methods[0]
+    # _process_message_background owns the top-level pipeline; send_final_ledgered
+    # is the ledger helper it delegates to (Hermes 0.21+).
+    for name in ("_process_message_background", "send_final_ledgered"):
+        methods = [
+            node
+            for node in classes[0].body
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == name
+        ]
+        if len(methods) == 1:
+            return methods[0]
+    raise ValueError("could not find safe BasePlatformAdapter contract")
 
 
 def _unique_exact_base_node(nodes, predicate):
@@ -4441,13 +4510,13 @@ def _find_split_decomposed_base_patch_locations(tree, lines):
     )
     delegated = exact(
         guard,
-        "await self._send_final_text(event, session_key, text_content, _final_thread_metadata, is_ephemeral_response, _ephemeral_ttl, _record_delivery)",
+        "await self._send_final_text(\n    event, session_key, text_content, _final_thread_metadata,\n    is_ephemeral_response, _ephemeral_ttl, _record_delivery)",
     )
     if guard.body != [delegated]:
         raise ValueError(error)
     attachments = exact(
         process,
-        "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)",
+        "await self._deliver_attachments(\n    event, extracted, _final_thread_metadata,\n    anything_sent=delivery_attempted or _tts_caption_delivered,\n    record_delivery=_record_delivery)",
     )
     ordered([extracted, assigned, metadata, tts_default, guard, attachments])
     branches = [
