@@ -1028,6 +1028,16 @@ def test_failed_visible_main_text_shows_error():
     assert session.visible_main_text == "失败原因"
 
 
+def test_failure_keeps_partial_answer_visible_and_rejects_late_success():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("answer.delta", 1, {"text": "已经查到的结果"}))
+    assert session.apply(event("message.failed", 2, {"error": "provider unavailable"}))
+    assert "已经查到的结果" in session.visible_main_text
+    assert "provider unavailable" in session.visible_main_text
+    assert not session.apply(event("message.completed", 3, {"answer": "late success"}))
+    assert session.status == "failed"
+
+
 def test_repeated_running_updates_do_not_inflate_tool_count():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     for i in range(3):

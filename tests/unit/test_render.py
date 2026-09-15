@@ -6,7 +6,7 @@ from hermes_feishu_card.render import (
     render_card_result,
     render_legacy_interaction_callback_card,
 )
-from hermes_feishu_card.session import CardSession, InteractionState, ToolState
+from hermes_feishu_card.session import CardSession, InteractionOption, InteractionState, ToolState
 from hermes_feishu_card.status import StatusConfig
 import pytest
 import time
@@ -692,23 +692,15 @@ def test_render_completed_interaction_replaces_buttons_with_choice():
     )
     assert "已选择：允许一次" in str(card)
     assert "Bailey" in str(card)
-    hover = next(
-        element
-        for element in card["body"]["elements"]
-        if element.get("element_id") == "interaction_hover"
+    visible = "\n".join(
+        element.get("content", "") for element in card["body"]["elements"]
+        if element.get("tag") == "markdown"
     )
-    assert hover == {
-        "tag": "button",
-        "element_id": "interaction_hover",
-        "type": "text",
-        "size": "small",
-        "text": {"tag": "plain_text", "content": "已选择：允许一次 by Bailey"},
-        "hover_tips": {
-            "tag": "plain_text",
-            "content": "❓ 允许执行命令吗？\n📋 ① 允许一次",
-        },
-    }
-    assert "敏感命令详情" not in hover["hover_tips"]["content"]
+    assert "允许执行命令吗？" in visible
+    assert "1. 允许一次" in visible
+    assert "已选择：允许一次 by Bailey" in visible
+    assert "敏感命令详情" not in visible
+    assert not any(e.get("hover_tips") for e in card["body"]["elements"])
 
 
 def test_render_completed_legacy_callback_card_removes_controls_and_credentials():
@@ -721,6 +713,7 @@ def test_render_completed_legacy_callback_card_removes_controls_and_credentials(
         callback_token="secret-token",
         choice="alpha",
         choice_label="Alpha",
+        options=[InteractionOption(label="Alpha", value="alpha")],
     )
 
     card = render_legacy_interaction_callback_card(
@@ -730,6 +723,8 @@ def test_render_completed_legacy_callback_card_removes_controls_and_credentials(
 
     assert "schema" not in card and "body" not in card
     assert "已选择：Alpha" in str(card)
+    assert "请选择" in str(card["elements"])
+    assert "1. Alpha" in str(card["elements"])
     assert "secret-token" not in str(card)
     assert not any(
         item.get("tag") in {"action", "form"} for item in card["elements"]

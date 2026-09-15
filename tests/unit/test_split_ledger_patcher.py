@@ -83,15 +83,19 @@ def test_split_ledger_rejects_delivery_contract_drift(before, after):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('success', [True, False])
 @pytest.mark.parametrize('obligation_id', ['ledger-test', None])
+@pytest.mark.parametrize('record_delivery', [True, False])
 async def test_installed_split_ledger_executes_record_hook_send_finalize(
-    monkeypatch, success, obligation_id,
+    monkeypatch, success, obligation_id, record_delivery,
 ):
     import logging
     from types import SimpleNamespace
     from hermes_feishu_card import hook_runtime
 
     namespace = {'logger': logging.getLogger(__name__)}
-    exec(compile(patcher.apply_base_patch(FIXTURE.read_text()), str(FIXTURE), 'exec'), namespace)
+    original = FIXTURE.read_text()
+    if record_delivery:
+        original = original.replace(ATTACHMENT_KWARG_TAIL, ATTACHMENT_KWARG_TAIL_EXTENDED)
+    exec(compile(patcher.apply_base_patch(original), str(FIXTURE), 'exec'), namespace)
     adapter = namespace['BasePlatformAdapter']()
     calls = []
     event = SimpleNamespace(source=SimpleNamespace(chat_id='test-chat'))
@@ -126,3 +130,31 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
     actual = await adapter.send_final_ledgered(event, 'test-session', 'answer', {'thread_id': 'test-thread'}, reply_to='topic-anchor')
     assert actual == (result, adapter)
     assert calls == ['record', 'hook', 'send'] + (['finalize'] if obligation_id else [])
+
+
+def test_installed_split_ledger_is_detected_for_staging(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from hermes_feishu_card import hook_runtime
+    namespace = {}
+    exec(compile(patcher.apply_base_patch(FIXTURE.read_text()), str(FIXTURE), 'exec'), namespace)
+    adapter = namespace['BasePlatformAdapter']
+    monkeypatch.setitem(sys.modules, 'gateway.platforms.base', SimpleNamespace(BasePlatformAdapter=adapter))
+    assert hook_runtime.can_stage_exact_base_completion({
+        'platform': 'feishu', 'answer': 'answer', 'agent_result': {},
+    })
+
+
+@pytest.mark.parametrize('fixture_name', ['hermes_split_ledger_base.py', 'hermes_decomposed/gateway/platforms/base.py'])
+@pytest.mark.parametrize('tail', [
+    'record_delivery=other_callback)',
+    'record_delivery=_record_delivery, unexpected=True)',
+    '**extra)',
+    'record_delivery=_record_delivery)\n                await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)',
+    'record_delivery=_record_delivery)\n                await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=False)',
+])
+def test_attachment_anchor_rejects_unknown_or_ambiguous_calls(fixture_name, tail):
+    original = (FIXTURE.parent / fixture_name).read_text()
+    changed = original.replace(ATTACHMENT_KWARG_TAIL, ATTACHMENT_KWARG_TAIL[:-1] + ', ' + tail)
+    with pytest.raises(ValueError, match='safe BasePlatformAdapter contract'):
+        patcher.apply_base_patch(changed)

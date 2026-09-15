@@ -270,7 +270,7 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 - E2E verification: [中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)
 - Release readiness: [中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
 - Testing: [中文](docs/testing.md) / [English](docs/testing.en.md)
-- Maintainer wiki: [docs/wiki](docs/wiki/README.md)
+- Maintainer wiki: [docs/wiki](docs/wiki/README.md) For `manual_review_required`, run `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`. The candidate prints a copyable read-only command in `integrity.next_command`. See [integrity recovery](docs/wiki/hermes-decomposed-patcher.md) and the [issue/PR review](docs/issue-triage-2026-09-15.md) for candidate fixes and remaining verification.
 - V4.1 safety controls and troubleshooting: [docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## Contributors

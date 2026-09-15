@@ -558,6 +558,7 @@ def create_app(
         "last_update_error": "",
         "last_route_error": "",
         "last_terminal_event": {},
+        "last_terminal_delivery": {},
         "last_runtime_interaction_callback": "none",
     }
     app[ROUTING_DIAGNOSTICS_KEY] = _initial_routing_diagnostics(feishu_client)
@@ -805,6 +806,7 @@ async def _health(request: web.Request) -> web.Response:
         "sessions": {
             _diagnostic_id_hash(message_id): {
                 "status": session.status,
+                "terminal_delivery_state": session.terminal_delivery_state,
                 "last_sequence": session.last_sequence,
                 "answer_chars": len(session.answer_text),
                 "thinking_chars": len(session.thinking_text),
@@ -5462,7 +5464,9 @@ async def _apply_event_locked(
         )
 
         async def _render_and_update() -> bool:
-            latest_session = sessions.get(session_key)
+            # A new turn may reuse the key while this terminal PATCH retries.
+            # Keep recovery content and routing bound to the accepted old turn.
+            latest_session = session if is_terminal else sessions.get(session_key)
             if latest_session is None:
                 return False
             # Freeze the card while an interaction is pending: Feishu card
@@ -5474,6 +5478,7 @@ async def _apply_event_locked(
             if (
                 interaction is not None
                 and interaction.status == "pending"
+                and not is_terminal
                 and not str(event.event or "").startswith("interaction.")
             ):
                 return False
@@ -5509,6 +5514,14 @@ async def _apply_event_locked(
                     latest_card,
                     bot_id,
                 )
+            if is_terminal and render_result.disposition == "card":
+                if updated:
+                    latest_session.terminal_delivery_state = "delivered"
+                else:
+                    updated = await _recover_terminal_card(
+                        request.app, session_key, latest_session, event,
+                        latest_card, bot_id, feishu_message_id,
+                    )
             if (
                 updated
                 and is_terminal
@@ -5534,6 +5547,7 @@ async def _apply_event_locked(
             return updated
 
         if is_terminal:
+            session.terminal_delivery_state = "pending"
             await controller.drain(_final_drain_timeout_seconds(request.app, session_key))
             current_task = controller.schedule(_render_and_update, terminal=True)
             controller.close()
@@ -5596,6 +5610,44 @@ async def _apply_event_locked(
             _session_key(event),
         )
     return web.json_response(response_payload), post_lock_task
+
+
+async def _recover_terminal_card(
+    app: web.Application,
+    session_key: str,
+    session: CardSession,
+    event: SidecarEvent,
+    card: dict[str, Any],
+    bot_id: str | None,
+    original_message_id: str,
+) -> bool:
+    """Deliver the final card once when all edits of its original message fail.
+
+    Hermes already transferred ownership on ACK; returning a late fail-open
+    response would race the native sender. Reuse the existing UUID-aware card
+    sender, with a distinct identity for this original card and terminal event.
+    """
+    if session.terminal_delivery_state != "pending":
+        return session.terminal_delivery_state in {"delivered", "recovered"}
+    session.terminal_delivery_state = "recovering"
+    delivery = await _send_card_for_app(
+        app, session.chat_id, card, bot_id,
+        thread_id=_thread_id_for_event(event) or None,
+        reply_to_message_id=session.reply_to_message_id or None,
+        reply_in_thread=session.reply_in_thread,
+        delivery_key=f"{session_key}:{original_message_id}:{event.sequence}",
+        delivery_kind="terminal-recovery",
+    )
+    session.terminal_delivery_state = (
+        "recovered" if delivery.outcome == "delivered" else delivery.outcome
+    )
+    app[DIAGNOSTICS_KEY]["last_terminal_delivery"] = {
+        "message_id_hash": _diagnostic_id_hash(original_message_id),
+        "event": event.event,
+        "outcome": session.terminal_delivery_state,
+        "error_kind": delivery.error_kind,
+    }
+    return delivery.outcome == "delivered"
 
 
 async def _maybe_send_completion_notify(

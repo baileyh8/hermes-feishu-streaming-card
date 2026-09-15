@@ -30,6 +30,7 @@ from urllib import request
 
 from . import __version__
 from .card_limits import serialize_card_for_delivery
+from .events import completion_turn_outcome
 from .event_auth import (
     sign_event_request,
     sign_native_handoff_ack_request,
@@ -2020,10 +2021,20 @@ def _exact_base_delivery_hook_available() -> bool:
             return True
         send = getattr(BasePlatformAdapter, "_send_final_text", None)
         send_names = set(getattr(getattr(send, "__code__", None), "co_names", ()))
-        return {"capture_decomposed_base_context", "finalize_exact_base_no_text", "_send_final_text"}.issubset(names) and {
+        decomposed = {"capture_decomposed_base_context", "finalize_exact_base_no_text", "_send_final_text"}.issubset(names)
+        if decomposed and {
             "prepare_decomposed_base_final_delivery", "_record_delivery_obligation",
             "_send_with_retry", "_finalize_delivery_obligation",
-        }.issubset(send_names)
+        }.issubset(send_names):
+            return True
+        ledger = getattr(BasePlatformAdapter, "send_final_ledgered", None)
+        ledger_names = set(getattr(getattr(ledger, "__code__", None), "co_names", ()))
+        ledger_contract = {"_record_delivery_obligation", "_send_with_retry", "_finalize_delivery_obligation"}
+        if not ledger_contract.issubset(ledger_names):
+            return False
+        if decomposed:
+            return "send_final_ledgered" in send_names and "prepare_decomposed_base_final_delivery" in ledger_names
+        return {"finalize_exact_base_no_text", "send_final_ledgered"}.issubset(names) and "prepare_exact_base_final_delivery" in ledger_names
     except Exception:
         return False
 
@@ -7382,6 +7393,21 @@ def _hfc_handle_operations_select_action(
     return _hfc_empty_feishu_callback_response(adapter)
 
 
+def _hfc_interaction_failure_response(adapter: Any, error: BaseException | None = None) -> Any:
+    # A transport failure can occur after the choice was accepted. Never claim
+    # that execution failed or invite a second approval when the outcome is unknown.
+    code = getattr(error, "code", None)
+    if code == 404:
+        content = "此交互卡片已不可用，请查看最新卡片。"
+    elif code == 409:
+        content = "此选择正在处理或已结束，请查看最新卡片，勿重复点击。"
+    elif code == 403:
+        content = "此操作未获验证，请由任务发起者操作最新卡片。"
+    else:
+        content = "暂未确认选择结果，请先查看任务状态，勿连续点击。"
+    return _hfc_toast_feishu_callback_response(adapter, content)
+
+
 def _hfc_handle_interaction_select_action(
     adapter: Any,
     data: Any,
@@ -7418,7 +7444,7 @@ def _hfc_handle_interaction_select_action(
     )
     if not interaction_id or not token or not choice:
         _hfc_info("interaction.select ignored: missing interaction_id/token/choice")
-        return _hfc_empty_feishu_callback_response(adapter)
+        return _hfc_interaction_failure_response(adapter)
 
     chat_id = _hfc_action_chat_id(data)
     open_id = _hfc_action_open_id(data)
@@ -7467,7 +7493,7 @@ def _hfc_handle_interaction_select_action(
             "interaction.select forward setup failed: "
             f"{_hfc_exception_summary(exc)}"
         )
-        return _hfc_empty_feishu_callback_response(adapter)
+        return _hfc_interaction_failure_response(adapter)
 
     started_at = time.monotonic()
     result: Any = None
@@ -7505,9 +7531,13 @@ def _hfc_handle_interaction_select_action(
             "interaction.select forward failed: "
             f"{_hfc_exception_summary(last_error)}"
         )
-        return _hfc_empty_feishu_callback_response(adapter)
+        return _hfc_interaction_failure_response(adapter, last_error)
 
-    if isinstance(result, dict) and isinstance(result.get("card"), dict):
+    if (
+        isinstance(result, dict)
+        and result.get("ok") is not False
+        and isinstance(result.get("card"), dict)
+    ):
         _hfc_info(
             "interaction.select resolved: "
             f"{_hfc_log_reference('interaction', interaction_id)}"
@@ -7518,7 +7548,7 @@ def _hfc_handle_interaction_select_action(
             "已选择",
         )
     _hfc_info("interaction.select forwarded but no card returned")
-    return _hfc_empty_feishu_callback_response(adapter)
+    return _hfc_interaction_failure_response(adapter)
 
 
 def _hfc_resolve_native_slash_action(
@@ -9814,14 +9844,9 @@ def _event_data(
         # The completion envelope also carries failed/partial Gateway returns.
         # Keep its delivery/attachment contract, but do not lose exact outcome
         # flags or infer task success from the presence of response text.
-        result = local_vars.get("agent_result")
-        if isinstance(result, dict):
-            if result.get("interrupted") is True:
-                data["turn_outcome"] = "interrupted"
-            elif result.get("failed") is True:
-                data["turn_outcome"] = "failed"
-            elif result.get("completed") is False or result.get("partial") is True:
-                data["turn_outcome"] = "incomplete"
+        outcome = completion_turn_outcome(local_vars.get("agent_result"))
+        if outcome is not None:
+            data["turn_outcome"] = outcome
         attachments = _extract_attachments(answer, local_vars)
         data.update({
             "answer": _card_visible_answer(answer),

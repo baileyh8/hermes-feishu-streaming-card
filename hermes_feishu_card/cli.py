@@ -3186,7 +3186,7 @@ def _run_status(args: argparse.Namespace) -> int:
             readiness_degraded = readiness_status == "degraded"
         integrity = status["health"].get("integrity")
         if isinstance(integrity, dict):
-            _print_status_integrity(integrity)
+            _print_status_integrity(integrity, args=args)
         print(f"active_sessions: {status['health'].get('active_sessions', 0)}")
         metrics = status["health"].get("metrics", {})
         if isinstance(metrics, dict):
@@ -3267,7 +3267,7 @@ def _print_status_native_handoffs(health: dict[str, Any]) -> bool:
     return manual_review_required
 
 
-def _print_status_integrity(snapshot: dict[str, Any]) -> None:
+def _print_status_integrity(snapshot: dict[str, Any], *, args: argparse.Namespace | None = None) -> None:
     integrity = sanitize_integrity_snapshot(snapshot)
     print(f"integrity.status: {integrity['last_status']}")
     print(f"integrity.reason: {integrity['last_reason']}")
@@ -3288,6 +3288,15 @@ def _print_status_integrity(snapshot: dict[str, Any]) -> None:
     }.get(str(integrity["last_status"]))
     if action:
         print(f"integrity.next_action: {action}")
+        if args is not None and integrity["last_status"] in {"repair_available", "manual_review_required"}:
+            command = ["hermes-feishu-card", "doctor", "--config", str(args.config)]
+            if getattr(args, "env_file", None):
+                command.extend(["--env-file", str(args.env_file)])
+            root = _configured_lifecycle_hermes_root(args)
+            if root is not None:
+                command.extend(["--hermes-dir", str(root)])
+            command.append("--explain")
+            print(f"integrity.next_command: {shlex.join(command)}")
 
 
 def _print_status_routing(health: dict[str, Any]) -> None:
