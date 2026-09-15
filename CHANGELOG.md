@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
-## Unreleased
+## V4.4.6 — 2026-09-15
 
 ### Fixed
 - Accept both verified attachment-delivery call shapes on Hermes 0.21.1+, rejecting duplicate, unknown and ambiguous calls. Preserve tidytorch's PR #291 implementation and Jentlezhi's PR #292 regressions, with additional contract execution tests.
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ### Maintenance
 - Upgrade CodeQL init/analyze together to 4.38.0, update pinned SHA checks, and group future CodeQL updates (#299/#300).
-- See the [issue and PR review](docs/issue-triage-2026-09-15.md) for coverage, remaining cases and real-client acceptance boundaries. These changes are not released yet.
+- See the [issue and PR review](docs/issue-triage-2026-09-15.md) for coverage, remaining cases and real-client acceptance boundaries.
 
 ### Credits
 - [tidytorch](https://github.com/tidytorch) and [Jentlezhi](https://github.com/Jentlezhi): installation fixes and regression tests in #291/#292; original commit authorship is preserved.

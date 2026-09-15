@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.5
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.6
 bash install-docker.sh
 ```
 
@@ -180,6 +180,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.4.6](docs/release-notes-v4.4.6.en.md) | Recover terminal delivery, accept current Hermes attachment anchors, preserve incomplete outcomes and interaction context |
 | [v4.4.5](docs/release-notes-v4.4.5.en.md) | Preserve unsuccessful and superseded turn outcomes; support the verified split-ledger contract with stronger stability regressions |
 | [v4.4.4](docs/release-notes-v4.4.4.en.md) | Keeps Hermes restart/shutdown notices inside the originating Feishu topic and activates the startup routing hook before boot notifications |
 | [v4.4.3](docs/release-notes-v4.4.3.en.md) | Hermes upgrades carrying older owned hooks, integrity snapshots that preserve local source customization, and omission of an empty zero-reasoning/zero-tool timeline |
@@ -270,23 +271,19 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 - E2E verification: [中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)
 - Release readiness: [中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
 - Testing: [中文](docs/testing.md) / [English](docs/testing.en.md)
-- Maintainer wiki: [docs/wiki](docs/wiki/README.md) For `manual_review_required`, run `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`. The candidate prints a copyable read-only command in `integrity.next_command`. See [integrity recovery](docs/wiki/hermes-decomposed-patcher.md) and the [issue/PR review](docs/issue-triage-2026-09-15.md) for candidate fixes and remaining verification.
+- Maintainer wiki: [docs/wiki](docs/wiki/README.md) For `manual_review_required`, run `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`. V4.4.6 prints a copyable read-only command in `integrity.next_command`. See [integrity recovery](docs/wiki/hermes-decomposed-patcher.md) and the [issue/PR review](docs/issue-triage-2026-09-15.md) for fixes and remaining verification.
 - V4.1 safety controls and troubleshooting: [docs/wiki/v4.1-safety-controls.md](docs/wiki/v4.1-safety-controls.md)
 
 ## Contributors
 
+- V4.4.5–V4.4.6: [tidytorch](https://github.com/tidytorch) (#286/#291), [Jentlezhi](https://github.com/Jentlezhi) (#292), [sp960817](https://github.com/sp960817), [Cyber-Yichen](https://github.com/Cyber-Yichen), [shichenshuo-star](https://github.com/shichenshuo-star), [ywarmy](https://github.com/ywarmy) (#288/#294/#296), [7360403-coder](https://github.com/7360403-coder) (#298), [mouyong](https://github.com/mouyong) (#276/#280/#282/#289/#301). Thanks for code, tests and field evidence; original PR #291/#292 commit authorship is retained.
 ### V4.4.3
-
 - [mouyong](https://github.com/mouyong): the multiplex production report in [#268](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/268) and the empty-timeline feedback in [#269](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/269). The reporter's real multi-bot environment still needs retesting for #268.
-
 ### V4.4.2
-
 - [ywarmy](https://github.com/ywarmy): [#261](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/261), Hermes 0.21 completion-marker report.
 - [Ricadre](https://github.com/Ricadre): [#265](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/265), stale integrity migration reproduction.
 - [mouyong](https://github.com/mouyong): [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83), [#263](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/263), [#264](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/264), [#266](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/266), Docker/source-only and multiplex evidence; [#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258), approval readability feedback.
-
 ### V4.4.1
-
 - [liooil](https://github.com/liooil) contributed the Hermes facade-decomposition implementation in [PR #257](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/257); [Clarence-G](https://github.com/Clarence-G) contributed topic follow-up, queue/redirect, and cron delivery work in [PR #251](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/251). Original code commits and authorship are retained.
 - [mouyong](https://github.com/mouyong) supplied multiplex-profile, topic, and readability feedback in [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83), [#252](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/252), [#253](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/253), [#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258), and [#259](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/259); [shiboyumm](https://github.com/shiboyumm) opened the original [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83) configuration question; [Boer2333](https://github.com/Boer2333) requested provider attribution in [#250](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/250).
 - [sp960817](https://github.com/sp960817), [Kevin32623](https://github.com/Kevin32623), and [shichenshuo-star](https://github.com/shichenshuo-star) reported Hermes 0.21 incompatibility in [#254](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254), [#255](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/255), and [#256](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/256); [hnzwx](https://github.com/hnzwx) and [leavrcn](https://github.com/leavrcn) supplied additional reproduction and compatibility evidence in [#254](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254). [micah928](https://github.com/micah928) supplied historical no-card evidence in [#73](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/73), whose current environment still needs retesting.

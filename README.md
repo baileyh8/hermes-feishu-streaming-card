@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.5
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.4.6
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.4.6](docs/release-notes-v4.4.6.md) | 恢复终局投递，兼容新 Hermes 附件契约，保留未完成状态与交互内容 |
 | [v4.4.5](docs/release-notes-v4.4.5.md) | 修复失败与被替代任务误报完成；支持已验证的拆分账本契约，补强稳定性测试规则 |
 | [v4.4.4](docs/release-notes-v4.4.4.md) | 修复 Hermes 重启/关闭通知从飞书话题错投父群主会话，并让启动期路由 hook 在 boot 通知前生效 |
 | [v4.4.3](docs/release-notes-v4.4.3.md) | 兼容携带旧 owned hook 的 Hermes 升级、保留本机源码定制的完整性快照，并隐藏零思考/零工具的空 timeline |
@@ -269,22 +270,18 @@ Hermes Gateway
 - 端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)
 - 发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
 - 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)
-- 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md) 遇到 `manual_review_required` 时，先执行 `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`；候选版本的 `integrity.next_command` 会给出可复制的只读诊断命令。迁移与启动顺序见 [Hermes 完整性排障](docs/wiki/hermes-decomposed-patcher.md)，本轮修复及待验证问题见 [Issues/PR 处理记录](docs/issue-triage-2026-09-15.md)。
+- 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md) 遇到 `manual_review_required` 时，先执行 `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`；V4.4.6 的 `integrity.next_command` 会给出可复制的只读诊断命令。迁移与启动顺序见 [Hermes 完整性排障](docs/wiki/hermes-decomposed-patcher.md)，本轮修复及待验证问题见 [Issues/PR 处理记录](docs/issue-triage-2026-09-15.md)。
 
 ## 贡献者
 
+- V4.4.5–V4.4.6: [tidytorch](https://github.com/tidytorch) (#286/#291), [Jentlezhi](https://github.com/Jentlezhi) (#292), [sp960817](https://github.com/sp960817), [Cyber-Yichen](https://github.com/Cyber-Yichen), [shichenshuo-star](https://github.com/shichenshuo-star), [ywarmy](https://github.com/ywarmy) (#288/#294/#296), [7360403-coder](https://github.com/7360403-coder) (#298), [mouyong](https://github.com/mouyong) (#276/#280/#282/#289/#301). 感谢代码、测试和现场证据；保留 #291/#292 原始提交作者身份。
 ### V4.4.3
-
 - [mouyong](https://github.com/mouyong)：[#268](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/268) 的 multiplex 生产反馈与 [#269](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/269) 的空 timeline 体验建议。#268 尚待报告者真实多 bot 环境复验。
-
 ### V4.4.2
-
 - [ywarmy](https://github.com/ywarmy): [#261](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/261), Hermes 0.21 completion-marker report.
 - [Ricadre](https://github.com/Ricadre): [#265](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/265), stale integrity migration reproduction.
 - [mouyong](https://github.com/mouyong): [#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83), [#263](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/263), [#264](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/264), [#266](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/266), Docker/source-only and multiplex evidence; [#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258), approval readability feedback.
-
 ### V4.4.1
-
 - [liooil](https://github.com/liooil)：[PR #257](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/257) 提供 Hermes facade 拆分适配实现；[Clarence-G](https://github.com/Clarence-G)：[PR #251](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/251) 提供话题后续投递、queue/redirect 与 cron 相关修复。原始代码提交和作者身份予以保留。
 - [mouyong](https://github.com/mouyong)：[#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83)、[#252](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/252)、[#253](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/253)、[#258](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/258)、[#259](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/259) 的单进程 profile、话题和阅读体验反馈；[shiboyumm](https://github.com/shiboyumm)：[#83](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/83) 最初的配置问题；[Boer2333](https://github.com/Boer2333)：[#250](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/250) 的 provider 展示需求。
 - [sp960817](https://github.com/sp960817)：[#254](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254)、[Kevin32623](https://github.com/Kevin32623)：[#255](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/255)、[shichenshuo-star](https://github.com/shichenshuo-star)：[#256](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/256) 的 Hermes 0.21 兼容性报告；[hnzwx](https://github.com/hnzwx) 与 [leavrcn](https://github.com/leavrcn)：[#254 的复现与兼容性审查](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/254)；[micah928](https://github.com/micah928)：[#73](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/73) 的历史无卡片诊断证据，该环境仍待新版复测。
