@@ -3405,6 +3405,7 @@ def _render_redirect_hook_block(indent: str, newline: str):
         f"{inner_indent}if bool(locals().get(\"redirected\")):{newline}",
         f"{deeper_indent}_hfc_redirect_message_id = str(getattr(event, \"message_id\", \"\") or \"\"){newline}",
         f"{deeper_indent}from hermes_feishu_card.hook_runtime import redirect_turn_id_for_agent as _hfc_redirect_turn{newline}",
+        f"{deeper_indent}from hermes_feishu_card.hook_runtime import redirect_conversation_id_for_agent as _hfc_redirect_conversation{newline}",
         f"{deeper_indent}_hfc_redirect_from_turn_id = _hfc_redirect_turn(locals().get(\"running_agent\"), event.source){newline}",
         # Unknown callback ownership must retain the current card. Emitting a
         # fresh started event would abandon it and strand its future callbacks.
@@ -3417,6 +3418,7 @@ def _render_redirect_hook_block(indent: str, newline: str):
             f"\"chat_id\": getattr(event.source, \"chat_id\", None), "
             f"\"message_id\": _hfc_redirect_message_id, "
             f"\"reply_to_message_id\": getattr(event, \"reply_to_message_id\", \"\") or _hfc_redirect_message_id, "
+            f"\"conversation_id\": _hfc_redirect_conversation(locals().get(\"running_agent\"), event.source), "
             f"\"redirect_from_turn_id\": _hfc_redirect_from_turn_id, "
             f"\"redirect_followup\": True}}, event_name=\"message.started\"){newline}"
         ),
@@ -3791,8 +3793,8 @@ def _render_approval_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"_hfc_loop\": locals().get(\"_loop_for_step\"),{newline}",
         f"{deeper_indent}}}, approval_data, interaction_id=\"approval_\" + _hfc_uuid4().hex[:10]){newline}",
         f"{deeper_indent}if _hfc_approval_choice:{newline}",
-        f"{deeper_indent}    from tools.approval import resolve_gateway_approval as _hfc_resolve_gateway_approval{newline}",
-        f"{deeper_indent}    _hfc_resolve_gateway_approval(_approval_session_key, _hfc_approval_choice){newline}",
+        f"{deeper_indent}    from hermes_feishu_card.hook_runtime import resolve_approval_choice as _hfc_resolve_gateway_approval{newline}",
+        f"{deeper_indent}    _hfc_resolve_gateway_approval(approval_data, _approval_session_key, _hfc_approval_choice){newline}",
         f"{deeper_indent}    return{newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{APPROVAL_PATCH_END}{newline}",

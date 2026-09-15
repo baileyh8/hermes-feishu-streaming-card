@@ -41,7 +41,9 @@ services:
         python -m venv /opt/hermes/venv
         cp /src/tests/fixtures/docker-smoke-config.yaml /opt/data/config.yaml
         bash /src/install-docker.sh
+        /opt/hermes/venv/bin/python /src/tests/fixtures/docker_ownership_probe.py --expected refused
         chown -R 65532:65532 /opt/hermes /opt/data /opt/hfc-state
+        /opt/hermes/venv/bin/python /src/tests/fixtures/docker_ownership_probe.py --expected installed
 
   sidecar:
     image: python:3.12-slim

@@ -31,6 +31,9 @@ def session_cleanup_reason(
     policy: CleanupPolicy,
 ) -> str | None:
     interaction = session.active_interaction
+    if (interaction is not None and interaction.status == "paused"
+            and now - session.updated_at >= policy.session_retention_seconds):
+        return "paused_runtime_disconnected"
     interaction_active = (
         interaction is not None
         and interaction.status not in {"completed", "failed"}

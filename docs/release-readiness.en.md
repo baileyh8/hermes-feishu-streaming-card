@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.4.6`. This cycle preserves unsuccessful and superseded turn outcomes, supports the verified decomposed split-ledger contract, and strengthens stability regressions. Production acceptance, cross-platform CI, exact merge and release assets are recorded by the final release gate.
+Current release candidate: `4.5.0`. This cycle adds topic notice routing, mobile interaction readability, requester mentions, CardKit entity streaming and live Gateway approval pause. Exact historical Hermes source and container UID checks supplement the release gates. Client acceptance and publication evidence remain separate from automated contracts.
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
 

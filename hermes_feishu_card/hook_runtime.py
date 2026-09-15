@@ -82,7 +82,8 @@ _NOTICE_UNCERTAIN_WARNING = (
 OPERATIONS_ACTION_TIMEOUT_SECONDS = 10.0
 OPERATIONS_ACTION_FORWARD_ATTEMPTS = 2
 OPERATIONS_ACTION_RETRY_DELAY_SECONDS = 0.1
-INTERACTION_ACTION_TOTAL_TIMEOUT_SECONDS = 5.0
+# Feishu requires callback acknowledgement within three seconds.
+INTERACTION_ACTION_TOTAL_TIMEOUT_SECONDS = 2.0
 INTERACTION_ACTION_FORWARD_ATTEMPTS = 3
 INTERACTION_ACTION_RETRY_DELAY_SECONDS = 0.1
 OPERATIONS_ACTION_WORKERS = 4
@@ -3035,7 +3036,10 @@ def build_interaction_event(
         "_hfc_interaction_multi_select": bool(multi_select),
         "_hfc_interaction_allow_custom_input": bool(allow_custom_input),
     }
-    return build_event("interaction.requested", event_locals)
+    payload = build_event("interaction.requested", event_locals)
+    if payload is not None and kind == "approval" and local_vars.get("_hfc_pause_approval") is True:
+        payload["data"]["pause_on_timeout"] = True
+    return payload
 
 
 def request_interaction_from_hermes_locals(
@@ -3137,6 +3141,7 @@ def request_interaction_from_hermes_locals(
         timeout = _interaction_timeout(timeout_seconds)
         poll_interval = _interaction_poll_interval(poll_interval_seconds)
         deadline = time.monotonic() + timeout
+        pause_waiting = False
         while True:
             try:
                 result = _get_json_sync(url, config.timeout_seconds)
@@ -3144,7 +3149,28 @@ def request_interaction_from_hermes_locals(
                 result = None
             if isinstance(result, dict) and result.get("status") in {"completed", "failed"}:
                 return result
+            if (kind == "approval" and local_vars.get("_hfc_pause_approval") is True
+                    and isinstance(result, dict) and result.get("pause_on_timeout") is True
+                    and result.get("status") in {"pending", "paused"}):
+                # The live approval callback keeps the tool blocked. Expiry only
+                # withdraws the old consent token; it does not resolve a denial.
+                pause_waiting = True
+                deadline = time.monotonic() + timeout
+            current = local_vars.get("_hfc_wait_current")
+            try:
+                still_current = not callable(current) or bool(current())
+            except Exception:
+                still_current = False
+            if not still_current:
+                _post_interaction_timeout_sync(local_vars, config.event_url, payload, config.timeout_seconds)
+                return {"ok": False, "status": "failed", "interaction_id": interaction_id}
             if time.monotonic() >= deadline:
+                if pause_waiting:
+                    # A temporary sidecar outage is not a user denial either.
+                    # Keep the live callback blocked until consent or cancellation.
+                    deadline = time.monotonic() + timeout
+                    time.sleep(poll_interval)
+                    continue
                 _hfc_warn(
                     "interaction poll timeout: "
                     f"{_hfc_log_reference('interaction', interaction_id)}"
@@ -4770,9 +4796,16 @@ def _hfc_notice_context_from_source(
     chat_id = str(getattr(source, "chat_id", "") or "").strip()
     if not chat_id:
         return None
+    # The inbound event owns the current anchor; source.message_id can still
+    # refer to a previous turn. Operational notices often receive only source.
+    bound_turn = getattr(source, _CANONICAL_TURN_ATTR, "")
+    bound_anchor = (
+        bound_turn if isinstance(bound_turn, str) and bound_turn.startswith("om_") else ""
+    )
     message_id = str(
-        getattr(source, "message_id", "")
-        or getattr(event, "message_id", "")
+        getattr(event, "message_id", "")
+        or bound_anchor
+        or getattr(source, "message_id", "")
         or ""
     ).strip()
     thread_id = str(
@@ -4803,6 +4836,17 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         return background_notice
     text = raw_text.strip()
     lowered = text.lower()
+    if text.startswith("📬 No home channel is set for Feishu."):
+        return {
+            "title": "默认投递位置未设置", "level": "info",
+            "notice_kind": "home-channel", "notice_id": "home-channel",
+        }
+    if text.startswith("ℹ️ 上下文压缩已推迟"):
+        return {
+            "title": "上下文压缩提示", "level": "info",
+            "notice_kind": "compression",
+            "notice_id": _hfc_content_notice_id("compression", text),
+        }
     if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
         return {
             "title": "运行中",
@@ -6203,6 +6247,16 @@ def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -
         adapter = _hfc_feishu_adapter_from_runner(runner, source)
         if adapter is None:
             return False
+        # Preserve Hermes' private-notice policy, including per-profile adapter
+        # overrides; a recognized setup message must not become a public card.
+        extra = getattr(getattr(adapter, "config", None), "extra", None)
+        delivery = extra.get("notice_delivery") if isinstance(extra, dict) else None
+        if delivery is None:
+            resolve_delivery = getattr(getattr(runner, "config", None), "get_notice_delivery", None)
+            if callable(resolve_delivery):
+                delivery = resolve_delivery(getattr(source, "platform", None))
+        if delivery == "private":
+            return False
         _hfc_schedule_platform_notice_card(
             adapter=adapter,
             chat_id=chat_id,
@@ -7250,7 +7304,7 @@ def _hfc_forward_form_submit_action(
     try:
         config = load_runtime_config()
         url = f"{_summary_base_url(config.event_url)}/card/actions"
-        result = _post_json_sync_response(url, sidecar_payload, 5.0)
+        result = _post_json_sync_response(url, sidecar_payload, INTERACTION_ACTION_TOTAL_TIMEOUT_SECONDS)
     except Exception as exc:
         _hfc_warn(
             "form submit forward failed: "
@@ -8475,6 +8529,18 @@ def _command_card_answer_text(answer: Any) -> str:
     return text
 
 
+def resolve_approval_choice(approval_data: dict[str, Any], session_key: str, choice: str) -> int:
+    """Bind delayed consent to the original queue entry when Hermes exposes IDs."""
+    from tools.approval import resolve_gateway_approval
+    request_id = approval_data.get("request_id")
+    if isinstance(request_id, str) and request_id:
+        if "request_id" not in inspect.signature(resolve_gateway_approval).parameters:
+            _hfc_warn("approval resolver lacks exact request identity")
+            return 0
+        return resolve_gateway_approval(session_key, choice, request_id=request_id)
+    return resolve_gateway_approval(session_key, choice)
+
+
 def request_approval_choice_from_hermes_locals(
     local_vars: dict[str, Any],
     approval_data: dict[str, Any],
@@ -8509,8 +8575,30 @@ def request_approval_choice_from_hermes_locals(
         if allow_permanent:
             options.append({"label": "始终允许", "value": "always"})
     options.append({"label": "拒绝", "value": "deny", "style": "danger"})
+    current = local_vars.get("_run_still_current")
+    if not callable(current):
+        context = local_vars.get("_hfc_turn_ctx") or local_vars.get("ctx")
+        current = getattr(context, "_run_still_current", None)
+    approval_locals = dict(local_vars)
+    if callable(current):
+        request_id = approval_data.get("request_id")
+        pending_probe = None
+        if isinstance(request_id, str) and request_id:
+            try:
+                from tools.approval import list_gateway_approvals
+                pending_probe = list_gateway_approvals
+            except ImportError:
+                pass
+        session_key = str(local_vars.get("_approval_session_key") or local_vars.get("conversation_id") or "")
+        def still_waiting():
+            if not current():
+                return False
+            if pending_probe is not None:
+                return any(item.get("request_id") == request_id for item in pending_probe(session_key))
+            return True
+        approval_locals.update(_hfc_pause_approval=True, _hfc_wait_current=still_waiting)
     result = request_interaction_from_hermes_locals(
-        local_vars,
+        approval_locals,
         kind="approval",
         interaction_id=interaction_id,
         prompt="需要授权后继续执行",
@@ -8964,6 +9052,7 @@ def _hfc_interaction_card_confirmed(
         result = _get_json_sync(url, config.timeout_seconds)
         return isinstance(result, dict) and result.get("status") in (
             "pending",
+            "paused",
             "completed",
             "failed",
         )
@@ -9333,6 +9422,11 @@ def _build_event(
     }
     if turn_id:
         payload["turn_id"] = turn_id
+    if event_name == "message.started" and not preview and source_obj is not None:
+        try:
+            setattr(source_obj, "_hfc_conversation_id", conversation_id)
+        except Exception:
+            pass
     if is_terminal_event:
         if not preview:
             if (
@@ -9862,6 +9956,11 @@ def _event_data(
         )
         if sender_open_id:
             data["sender_open_id"] = sender_open_id
+            sender_name = getattr(source_obj, "user_name", None)
+            if (getattr(source_obj, "user_id", None) == sender_open_id
+                    and isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                    and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+                data["sender_name"] = sender_name
         delivery_kind = _first_string(local_vars, ("delivery_kind",))
         if delivery_kind:
             data["delivery_kind"] = delivery_kind
@@ -9876,6 +9975,11 @@ def _event_data(
         )
         if sender_open_id:
             data["sender_open_id"] = sender_open_id
+            sender_name = getattr(source_obj, "user_name", None)
+            if (getattr(source_obj, "user_id", None) == sender_open_id
+                    and isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                    and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+                data["sender_name"] = sender_name
         for source_key, data_key in (
             ("chat_type", "chat_type"),
             ("tenant_key", "tenant_key"),
@@ -10134,6 +10238,7 @@ def bind_agent_turn_identity(agent: Any, source: Any) -> bool:
         # Cached agents are reused: failure to prove this turn invalidates the
         # previous binding rather than allowing a later redirect to reuse it.
         setattr(agent, "_hfc_turn_binding", None)
+        setattr(agent, "_hfc_conversation_binding", None)
         turn_id = getattr(source, _CANONICAL_TURN_ATTR, None)
         if _platform_name({}, source) != "feishu" or not isinstance(turn_id, str) or not turn_id.strip():
             return False
@@ -10143,6 +10248,9 @@ def bind_agent_turn_identity(agent: Any, source: Any) -> bool:
         if not chat_id or profile_source.startswith("sanitized_"):
             return False
         setattr(agent, "_hfc_turn_binding", (turn_id.strip(), profile, chat_id, thread_id))
+        conversation_id = getattr(source, "_hfc_conversation_id", None)
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            setattr(agent, "_hfc_conversation_binding", (turn_id.strip(), conversation_id.strip()))
         return True
     except Exception:
         return False
@@ -10162,6 +10270,15 @@ def redirect_turn_id_for_agent(agent: Any, source: Any) -> str:
         return binding[0] if binding[1:] == scope else ""
     except Exception:
         return ""
+
+
+def redirect_conversation_id_for_agent(agent: Any, source: Any) -> str:
+    turn_id = redirect_turn_id_for_agent(agent, source)
+    binding = getattr(agent, "_hfc_conversation_binding", None)
+    if (turn_id and isinstance(binding, tuple) and len(binding) == 2
+            and binding[0] == turn_id and isinstance(binding[1], str)):
+        return binding[1]
+    return ""
 
 
 def _turn_id_for_runtime_event(

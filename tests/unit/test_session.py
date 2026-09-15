@@ -1580,3 +1580,13 @@ def test_runtime_header_keeps_unknown_tools_specific_without_exposing_arguments(
     )
 
     assert session.runtime_header_text == "正在使用 memos skill get"
+
+
+def test_pause_capability_never_extends_native_admission():
+    from hermes_feishu_card.session import InteractionState
+    interaction = InteractionState('native', 'approval', 'scope', pause_on_timeout=True,
+                                   requested_at=0, timeout_seconds=1,
+                                   runtime_admission={'expires_at': 1})
+    assert interaction.expire(2)
+    assert interaction.status == 'failed'
+    assert interaction.runtime_admission is None

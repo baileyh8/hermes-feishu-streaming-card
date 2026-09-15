@@ -8,6 +8,8 @@ interaction completes.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -19,6 +21,7 @@ class FakeFeishuClient:
     def __init__(self):
         self.sent = []
         self.updated = []
+        self.update_observed = asyncio.Event()
 
     async def send_card(self, chat_id, card, thread_id=None, reply_to_message_id=None):
         self.sent.append((chat_id, card, thread_id, reply_to_message_id))
@@ -26,6 +29,7 @@ class FakeFeishuClient:
 
     async def update_card_message(self, message_id, card):
         self.updated.append((message_id, card))
+        self.update_observed.set()
 
 
 def event_payload(event, sequence, data=None, *, chat_id="oc_abc", message_id="hermes-message-1"):
@@ -94,6 +98,7 @@ async def test_streaming_events_do_not_update_card_while_interaction_pending(cli
         },
     })
     assert resp.status == 200
+    await asyncio.wait_for(feishu_client.update_observed.wait(), 2)
     assert len(feishu_client.updated) >= 1, "interaction.completed must update the card"
 
 
@@ -108,4 +113,5 @@ async def test_normal_streaming_updates_still_work_without_interaction(client):
         "thinking.delta", 2, {"text": "思考中"},
     ))
     assert resp.status == 200
+    await asyncio.wait_for(feishu_client.update_observed.wait(), 2)
     assert len(feishu_client.updated) >= 1, "streaming updates must work without interaction"

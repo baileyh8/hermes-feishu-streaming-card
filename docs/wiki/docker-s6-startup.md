@@ -116,3 +116,18 @@ state directory 的 `status` 核对 PID/token/health，再按受管 `stop` 流�
 
 本样例已完成 shell 语法及 HFC CLI 参数校验；本仓库尚未用 #263 的实际 s6 镜像
 执行启动，不能把文档样例视为远端部署修复已经完成。
+
+## root 构建与普通用户运行
+
+#277 的后续截图确认：root 安装的 manifest/backup 在普通 Gateway 用户下无法读取，
+仅修改 `.env` 的所有者不足以解决。镜像构建时应让安装器以未来的 Gateway 用户运行，
+或者在镜像构建完成前，把该安装创建的源码、manifest、backup 和独立 state directory
+交给该用户。不要在运行时删除 manifest 或降低 transport key 的私有权限。
+
+仓库的 `docker-compose.smoke.yml` 在 root 安装后先降到 UID 65532 验证拒绝，
+再对专用测试卷完成所有权移交，复验安装状态与完整性，并以相同 UID 启动 Gateway/sidecar。
+这两次探测使用真正的 Linux UID，不通过 mock 修改 `getuid()`。
+
+截图所列镜像的源码 revision 为 `63279301bcbdc185c1b07b98a9312eb0c862f26d`，
+属于单文件 Hermes 0.21.0。它与拆分版都在固定源码回归范围内；不以版本号或有没有 `.git`
+推断具体布局。测试对源码 SHA256、安装、重复安装、旧 manifest 迁移和逐字恢复分别断言。

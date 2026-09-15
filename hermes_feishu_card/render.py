@@ -112,6 +112,7 @@ def render_card(
     interaction_profile_id: str = "default",
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
+    completion_mention: bool = False,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -129,6 +130,7 @@ def render_card(
         interaction_profile_id=interaction_profile_id,
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
+        completion_mention=completion_mention,
     ).card
 
 
@@ -148,6 +150,7 @@ def render_card_result(
     interaction_profile_id: str = "default",
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
+    completion_mention: bool = False,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(session)
     table_overflow = transform_table_overflow(
@@ -170,6 +173,7 @@ def render_card_result(
         interaction_profile_id=interaction_profile_id,
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
+        completion_mention=completion_mention,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -212,6 +216,7 @@ def _render_card_unchecked(
     interaction_profile_id: str = "default",
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
+    completion_mention: bool = False,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -231,7 +236,7 @@ def _render_card_unchecked(
         display_status=display_status,
     )
     if native_reply_completed:
-        footer = f"已完成 · {footer}"
+        footer = f"本轮回复结束 · {footer}"
     if session.delivery_kind == "notice" and session.notice_title:
         configured_title = session.notice_title
     else:
@@ -268,6 +273,13 @@ def _render_card_unchecked(
         # the execution timeline must not push this decision below old output.
         primary_text = pending_interaction.prompt
     if primary_text:
+        if mentions_enabled and session.delivery_kind == "chat" and not pending_approval:
+            primary_text = _render_known_requester_mentions(primary_text, session)
+        if completion_mention and session.status == "completed" and session.delivery_kind == "chat":
+            requester = _exact_feishu_open_id(session.sender_open_id)
+            mention = f'<at id="{requester}"></at>' if requester else ""
+            if mention and mention not in primary_text:
+                primary_text = mention + "\n\n" + primary_text
         elements = _render_main_content_elements(
             primary_text,
             table_overflow_mode=table_overflow_mode,
@@ -466,6 +478,19 @@ def _render_legacy_callback_card(
             "header": dict(header),
             "elements": elements,
         }
+    if interaction.status == "paused":
+        elements.extend(_interaction_review_elements(interaction))
+        elements.append({"tag": "markdown", "content": interaction.error})
+        elements.append({"tag": "action", "actions": [{
+            "tag": "button", "type": "primary",
+            "text": {"tag": "plain_text", "content": "查看并继续审批"},
+            "value": {"hfc_action": "interaction.select", "interaction_id": interaction.interaction_id,
+                      "token": interaction.callback_token, "choice": "__hfc_resume_approval__",
+                      "profile_id": profile_id},
+        }]})
+        return {"config": {"wide_screen_mode": True, "update_multi": True},
+                "header": {"template": "orange", "title": {"tag": "plain_text", "content": "任务已暂停，等待审批"}},
+                "elements": elements}
     if interaction.status != "pending":
         elements.extend(_interaction_review_elements(interaction))
         elements.append(
@@ -480,6 +505,11 @@ def _render_legacy_callback_card(
             "elements": elements,
         }
 
+    # Mobile clients truncate long headers without exposing their full text.
+    # Keep the complete question in the body before options and controls.
+    prompt = normalize_stream_text(interaction.prompt).strip()
+    if len(prompt) > 40:
+        elements.append({"tag": "markdown", "content": prompt})
     description = normalize_stream_text(interaction.description).strip()
     if description:
         elements.append({"tag": "markdown", "content": description})
@@ -670,7 +700,7 @@ def _render_status(
         }
     display_status = resolve_display_status(session, status_config or StatusConfig.defaults()).value
     if display_status == "completed":
-        return {"subtitle": "已完成", "template": "green"}
+        return {"subtitle": "本轮回复结束", "template": "green"}
     if display_status == "failed":
         return {"subtitle": "", "summary": "处理失败", "template": "red"}
     if display_status == "waiting":
@@ -723,6 +753,21 @@ def _sanitize_runtime_header(text: str) -> str:
     if len(normalized) <= RUNTIME_HEADER_MAX_CHARS:
         return normalized
     return normalized[: RUNTIME_HEADER_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _render_known_requester_mentions(text: str, session: CardSession) -> str:
+    """Resolve only the authenticated requester name, never guess other users."""
+    name = getattr(session, "sender_name", "")
+    open_id = _exact_feishu_open_id(getattr(session, "sender_open_id", ""))
+    if not name or not open_id or len(name) > 80 or any(ord(c) < 32 or c in "<>" for c in name):
+        return text
+    # Preserve code, links, and existing markup literally.
+    protected = re.compile(r"(```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*(?:`|$)|<at\b[^>]*>[\s\S]*?</at>|<[^>]*>|https?://[^\s]+|\[[^\]]*\]\([^)]*\))")
+    mention = re.compile(r"(?<![\w@])@" + re.escape(name) + r"(?=$|[\s，。！？、,.!?;:：；）)\]】*])")
+    parts = protected.split(text)
+    for index in range(0, len(parts), 2):
+        parts[index] = mention.sub(lambda _: f'<at id="{open_id}"></at>', parts[index])
+    return "".join(parts)
 
 
 def _render_main_content_elements(
@@ -909,6 +954,8 @@ def _interaction_review_elements(interaction: Any) -> list[Dict[str, Any]]:
     elements = []
     if interaction.prompt:
         elements.append({"tag": "markdown", "content": interaction.prompt})
+    if interaction.status == "paused" and interaction.description:
+        elements.append({"tag": "markdown", "content": normalize_stream_text(interaction.description)})
     elements.extend(_interaction_option_descriptions(interaction))
     return elements
 

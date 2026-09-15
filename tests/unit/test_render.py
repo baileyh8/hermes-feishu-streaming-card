@@ -327,7 +327,7 @@ def test_v4_completed_reply_card_uses_only_native_feishu_quote_header():
         for item in card["body"]["elements"]
         if item.get("element_id") == "footer"
     )
-    assert footer["content"].startswith("已完成 · ")
+    assert footer["content"].startswith("本轮回复结束 · ")
 
 
 def test_v4_failed_retains_preview_and_status_only_footer():
@@ -385,7 +385,7 @@ def test_render_completed_card_replaces_thinking():
     session.status = "completed"
     card = render_card(session)
     content = str(card)
-    assert card["header"]["subtitle"]["content"] == "已完成"
+    assert card["header"]["subtitle"]["content"] == "本轮回复结束"
     assert "最终答案" in content
     assert "不会展示" not in content
 
@@ -503,7 +503,7 @@ def test_progress_handoff_changes_only_header_status_from_completed_card():
     inferred_card = render_card(inferred)
 
     assert completed_card["header"]["template"] == "green"
-    assert completed_card["header"]["subtitle"]["content"] == "已完成"
+    assert completed_card["header"]["subtitle"]["content"] == "本轮回复结束"
     assert inferred_card["header"]["template"] == "blue"
     assert "subtitle" not in inferred_card["header"]
     assert inferred_card["config"]["summary"]["content"] == "生成中"
@@ -2391,3 +2391,44 @@ def test_render_can_hide_reasoning_timeline_when_configured():
     assert "主回答" in content
     assert "隐藏的思考" not in content
     assert "auxiliary_timeline" not in content
+
+
+@pytest.mark.parametrize('kind', ['approval', 'clarify'])
+def test_mobile_interaction_preserves_full_prompt_in_body(kind):
+    prompt = '需要完整显示的问题内容，' * 25 + '不要丢失末尾条件。'
+    session = CardSession('c', 'm', 'oc')
+    session.active_interaction = InteractionState(
+        interaction_id='mobile-question', kind=kind, prompt=prompt,
+        description='完整授权范围', options=[InteractionOption(label='允许一次', value='once')],
+    )
+    card = render_legacy_interaction_callback_card(session)
+    contents = [item.get('content') for item in card['elements'] if item.get('tag') == 'markdown']
+    assert prompt in contents
+    assert '完整授权范围' in contents
+
+
+def test_answer_mentions_resolve_only_known_requester_and_preserve_code():
+    from hermes_feishu_card.render import _render_known_requester_mentions
+    session = CardSession('c', 'm', 'oc', sender_open_id='ou_requester', sender_name='牟勇')
+    text = '@牟勇，请查看。**@牟勇** @陌生人 @牟勇其他 `@牟勇`\n```text\n@牟勇\n```\n[链接](https://example.com/@牟勇)'
+    result = _render_known_requester_mentions(text, session)
+    assert result.count('<at id="ou_requester"></at>') == 2
+    for literal in ('@陌生人', '@牟勇其他', '`@牟勇`', '```text\n@牟勇\n```', 'https://example.com/@牟勇'):
+        assert literal in result
+
+
+def test_answer_mentions_obey_disable_switch_and_do_not_guess_missing_identity():
+    session = CardSession('c', 'm', 'oc', sender_open_id='ou_requester', sender_name='牟勇')
+    session.answer_text = '@牟勇，请查看。'
+    session.status = 'completed'
+    assert '<at id="ou_requester">' in str(render_card(session))
+    assert '<at id="ou_requester">' not in str(render_card(session, mentions_enabled=False))
+    session.sender_open_id = ''
+    assert '<at id=' not in str(render_card(session))
+
+
+def test_requester_mentions_preserve_existing_at_markup_and_plain_urls():
+    from hermes_feishu_card.render import _render_known_requester_mentions
+    session = CardSession('c', 'm', 'oc', sender_open_id='ou_requester', sender_name='牟勇')
+    original = '<at id="ou_requester">@牟勇</at> https://example.com/@牟勇 `@牟勇'
+    assert _render_known_requester_mentions(original, session) == original

@@ -36,5 +36,27 @@
       "gateway/platforms/base.py": "8a484a522256d23bef86d09b5664a6077f18bcf5cdfdc5b4c7dc283707dfd5b0",
       "hermes_cli/__init__.py": "fd84470016147d1ed16b8655a60fd5e5c118c26a1a9816d1276933d32c337ff5"
     }
+  },
+  "historical": {
+    "commit": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3",
+    "source": "https://github.com/NousResearch/hermes-agent",
+    "version": "0.17.0",
+    "sha256": {
+      "gateway/run.py": "06d373b466d5f1cb3a6e6d62ee8e35b279087a00d7d260deb9afa70788df000c",
+      "cron/scheduler.py": "2d82e4958494b52bcae27527e8ad64f0b730d22906e725609fda7725b410abfa",
+      "gateway/platforms/base.py": "2123db7ed921a4779223fc827acc26e4ff97c2e205297d1618362347e551f94e",
+      "hermes_cli/__init__.py": "53688af91eff8d503b299077e2ec827600ff040522e3a219f55ab47ef0dd1855"
+    }
+  },
+  "image": {
+    "commit": "63279301bcbdc185c1b07b98a9312eb0c862f26d",
+    "source": "https://github.com/NousResearch/hermes-agent",
+    "version": "0.21.0",
+    "sha256": {
+      "gateway/run.py": "0e86f4db0a0b3628d09dd6382974115945136bfbedc7cc7078d062e4aabcab19",
+      "cron/scheduler.py": "51af6692a2483605275c5d996bb54689f475c2da502bef85825514dd815fa7da",
+      "gateway/platforms/base.py": "7d7f9351be0b4e2270056a2e61946db2a6eb2e59dd667a601d033528bbdce73a",
+      "hermes_cli/__init__.py": "fd84470016147d1ed16b8655a60fd5e5c118c26a1a9816d1276933d32c337ff5"
+    }
   }
 }

@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict
 from aiohttp import ClientSession, ClientTimeout, web
 
 from .bots import RouteResult
+from .card_limits import inspect_card_limits
 from .config import (
     card_completion_mention_enabled,
     card_interaction_mention_enabled,
@@ -140,6 +141,7 @@ REDIRECT_SESSION_ALIASES_KEY = web.AppKey("redirect_session_aliases", dict)
 CARD_SUMMARIES_KEY = web.AppKey("card_summaries", dict)
 CARD_SUMMARY_SESSION_KEYS_KEY = web.AppKey("card_summary_session_keys", dict)
 INTERACTION_RESULTS_KEY = web.AppKey("interaction_results", dict)
+PAUSED_APPROVAL_TASKS_KEY = web.AppKey("paused_approval_tasks", set)
 INTERACTION_RESULT_SESSION_KEYS_KEY = web.AppKey(
     "interaction_result_session_keys", dict
 )
@@ -497,6 +499,7 @@ def create_app(
     app[CARD_SUMMARIES_KEY] = {}
     app[CARD_SUMMARY_SESSION_KEYS_KEY] = {}
     app[INTERACTION_RESULTS_KEY] = {}
+    app[PAUSED_APPROVAL_TASKS_KEY] = set()
     app[INTERACTION_RESULT_SESSION_KEYS_KEY] = {}
     app[MESSAGE_BOT_IDS_KEY] = {}
     app[SESSION_CARD_CONFIGS_KEY] = {}
@@ -646,6 +649,11 @@ async def _stop_runtime_cleanup(app: web.Application) -> None:
 
 
 async def _clear_runtime_interaction_admissions(app: web.Application) -> None:
+    tasks = tuple(app[PAUSED_APPROVAL_TASKS_KEY])
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    app[PAUSED_APPROVAL_TASKS_KEY].clear()
     for session in tuple(app[SESSIONS_KEY].values()):
         interaction = session.active_interaction
         if interaction is not None:
@@ -907,6 +915,15 @@ async def _interaction_result(request: web.Request) -> web.Response:
     owner_key = request.app[INTERACTION_RESULT_SESSION_KEYS_KEY].get(interaction_id)
     owner = request.app[SESSIONS_KEY].get(owner_key) if owner_key is not None else None
     if owner_key is not None and owner is not None:
+        lock = request.app[MESSAGE_LOCKS_KEY].setdefault(str(owner_key), asyncio.Lock())
+        async with lock:
+            interaction = owner.active_interaction
+            if (interaction is not None and interaction.interaction_id == interaction_id
+                    and interaction.pause_on_timeout and interaction.status in {"pending", "paused"}):
+                interaction.last_waiter_poll_at = time.time()
+                owner.updated_at = interaction.last_waiter_poll_at
+                if interaction.status == "paused":
+                    _schedule_paused_approval_card(request.app, str(owner_key), owner, interaction)
         await _expire_pending_interaction(
             request.app,
             str(owner_key),
@@ -1190,6 +1207,8 @@ async def _interaction_action(
         return web.json_response(
             {"ok": False, "error": "interaction not found"}, status=404
         )
+    if value.get("choice") == "__hfc_resume_approval__" and not form_callback_token:
+        return await _resume_paused_approval(request, session_key, session, interaction, token, callback_chat_id)
     allowed_values = {option.value for option in interaction.options}
     form_value = _extract_form_value(payload)
     if mode == "confirm":
@@ -1463,7 +1482,7 @@ async def _interaction_action(
                     request.app[SESSIONS_KEY].get(session_key) is session
                     and session.active_interaction is expired_interaction
                     and expired_interaction is not None
-                    and expired_interaction.status == "failed"
+                    and expired_interaction.status in {"failed", "paused"}
                     and session.last_sequence == expiry_sequence
                 ),
             )
@@ -1474,7 +1493,10 @@ async def _interaction_action(
         )
         return _expired_interaction_response(callback_card)
     if post_lock_task is not None:
-        await post_lock_task
+        # The choice is already committed. A slow Feishu PATCH must not hold
+        # the WebSocket callback open or cancel the controller-owned update.
+        post_lock_task.add_done_callback(_log_background_task_failure)
+        await asyncio.wait({post_lock_task}, timeout=0.05)
     assert response is not None
     if response.status >= 400:
         return response
@@ -5124,6 +5146,10 @@ async def _apply_event_locked(
                     }
                     return _native_disposition_response(handoff_record), None
                 _record_card_render_decision(metrics, render_result)
+                if event.event == "interaction.requested" and session.active_interaction is not None:
+                    session.active_interaction.thread_id = _thread_id_for_event(event) or ""
+                    session.active_interaction.reply_to_message_id = _reply_to_message_id_for_event(event) or ""
+                    session.active_interaction.reply_in_thread = _reply_in_thread_for_event(event)
                 delivery = await _send_card(
                     request,
                     event.chat_id,
@@ -5326,6 +5352,10 @@ async def _apply_event_locked(
             or session.reply_to_message_id
             or None
         )
+        if interaction is not None:
+            interaction.thread_id = _thread_id_for_event(incoming_event) or ""
+            interaction.reply_to_message_id = reply_to_message_id or ""
+            interaction.reply_in_thread = _reply_in_thread_for_event(incoming_event) or session.reply_in_thread
         if _session_has_runtime_admission(session):
             if rollback_session_snapshot is None or interaction is None:
                 metrics.events_rejected += 1
@@ -5477,7 +5507,7 @@ async def _apply_event_locked(
             interaction = latest_session.active_interaction
             if (
                 interaction is not None
-                and interaction.status == "pending"
+                and interaction.status in {"pending", "paused"}
                 and not is_terminal
                 and not str(event.event or "").startswith("interaction.")
             ):
@@ -5683,6 +5713,9 @@ async def _maybe_send_completion_notify(
         )
     ):
         return
+    if notify_config.get("placement", "message") == "card":
+        session.completion_notify_state = "sent"
+        return
     client = _client_for_bot(app, app[MESSAGE_BOT_IDS_KEY].get(session_key))
     send_text = getattr(client, "send_text_message", None)
     if not callable(send_text):
@@ -5696,7 +5729,7 @@ async def _maybe_send_completion_notify(
         if mention_enabled
         else ""
     )
-    text = f"{mention_prefix}✅ 任务已完成{suffix}"
+    text = f"{mention_prefix}✅ 本轮回复结束{suffix}"
     try:
         send_kwargs: dict[str, Any] = {
             "thread_id": _thread_id_for_event(event) or None,
@@ -5799,6 +5832,8 @@ async def _finalize_interaction_predecessor(
         predecessor_snapshot,
         session_key=session_key,
     )
+    if "streaming_mode" in card.get("config", {}):
+        card["config"]["streaming_mode"] = False
     header = card.get("header")
     title = header.get("title") if isinstance(header, dict) else None
     if not isinstance(title, dict):
@@ -5983,7 +6018,7 @@ def _card_animation_is_current(
     # Freeze loading/tool animations while an interaction is pending —
     # periodic PATCHes would reset the user's in-progress selections/input.
     interaction = session.active_interaction
-    if interaction is not None and interaction.status == "pending":
+    if interaction is not None and interaction.status in {"pending", "paused"}:
         return False
     return app[SESSIONS_KEY].get(session_key) is session and (
         _is_initial_loading(session) or _has_running_tool(session)
@@ -6033,6 +6068,8 @@ def _store_interaction_result(app: web.Application, session: CardSession) -> Non
         "choice": interaction.choice,
         "choice_label": interaction.choice_label,
     }
+    if interaction.pause_on_timeout:
+        result["pause_on_timeout"] = True
     if interaction.error:
         result["error"] = interaction.error
     app[INTERACTION_RESULTS_KEY][interaction.interaction_id] = result
@@ -6049,6 +6086,9 @@ def _mark_interaction_expired_locked(
     now: float,
 ) -> None:
     session.updated_at = now
+    interaction = session.active_interaction
+    if interaction is not None and interaction.status == "paused":
+        _schedule_paused_approval_card(app, session_key, session, interaction)
     card_config = app[SESSION_CARD_CONFIGS_KEY].get(session_key, {})
     session.refresh_display_status_source(
         StatusConfig.from_mapping(card_config.get("status"))
@@ -6098,6 +6138,67 @@ def _expired_interaction_response(card: dict[str, Any]) -> web.Response:
     )
 
 
+def _schedule_paused_approval_card(app, session_key, session, interaction):
+    if (session.status in {"completed", "failed"}
+            or interaction.pause_notified_generation >= interaction.pause_generation
+            or time.time() < interaction.pause_retry_after):
+        return
+    interaction.pause_notified_generation = interaction.pause_generation
+    generation = interaction.pause_generation
+    snapshot = copy.deepcopy(session)
+    card = _render_interaction_callback_card_for_app(app, snapshot, session_key=session_key)
+
+    async def deliver():
+        if (app[SESSIONS_KEY].get(session_key) is not session
+                or session.active_interaction is not interaction
+                or session.status in {"completed", "failed"}
+                or interaction.status != "paused" or interaction.pause_generation != generation):
+            return
+        result = await _send_card_for_app(
+            app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
+            thread_id=interaction.thread_id or None,
+            reply_to_message_id=interaction.reply_to_message_id or session.reply_to_message_id or None,
+            reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
+            delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
+            delivery_kind="interaction",
+        )
+        if (result.outcome != "delivered" and session.active_interaction is interaction
+                and interaction.status == "paused" and interaction.pause_generation == generation):
+            # The live waiter drives recovery after a transient Feishu outage.
+            # Retain the same generation/delivery UUID; never rotate consent on retry.
+            interaction.pause_retry_after = time.time() + 5.0
+            interaction.pause_notified_generation = generation - 1
+    task = asyncio.create_task(deliver())
+    tasks = app[PAUSED_APPROVAL_TASKS_KEY]
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    task.add_done_callback(_log_background_task_failure)
+
+
+async def _resume_paused_approval(request, session_key, session, interaction, token, chat_id):
+    lock = request.app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
+    async with lock:
+        if (request.app[SESSIONS_KEY].get(session_key) is not session
+                or session.active_interaction is not interaction
+                or interaction.callback_token != token or session.chat_id != chat_id
+                or interaction.status != "paused" or not interaction.pause_on_timeout
+                or session.status in {"completed", "failed"}
+                or interaction.runtime_admission is not None):
+            return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
+        if not interaction.last_waiter_poll_at or time.time() - interaction.last_waiter_poll_at > 15:
+            return web.json_response({"ok": False, "error": "approval runtime is not waiting"}, status=409)
+        # Resuming is not consent. Withdraw the resume token and present the
+        # complete original scope with fresh decision buttons and a new window.
+        interaction.status = "pending"
+        interaction.callback_token = secrets.token_urlsafe(16)
+        interaction.requested_at = time.time()
+        interaction.error = ""
+        session.updated_at = interaction.requested_at
+        _store_interaction_result(request.app, session)
+        card = _render_interaction_callback_card_for_app(request.app, session, session_key=session_key)
+    return web.json_response({"ok": True, "toast": {"type": "info", "content": "请重新确认完整操作"}, "card": card})
+
+
 async def _expire_pending_interaction(
     app: web.Application,
     session_key: str,
@@ -6132,7 +6233,7 @@ async def _expire_pending_interaction(
             is_current=lambda: (
                 app[SESSIONS_KEY].get(session_key) is session
                 and session.active_interaction is expired_interaction
-                and expired_interaction.status == "failed"
+                and expired_interaction.status in {"failed", "paused"}
                 and session.last_sequence == expiry_sequence
             ),
         )
@@ -6494,7 +6595,10 @@ def _render_session_card_result_for_app(
     )
     if table_overflow_mode not in {"compact", "truncate"}:
         table_overflow_mode = "compact"
-    return render_card_result(
+    notify = card_config.get("completion_notify") or {}
+    completion_in_card = (isinstance(notify, dict) and notify.get("enabled") is True
+                          and notify.get("placement", "message") == "card")
+    result = render_card_result(
         session,
         footer_fields=footer_fields,
         title=title,
@@ -6519,11 +6623,26 @@ def _render_session_card_result_for_app(
             else None
         ),
         table_overflow_mode=table_overflow_mode,
+        completion_mention=completion_in_card and card_completion_mention_enabled(card_config),
         mentions_enabled=card_interaction_mention_enabled(
             card_config,
             kind=getattr(session.active_interaction, "kind", "") or "",
         ),
     )
+
+    if card_config.get("streaming_mode") is True and result.card.get("schema") == "2.0":
+        result.card.setdefault("config", {})["streaming_mode"] = (
+            session.status not in {"completed", "failed"}
+            and session.active_interaction is None
+            and session.delivery_kind == "chat"
+        )
+        # Added configuration must pass the same serialized size boundary.
+        inspection = inspect_card_limits(result.card)
+        if not inspection.safe:
+            result.card["config"].pop("streaming_mode", None)
+        else:
+            result = replace(result, inspection=inspection)
+    return result
 
 
 def _render_interaction_callback_card_for_app(

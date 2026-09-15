@@ -155,6 +155,8 @@ class FeishuClient:
         self._trust_env = not _should_bypass_proxy(config.base_url)
         self._tenant_access_token: str | None = None
         self._tenant_access_token_expires_at = 0.0
+        from .cardkit import CardKitTransport
+        self.cardkit = CardKitTransport(self)
 
     def build_message_payload(
         self,
@@ -212,6 +214,20 @@ class FeishuClient:
                 raise ValueError("delivery_uuid must be a non-empty string")
             if len(delivery_uuid) > 50:
                 raise ValueError("delivery_uuid must not exceed 50 characters")
+
+        if not isinstance(chat_id, str) or not chat_id.strip():
+            raise ValueError("chat_id is required")
+        if not isinstance(card, dict):
+            raise TypeError("card must be a dict")
+
+        if (isinstance(card, dict) and card.get("schema") == "2.0"
+                and isinstance(card.get("config"), dict)
+                and card["config"].get("streaming_mode") is True):
+            return await self.cardkit.send(
+                chat_id, card, thread_id=thread_id,
+                reply_to_message_id=reply_to_message_id,
+                reply_in_thread=reply_in_thread, delivery_uuid=delivery_uuid,
+            )
 
         payload = self.build_message_payload(
             chat_id,
@@ -293,6 +309,8 @@ class FeishuClient:
             raise ValueError("message_id is required")
         if not isinstance(card, dict):
             raise TypeError("card must be a dict")
+        if await self.cardkit.update(message_id, card):
+            return
         content = serialize_card_for_delivery(card)
         token = await self._tenant_token()
         await self._request_json(

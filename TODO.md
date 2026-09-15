@@ -6,6 +6,15 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
+### V4.5.0：剩余问题修复
+
+- [x] 话题通知、中文压缩提示、完整问题正文与有限回调等待。
+- [x] 已知提问者正文提及、可选卡片内完成提及与准确的本轮结束文案。
+- [x] CardKit 实体流式更新和同步 Gateway 审批暂停/重新审阅。
+- [x] 报告中的 Hermes 0.17/0.21 固定源码安装与完整性迁移回归。
+- [ ] 容器真实 UID 对照、全量 CI、精确合并提交、发布资产和公开安装门禁。
+- [ ] 真实 CardKit/移动端验收与逐项发布回复。
+
 ### V4.4.6：Issues/PR 集中修复
 
 - [x] 新附件契约与拆分账本 hook 检测；终局 PATCH 耗尽后恢复完整卡片。

@@ -4203,7 +4203,12 @@ def test_malformed_background_notice_fails_open(monkeypatch, content):
     assert adapter.text_sent == [("oc_abc", content, None, None)]
 
 
-def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkeypatch):
+@pytest.mark.parametrize("notice_text", [
+    "ℹ️ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
+    "📬 No home channel is set for Feishu. Type /sethome to make this chat your home channel.",
+    "ℹ️ 上下文压缩已推迟 — 摘要仍在生成中。本回合将不压缩继续。",
+])
+def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkeypatch, notice_text):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -4254,7 +4259,7 @@ def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkey
     async def run():
         result = await runner._deliver_platform_notice(
             source,
-            "ℹ️ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
+            notice_text,
         )
         await drain_tasks()
         return result
@@ -11604,7 +11609,7 @@ def test_interaction_select_forwards_to_sidecar_and_returns_card(monkeypatch):
     response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
 
     assert posted["url"] == "http://127.0.0.1:8765/card/actions"
-    assert posted["timeout"] == 5.0
+    assert posted["timeout"] == 2.0
     sent = posted["payload"]["event"]
     assert sent["action"]["value"] == {
         "hfc_action": "interaction.select",
@@ -13268,3 +13273,35 @@ def test_native_slash_confirm_claims_state_before_background_submission(monkeypa
         coroutine.close()
     assert len(submitted) == 1
     assert "cf-1" not in adapter._hfc_slash_confirm_state
+
+
+def test_delayed_approval_resolution_targets_original_request(monkeypatch):
+    import types
+    calls = []
+    module = types.ModuleType('tools.approval')
+    module.resolve_gateway_approval = lambda session, choice, *, request_id: calls.append((session, choice, request_id)) or 0
+    monkeypatch.setitem(sys.modules, 'tools.approval', module)
+    assert hook_runtime.resolve_approval_choice({'request_id': 'old-request'}, 'session', 'once') == 0
+    assert calls == [('session', 'once', 'old-request')]
+
+
+def test_paused_approval_outage_does_not_turn_into_denial(monkeypatch):
+    results = iter([{'status': 'paused', 'pause_on_timeout': True}, None, None,
+                    {'status': 'completed', 'choice': 'once'}])
+    tick = [0.0]
+    def now():
+        tick[0] += 2
+        return tick[0]
+    monkeypatch.setattr(hook_runtime.time, 'monotonic', now)
+    monkeypatch.setattr(hook_runtime.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(hook_runtime, '_policy_gate_sync', lambda *args: SimpleNamespace(card=True))
+    monkeypatch.setattr(hook_runtime, '_post_interaction_event', lambda *args: {'ok': True, 'applied': True})
+    monkeypatch.setattr(hook_runtime, '_get_json_sync', lambda *args: next(results))
+    monkeypatch.setattr(hook_runtime, '_post_interaction_timeout_sync', lambda *args: pytest.fail('silence is not denial'))
+    result = hook_runtime.request_interaction_from_hermes_locals(
+        {'chat_id': 'oc_fixture', 'message_id': 'om_fixture', '_hfc_pause_approval': True,
+         '_hfc_wait_current': lambda: True},
+        kind='approval', interaction_id='pause-outage', prompt='scope', timeout_seconds=1,
+        poll_interval_seconds=0,
+    )
+    assert result['choice'] == 'once'
