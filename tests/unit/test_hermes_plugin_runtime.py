@@ -859,6 +859,26 @@ def test_task4_post_llm_is_cache_only_and_failed_end_ignores_nonempty_explanatio
     assert "PRIVATE-TRACE-CANARY" not in repr(posted)
 
 
+@pytest.mark.parametrize("completed,reason", [
+    (False, "budget_exhausted"),
+    (True, "max_iterations_reached(10/10)"),
+    (False, "unknown"),
+])
+def test_native_incomplete_end_never_reports_success_or_leaves_card_running(completed, reason):
+    posted = []
+    runtime = active_task4_runtime(posted)
+    runtime.handle_post_llm_call(turn_id="turn-1", assistant_response="partial answer")
+    runtime.handle_on_session_end(
+        turn_id="turn-1", completed=completed, failed=False,
+        interrupted=False, turn_exit_reason=reason,
+    )
+    assert len(posted) == 1
+    assert posted[0]["event"] == "message.failed"
+    assert "未报告执行完成" in posted[0]["data"]["error"]
+    runtime.handle_on_session_end(turn_id="turn-1", completed=True, failed=False, interrupted=False)
+    assert len(posted) == 1
+
+
 def test_task4_only_literal_success_flags_with_exact_cached_answer_complete():
     posted = []
     runtime = active_task4_runtime(posted)

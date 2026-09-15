@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.4.6 — 2026-09-15
+
+### Fixed
+- Accept both verified attachment-delivery call shapes on Hermes 0.21.1+, rejecting duplicate, unknown and ambiguous calls. Preserve tidytorch's PR #291 implementation and Jentlezhi's PR #292 regressions, with additional contract execution tests.
+- Recognize installed split-ledger hooks at runtime so final delivery uses the staged Base contract. Pin upstream compatibility CI to Hermes 0.21.3 commit `2179a279ae04bfadf8efbc49a01ca0abfb738000`.
+- Recover an accepted terminal card with one UUID-bound replacement when all PATCH retries fail; keep the original topic and full answer, suppress native duplicates, and expose unsuccessful recovery through health diagnostics (#298).
+- Interpret explicit iteration/budget exits in both legacy and native completion paths; terminate native incomplete turns without claiming success (#301). Preserve visible partial answers on `message.failed` (#289).
+- Keep the question, numbered options and result visible after interaction completion/expiry, including on mobile (#280). Explain rejected and uncertain callbacks without inviting repeat approval (#282).
+- Print a copyable, shell-quoted diagnostic command for integrity review using the current config, environment and Hermes paths (#276).
+
+### Maintenance
+- Upgrade CodeQL init/analyze together to 4.38.0, update pinned SHA checks, and group future CodeQL updates (#299/#300).
+- See the [issue and PR review](docs/issue-triage-2026-09-15.md) for coverage, remaining cases and real-client acceptance boundaries.
+
+### Credits
+- [tidytorch](https://github.com/tidytorch) and [Jentlezhi](https://github.com/Jentlezhi): installation fixes and regression tests in #291/#292; original commit authorship is preserved.
+- [sp960817](https://github.com/sp960817), [Cyber-Yichen](https://github.com/Cyber-Yichen), [shichenshuo-star](https://github.com/shichenshuo-star), and [ywarmy](https://github.com/ywarmy): installation failure isolation and cross-version evidence in #288/#294/#296.
+- [7360403-coder](https://github.com/7360403-coder): terminal delivery failure evidence and recovery analysis in #298. [mouyong](https://github.com/mouyong): execution-state, interaction, readability and diagnostic reports.
+
 ## V4.4.5 — 2026-09-10
 
 ### Fixed

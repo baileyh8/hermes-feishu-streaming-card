@@ -8251,6 +8251,11 @@ def test_extract_real_platform():
 
 
 @pytest.mark.parametrize("result,outcome", [
+    ({"completed": True, "turn_exit_reason": "max_iterations_reached(10/10)"}, "incomplete"),
+    ({"turn_exit_reason": "budget_exhausted"}, "incomplete"),
+    ({"turn_exit_reason": "error_near_max_iterations(test)"}, "failed"),
+    ({"turn_exit_reason": "text_response(finish_reason=stop)"}, None),
+    ({"turn_exit_reason": "unrecognized_future_reason"}, None),
     ({"failed": True}, "failed"),
     ({"interrupted": True, "completed": True}, "interrupted"),
     ({"completed": False}, "incomplete"),
@@ -12489,8 +12494,12 @@ def test_native_platform_notice_falls_through_without_scheduling_card(monkeypatc
     assert scheduled == []
 
 
-def test_interaction_select_returns_empty_response_when_sidecar_rejects(monkeypatch):
-    """Expired/rejected interactions should not crash or fall through."""
+@pytest.mark.parametrize("status,expected", [
+    (404, "已不可用"), (409, "勿重复点击"), (403, "未获验证"), (503, "暂未确认"),
+    ("timeout", "暂未确认"), ("rejected_card", "暂未确认"),
+])
+def test_interaction_select_rejection_shows_safe_feedback(monkeypatch, status, expected):
+    """Rejected clicks must explain the outcome without replaying authorization."""
 
     class FakeP2Response:
         def __init__(self):
@@ -12512,8 +12521,17 @@ def test_interaction_select_returns_empty_response_when_sidecar_rejects(monkeypa
         lambda: SimpleNamespace(event_url="http://127.0.0.1:8765/events"),
     )
 
+    calls = []
+    class FakeToast:
+        pass
+    monkeypatch.setattr(hook_runtime, "CallBackToast", FakeToast, raising=False)
     def fake_post(url, payload, timeout):
-        raise error.HTTPError(url, 404, "not found", {}, None)
+        calls.append(payload)
+        if status == "timeout":
+            raise TimeoutError("private response must not leak")
+        if status == "rejected_card":
+            return {"ok": False, "card": {"elements": []}}
+        raise error.HTTPError(url, status, "private response must not leak", {}, None)
 
     monkeypatch.setattr(hook_runtime, "_post_json_sync_response", fake_post)
 
@@ -12537,6 +12555,12 @@ def test_interaction_select_returns_empty_response_when_sidecar_rejects(monkeypa
     response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
 
     assert response.card is None
+    assert response.toast.type == "warning"
+    assert expected in response.toast.content
+    assert "private" not in response.toast.content
+    assert len(calls) <= hook_runtime.INTERACTION_ACTION_FORWARD_ATTEMPTS
+    if status != "timeout":
+        assert len(calls) == 1
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,14 @@
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。
 
+### V4.4.6：Issues/PR 集中修复
+
+- [x] 新附件契约与拆分账本 hook 检测；终局 PATCH 耗尽后恢复完整卡片。
+- [x] 迭代上限/预算耗尽与 native incomplete 状态；失败正文和交互回看。
+- [x] 完整性诊断命令、CodeQL 同步更新、Hermes 0.21.3 源码契约验证。
+- [ ] #293 CardKit streaming_mode、#295 持久暂停恢复需独立设计和实现。
+- [ ] #282 等真实移动端与未复现现场继续跟踪，详见本轮 issue triage。
+
 ### V4.4.5：终态与安装稳定性修复
 
 - [x] Gateway 失败、中断和未完成状态不再显示成功或发送成功通知。

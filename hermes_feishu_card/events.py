@@ -23,6 +23,25 @@ SUPPORTED_EVENTS = {
     "subagent.updated",
 }
 
+
+def completion_turn_outcome(result: Any) -> str | None:
+    """Interpret exact upstream outcome fields, without inspecting answer text."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("interrupted") is True:
+        return "interrupted"
+    if result.get("failed") is True:
+        return "failed"
+    if result.get("completed") is False or result.get("partial") is True:
+        return "incomplete"
+    reason = result.get("turn_exit_reason")
+    reason_code = reason.split("(", 1)[0] if isinstance(reason, str) else ""
+    if reason_code in {"max_iterations_reached", "budget_exhausted", "review_input_budget_exhausted"}:
+        return "incomplete"
+    if reason_code == "error_near_max_iterations":
+        return "failed"
+    return None
+
 _EVENT_IDENTITY_MAX_CHARS = 256
 _EVENT_PRODUCERS = {"plugin", "patch", "legacy-patch"}
 _EVENT_PHASES = {"started", "terminal", "update"}

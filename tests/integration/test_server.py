@@ -11919,6 +11919,109 @@ async def test_terminal_update_failure_is_retried_in_background(client, monkeypa
     assert "最终答案" in str(feishu_client.updated[-1][1])
 
 
+@pytest.mark.parametrize("terminal,data,expected", [
+    ("message.completed", {"answer": "最终答案"}, "最终答案"),
+    ("message.failed", {"error": "provider failed"}, "provider failed"),
+])
+async def test_exhausted_terminal_patch_recovers_once_in_original_topic(
+    client, monkeypatch, terminal, data, expected,
+):
+    test_client, feishu_client = client
+    async def exhausted(*args):
+        return False
+    monkeypatch.setattr(sidecar_server, "_retry_terminal_update", exhausted)
+    route = {"thread_id": "omt_recovery"}
+    await test_client.post("/events", json=event_payload(
+        "message.started", 0, {"reply_to_message_id": "om_anchor"}, **route,
+    ))
+    feishu_client.update_failures_remaining = 100
+    payload = event_payload(terminal, 1, data, **route)
+    response = await test_client.post("/events", json=payload)
+    assert (await response.json())["applied"] is True
+    for _ in range(100):
+        if len(feishu_client.sent) == 2:
+            break
+        await _REAL_ASYNCIO_SLEEP(0.01)
+    assert len(feishu_client.sent) == 2
+    recovered = feishu_client.sent[-1]
+    assert expected in str(recovered[1])
+    assert recovered[2:] == ("omt_recovery", "om_anchor")
+    for sequence in [1, 2]:
+        duplicate = dict(payload, sequence=sequence)
+        assert (await (await test_client.post("/events", json=duplicate)).json())["applied"] is True
+    await _REAL_ASYNCIO_SLEEP(0.02)
+    assert len(feishu_client.sent) == 2
+    assert feishu_client.texts == []
+    assert next(iter(test_client.app[SESSIONS_KEY].values())).terminal_delivery_state == "recovered"
+
+
+@pytest.mark.parametrize("outcome", ["not_sent", "unknown"])
+async def test_terminal_recovery_send_failure_is_observable(client, monkeypatch, outcome):
+    test_client, feishu_client = client
+    async def exhausted(*args):
+        return False
+    monkeypatch.setattr(sidecar_server, "_retry_terminal_update", exhausted)
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    feishu_client.update_failures_remaining = 100
+    async def failed_send(*args, **kwargs):
+        raise FeishuAPIError("unavailable", retryable=False, outcome=outcome)
+    monkeypatch.setattr(feishu_client, "send_card", failed_send)
+    await test_client.post("/events", json=event_payload("message.completed", 1, {"answer": "答案"}))
+    session = next(iter(test_client.app[SESSIONS_KEY].values()))
+    for _ in range(100):
+        if session.terminal_delivery_state == outcome:
+            break
+        await _REAL_ASYNCIO_SLEEP(0.01)
+    assert session.terminal_delivery_state == outcome
+    assert len(feishu_client.sent) == 1
+    assert feishu_client.texts == []
+    health = await (await test_client.get("/health")).json()
+    assert health["diagnostics"]["last_terminal_delivery"]["outcome"] == outcome
+
+
+@pytest.mark.parametrize("patch_fails", [False, True])
+async def test_exact_hook_ownership_keeps_final_answer_after_patch_exhaustion(client, monkeypatch, patch_fails):
+    test_client, feishu_client = client
+    await test_client.post("/events", json=event_payload("message.started", 0))
+    async def exhausted(*args):
+        return False
+    async def post_to_sidecar(_url, payload, _timeout):
+        return await (await test_client.post("/events", json=payload)).json()
+    async def unexpected_native_send(**kwargs):
+        pytest.fail("accepted terminal must not also send native text")
+    monkeypatch.setattr(sidecar_server, "_retry_terminal_update", exhausted)
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", post_to_sidecar)
+    if patch_fails:
+        feishu_client.update_failures_remaining = 100
+    answer = "完整回答" * 500 + "末尾校验"
+    token = hook_runtime._HFC_EXACT_COMPLETION_STAGE.set({
+        "payload": event_payload("message.completed", 1, {"answer": answer}),
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 10,
+        "task_id": id(asyncio.current_task()),
+        "base_context": {"images": [], "local_files": [], "media_files": []},
+    })
+    try:
+        adapter = SimpleNamespace(name="feishu", _send_with_retry=unexpected_native_send)
+        delivery_adapter, content, reply_to, metadata = await hook_runtime.prepare_decomposed_base_final_delivery({
+            "delivery_adapter": adapter, "content": answer,
+            "reply_to": None, "metadata": None, "obligation_id": None,
+        })
+        delivered = await delivery_adapter._send_with_retry(content=content, reply_to=reply_to, metadata=metadata)
+        assert delivered.success is True
+        session = next(iter(test_client.app[SESSIONS_KEY].values()))
+        for _ in range(100):
+            if session.terminal_delivery_state in {"delivered", "recovered"}:
+                break
+            await _REAL_ASYNCIO_SLEEP(0.01)
+        assert session.terminal_delivery_state == ("recovered" if patch_fails else "delivered")
+        final_card = feishu_client.sent[-1][1] if patch_fails else feishu_client.updated[-1][1]
+        assert answer in str(final_card)
+        assert len(feishu_client.sent) == (2 if patch_fails else 1)
+        assert feishu_client.texts == []
+    finally:
+        hook_runtime._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
 async def test_terminal_retry_backoff_does_not_inflate_patch_latency_metric(
     client, monkeypatch
 ):

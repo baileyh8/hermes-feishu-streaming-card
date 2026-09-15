@@ -266,6 +266,21 @@ def test_status_reports_sanitized_integrity_repair_action(monkeypatch, capsys):
     assert "integrity.reason: verified_git_upgrade" in output
     assert "integrity.next_action:" in output
     assert "integrity migrate-safe" in output
+    assert "integrity.next_command: hermes-feishu-card doctor --config config.yaml --explain" in output
+
+
+def test_integrity_next_command_preserves_explicit_paths(capsys):
+    import argparse
+    import shlex
+    cli_module._print_status_integrity(
+        {"last_status": "manual_review_required"},
+        args=argparse.Namespace(config="/test/card config.yaml", env_file="/test/card.env", hermes_dir="/test/hermes agent"),
+    )
+    line = next(line for line in capsys.readouterr().out.splitlines() if line.startswith("integrity.next_command:"))
+    assert shlex.split(line.split(": ", 1)[1]) == [
+        "hermes-feishu-card", "doctor", "--config", "/test/card config.yaml",
+        "--env-file", "/test/card.env", "--hermes-dir", "/test/hermes agent", "--explain",
+    ]
 
 
 def test_status_reports_native_handoff_manual_review_without_identifiers(

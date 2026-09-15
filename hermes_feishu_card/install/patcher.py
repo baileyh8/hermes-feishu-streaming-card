@@ -4300,7 +4300,7 @@ def _find_decomposed_base_patch_locations(tree, lines):
     delegated = exact(guard, 'await self._send_final_text(event, session_key, text_content, _final_thread_metadata, is_ephemeral_response, _ephemeral_ttl, _record_delivery)')
     if guard.body != [delegated]:
         raise ValueError(error)
-    attachments = exact(process, 'await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)')
+    attachments = _exact_deliver_attachments(process)
     ordered([extracted, assigned, metadata, tts_default, guard, attachments])
     # All three stages must be siblings in the response branch.
     branches = [n for n in ast.walk(process) if isinstance(n, ast.If)
@@ -4338,6 +4338,30 @@ def _find_decomposed_base_patch_locations(tree, lines):
     exact(finish, 'await asyncio.to_thread(mark_failed, obligation_id, error)')
     return ((guard.lineno - 1, _line_indent(lines, guard.lineno - 1)),
             (final_send.lineno - 1, _line_indent(lines, final_send.lineno - 1)))
+
+
+_DELIVER_ATTACHMENTS_PATTERNS = (
+    # Hermes 0.21.1+: _deliver_attachments gained record_delivery= kwarg
+    "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered, record_delivery=_record_delivery)",
+    # Hermes <= 0.21.0: no record_delivery kwarg
+    "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)",
+)
+
+
+def _exact_deliver_attachments(process):
+    """Match the _deliver_attachments call site, accepting both pre- and
+    post-0.21.1 signatures (with/without ``record_delivery=`` kwarg)."""
+    calls = [node for node in ast.walk(process)
+             if isinstance(node, ast.Call)
+             and _call_function(node) == ("self", "_deliver_attachments")]
+    if len(calls) != 1:
+        raise ValueError("could not find safe BasePlatformAdapter contract")
+    patterns = {ast.dump(ast.parse(pattern).body[0]) for pattern in _DELIVER_ATTACHMENTS_PATTERNS}
+    # Count across both spellings. Trying them independently would accept two
+    # different attachment sends and silently admit a changed delivery pipeline.
+    return _unique_exact_base_node(
+        ast.walk(process), lambda node: ast.dump(node) in patterns
+    )
 
 
 def _find_split_decomposed_base_patch_locations(tree, lines):
@@ -4445,10 +4469,7 @@ def _find_split_decomposed_base_patch_locations(tree, lines):
     )
     if guard.body != [delegated]:
         raise ValueError(error)
-    attachments = exact(
-        process,
-        "await self._deliver_attachments(event, extracted, _final_thread_metadata, anything_sent=delivery_attempted or _tts_caption_delivered)",
-    )
+    attachments = _exact_deliver_attachments(process)
     ordered([extracted, assigned, metadata, tts_default, guard, attachments])
     branches = [
         node

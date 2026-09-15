@@ -22,6 +22,7 @@ from urllib import parse, request
 
 from . import __version__
 from .event_auth import sign_event_request
+from .events import completion_turn_outcome
 from .operations_transport import read_transport_root_secret
 from .profile_sources import TRUSTED_PROFILE_SOURCES
 from .runtime_control import RuntimeControlLease, acquire_runtime_control
@@ -1596,6 +1597,7 @@ class PluginRuntime:
         failed = kwargs.get("failed")
         interrupted = kwargs.get("interrupted")
         flags_exact = all(type(value) is bool for value in (completed, failed, interrupted))
+        outcome = completion_turn_outcome(kwargs) if flags_exact else None
         coordinator: TurnEventCoordinator | None = None
         turn: TurnBinding | None = None
         owner_token: object | None = None
@@ -1613,7 +1615,7 @@ class PluginRuntime:
             entry = self._answers.get(turn_id)
             if entry is not None:
                 answer = entry.answer
-            if flags_exact and (failed is True or interrupted is True):
+            if outcome is not None:
                 terminal_kind = "failed"
             elif (
                 flags_exact
@@ -1658,7 +1660,10 @@ class PluginRuntime:
                 {"answer": answer}
                 if terminal_kind == "completed"
                 else {
-                    "error": "消息处理失败",
+                    "error": (
+                        "本轮已结束，但 Hermes 未报告执行完成。"
+                        if outcome == "incomplete" else "消息处理失败"
+                    ),
                     "turn_exit_reason": self._classify_exit_reason(
                         kwargs.get("turn_exit_reason"), interrupted is True
                     ),

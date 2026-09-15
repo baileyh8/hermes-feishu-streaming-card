@@ -99,6 +99,13 @@ Docker 建议依次完成：安装 HFC 包与 hook、必要的完整性迁移、
 写入 hook 而自动加载新代码。Gateway 和 sidecar 还必须共享认证状态目录；细节见
 [单进程多 profile 排障](shared-profile-routing.md)。
 
+后续 Hermes 的 `_deliver_attachments` 可以带精确的 `record_delivery=_record_delivery`。
+安装器只接受带/不带这个参数的两种已知调用，且同一处理方法只能有一次附件发送；
+未知参数、错误 callback 或重复调用仍拒绝。运行时还需识别 `send_final_ledgered` 内的
+已安装 hook，才能把终局暂存到 Base 的 record → hook → send → finalize 流程。
+源码安装回归现覆盖 Hermes 0.21.3 的固定提交 `2179a279ae04bfadf8efbc49a01ca0abfb738000`；
+这证明该源码快照的安装、诊断与恢复，不代表所有同版本分发或真实飞书均已验收。
+
 ## 验证与后续维护
 
 `tests/fixtures/hermes_decomposed/` 包含 8 个注入目标和两个 facade，无凭据、无运行环境。

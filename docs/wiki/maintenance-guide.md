@@ -63,6 +63,8 @@
 
 - 显式 `turn_id` 必须作为 canonical turn hard fence，直接决定 session ownership、ordering 和 native handoff，绝不查 reply alias；只有缺少 `turn_id` 的 legacy topic 后续事件使用不同内部 `message_id` 时，才查 `reply_to_message_id` anchor。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
+- 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
+- legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
 - 初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；不重试 `/events`，也不把这套策略套到 PATCH。
 - `feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings`、`notice_update_failures`、`last_send_error` 与 `last_update_error` 必须保持脱敏；更新失败只可附加白名单校验后的 `status_code` / `api_code`，不得记录 UUID、响应正文、URL 或原始标识符。
@@ -199,3 +201,5 @@ reporting an older nearest tag.
 ## 稳定性回归准入
 
 修复前后的失败证据、真实流程覆盖和发版阻断条件见 [稳定性测试规则](stability-test-policy.md)。新兼容契约必须验证错误参数、错误 adapter、错误控制流被拒绝，并实际执行补丁后的投递顺序；失去上游完成证据的旧轮不得被测试固化为成功。
+
+V4.4.6 集中修复的发布范围及现场边界见 [发布说明](../release-notes-v4.4.6.md)；#293/#295 仍为独立功能需求。

@@ -151,6 +151,7 @@ class CardSession:
     reply_in_thread: bool = False
     sender_open_id: str = ""
     completion_notify_state: str = "idle"
+    terminal_delivery_state: str = "idle"
     notice_title: str = ""
     notice_level: str = "info"
     terminal_disposition: str = ""
@@ -458,11 +459,12 @@ class CardSession:
         elif event.event == "message.failed":
             if self.active_interaction is not None:
                 self.active_interaction.runtime_admission = None
-            self._archive_current_answer_to_reasoning()
             self.timeline.complete()
             self.status = "failed"
             error = event.data.get("error")
-            self.answer_text = error if isinstance(error, str) else "消息处理失败"
+            error = error if isinstance(error, str) and error.strip() else "消息处理失败"
+            partial = self.answer_text.rstrip()
+            self.answer_text = partial + "\n\n> " + error if partial else error
         self.updated_at = time.time()
         self.refresh_display_status_source()
         return True

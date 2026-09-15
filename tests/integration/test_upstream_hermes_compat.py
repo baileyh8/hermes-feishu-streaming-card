@@ -48,7 +48,7 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     detection = detect_hermes(target)
     assert detection.supported, detection.reason
-    assert detection.version == "0.21.0"
+    assert detection.version == expected.get("version", "0.21.0")
     assert detection.decomposed == (baseline == "main")
     assert cli.main(["install", "--hermes-dir", str(target), "--yes"]) == 0
     installed = {name: (target / name).read_bytes() for name in originals}
