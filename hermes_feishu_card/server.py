@@ -922,6 +922,8 @@ async def _interaction_result(request: web.Request) -> web.Response:
                     and interaction.pause_on_timeout and interaction.status in {"pending", "paused"}):
                 interaction.last_waiter_poll_at = time.time()
                 owner.updated_at = interaction.last_waiter_poll_at
+                if interaction.status == "paused":
+                    _schedule_paused_approval_card(request.app, str(owner_key), owner, interaction)
         await _expire_pending_interaction(
             request.app,
             str(owner_key),
@@ -6137,7 +6139,9 @@ def _expired_interaction_response(card: dict[str, Any]) -> web.Response:
 
 
 def _schedule_paused_approval_card(app, session_key, session, interaction):
-    if interaction.pause_notified_generation >= interaction.pause_generation:
+    if (session.status in {"completed", "failed"}
+            or interaction.pause_notified_generation >= interaction.pause_generation
+            or time.time() < interaction.pause_retry_after):
         return
     interaction.pause_notified_generation = interaction.pause_generation
     generation = interaction.pause_generation
@@ -6145,9 +6149,12 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
     card = _render_interaction_callback_card_for_app(app, snapshot, session_key=session_key)
 
     async def deliver():
-        if app[SESSIONS_KEY].get(session_key) is not session or session.active_interaction is not interaction:
+        if (app[SESSIONS_KEY].get(session_key) is not session
+                or session.active_interaction is not interaction
+                or session.status in {"completed", "failed"}
+                or interaction.status != "paused" or interaction.pause_generation != generation):
             return
-        await _send_card_for_app(
+        result = await _send_card_for_app(
             app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
             thread_id=interaction.thread_id or None,
             reply_to_message_id=interaction.reply_to_message_id or session.reply_to_message_id or None,
@@ -6155,6 +6162,12 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
             delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
             delivery_kind="interaction",
         )
+        if (result.outcome != "delivered" and session.active_interaction is interaction
+                and interaction.status == "paused" and interaction.pause_generation == generation):
+            # The live waiter drives recovery after a transient Feishu outage.
+            # Retain the same generation/delivery UUID; never rotate consent on retry.
+            interaction.pause_retry_after = time.time() + 5.0
+            interaction.pause_notified_generation = generation - 1
     task = asyncio.create_task(deliver())
     tasks = app[PAUSED_APPROVAL_TASKS_KEY]
     tasks.add(task)

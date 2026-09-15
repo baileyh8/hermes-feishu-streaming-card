@@ -88,6 +88,7 @@ class InteractionState:
     pause_on_timeout: bool = False
     pause_generation: int = 0
     pause_notified_generation: int = 0
+    pause_retry_after: float = 0.0
     last_waiter_poll_at: float = 0.0
     thread_id: str = ""
     reply_to_message_id: str = ""

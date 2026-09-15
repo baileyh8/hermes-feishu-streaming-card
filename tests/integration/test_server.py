@@ -13226,6 +13226,49 @@ async def test_expired_approval_pauses_then_requires_fresh_explicit_consent(clie
     assert (await result.json())['choice'] == 'once'
 
 
+@pytest.mark.parametrize('outcome', ['not_sent', 'unknown'])
+async def test_paused_approval_notification_recovers_with_same_uuid(client, monkeypatch, outcome):
+    test_client, feishu_client = client
+    await test_client.post('/events', json=event_payload('message.started', 0))
+    await test_client.post('/events', json=event_payload('interaction.requested', 1, {
+        'interaction_id': 'pause-retry', 'kind': 'approval', 'prompt': 'Review operation',
+        'pause_on_timeout': True, 'timeout_seconds': 300,
+        'options': [{'label': 'Allow once', 'value': 'once'}],
+    }))
+    attempts = []
+
+    async def delivery(chat_id, card, **kwargs):
+        attempts.append(kwargs.pop('delivery_uuid'))
+        if len(attempts) == 1:
+            raise FeishuAPIError('temporary send failure', outcome=outcome)
+        message_id = await feishu_client.send_card(chat_id, card, **kwargs)
+        return SimpleNamespace(message_id=message_id, retry_count=0)
+
+    monkeypatch.setattr(feishu_client, 'send_card_delivery', delivery, raising=False)
+    interaction = test_client.app[SESSIONS_KEY]['hermes-message-1'].active_interaction
+    interaction.requested_at -= 301
+    await test_client.get('/interactions/pause-retry')
+    await _wait_until(lambda: not test_client.app[sidecar_server.PAUSED_APPROVAL_TASKS_KEY])
+    token = interaction.callback_token
+    assert interaction.status == 'paused' and interaction.choice == ''
+    await test_client.get('/interactions/pause-retry')
+    assert len(attempts) == 1  # Backoff prevents polling from flooding Feishu.
+    interaction.pause_retry_after = 0
+    await test_client.get('/interactions/pause-retry')
+    await _wait_until(lambda: len(feishu_client.sent) == 3)
+    assert len(attempts) == 2 and attempts[0] == attempts[1]
+    assert interaction.callback_token == token
+    resume = interaction_buttons(feishu_client.sent[-1][1])[0]['value']
+    response = await test_client.post('/card/actions', json={'event': {
+        'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'},
+        'action': {'value': resume},
+    }})
+    assert response.status == 200
+    assert interaction.status == 'pending' and interaction.choice == ''
+    await test_client.get('/interactions/pause-retry')
+    assert len(attempts) == 2
+
+
 async def test_paused_approval_cannot_resume_after_runtime_disappears(client):
     test_client, feishu_client = client
     await test_client.post('/events', json=event_payload('message.started', 0))
