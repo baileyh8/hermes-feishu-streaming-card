@@ -37,6 +37,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "final_drain_timeout_ms": 900,
         "title": "Hermes Agent",
         "interaction_mode": "auto",
+        "streaming_mode": False,
         "show_reasoning": True,
         "reasoning_format": "panel",
         "timeline_expanded": False,
@@ -435,6 +436,10 @@ def _normalize_card_config(value: object, *, path: str) -> None:
         value["table_overflow_mode"] = normalize_table_overflow_mode(
             value["table_overflow_mode"], path=f"{path}.table_overflow_mode"
         )
+    if "streaming_mode" in value:
+        value["streaming_mode"] = _normalize_boolean(
+            value["streaming_mode"], f"{path}.streaming_mode"
+        )
     if "reasoning_format" in value:
         raw_format = value["reasoning_format"]
         if not isinstance(raw_format, str) or raw_format.strip().lower() not in {"panel", "code"}:
@@ -456,6 +461,9 @@ def _normalize_card_config(value: object, *, path: str) -> None:
         value["interaction_mentions"] = normalized
     if "completion_notify" in value and isinstance(value["completion_notify"], dict):
         notify = value["completion_notify"]
+        if "placement" in notify and (not isinstance(notify["placement"], str)
+                                       or notify["placement"] not in {"card", "message"}):
+            raise ValueError(f"{path}.completion_notify.placement must be card or message")
         if "mention" in notify and notify["mention"] is not None:
             notify["mention"] = _normalize_boolean(
                 notify["mention"], f"{path}.completion_notify.mention"

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.5.0 — 2026-09-15
+
+### Added
+- Opt-in CardKit entity streaming with ordered cumulative text updates, UUID-bound delivery reuse and explicit stream shutdown (#293).
+- Live synchronous Gateway approvals pause on expiry, rotate consent tokens and require fresh review before resolving the original approval request (#295).
+- Resolve known requester names in answer mentions and offer in-card completion mention placement (#262/#279).
+
+### Fixed
+- Route home-channel onboarding and Chinese deferred-compaction notices through the correct topic anchor (#275/#278).
+- Bound callback acknowledgement independently of slow card PATCH operations; show long mobile questions in the body (#258/#282).
+- Describe successful model turns as response completion rather than business-task completion (#274).
+- Pin compatibility tests to the reported Hermes 0.17 and Docker 0.21 sources, exercise integrity migration, and test real root/non-root container ownership (#73/#263/#264/#265/#266/#277).
+
 ## V4.4.6 — 2026-09-15
 
 ### Fixed

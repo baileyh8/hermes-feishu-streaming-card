@@ -75,7 +75,7 @@
 - pending interaction 期间，非 interaction lifecycle 的 card PATCH 与动画必须冻结，避免全量替换清空用户尚未提交的多选和输入。
 - form submit 不接受 interaction ID 或空 token 作为凭据，也不接受缺失或不匹配的 callback chat。
 - `interaction.requested` 在已有 session card 时会发送新的当前状态卡并迁移后续 message id；必须使用 interaction-specific delivery key，发送失败恢复 session，动画任务也必须从旧 message id 切到新卡。
-- interaction deadline 由 sidecar 接收时刻与 `timeout_seconds` 计算为绝对截止时间 `expires_at`；action、result poll 与周期清理都在现有 session lock 下先做幂等过期转换。过期状态只能是 failed，晚到直连按钮或 form submit 不能把它改回 completed，原卡必须刷新为“交互已过期”。
+- interaction deadline 由 sidecar 接收时刻与 `timeout_seconds` 计算为绝对截止时间 `expires_at`；action、result poll 与周期清理都在现有 session lock 下先做幂等过期转换。未声明暂停能力的过期状态为 failed；声明 pause_on_timeout 且没有 native runtime admission 的同步 Gateway 审批可转 paused，并撤销旧 token。晚到按钮/form 均不能批准过期操作。恢复按钮要求 Gateway 在最近 15 秒内仍轮询，旋转 token 并重新展示完整范围，只恢复审阅窗口；后续明确选择才解析原 request_id。不得延长 native admission 证明或把重启后旧执行当作仍在等待。
 - card action 是认证的 out-of-band 回调：它生成的内部 `interaction.completed` 可以执行 identity/stale 校验，但不得推进 Hermes `/events` transport 的 `last_sequence`。batch 下一条 `interaction.requested` 必须仍按严格单调序列接受；callback 响应卡要在同一 session lock 内快照，不能混入随后到达的下一题。
 - cleanup 只把尚未到期的 pending interaction 视为活跃；周期循环先转换/刷新过期 interaction，再执行普通 retention cleanup，避免永久保留或删掉仍显示可点击按钮的旧卡。
 

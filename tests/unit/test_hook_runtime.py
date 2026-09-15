@@ -4203,7 +4203,12 @@ def test_malformed_background_notice_fails_open(monkeypatch, content):
     assert adapter.text_sent == [("oc_abc", content, None, None)]
 
 
-def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkeypatch):
+@pytest.mark.parametrize("notice_text", [
+    "ℹ️ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
+    "📬 No home channel is set for Feishu. Type /sethome to make this chat your home channel.",
+    "ℹ️ 上下文压缩已推迟 — 摘要仍在生成中。本回合将不压缩继续。",
+])
+def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkeypatch, notice_text):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -4254,7 +4259,7 @@ def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkey
     async def run():
         result = await runner._deliver_platform_notice(
             source,
-            "ℹ️ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
+            notice_text,
         )
         await drain_tasks()
         return result
@@ -11604,7 +11609,7 @@ def test_interaction_select_forwards_to_sidecar_and_returns_card(monkeypatch):
     response = hook_runtime._hfc_on_feishu_card_action_trigger(adapter, data)
 
     assert posted["url"] == "http://127.0.0.1:8765/card/actions"
-    assert posted["timeout"] == 5.0
+    assert posted["timeout"] == 2.0
     sent = posted["payload"]["event"]
     assert sent["action"]["value"] == {
         "hfc_action": "interaction.select",
@@ -13268,3 +13273,13 @@ def test_native_slash_confirm_claims_state_before_background_submission(monkeypa
         coroutine.close()
     assert len(submitted) == 1
     assert "cf-1" not in adapter._hfc_slash_confirm_state
+
+
+def test_delayed_approval_resolution_targets_original_request(monkeypatch):
+    import types
+    calls = []
+    module = types.ModuleType('tools.approval')
+    module.resolve_gateway_approval = lambda session, choice, *, request_id: calls.append((session, choice, request_id)) or 0
+    monkeypatch.setitem(sys.modules, 'tools.approval', module)
+    assert hook_runtime.resolve_approval_choice({'request_id': 'old-request'}, 'session', 'once') == 0
+    assert calls == [('session', 'once', 'old-request')]

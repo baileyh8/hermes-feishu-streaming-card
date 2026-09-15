@@ -88,7 +88,7 @@ def resolve_display_status(session: "CardSession", config: StatusConfig) -> Disp
         return DisplayStatus("failed", "session")
 
     interaction = session.active_interaction
-    if interaction is not None and interaction.status == "pending":
+    if interaction is not None and interaction.status in {"pending", "paused"}:
         return DisplayStatus("waiting", "session")
 
     if session.status == "completed" and infer_progress_handoff(session.answer_text, config):

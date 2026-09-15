@@ -85,6 +85,11 @@ class InteractionState:
     choice_label: str = ""
     user_name: str = ""
     error: str = ""
+    pause_on_timeout: bool = False
+    pause_generation: int = 0
+    pause_notified_generation: int = 0
+    last_waiter_poll_at: float = 0.0
+    thread_id: str = ""
     runtime_admission: object | None = field(default=None, repr=False)
     runtime_turn_id: str = field(default="", repr=False)
 
@@ -115,8 +120,14 @@ class InteractionState:
         checked_at = _now() if now is None else float(now)
         if not self.is_expired(checked_at):
             return False
-        self.status = "failed"
-        self.error = "交互已过期"
+        if self.pause_on_timeout and self.kind == "approval" and self.runtime_admission is None:
+            self.status = "paused"
+            self.error = "审批窗口已过期，任务已暂停。请查看完整操作后继续审批。"
+            self.callback_token = secrets.token_urlsafe(16)
+            self.pause_generation += 1
+        else:
+            self.status = "failed"
+            self.error = "交互已过期"
         self.runtime_admission = None
         return True
 
@@ -150,6 +161,7 @@ class CardSession:
     reply_to_message_id: str = ""
     reply_in_thread: bool = False
     sender_open_id: str = ""
+    sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
     notice_title: str = ""
@@ -357,7 +369,13 @@ class CardSession:
                 self.delivery_kind = delivery_kind.strip()
             sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
             if sender_open_id:
+                if self.sender_open_id != sender_open_id:
+                    self.sender_name = ""
                 self.sender_open_id = sender_open_id
+                sender_name = event.data.get("sender_name")
+                if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                        and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+                    self.sender_name = sender_name
             reply_to_message_id = event.data.get("reply_to_message_id")
             if isinstance(reply_to_message_id, str):
                 self.reply_to_message_id = reply_to_message_id
@@ -367,6 +385,7 @@ class CardSession:
             self.active_interaction = _interaction_from_event_data(
                 event.data, runtime_turn_id=event.turn_id
             )
+            self.active_interaction.thread_id = event.thread_id or str(event.data.get("thread_id") or "")
         elif event.event == "interaction.completed":
             self._complete_interaction(event.data)
         elif event.event == "interaction.failed":
@@ -419,7 +438,13 @@ class CardSession:
                 self.answer_text = completed_answer
             sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
             if sender_open_id:
+                if self.sender_open_id != sender_open_id:
+                    self.sender_name = ""
                 self.sender_open_id = sender_open_id
+                sender_name = event.data.get("sender_name")
+                if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                        and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+                    self.sender_name = sender_name
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()
@@ -528,7 +553,7 @@ class CardSession:
             interaction_id and interaction_id != self.active_interaction.interaction_id
         ):
             return
-        if self.active_interaction.status != "pending":
+        if self.active_interaction.status not in {"pending", "paused"}:
             return
         self.active_interaction.status = "failed"
         self.active_interaction.error = str(data.get("error") or "交互请求失败").strip()
@@ -564,6 +589,8 @@ def _interaction_from_event_data(
         multi_select=bool(data.get("multi_select", False)),
         allow_custom_input=allow_custom_input,
         timeout_seconds=_safe_timeout_seconds(data.get("timeout_seconds")),
+        pause_on_timeout=(data.get("pause_on_timeout") is True and kind == "approval"
+                          and frozen_runtime_admission is None),
         runtime_admission=frozen_runtime_admission,
         runtime_turn_id=(
             runtime_turn_id

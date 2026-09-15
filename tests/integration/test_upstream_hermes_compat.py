@@ -21,7 +21,7 @@ SOURCES = json.loads(
 )
 
 
-@pytest.mark.parametrize("baseline", ["stable", "main", "production"])
+@pytest.mark.parametrize("baseline", ["stable", "main", "production", "historical", "image"])
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):
     configured = os.environ.get(f"HFC_UPSTREAM_{baseline.upper()}_ROOT")
     if not configured:
@@ -64,6 +64,18 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     integrity = plan_integrity_repair(detection)
     assert integrity.reason == "recovery_not_required", integrity
     assert not integrity.executable
+    # Reproduce the pre-integrity manifest upgrade on the exact source, then
+    # prove every owned byte survives migration and the stale fence is eligible.
+    from hermes_feishu_card.install.integrity import migrate_integrity_manifest, integrity_acknowledgement_eligible
+    from hermes_feishu_card.install.recovery import plan_recovery
+    manifest_path = target / ".hermes_feishu_card_manifest"
+    manifest = json.loads(manifest_path.read_text())
+    manifest.pop("integrity", None)
+    manifest_path.write_text(json.dumps(manifest))
+    assert plan_integrity_repair(detection).reason == "integrity_migration_required"
+    migrate_integrity_manifest(detection)
+    assert installed == {name: (target / name).read_bytes() for name in originals}
+    assert integrity_acknowledgement_eligible(detection, plan_recovery(detection), plan_integrity_repair(detection))
     assert cli.main(["uninstall", "--hermes-dir", str(target), "--yes"]) == 0
     assert originals == {name: (target / name).read_bytes() for name in originals}
     assert not list(target.rglob("*.hermes_feishu_card.bak"))
