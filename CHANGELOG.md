@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 - Resolve known requester names in answer mentions and offer in-card completion mention placement (#262/#279).
 
 ### Fixed
+- Preserve the original bound conversation ID through active-turn redirects; execute the actual upstream redirect function through the sidecar and verify final delivery to the new card (#283).
 - Route home-channel onboarding and Chinese deferred-compaction notices through the correct topic anchor (#275/#278).
 - Bound callback acknowledgement independently of slow card PATCH operations; show long mobile questions in the body (#258/#282).
 - Describe successful model turns as response completion rather than business-task completion (#274).

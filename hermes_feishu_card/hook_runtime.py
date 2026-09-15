@@ -9422,6 +9422,11 @@ def _build_event(
     }
     if turn_id:
         payload["turn_id"] = turn_id
+    if event_name == "message.started" and not preview and source_obj is not None:
+        try:
+            setattr(source_obj, "_hfc_conversation_id", conversation_id)
+        except Exception:
+            pass
     if is_terminal_event:
         if not preview:
             if (
@@ -10233,6 +10238,7 @@ def bind_agent_turn_identity(agent: Any, source: Any) -> bool:
         # Cached agents are reused: failure to prove this turn invalidates the
         # previous binding rather than allowing a later redirect to reuse it.
         setattr(agent, "_hfc_turn_binding", None)
+        setattr(agent, "_hfc_conversation_binding", None)
         turn_id = getattr(source, _CANONICAL_TURN_ATTR, None)
         if _platform_name({}, source) != "feishu" or not isinstance(turn_id, str) or not turn_id.strip():
             return False
@@ -10242,6 +10248,9 @@ def bind_agent_turn_identity(agent: Any, source: Any) -> bool:
         if not chat_id or profile_source.startswith("sanitized_"):
             return False
         setattr(agent, "_hfc_turn_binding", (turn_id.strip(), profile, chat_id, thread_id))
+        conversation_id = getattr(source, "_hfc_conversation_id", None)
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            setattr(agent, "_hfc_conversation_binding", (turn_id.strip(), conversation_id.strip()))
         return True
     except Exception:
         return False
@@ -10261,6 +10270,15 @@ def redirect_turn_id_for_agent(agent: Any, source: Any) -> str:
         return binding[0] if binding[1:] == scope else ""
     except Exception:
         return ""
+
+
+def redirect_conversation_id_for_agent(agent: Any, source: Any) -> str:
+    turn_id = redirect_turn_id_for_agent(agent, source)
+    binding = getattr(agent, "_hfc_conversation_binding", None)
+    if (turn_id and isinstance(binding, tuple) and len(binding) == 2
+            and binding[0] == turn_id and isinstance(binding[1], str)):
+        return binding[1]
+    return ""
 
 
 def _turn_id_for_runtime_event(

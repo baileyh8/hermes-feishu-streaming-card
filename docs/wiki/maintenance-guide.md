@@ -61,6 +61,7 @@
 
 高风险点：
 
+- 重定向必须从已校验的 agent turn binding 取回原 conversation ID，不能退化为 source.thread_id；server 的 conversation/profile/chat 边界保持不变。
 - 显式 `turn_id` 必须作为 canonical turn hard fence，直接决定 session ownership、ordering 和 native handoff，绝不查 reply alias；只有缺少 `turn_id` 的 legacy topic 后续事件使用不同内部 `message_id` 时，才查 `reply_to_message_id` anchor。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
