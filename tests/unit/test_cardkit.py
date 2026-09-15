@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import json
 
@@ -34,6 +35,29 @@ def transport(monkeypatch):
     monkeypatch.setattr(client, '_tenant_token', token)
     monkeypatch.setattr(client, '_request_json', request)
     return client, calls
+
+
+def test_client_built_without_event_loop_can_stream_on_running_loop(monkeypatch):
+    # CLI/maintenance builds the client before asyncio.run; no loop exists in
+    # this worker, including on Python 3.9 where Lock binds eagerly.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        client = pool.submit(
+            FeishuClient, FeishuClientConfig('fixture-app', 'fixture-secret')
+        ).result()
+    calls = []
+
+    async def token():
+        return 'fixture-token'
+
+    async def request(method, path, **kwargs):
+        calls.append(path)
+        return {'code': 0, 'data': {'card_id': 'card_fixture', 'message_id': 'om_fixture'}}
+
+    monkeypatch.setattr(client, '_tenant_token', token)
+    monkeypatch.setattr(client, '_request_json', request)
+    result = asyncio.run(client.send_card('oc_fixture', card(), delivery_uuid='sync-built'))
+    assert result == 'om_fixture'
+    assert calls == ['/cardkit/v1/cards', '/im/v1/messages']
 
 
 @pytest.mark.asyncio

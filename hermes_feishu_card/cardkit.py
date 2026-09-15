@@ -68,7 +68,9 @@ class CardKitTransport:
         self.client = client
         self.entities: dict[str, Entity] = {}
         self.deliveries: dict[str, Entity] = {}
-        self.creation_lock = asyncio.Lock()
+        # FeishuClient is also constructed by synchronous CLI/maintenance code.
+        # Python 3.9 binds Lock eagerly, so create it only on first async send.
+        self.creation_lock: asyncio.Lock | None = None
 
     def _prune(self) -> None:
         now = time.monotonic()
@@ -86,6 +88,8 @@ class CardKitTransport:
         raw_key = json.dumps([chat_id, kwargs.get('thread_id'), kwargs.get('reply_to_message_id'),
                               kwargs.get('reply_in_thread'), delivery_uuid], ensure_ascii=False)
         key = sha256(raw_key.encode()).hexdigest() if delivery_uuid else ''
+        if self.creation_lock is None:
+            self.creation_lock = asyncio.Lock()
         async with self.creation_lock:
             self._prune()
             entity = self.deliveries.get(key) if key else None
