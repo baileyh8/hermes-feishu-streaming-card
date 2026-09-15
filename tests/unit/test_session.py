@@ -50,6 +50,62 @@ def test_unknown_completion_outcome_retains_legacy_behavior(outcome):
     assert session.answer_text == "普通答案"
 
 
+_STREAMED_ANSWER = "这是一轮正在进行的流式回答。" * 4
+_PROVIDER_FAILURE = (
+    "\u26a0\ufe0f The model provider failed after retries. I kept raw provider "
+    "details out of chat; check gateway logs for diagnostics."
+)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "interrupted", "incomplete"])
+@pytest.mark.parametrize("tool_event_between", [False, True])
+def test_unsuccessful_completion_keeps_streamed_answer(outcome, tool_event_between):
+    """An unsuccessful turn appends its notice; it never blanks the streamed answer. (#307)
+
+    Both shapes matter: a tool event between the streamed text and the completion is
+    what arms the answer archive, so it used to take a different branch to the same
+    data loss.
+    """
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("message.started", 1, {"display_status": "running"}))
+    assert session.apply(event("answer.delta", 2, {"text": _STREAMED_ANSWER}))
+    sequence = 3
+    if tool_event_between:
+        assert session.apply(event("tool.updated", sequence, {
+            "tool_id": "t1", "name": "terminal", "status": "running",
+        }))
+        sequence += 1
+
+    assert session.apply(event("message.completed", sequence, {
+        "answer": _PROVIDER_FAILURE, "turn_outcome": outcome,
+    }))
+
+    assert session.status == "failed"
+    assert _STREAMED_ANSWER in session.answer_text
+    assert _PROVIDER_FAILURE in session.answer_text
+    assert "本轮" in session.answer_text
+    # The answer the user was reading still reads first; the failure notice follows it.
+    assert session.answer_text.index(
+        _STREAMED_ANSWER
+    ) < session.answer_text.index(_PROVIDER_FAILURE)
+
+
+def test_unsuccessful_completion_keeps_short_streamed_answer():
+    """Length gates meant for success must not delete an unsuccessful turn's text. (#307)
+
+    A completion shorter than the 3:1 ratio gate used to send the streamed text to the
+    reasoning archive and leave the body holding only the error notice.
+    """
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("answer.delta", 1, {"text": "短答案，仍在流式输出中。"}))
+    assert session.apply(event("message.completed", 2, {
+        "answer": _PROVIDER_FAILURE, "turn_outcome": "failed",
+    }))
+
+    assert "短答案，仍在流式输出中。" in session.answer_text
+    assert _PROVIDER_FAILURE in session.answer_text
+
+
 def test_thinking_accumulates_and_strips_tags():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 1, {"text": "<think>先分析"}))

@@ -24,6 +24,19 @@ MIN_PRESERVED_STREAMED_ANSWER_CHARS = 64
 MAX_SHORT_COMPLETION_POSTSCRIPT_CHARS = 240
 MIN_STREAMED_ANSWER_TO_POSTSCRIPT_RATIO = 3
 
+# Unsuccessful turn outcomes (the gateway reports these once the provider/API call
+# failed, the turn was interrupted, or no completion was confirmed).  On these the
+# completed "answer" is only an error notice, so it must be appended to whatever
+# already streamed instead of replacing it — otherwise the card blanks out the
+# answer the user was watching.  The notices double as the membership set so the
+# two can never drift apart.  (#307)
+_UNSUCCESSFUL_TURN_OUTCOME_NOTICES = {
+    "failed": "本轮执行失败，任务完成情况请以实际结果为准。",
+    "interrupted": "本轮已中断，任务尚未确认完成。",
+    "incomplete": "本轮已结束，但 Hermes 未报告执行完成。",
+}
+_UNSUCCESSFUL_TURN_OUTCOMES = frozenset(_UNSUCCESSFUL_TURN_OUTCOME_NOTICES)
+
 _RUNTIME_ACTION_PREFIX_RE = re.compile(
     r"^(?:正在)?(?:读取|执行(?:终端)?|编辑|写入|搜索|查询|浏览|访问|打开)\s*[:：]?\s*",
     re.IGNORECASE,
@@ -431,9 +444,15 @@ class CardSession:
         elif event.event == "message.completed":
             if self.active_interaction is not None:
                 self.active_interaction.runtime_admission = None
+            outcome = event.data.get("turn_outcome")
+            failed_outcome = (
+                isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES
+            )
             completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
             if completed_answer.strip():
-                completed_answer = self._prepare_completed_answer(completed_answer)
+                completed_answer = self._prepare_completed_answer(
+                    completed_answer, failed_outcome=failed_outcome
+                )
             self.timeline.complete()
             self.status = "completed"
             self.latest_tool_preview = ""
@@ -473,16 +492,12 @@ class CardSession:
                     for attachment in attachments
                     if isinstance(attachment, dict) and isinstance(attachment.get("name"), str)
                 ]
-            outcome = event.data.get("turn_outcome")
-            outcome_notices = {
-                "failed": "本轮执行失败，任务完成情况请以实际结果为准。",
-                "interrupted": "本轮已中断，任务尚未确认完成。",
-                "incomplete": "本轮已结束，但 Hermes 未报告执行完成。",
-            }
-            if isinstance(outcome, str) and outcome in outcome_notices:
+            if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
                 self.status = "failed"
                 self.answer_text = (
-                    self.answer_text.rstrip() + "\n\n> " + outcome_notices[outcome]
+                    self.answer_text.rstrip()
+                    + "\n\n> "
+                    + _UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome]
                 ).lstrip()
         elif event.event == "message.failed":
             if self.active_interaction is not None:
@@ -509,11 +524,22 @@ class CardSession:
         self.timeline.insert_completed_reasoning(preface, self._answer_archive_index)
         self._answer_archive_index = None
 
-    def _prepare_completed_answer(self, completed_answer: str) -> str:
+    def _prepare_completed_answer(
+        self, completed_answer: str, *, failed_outcome: bool = False
+    ) -> str:
         preface = normalize_stream_text(self.answer_text).strip()
         final = normalize_stream_text(completed_answer).strip()
         if not preface or final == preface:
             return final
+
+        if failed_outcome:
+            # The closing text of an unsuccessful turn is a postscript, not a rewrite:
+            # keep everything that already streamed and append the provider/error notice
+            # below it.  The archive/length gates further down exist for successful
+            # completions and would otherwise drop the streamed answer outright.  (#307)
+            if final in preface:
+                return preface
+            return f"{preface}\n\n---\n\n{final}"
 
         if self._answer_archive_index is not None:
             stripped = _strip_preface_prefix(final, preface)
