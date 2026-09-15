@@ -120,6 +120,66 @@ def test_apply_patch_013_plus_started_hook_uses_real_message_id_with_anchor_fall
     )
 
 
+def test_started_hook_publishes_real_message_id_onto_source_message_id(monkeypatch):
+    """The started hook must mirror the canonical anchor onto ``source.message_id``.
+
+    The gateway fills ``HERMES_SESSION_MESSAGE_ID`` from ``source.message_id`` alone, so a
+    source left at ``message_id=None`` makes every consumer of that variable — cron origin
+    anchors, background-task completion notices and notification plugins — fall back to the
+    chat's main message stream instead of the originating topic.
+    """
+    import asyncio
+    import sys
+    import types
+
+    from hermes_feishu_card.install.patcher import _render_hook_block
+
+    fake_runtime = types.ModuleType("hermes_feishu_card.hook_runtime")
+    fake_runtime.emit_from_hermes_locals = lambda *args, **kwargs: None
+    fake_runtime.handle_hfc_command_from_hermes_locals = lambda *args, **kwargs: False
+    monkeypatch.setitem(sys.modules, "hermes_feishu_card.hook_runtime", fake_runtime)
+
+    block = "".join(_render_hook_block("    ", "\n", strategy="gateway_run_013_plus"))
+
+    # Published before the command hook can early-return the turn.
+    assert "_hfc_anchor_source = locals().get(\"source\")" in block
+    assert "_hfc_anchor_source.message_id = _hfc_started_message_id" in block
+    assert block.index("_hfc_anchor_source.message_id") < block.index(
+        "_hfc_handle_command("
+    )
+
+    namespace = {}
+    exec(
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        + block
+        + "    return 'ok'\n",
+        namespace,
+    )
+
+    class _Runner:
+        def _reply_anchor_for_event(self, event):
+            return getattr(event, "reply_to_message_id", None) or event.message_id
+
+    runner = _Runner()
+
+    def _run(event, source):
+        return asyncio.run(
+            namespace["_handle_message_with_agent"](runner, event, source, "key", 1)
+        )
+
+    # The REAL incoming message id wins over the quoted/reply anchor.
+    event = types.SimpleNamespace(message_id="om_current", reply_to_message_id="om_parent")
+    source = types.SimpleNamespace(message_id=None, chat_id="oc_chat")
+    assert _run(event, source) == "ok"
+    assert source.message_id == "om_current"
+
+    # Without a real message id the reply anchor is still the best available anchor.
+    fallback_event = types.SimpleNamespace(message_id=None, reply_to_message_id="om_parent")
+    fallback_source = types.SimpleNamespace(message_id=None, chat_id="oc_chat")
+    assert _run(fallback_event, fallback_source) == "ok"
+    assert fallback_source.message_id == "om_parent"
+
+
 def test_apply_patch_013_plus_inserts_cron_delivery_hook():
     content = (
         "def _deliver_result(job: dict, content: str, adapters=None, loop=None):\n"
