@@ -13283,3 +13283,25 @@ def test_delayed_approval_resolution_targets_original_request(monkeypatch):
     monkeypatch.setitem(sys.modules, 'tools.approval', module)
     assert hook_runtime.resolve_approval_choice({'request_id': 'old-request'}, 'session', 'once') == 0
     assert calls == [('session', 'once', 'old-request')]
+
+
+def test_paused_approval_outage_does_not_turn_into_denial(monkeypatch):
+    results = iter([{'status': 'paused', 'pause_on_timeout': True}, None, None,
+                    {'status': 'completed', 'choice': 'once'}])
+    tick = [0.0]
+    def now():
+        tick[0] += 2
+        return tick[0]
+    monkeypatch.setattr(hook_runtime.time, 'monotonic', now)
+    monkeypatch.setattr(hook_runtime.time, 'sleep', lambda _: None)
+    monkeypatch.setattr(hook_runtime, '_policy_gate_sync', lambda *args: SimpleNamespace(card=True))
+    monkeypatch.setattr(hook_runtime, '_post_interaction_event', lambda *args: {'ok': True, 'applied': True})
+    monkeypatch.setattr(hook_runtime, '_get_json_sync', lambda *args: next(results))
+    monkeypatch.setattr(hook_runtime, '_post_interaction_timeout_sync', lambda *args: pytest.fail('silence is not denial'))
+    result = hook_runtime.request_interaction_from_hermes_locals(
+        {'chat_id': 'oc_fixture', 'message_id': 'om_fixture', '_hfc_pause_approval': True,
+         '_hfc_wait_current': lambda: True},
+        kind='approval', interaction_id='pause-outage', prompt='scope', timeout_seconds=1,
+        poll_interval_seconds=0,
+    )
+    assert result['choice'] == 'once'

@@ -92,11 +92,20 @@ class CardKitTransport:
             if entity is None:
                 if len(self.deliveries) >= MAX_ENTITIES:
                     raise FeishuAPIError('CardKit entity capacity reached', outcome='not_sent')
-                token = await self.client._tenant_token()
-                result = await self.client._request_json(
-                    'POST', '/cardkit/v1/cards', token=token,
-                    json_body={'type': 'card_json', 'data': serialized},
-                )
+                try:
+                    token = await self.client._tenant_token()
+                    result = await self.client._request_json(
+                        'POST', '/cardkit/v1/cards', token=token,
+                        json_body={'type': 'card_json', 'data': serialized},
+                    )
+                except FeishuAPIError as exc:
+                    # Even an ambiguous entity creation cannot have delivered
+                    # an IM message: the send/reply call has not started yet.
+                    raise FeishuAPIError(
+                        'CardKit entity creation failed', status_code=exc.status_code,
+                        api_code=exc.api_code, retryable=exc.retryable,
+                        outcome='not_sent', retry_after_seconds=exc.retry_after_seconds,
+                    ) from exc
                 card_id = (result.get('data') or {}).get('card_id')
                 if not isinstance(card_id, str) or not card_id.strip():
                     raise FeishuAPIError('CardKit create response missing card_id', outcome='not_sent')

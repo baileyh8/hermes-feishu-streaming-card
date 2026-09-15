@@ -13286,3 +13286,20 @@ async def test_live_gateway_approval_wait_survives_expiry_until_fresh_choice(cli
     finally:
         alive[0] = False
         await asyncio.wait_for(asyncio.shield(waiter), 3)
+
+
+async def test_paused_approval_keeps_initial_reply_anchor_without_started_event(client):
+    test_client, feishu_client = client
+    response = await test_client.post('/events', json=event_payload('interaction.requested', 1, {
+        'interaction_id': 'first-approval', 'kind': 'approval', 'prompt': 'Review',
+        'pause_on_timeout': True, 'timeout_seconds': 300,
+        'reply_to_message_id': 'om_inbound', 'reply_in_thread': True,
+        'options': [{'label': 'A', 'value': 'once'}],
+    }, message_id='om_first', thread_id='omt_thread'))
+    assert response.status == 200
+    session = test_client.app[SESSIONS_KEY]['om_first']
+    session.active_interaction.requested_at -= 301
+    await test_client.get('/interactions/first-approval')
+    await _wait_until(lambda: len(feishu_client.sent) == 2)
+    assert feishu_client.sent[-1][2:] == ('omt_thread', 'om_inbound')
+    assert feishu_client.sent_reply_in_thread[-1] is True

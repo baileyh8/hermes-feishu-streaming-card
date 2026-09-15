@@ -90,6 +90,8 @@ class InteractionState:
     pause_notified_generation: int = 0
     last_waiter_poll_at: float = 0.0
     thread_id: str = ""
+    reply_to_message_id: str = ""
+    reply_in_thread: bool = False
     runtime_admission: object | None = field(default=None, repr=False)
     runtime_turn_id: str = field(default="", repr=False)
 

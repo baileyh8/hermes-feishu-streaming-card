@@ -160,6 +160,7 @@ jobs:
           python -m pytest -q
           tests/unit/test_bots.py
           tests/unit/test_card_limits.py
+          tests/unit/test_cardkit.py
           tests/unit/test_config.py
           tests/unit/test_delivery_policy.py
           tests/unit/test_diagnostics.py
@@ -167,6 +168,7 @@ jobs:
           tests/unit/test_events.py
           tests/unit/test_feishu_client.py
           tests/unit/test_hook_runtime.py
+          tests/unit/test_notice_routing_regressions.py
           tests/unit/test_lifecycle.py
           tests/unit/test_render.py
           tests/unit/test_runner.py

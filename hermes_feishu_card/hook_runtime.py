@@ -3141,6 +3141,7 @@ def request_interaction_from_hermes_locals(
         timeout = _interaction_timeout(timeout_seconds)
         poll_interval = _interaction_poll_interval(poll_interval_seconds)
         deadline = time.monotonic() + timeout
+        pause_waiting = False
         while True:
             try:
                 result = _get_json_sync(url, config.timeout_seconds)
@@ -3153,12 +3154,23 @@ def request_interaction_from_hermes_locals(
                     and result.get("status") in {"pending", "paused"}):
                 # The live approval callback keeps the tool blocked. Expiry only
                 # withdraws the old consent token; it does not resolve a denial.
+                pause_waiting = True
                 deadline = time.monotonic() + timeout
             current = local_vars.get("_hfc_wait_current")
-            if callable(current) and not current():
+            try:
+                still_current = not callable(current) or bool(current())
+            except Exception:
+                still_current = False
+            if not still_current:
                 _post_interaction_timeout_sync(local_vars, config.event_url, payload, config.timeout_seconds)
                 return {"ok": False, "status": "failed", "interaction_id": interaction_id}
             if time.monotonic() >= deadline:
+                if pause_waiting:
+                    # A temporary sidecar outage is not a user denial either.
+                    # Keep the live callback blocked until consent or cancellation.
+                    deadline = time.monotonic() + timeout
+                    time.sleep(poll_interval)
+                    continue
                 _hfc_warn(
                     "interaction poll timeout: "
                     f"{_hfc_log_reference('interaction', interaction_id)}"

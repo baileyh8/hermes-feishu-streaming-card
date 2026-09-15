@@ -231,3 +231,15 @@ async def test_long_element_identifier_uses_full_card_contract(transport):
     changed['body']['elements'][0]['content'] = 'next'
     await client.update_card_message('om_fixture', changed)
     assert calls[-1][:2] == ('PUT', '/cardkit/v1/cards/card_fixture')
+
+
+@pytest.mark.asyncio
+async def test_lost_create_response_is_not_an_unknown_im_delivery(transport, monkeypatch):
+    client, calls = transport
+    async def lost_create(*args, **kwargs):
+        raise FeishuAPIError('response lost', retryable=True, outcome='unknown')
+    monkeypatch.setattr(client, '_request_json', lost_create)
+    with pytest.raises(FeishuAPIError) as error:
+        await client.send_card('oc_group', card(), delivery_uuid='turn-1')
+    assert error.value.outcome == 'not_sent'
+    assert not client.cardkit.entities

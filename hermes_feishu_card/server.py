@@ -1493,6 +1493,7 @@ async def _interaction_action(
     if post_lock_task is not None:
         # The choice is already committed. A slow Feishu PATCH must not hold
         # the WebSocket callback open or cancel the controller-owned update.
+        post_lock_task.add_done_callback(_log_background_task_failure)
         await asyncio.wait({post_lock_task}, timeout=0.05)
     assert response is not None
     if response.status >= 400:
@@ -5143,6 +5144,10 @@ async def _apply_event_locked(
                     }
                     return _native_disposition_response(handoff_record), None
                 _record_card_render_decision(metrics, render_result)
+                if event.event == "interaction.requested" and session.active_interaction is not None:
+                    session.active_interaction.thread_id = _thread_id_for_event(event) or ""
+                    session.active_interaction.reply_to_message_id = _reply_to_message_id_for_event(event) or ""
+                    session.active_interaction.reply_in_thread = _reply_in_thread_for_event(event)
                 delivery = await _send_card(
                     request,
                     event.chat_id,
@@ -5345,6 +5350,10 @@ async def _apply_event_locked(
             or session.reply_to_message_id
             or None
         )
+        if interaction is not None:
+            interaction.thread_id = _thread_id_for_event(incoming_event) or ""
+            interaction.reply_to_message_id = reply_to_message_id or ""
+            interaction.reply_in_thread = _reply_in_thread_for_event(incoming_event) or session.reply_in_thread
         if _session_has_runtime_admission(session):
             if rollback_session_snapshot is None or interaction is None:
                 metrics.events_rejected += 1
@@ -6141,8 +6150,8 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
         await _send_card_for_app(
             app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
             thread_id=interaction.thread_id or None,
-            reply_to_message_id=session.reply_to_message_id or None,
-            reply_in_thread=session.reply_in_thread,
+            reply_to_message_id=interaction.reply_to_message_id or session.reply_to_message_id or None,
+            reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
             delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
             delivery_kind="interaction",
         )
