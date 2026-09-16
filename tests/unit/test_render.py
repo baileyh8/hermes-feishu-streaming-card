@@ -25,7 +25,13 @@ def test_render_thinking_card_keeps_runtime_status_only_in_footer():
     session.apply(event)
     card = render_card(session)
     assert card["schema"] == "2.0"
-    assert card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
+    # Maintainer note (contract change): this used to assert "⏳ 执行中 · Hermes Agent" — the
+    # header carried the state word and nothing else. The user asked the title to also show the
+    # running time and tool count ("⏳ Sales Bot · 1m12s · 工具 3 · 正在读取"), so the bare state
+    # word is replaced by metrics when there are any. What this test is actually about is
+    # unchanged: the runtime status stays out of the thinking text's way, and the header never
+    # leaks "正在思考"/"思考中".
+    assert card["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 1"
     assert "subtitle" not in card["header"]
     content = str(card)
     main = next(item for item in card["body"]["elements"] if item.get("element_id") == "main_content")
@@ -214,7 +220,11 @@ def test_tool_activity_clears_compaction_and_restores_tool_subtitle():
 
     assert session.runtime_phase_text == ""
     # The header keeps the action PHRASE but not the target; the target lives in the row below.
-    assert card["header"]["title"]["content"] == "⏳ 正在执行终端 · 研发助手"
+    # Maintainer note (contract change): the phrase used to lead the title ("⏳ 正在执行终端 ·
+    # 研发助手"). The user asked for the phrase LAST, with the running time and tool count
+    # ahead of it, so the title now reads name → metrics → phrase. The property this test guards
+    # (the phrase survives in the header, the target "pytest" does not) is unchanged.
+    assert card["header"]["title"]["content"] == "⏳ 研发助手 · 工具 1 · 正在执行终端"
     row = next(
         item for item in card["body"]["elements"]
         if item.get("element_id") == "tool_activity_0"
@@ -314,7 +324,11 @@ def test_v4_completed_restores_configured_title_and_metrics():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "✅ 研发助手"
+    # Maintainer note (contract change): the completed title now also carries the metrics the user
+    # asked to see there ("✅ 研发助手 · 2s"), instead of the bare "✅ 研发助手". The point of this
+    # test is untouched: the CONFIGURED title is restored (the stale tool preview never comes back
+    # into the header), and duration/model stay visible somewhere ("2s"/"gpt-5.5" below).
+    assert card["header"]["title"]["content"] == "✅ 研发助手 · 2s"
     assert "正在执行终端：pytest" not in str(card["header"])
     assert "2s" in str(card)
     assert "gpt-5.5" in str(card)

@@ -775,14 +775,54 @@ def _header_title_with_state(
     interaction = session.active_interaction
     if interaction is not None and interaction.status == "pending":
         return _sanitize_runtime_header(interaction.prompt) or configured_title
+    metrics = _runtime_header_metrics(session, display_status=display_status)
     if display_status == "completed":
-        return f"✅ {configured_title}"
+        return f"✅ {configured_title}" + (f" · {metrics}" if metrics else "")
     if display_status == "failed":
         return f"⛔ {configured_title}"
     phrase = _latest_running_action_phrase(session)
+    if not metrics and not phrase:
+        # Nothing measured and nothing to describe: keep the legacy wording rather than a bare
+        # "⏳ <name>", which reads as a label instead of a state.
+        return f"⏳ 执行中 · {configured_title}"
+    # Maintainer note (contract change): the reader's order is metrics then prose — the title
+    # used to lead with the phrase ("⏳ 正在读取 · Sales Bot") and carry no numbers at all, so the
+    # elapsed time and tool count lived only in the footer. The user asked for both in the title,
+    # with the action phrase LAST: "⏳ Sales Bot · 1m12s · 工具 3 · 正在读取". The name stays first
+    # because it is what identifies WHICH conversation is still working.
+    parts = [f"⏳ {configured_title}"]
+    if metrics:
+        parts.append(metrics)
     if phrase:
-        return f"⏳ {phrase} · {configured_title}"
-    return f"⏳ 执行中 · {configured_title}"
+        parts.append(phrase)
+    return " · ".join(parts)
+
+
+def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str:
+    """``"1m12s · 工具 3"`` for the header — the numbers the user asked to see up there.
+
+    Elapsed comes from the same source the footer uses (live clock while running, the recorded
+    duration once done). Sub-second elapsed is omitted: a freshly started turn would otherwise
+    open with "0s", which reads as a broken clock rather than "just started".
+    """
+    parts: list[str] = []
+    finished = display_status == "completed" or session.status == "completed"
+    if finished:
+        try:
+            duration = float(session.duration)
+        except (TypeError, ValueError):
+            duration = 0.0
+        if duration >= 1.0:
+            parts.append(_format_duration(duration))
+    else:
+        created_at = session.created_at
+        if created_at:
+            elapsed = max(0.0, _time.time() - float(created_at))
+            if elapsed >= 1.0:
+                parts.append(_format_duration(elapsed))
+    if session.tool_count:
+        parts.append(f"工具 {session.tool_count}")
+    return " · ".join(parts)
 
 
 def _runtime_header_summary(session: CardSession) -> str:
@@ -1305,6 +1345,12 @@ _FINISHED_TOOL_PILL = ("已完成", "green")
 _FAILED_TOOL_PILL = ("失败", "red")
 # A row, not a paragraph: this is the live action line, not a place to dump a whole command.
 _TOOL_ACTIVITY_TEXT_MAX_CHARS = 100
+# Verb-only action lines ("正在执行终端") repeat the tool-name pill and carry no target, so they add
+# nothing to the row. Matches exactly the bare phrases `_runtime_tool_summary` can return when it
+# finds no target; anything longer ("正在读取 session.py") keeps its line.
+_BARE_ACTION_PHRASE_RE = re.compile(
+    r"^正在(?:搜索|浏览|执行终端|编辑|读取|使用\s+\S+)$"
+)
 
 
 def _status_tag(label: str, color: str) -> str:
@@ -1384,9 +1430,15 @@ def _tool_activity_text(tool: ToolState) -> str:
     This is the text the header used to carry as a truncated one-liner. It belongs here, in the
     content area, where there is room for it — the header only answers "still working?".
     Sanitized through the header sanitizer (untrusted paths/commands/secrets) and capped.
+
+    Maintainer note: a VERB-ONLY line is dropped. `_runtime_tool_summary` falls back to the bare
+    action phrase when it cannot extract a target, which produced rows like
+    "已完成 · terminal · #4 · 正在执行终端" — the name pill already says `terminal`, so the phrase
+    repeated it and pushed the line's real information (status + name + ordinal) apart.
+    Only the targeted form earns a line; the tool still shows via its status pill + name.
     """
     summary = _runtime_tool_summary(tool.name, tool.detail)
-    if not summary:
+    if not summary or _BARE_ACTION_PHRASE_RE.match(summary.strip()):
         return ""
     text = _sanitize_runtime_header(summary)
     if len(text) > _TOOL_ACTIVITY_TEXT_MAX_CHARS:
@@ -1408,13 +1460,17 @@ def _tool_activity_row(
     parts = [_status_tag(label, color)]
     if tool.name:
         parts.append(_name_tag(tool.name))
+    # Maintainer note (contract change): the numbers now precede the phrase. The row used to end
+    # with the elapsed time ("… #4 · 正在执行终端：pytest -q · 12s"), which put the one thing that
+    # changes between renders furthest from the status it belongs to. The user asked for time and
+    # count ahead of the phrase: "运行中 · terminal · 12s · #4 · 正在执行终端：pytest -q".
+    if running and tool.started_at:
+        parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
     if tool.ordinal:
         parts.append(f"#{tool.ordinal}")
     action = _tool_activity_text(tool)
     if action:
         parts.append(action)
-    if running and tool.started_at:
-        parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
     element: Dict[str, Any] = {
         "tag": "markdown",
         "element_id": f"tool_activity_{index}",

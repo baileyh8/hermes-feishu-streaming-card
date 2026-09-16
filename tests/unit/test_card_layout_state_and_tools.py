@@ -61,7 +61,15 @@ def test_header_leads_with_the_state_and_keeps_the_session_name():
 
 
 def test_header_keeps_the_action_phrase_but_never_the_target():
-    """The phrase ("正在执行终端") stays; the long command it used to append does not."""
+    """The phrase ("正在执行终端") stays, now AFTER the metrics; the long command never appears.
+
+    Maintainer note (contract change): the header used to lead with the phrase
+    ("⏳ 正在执行终端 · 研发助手"). The user asked for the phrase to move to the back so the
+    numbers they want to read (elapsed, tool count) sit next to the state — see
+    test_header_carries_elapsed_time_and_tool_count. The two properties this test has always
+    guarded are unchanged: the phrase survives, and the target (command/path) never reaches the
+    title.
+    """
     session = _session()
     long_command = "pytest -q " + ("x" * 200)
     session.apply(_tool_event(tool_id="t1", name="terminal", detail=long_command))
@@ -69,11 +77,40 @@ def test_header_keeps_the_action_phrase_but_never_the_target():
     card = render_card(session, title="研发助手")
     title = card["header"]["title"]["content"]
 
-    assert title == "⏳ 正在执行终端 · 研发助手"
+    assert title == "⏳ 研发助手 · 工具 1 · 正在执行终端"
     assert "x" * 20 not in title
     # ...and the target is not lost: it renders in the content-area row instead.
     row = _elements(card, "tool_activity_0")[0]
     assert "pytest" in row["content"]
+
+
+def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
+    """User's spec: the title itself shows how long it has run and how many tools were used."""
+    from hermes_feishu_card import render as render_module
+
+    session = _session()
+    session.apply(
+        _tool_event(tool_id="t1", name="terminal", detail="pytest -q", sequence=1, created_at=10.0)
+    )
+    session.apply(
+        _tool_event(
+            tool_id="t2", name="read_file", detail="session.py", sequence=2, created_at=12.0
+        )
+    )
+    monkeypatch.setattr(
+        render_module._time, "time", lambda: session.created_at + 72.0
+    )
+
+    title = render_card(session, title="Sales Bot")["header"]["title"]["content"]
+    # Metrics first, action phrase last. The title carries only the VERB phrase (the target stays
+    # in the content-area row) — that is the pre-existing design, not something this test changes.
+    assert title == "⏳ Sales Bot · 1m12s · 工具 2 · 正在读取"
+
+    session.status = "completed"
+    session.duration = 152.0
+    session.answer_text = "完成"
+    done = render_card(session, title="Sales Bot")["header"]["title"]["content"]
+    assert done == "✅ Sales Bot · 2m32s · 工具 2"
 
 
 def test_tool_row_shows_state_name_ordinal_and_elapsed_time():
@@ -124,6 +161,40 @@ def test_finished_card_keeps_one_tool_row_as_evidence_of_what_ran():
 
     assert len(rows) == 1
     assert "<text_tag color='green'>已完成</text_tag>" in rows[0]["content"]
+
+
+def test_verb_only_tool_line_is_dropped_from_the_row():
+    """User-reported noise on a finished card: "已完成 · terminal · #4 · 正在执行终端".
+
+    A verb-only line (no target) only repeats what the tool-name pill already says, so the row
+    keeps status + name + ordinal and drops the phrase. The targeted form must still render —
+    that is the pair this contract protects (see the assertion at the end).
+    """
+    session = _session()
+    session.apply(
+        _tool_event(tool_id="t1", name="terminal", status="completed", detail="正在执行终端")
+    )
+    session.status = "completed"
+    session.answer_text = "完成"
+
+    row = _elements(render_card(session), "tool_activity_0")[0]["content"]
+
+    assert row == (
+        "<text_tag color='green'>已完成</text_tag> · "
+        "<text_tag color='neutral'>terminal</text_tag> · #1"
+    )
+    assert "正在执行终端" not in row
+
+    targeted = _session()
+    targeted.apply(
+        _tool_event(tool_id="t1", name="terminal", status="completed", detail="pytest -q")
+    )
+    targeted.status = "completed"
+    targeted.answer_text = "完成"
+    # The same phrase WITH a target still earns its line.
+    assert "正在执行终端：pytest -q" in _elements(render_card(targeted), "tool_activity_0")[0][
+        "content"
+    ]
 
 
 def test_failed_tool_is_tagged_red():
