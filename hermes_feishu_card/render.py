@@ -510,7 +510,7 @@ def _render_legacy_callback_card(
     prompt = normalize_stream_text(interaction.prompt).strip()
     if len(prompt) > 40:
         elements.append({"tag": "markdown", "content": prompt})
-    description = normalize_stream_text(interaction.description).strip()
+    description = mask_approval_scope(normalize_stream_text(interaction.description).strip())
     if description:
         elements.append({"tag": "markdown", "content": description})
 
@@ -834,11 +834,14 @@ def _render_interaction_elements(
         mentions_enabled=mentions_enabled,
     )
     if interaction.status == "pending" and interaction.description:
+        # Masked even here: this card lives in a chat other members can read for as long as the
+        # approval is open, so a credential in the scope leaks there just as it would on the
+        # retained (decided) card. The command stays readable.
         elements.append(
             {
                 "tag": "markdown",
                 "element_id": "interaction_description",
-                "content": interaction.description,
+                "content": mask_approval_scope(interaction.description),
             }
         )
     if interaction.status == "pending" and _normalize_interaction_mode(interaction_mode) == "text":
@@ -948,14 +951,81 @@ def _render_interaction_elements(
     return elements
 
 
+# ---------------------------------------------------------------------------
+# Maintainer note — why a decided approval now KEEPS its operation scope, masked
+# ---------------------------------------------------------------------------
+# Upstream deliberately dropped ``description`` (the operation scope: what the command does plus
+# the exact command line) as soon as a decision was taken, and a test froze that
+# ("敏感命令详情不应保留在完成态"). The threat behind it is real: the card is one message edited in
+# place, so not rendering the scope on the completed card removes the command from the group's
+# history — useful when a command carries a credential and the chat has other members.
+#
+# We changed the contract because the same edit destroyed the audit trail. After a click the card
+# showed the question and the choice but NOT what had actually been approved, so neither the
+# approver nor anyone reviewing the chat later could reconstruct the decision. Keeping the scope
+# and masking credentials gets both properties: the command stays identifiable, the secret never
+# appears on a group-visible card (the pending card is masked too — a secret pasted while the
+# approval is open leaks exactly the same way).
+#
+# If upstream prefers the original behaviour, the only thing to change is whether
+# ``_interaction_review_elements`` renders ``description``; do NOT re-gate it on
+# ``status == "paused"`` (that is what made the card unauditable).
+#
+# What the mask does NOT cover, stated plainly so this is not mistaken for a guarantee: a secret
+# passed as a bare positional argument (``redis-cli -a hunter2``) or any credential shape not
+# listed below stays visible. Masking is defence in depth for the command scope of an approval;
+# it is not a reason to put credentials on a command line in the first place.
+_APPROVAL_SCOPE_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b([A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|ACCESS_KEY|PRIVATE_KEY|"
+    r"CREDENTIAL|AUTHORIZATION)[A-Za-z0-9_]*\s*=\s*)"
+    r"(\"[^\"]*\"|'[^']*'|[^\s;&|]+)"
+)
+_APPROVAL_SCOPE_BEARER_RE = re.compile(r"(?i)\b(Bearer\s+)([A-Za-z0-9._~+/=\-]{8,})")
+_APPROVAL_SCOPE_URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]*://)([^/\s:@]+):([^/\s@]+)@")
+_APPROVAL_SCOPE_TOKEN_LITERAL_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_\-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{30,}"
+    r"|glpat-[A-Za-z0-9_\-]{16,})\b"
+)
+_APPROVAL_SCOPE_REDACTED = "[REDACTED]"
+
+
+def mask_approval_scope(text: str) -> str:
+    """Mask credentials inside an approval's operation scope, keeping the command readable.
+
+    Only value positions are replaced (``KEY=``, ``--flag``, URL userinfo/query, ``Bearer``, known
+    token shapes), so a reviewer still sees which command ran with which flags — the audit value —
+    without exposing the credential itself. Applied to every render of the scope, pending included.
+    """
+    if not text:
+        return text
+    masked = _RUNTIME_SECRET_FLAG_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", str(text))
+    masked = _RUNTIME_URL_SECRET_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", masked)
+    masked = _APPROVAL_SCOPE_ASSIGNMENT_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", masked)
+    masked = _APPROVAL_SCOPE_BEARER_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", masked)
+    masked = _APPROVAL_SCOPE_URL_USERINFO_RE.sub(rf"\1\2:{_APPROVAL_SCOPE_REDACTED}@", masked)
+    masked = _APPROVAL_SCOPE_TOKEN_LITERAL_RE.sub(_APPROVAL_SCOPE_REDACTED, masked)
+    return _TOOL_DETAIL_REDACTION_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", masked)
+
+
 def _interaction_review_elements(interaction: Any) -> list[Dict[str, Any]]:
-    # Mobile has no hover: keep the original question and options in the card
-    # body after submission/expiry, without retaining callback credentials.
+    # Mobile has no hover: keep the original question, the full operation scope and the options in
+    # the card body after submission/expiry, without retaining callback credentials. An approval
+    # must stay auditable afterwards — what was asked, what was chosen, and what would run — so the
+    # result is APPENDED below these, never swapped in for them. Two rules matter here:
+    #   1. never gate the description on ``status == "paused"`` — that hid the command as soon as a
+    #      decision was taken and left the card unauditable (see the maintainer note above);
+    #   2. the scope is always masked, so retention does not put credentials into group history.
     elements = []
     if interaction.prompt:
         elements.append({"tag": "markdown", "content": interaction.prompt})
-    if interaction.status == "paused" and interaction.description:
-        elements.append({"tag": "markdown", "content": normalize_stream_text(interaction.description)})
+    if interaction.description:
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": mask_approval_scope(normalize_stream_text(interaction.description)),
+            }
+        )
     elements.extend(_interaction_option_descriptions(interaction))
     return elements
 

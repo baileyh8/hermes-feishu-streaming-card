@@ -699,7 +699,11 @@ def test_render_completed_interaction_replaces_buttons_with_choice():
     assert "允许执行命令吗？" in visible
     assert "1. 允许一次" in visible
     assert "已选择：允许一次 by Bailey" in visible
-    assert "敏感命令详情" not in visible
+    # Contract change: the operation scope (the exact command) is RETAINED after the decision.
+    # Dropping it left the card unauditable — neither the approver nor anyone reviewing the chat
+    # afterwards could see what had actually been approved. The command is already visible while
+    # the approval is pending, so keeping it exposes nothing new to the chat.
+    assert "敏感命令详情" in visible
     assert not any(e.get("hover_tips") for e in card["body"]["elements"])
 
 

@@ -10494,7 +10494,14 @@ async def test_signed_sensitive_route_uses_raw_encoded_path_for_proof():
     assert body == {"ok": True, "summary": "encoded path"}
 
 
-async def test_zero_timeout_interaction_rejects_late_choice_and_refreshes_card(client):
+async def test_zero_timeout_approval_reissues_on_a_late_choice_without_consenting(client):
+    """A late choice on an expired approval leads back to a usable approval, and decides nothing.
+
+    Contract change: this used to answer 409 and leave the expired card repainted in place — a
+    dead end, since that card could never take a decision again. Reissuing replaces "your click
+    did nothing" with a card the user can actually act on. The security half is unchanged: the
+    late choice is still NOT consent (``choice`` stays empty) and the withdrawn option is dead.
+    """
     test_client, feishu_client = client
     await test_client.post("/events", json=event_payload("message.started", 0))
     requested = await test_client.post(
@@ -10515,6 +10522,7 @@ async def test_zero_timeout_interaction_rejects_late_choice_and_refreshes_card(c
     waiting_card = feishu_client.sent[-1][1]
     button = interaction_buttons(waiting_card)[0]
     action_value = button["value"]
+    cards_before = len(feishu_client.sent)
 
     callback = await test_client.post(
         "/card/actions",
@@ -10527,22 +10535,32 @@ async def test_zero_timeout_interaction_rejects_late_choice_and_refreshes_card(c
         },
     )
     callback_body = await callback.json()
+    session = test_client.app[SESSIONS_KEY]["hermes-message-1"]
+    interaction = session.active_interaction
     result = await test_client.get("/interactions/approval-expired")
     result_body = await result.json()
-    _message_id, expired_card = await wait_for_card_update(feishu_client, "交互已过期")
 
-    assert callback.status == 409
-    assert callback_body["ok"] is False
-    assert callback_body["status"] == "failed"
-    assert callback_body["toast"] == {"type": "warning", "content": "交互已过期"}
-    assert callback_body["card"].get("schema") is None
-    assert "body" not in callback_body["card"]
-    assert "交互已过期" in str(callback_body["card"])
-    assert result.status == 200
-    assert result_body["status"] == "failed"
-    assert result_body["error"] == "交互已过期"
-    assert _message_id == "feishu-message-1"
-    assert "已选择" not in str(expired_card)
+    assert callback.status == 200
+    assert "重新审批" in callback_body["toast"]["content"]
+    # Consent was NOT taken from the expired card — the only thing that matters for security.
+    assert interaction.choice == ""
+    assert result_body["choice"] == ""
+    # The dead card is withdrawn and a fresh usable one posted, so the user can act again.
+    # (This approval's configured window is 0s, so the renewed card expires again immediately;
+    # what this asserts is that a replacement with live buttons is what the user gets.)
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)
+    assert interaction_buttons(feishu_client.sent[-1][1])
+    assert action_value["token"] not in str(feishu_client.sent[-1][1])
+    assert (await test_client.post(
+        "/card/actions",
+        json={
+            "event": {
+                "operator": {"open_id": "ou_bailey", "name": "Bailey"},
+                "context": {"open_chat_id": "oc_abc"},
+                "action": {"value": action_value},
+            }
+        },
+    )).status == 404
 
 
 async def test_periodic_expiry_marks_pending_result_and_patches_existing_card(client):
@@ -13279,6 +13297,76 @@ async def test_resume_refreshes_in_place_when_the_dead_card_cannot_be_recalled(c
     assert interaction.feishu_message_id == dead_card_id
     assert interaction.status == 'pending'
     assert interaction_buttons(cards_edited_into(feishu_client, dead_card_id)[-1])
+
+
+async def test_any_option_on_an_expired_approval_reissues_it_instead_of_a_dead_button(client):
+    """The window closed while the card was on screen: every option leads back to a usable card.
+
+    Field report: clicking an option answered with a toast nobody understood ("暂未确认选择结果"),
+    the card never changed, and the approval could not be taken any more.
+    """
+    test_client, feishu_client = client
+    await test_client.post('/events', json=event_payload('message.started', 0))
+    await test_client.post('/events', json=event_payload('interaction.requested', 1, {
+        'interaction_id': 'reissue-on-expired-option', 'kind': 'approval', 'prompt': 'Review',
+        'description': 'exact operation scope', 'pause_on_timeout': True, 'timeout_seconds': 300,
+        'options': [{'label': 'Allow once', 'value': 'once'}, {'label': 'Deny', 'value': 'deny'}],
+    }, thread_id='omt_topic'))
+    session = test_client.app[SESSIONS_KEY]['hermes-message-1']
+    interaction = session.active_interaction
+    expired_option = interaction_buttons(feishu_client.sent[-1][1])[0]['value']
+    dead_card_id = interaction.feishu_message_id
+    cards_before = len(feishu_client.sent)
+    interaction.requested_at -= 301  # the card is still on screen, its window is not
+
+    async def click(value):
+        return await test_client.post('/card/actions', json={'event': {
+            'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'},
+            'action': {'value': value},
+        }})
+
+    response = await click(expired_option)
+    assert response.status == 200
+    assert '重新审批' in (await response.json())['toast']['content']
+    assert interaction.status == 'pending' and interaction.choice == ''
+    # Renewal is not consent: the withdrawn card's option decides nothing on replay.
+    assert (await click(expired_option)).status == 404
+    # The dead card is withdrawn and replaced, so exactly one usable approval stays in the chat.
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)
+    assert dead_card_id in feishu_client.deleted
+    assert interaction.feishu_message_id not in {'', dead_card_id}
+
+
+async def test_expired_approval_without_the_pause_marker_also_reissues(client):
+    """An approval that expired straight to "failed" (no pause marker) reissues the same way.
+
+    Its card is just as dead, so the option must still lead back to a usable approval.
+    """
+    test_client, feishu_client = client
+    await test_client.post('/events', json=event_payload('message.started', 0))
+    await test_client.post('/events', json=event_payload('interaction.requested', 1, {
+        'interaction_id': 'reissue-failed-approval', 'kind': 'approval', 'prompt': 'Review',
+        'description': 'exact operation scope', 'timeout_seconds': 300,
+        'options': [{'label': 'Allow once', 'value': 'once'}],
+    }, thread_id='omt_topic'))
+    session = test_client.app[SESSIONS_KEY]['hermes-message-1']
+    interaction = session.active_interaction
+    option = interaction_buttons(feishu_client.sent[-1][1])[0]['value']
+    cards_before = len(feishu_client.sent)
+    interaction.requested_at -= 301
+    assert (await (await test_client.get('/interactions/reissue-failed-approval')).json())[
+        'status'
+    ] == 'failed'
+
+    response = await test_client.post('/card/actions', json={'event': {
+        'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'},
+        'action': {'value': option},
+    }})
+
+    assert response.status == 200
+    assert '重新审批' in (await response.json())['toast']['content']
+    assert interaction.status == 'pending' and interaction.choice == ''
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)
 
 
 @pytest.mark.parametrize('outcome', ['not_sent', 'unknown'])

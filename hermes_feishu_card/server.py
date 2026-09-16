@@ -1209,6 +1209,12 @@ async def _interaction_action(
         )
     if value.get("choice") == "__hfc_resume_approval__" and not form_callback_token:
         return await _resume_paused_approval(request, session_key, session, interaction, token, callback_chat_id)
+    if not form_callback_token and _approval_card_needs_reissue(interaction):
+        # Any operation on an approval that can no longer take a decision is a request to start
+        # over: withdraw the dead card and put a fresh approval for the same scope in front of the
+        # user. Every option used to collapse into "interaction already completed", which reads as
+        # a broken button (#314 follow-up).
+        return await _resume_paused_approval(request, session_key, session, interaction, token, callback_chat_id)
     allowed_values = {option.value for option in interaction.options}
     form_value = _extract_form_value(payload)
     if mode == "confirm":
@@ -6145,6 +6151,30 @@ def _expired_interaction_response(card: dict[str, Any]) -> web.Response:
     )
 
 
+def _approval_card_needs_reissue(interaction: Any) -> bool:
+    """Whether a click on this approval must re-issue it instead of deciding.
+
+    Maintainer note (contract change — see the accompanying test rewrite):
+    An approval whose window had closed answered every option with 409
+    "interaction already completed" and left the card on screen unchanged. From the user's side
+    that is a broken button: the card still shows live options, clicking does nothing, and nothing
+    says why (reported as "点 1/2 没反应，卡也不能再点了"). The old behavior treated the click as an
+    invalid decision; the product rule is the opposite — a card that can no longer carry a decision
+    must return the user to one that can, for EVERY option, not just the renewal button, and for
+    every shape of expiry (paused, failed, or pending past its deadline).
+
+    What this intentionally does NOT change: consent is never taken from the dead card. The
+    withdrawn token is replaced, ``interaction.choice`` stays empty, and replaying the old option
+    still 404s — see ``_resume_paused_approval`` and ``test_zero_timeout_approval_reissues_on_a_
+    late_choice_without_consenting``.
+    """
+    if interaction.kind != "approval":
+        return False
+    if interaction.status in {"paused", "failed"}:
+        return True
+    return interaction.is_expired()
+
+
 def _schedule_paused_approval_card(app, session_key, session, interaction):
     if (session.status in {"completed", "failed"}
             or interaction.pause_notified_generation >= interaction.pause_generation
@@ -6263,10 +6293,19 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
     """Re-arm an approval from the card the user still has, after its window expired.
 
     Resuming is not consent: the withdrawn token is replaced and the complete original scope is
-    presented again with fresh buttons and a new window. Two shapes, chosen by whether the agent is
-    still waiting:
+    presented again with fresh buttons and a new window. Any operation on an expired approval
+    lands here — the dedicated button and every stale option alike — because a card that can no
+    longer carry a decision must lead the user back to a usable one. Two shapes, chosen by whether
+    the agent is still waiting:
       * waiting -> refresh that same card in place, so one approval never becomes two cards (#314);
       * gone    -> that card is un-completable, so it is recalled and a fresh one is posted.
+
+    Maintainer note (contract change): the guards below used to require ``status == "paused"`` and
+    ``runtime_admission is None``. Real gateway approvals always carry a runtime admission, so
+    they expired into ``failed`` and could never reach this path at all — the feature was written
+    but dead for exactly the cards it was meant for. They now accept ``failed`` and any admission;
+    what still guards the call is identity (same session, same interaction, same token, same chat)
+    plus the 15s staleness window, which is what makes a stale click harmless rather than a replay.
     """
     app = request.app
     lock = app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
@@ -6274,9 +6313,13 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
         if (app[SESSIONS_KEY].get(session_key) is not session
                 or session.active_interaction is not interaction
                 or interaction.callback_token != token or session.chat_id != chat_id
-                or interaction.status != "paused" or not interaction.pause_on_timeout
-                or session.status in {"completed", "failed"}
-                or interaction.runtime_admission is not None):
+                or interaction.kind != "approval"):
+            return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
+        # A still-pending approval whose window just closed is the same situation as one that
+        # already stopped being usable: settle it first, so the renewal below has one shape to
+        # handle and the expired card can never be mistaken for a live one.
+        interaction.expire()
+        if interaction.status not in {"paused", "failed"}:
             return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
         runtime_waiting = _approval_runtime_is_waiting(interaction)
         interaction.status = "pending"
@@ -6293,7 +6336,7 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
         return web.json_response(
             {
                 "ok": True,
-                "toast": {"type": "info", "content": "请重新确认完整操作"},
+                "toast": {"type": "info", "content": "审批已过期，请重新审批"},
                 "card": card,
             }
         )
@@ -6303,7 +6346,7 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
     return web.json_response(
         {
             "ok": True,
-            "toast": {"type": "info", "content": "原授权已失效，已重新发起审批"},
+            "toast": {"type": "info", "content": "审批已过期，已重新发起，请重新审批"},
         }
     )
 

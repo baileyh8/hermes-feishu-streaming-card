@@ -7520,6 +7520,85 @@ def _hfc_interaction_failure_response(adapter: Any, error: BaseException | None 
     return _hfc_toast_feishu_callback_response(adapter, content)
 
 
+_HFC_SIDECAR_ERROR_NOTICES: dict[str, str] = {
+    "interaction expired": "本次审批已过期，请重新审批。",
+    "interaction already completed": "该选择已处理，请查看最新卡片。",
+    "interaction not found": "此交互卡片已不可用，请查看最新卡片。",
+    "interaction changed": "审批状态已变化，请重新确认完整操作。",
+    "interaction delivery pending": "此选择正在处理，请稍候，勿重复点击。",
+    "interaction resolution unavailable": "审批暂时无法提交，请稍后重试。",
+}
+_HFC_INTERACTION_UNKNOWN_NOTICE = "暂未确认选择结果，请先查看任务状态，勿连续点击。"
+
+
+def _hfc_sidecar_notice(result: Any) -> tuple[str, str] | None:
+    """The sidecar's own words for this click, when it explained itself.
+
+    A rejected click still carries an answer — ``ok:false`` plus a toast and/or an error code.
+    Dropping them made every rejection look like a transport failure, which is why an expired
+    approval showed "暂未确认选择结果" instead of the sidecar's "交互已过期". (The code-keyed
+    messages in ``_hfc_interaction_failure_response`` are unreachable for these: an HTTP error
+    body carrying a boolean ``ok`` is returned to the caller instead of being raised.)
+    """
+    if not isinstance(result, dict):
+        return None
+    toast = result.get("toast")
+    if isinstance(toast, dict):
+        content = str(toast.get("content") or "").strip()
+        if content:
+            raw_type = str(toast.get("type") or "").strip().lower()
+            toast_type = (
+                raw_type
+                if raw_type in {"info", "success", "warning", "error"}
+                else "warning"
+            )
+            return content, toast_type
+    error = str(result.get("error") or "").strip()
+    if error:
+        return (
+            _HFC_SIDECAR_ERROR_NOTICES.get(error, _HFC_INTERACTION_UNKNOWN_NOTICE),
+            "warning",
+        )
+    return None
+
+
+def _hfc_interaction_notice_response(
+    adapter: Any,
+    card_data: dict[str, Any] | None,
+    content: str,
+    *,
+    toast_type: str = "warning",
+) -> Any:
+    """Repaint the card AND show the sidecar's message in one callback response.
+
+    The rejection path used to return a toast only, so the card never changed: an expired
+    approval stayed on screen looking clickable while every click answered in the same vague
+    sentence. A card that cannot take the decision has to be repainted to say so.
+    """
+    if (
+        not isinstance(card_data, dict)
+        or card_data.get("schema") == "2.0"
+        or "body" in card_data
+    ):
+        return _hfc_toast_feishu_callback_response(adapter, content, toast_type=toast_type)
+    response = _hfc_raw_feishu_callback_response(adapter, card_data)
+    if response is None:
+        return None
+    module = sys.modules.get(type(adapter).__module__)
+    callback_toast_type = getattr(module, "CallBackToast", None) if module else None
+    if callback_toast_type is None:
+        response_types = getattr(type(response), "_types", {})
+        if isinstance(response_types, dict):
+            callback_toast_type = response_types.get("toast")
+    if callback_toast_type is None:
+        return response
+    toast = callback_toast_type()
+    toast.type = toast_type
+    toast.content = content
+    response.toast = toast
+    return response
+
+
 def _hfc_handle_interaction_select_action(
     adapter: Any,
     data: Any,
@@ -7645,20 +7724,39 @@ def _hfc_handle_interaction_select_action(
         )
         return _hfc_interaction_failure_response(adapter, last_error)
 
-    if (
-        isinstance(result, dict)
-        and result.get("ok") is not False
-        and isinstance(result.get("card"), dict)
-    ):
-        _hfc_info(
-            "interaction.select resolved: "
-            f"{_hfc_log_reference('interaction', interaction_id)}"
-        )
-        return _hfc_interaction_success_response(
-            adapter,
-            result["card"],
-            "已选择",
-        )
+    if isinstance(result, dict):
+        # Maintainer note (contract change): this used to be
+        #     if result.get("ok") is not False and isinstance(result.get("card"), dict):
+        # so a rejected click (``ok:false``) threw away BOTH the sidecar's explanation and its
+        # repainted card, and every rejection collapsed into the generic "暂未确认选择结果" below.
+        # That is what a user saw when clicking an expired approval: a message about "not
+        # confirmed yet" while the card sat there looking clickable. The sidecar had answered
+        # properly ("交互已过期" / "已重新发起") — the plugin just refused to relay it.
+        # Note the code-keyed notices in ``_hfc_interaction_failure_response`` cannot cover this:
+        # an HTTP error body that carries a boolean ``ok`` is RETURNED, not raised, so that
+        # classification never runs for these responses.
+        # Also keep the ``ok:true`` + no-card case working: a renewal is delivered as its own
+        # message and still carries a toast, which is a success to relay, not a failure.
+        card = result["card"] if isinstance(result.get("card"), dict) else None
+        accepted = result.get("ok") is not False
+        notice = _hfc_sidecar_notice(result)
+        if card is not None and accepted and (notice is None or notice[1] == "success"):
+            _hfc_info(
+                "interaction.select resolved: "
+                f"{_hfc_log_reference('interaction', interaction_id)}"
+            )
+            return _hfc_interaction_success_response(adapter, result["card"], "已选择")
+        if card is not None or notice is not None:
+            # The sidecar explained itself (expired / re-issued / unknown): pass its words and
+            # its repainted card through instead of replacing both with a generic guess.
+            content, toast_type = notice or (_HFC_INTERACTION_UNKNOWN_NOTICE, "warning")
+            _hfc_info(
+                "interaction.select answered: "
+                f"{_hfc_log_reference('interaction', interaction_id)}"
+            )
+            return _hfc_interaction_notice_response(
+                adapter, card, content, toast_type=toast_type
+            )
     _hfc_info("interaction.select forwarded but no card returned")
     return _hfc_interaction_failure_response(adapter)
 
