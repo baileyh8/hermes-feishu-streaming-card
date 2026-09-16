@@ -5411,6 +5411,10 @@ async def _apply_event_locked(
             delivery_key=f"{session_key}:interaction:{interaction_id}",
             delivery_kind="interaction",
         )
+        delivered_interaction = session.active_interaction
+        if delivery.delivered and delivered_interaction is not None:
+            # Record the approval card's id so its timeout can refresh this card (#314).
+            delivered_interaction.feishu_message_id = str(delivery.message_id or "")
         if not delivery.delivered:
             if rollback_session_snapshot is not None:
                 _restore_session_snapshot(session, rollback_session_snapshot)
@@ -5871,6 +5875,9 @@ async def _complete_runtime_interaction_delivery(
         delivery_key=reservation.delivery_key,
         delivery_kind="interaction",
     )
+    if delivery.delivered:
+        # Same reuse contract as the callback-mode card (#314).
+        reservation.interaction.feishu_message_id = str(delivery.message_id or "")
 
     lock = app[MESSAGE_LOCKS_KEY].setdefault(
         reservation.session_key, asyncio.Lock()
@@ -6154,14 +6161,26 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
                 or session.status in {"completed", "failed"}
                 or interaction.status != "paused" or interaction.pause_generation != generation):
             return
-        result = await _send_card_for_app(
-            app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
-            thread_id=interaction.thread_id or None,
-            reply_to_message_id=interaction.reply_to_message_id or session.reply_to_message_id or None,
-            reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
-            delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
-            delivery_kind="interaction",
-        )
+        bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
+        existing_card_id = str(getattr(interaction, "feishu_message_id", "") or "")
+        if existing_card_id:
+            # The approval card is already in front of the user: refresh it in place. Sending the
+            # paused notice as its own message shows one paused approval twice (#314). A failed
+            # edit keeps the same generation and retries below — never a second card.
+            refreshed = await _update_card_for_app(app, existing_card_id, card, bot_id)
+            result = CardDeliveryResult(
+                message_id=existing_card_id,
+                outcome="delivered" if refreshed else "not_sent",
+            )
+        else:
+            result = await _send_card_for_app(
+                app, session.chat_id, card, bot_id,
+                thread_id=interaction.thread_id or None,
+                reply_to_message_id=interaction.reply_to_message_id or session.reply_to_message_id or None,
+                reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
+                delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
+                delivery_kind="interaction",
+            )
         if (result.outcome != "delivered" and session.active_interaction is interaction
                 and interaction.status == "paused" and interaction.pause_generation == generation):
             # The live waiter drives recovery after a transient Feishu outage.

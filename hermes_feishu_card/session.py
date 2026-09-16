@@ -108,6 +108,9 @@ class InteractionState:
     reply_in_thread: bool = False
     runtime_admission: object | None = field(default=None, repr=False)
     runtime_turn_id: str = field(default="", repr=False)
+    # The approval card's own Feishu message id, recorded when the card is delivered. A timed-out
+    # approval refreshes THAT card in place instead of sending a second paused card (#314).
+    feishu_message_id: str = ""
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission
