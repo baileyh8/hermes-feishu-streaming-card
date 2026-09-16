@@ -72,7 +72,10 @@ def test_a_timeline_with_tool_work_still_uses_the_panel():
     panels = _panels(card)
 
     assert len(panels) == 1
-    assert panels[0]["header"]["title"]["content"] == "思考过程"
+    # Maintainer note (contract change): the header used to be the bare word "思考过程", which the
+    # user could not tell was tappable. It now carries a triangle + an explicit hint; the panel
+    # identity/behaviour is unchanged.
+    assert panels[0]["header"]["title"]["content"] == "▸ 思考过程（点开查看）"
     assert "上下文压缩已推迟" in str(panels[0])
 
 
@@ -90,3 +93,19 @@ def test_reasoning_alone_still_earns_the_panel():
 
 def test_a_session_with_nothing_to_show_has_no_panel():
     assert _panels(render_card(_session())) == []
+
+
+def test_panel_header_says_it_can_be_opened():
+    """User report: "思考过程这几个字目前看不出来 可以点开折叠" — the header gave no affordance.
+
+    The panel IS collapsible, so its header must say so; a bare noun reads as a static heading.
+    This test pins the affordance (a leading triangle + an explicit hint) so a later copy tweak
+    cannot silently drop it back to prose.
+    """
+    panels = _panels(render_card(_session(_tool_event())))
+
+    assert len(panels) == 1
+    title = panels[0]["header"]["title"]
+    assert title["tag"] == "plain_text"
+    assert title["content"].startswith("▸")
+    assert "点开" in title["content"]

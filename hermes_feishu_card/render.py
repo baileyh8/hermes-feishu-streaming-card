@@ -733,12 +733,18 @@ def _render_status(
 
 
 def _tool_action_phrase(tool: ToolState) -> str:
-    """The ACTION phrase only: "正在读取", "正在执行终端" — never the command or path."""
+    """The ACTION phrase for the title, PREFIXED with 正在 — "正在读取文件", "正在执行命令".
+
+    Maintainer note (contract change): the 正在 prefix now lives here and only here. The user
+    asked for it in the title (it is the status line: "⏳ Sales Bot · 工具 3 · 1m12s · 正在读取文件")
+    and removed from the content-area row, where the 运行中/已完成 status pill already says it.
+    `_runtime_tool_summary` therefore returns the phrase WITHOUT the prefix.
+    """
     summary = _runtime_tool_summary(tool.name, tool.detail)
     if summary:
         phrase = summary.split("：", 1)[0].split(":", 1)[0].strip()
         if phrase:
-            return phrase
+            return f"正在{phrase}" if not phrase.startswith("正在") else phrase
     return ""
 
 
@@ -755,6 +761,19 @@ def _latest_running_action_phrase(session: CardSession) -> str:
     return _tool_action_phrase(latest)
 
 
+def _last_tool_action_phrase(session: CardSession) -> str:
+    """The phrase for the most recent tool REGARDLESS of state — used for a stopped turn.
+
+    A stopped run usually has no tool still running, yet the point of the phrase is to say where
+    it stopped; the last tool seen is that answer.
+    """
+    tools = list(session.tools.values())
+    if not tools:
+        return ""
+    latest = max(tools, key=lambda tool: (tool.ordinal or 0, tool.started_at or 0.0))
+    return _tool_action_phrase(latest)
+
+
 def _header_title_with_state(
     session: CardSession,
     configured_title: str,
@@ -765,7 +784,7 @@ def _header_title_with_state(
 
     The title used to BE the full tool preview while running: the session name disappeared and
     long previews were cut off mid-word. It now leads with the state, keeps the action PHRASE
-    ("正在读取") which is what made the old line useful, and drops the target (command/path)
+    ("读取") which is what made the old line useful, and drops the target (command/path)
     to the content area, which has room for it.
 
     Pending interactions keep their own wording (待审批：/待选择： is prefixed by the caller).
@@ -779,17 +798,27 @@ def _header_title_with_state(
     if display_status == "completed":
         return f"✅ {configured_title}" + (f" · {metrics}" if metrics else "")
     if display_status == "failed":
-        return f"⛔ {configured_title}"
+        # Maintainer note (contract change): this used to collapse to "⛔ <name>", which hid where
+        # the run stopped. Keep the metrics and the action phrase (of the LAST tool, since nothing
+        # is running any more) so a reader can see the stopping point.
+        parts = [f"⛔ {configured_title}"]
+        if metrics:
+            parts.append(metrics)
+        phrase = _last_tool_action_phrase(session)
+        if phrase:
+            parts.append(phrase)
+        return " · ".join(parts)
     phrase = _latest_running_action_phrase(session)
     if not metrics and not phrase:
         # Nothing measured and nothing to describe: keep the legacy wording rather than a bare
         # "⏳ <name>", which reads as a label instead of a state.
         return f"⏳ 执行中 · {configured_title}"
-    # Maintainer note (contract change): the reader's order is metrics then prose — the title
+    # Maintainer note (contract change): the reader's order is name → metrics → prose. The title
     # used to lead with the phrase ("⏳ 正在读取 · Sales Bot") and carry no numbers at all, so the
     # elapsed time and tool count lived only in the footer. The user asked for both in the title,
-    # with the action phrase LAST: "⏳ Sales Bot · 1m12s · 工具 3 · 正在读取". The name stays first
-    # because it is what identifies WHICH conversation is still working.
+    # both AFTER the name, with the action phrase LAST:
+    # "⏳ Sales Bot · 工具 3 · 1m12s · 正在读取文件". The name stays first because it is what
+    # identifies WHICH conversation is still working.
     parts = [f"⏳ {configured_title}"]
     if metrics:
         parts.append(metrics)
@@ -799,14 +828,25 @@ def _header_title_with_state(
 
 
 def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str:
-    """``"1m12s · 工具 3"`` for the header — the numbers the user asked to see up there.
+    """``"工具 3 · 1m12s"`` for the header — the numbers the user asked to see up there.
 
-    Elapsed comes from the same source the footer uses (live clock while running, the recorded
-    duration once done). Sub-second elapsed is omitted: a freshly started turn would otherwise
-    open with "0s", which reads as a broken clock rather than "just started".
+    Maintainer note (contract change): the order used to be elapsed then tool count. The user
+    asked for the COUNT first, so the title reads name → how many tools → how long → what it is
+    doing. Elapsed comes from the same source the footer uses (live clock while running, the
+    recorded duration once done). Sub-second elapsed is omitted: a freshly started turn would
+    otherwise open with "0s", which reads as a broken clock rather than "just started".
     """
     parts: list[str] = []
-    finished = display_status == "completed" or session.status == "completed"
+    if session.tool_count:
+        # Maintainer note (contract change): the user asked for a hash before the count
+        # ("工具 #3"), so it reads as a numbered tally rather than prose.
+        parts.append(f"工具 #{session.tool_count}")
+    # A stopped turn is over too: report the recorded duration instead of a live clock that keeps
+    # climbing after the run ended.
+    finished = (
+        display_status in {"completed", "failed"}
+        or session.status in {"completed", "failed"}
+    )
     if finished:
         try:
             duration = float(session.duration)
@@ -820,8 +860,6 @@ def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str
             elapsed = max(0.0, _time.time() - float(created_at))
             if elapsed >= 1.0:
                 parts.append(_format_duration(elapsed))
-    if session.tool_count:
-        parts.append(f"工具 {session.tool_count}")
     return " · ".join(parts)
 
 
@@ -1340,17 +1378,17 @@ def _render_tool_summary(session: CardSession) -> str:
     return "\n".join(lines)
 
 
-_RUNNING_TOOL_PILL = ("运行中", "blue")
+# One word for "still working", wherever the card says it. It used to differ per surface —
+# 运行中 on the tool row, 进行中 in the panel, 执行中 in the footer — which read as three
+# different states on one card. The user settled on 执行中.
+_RUNNING_TOOL_PILL = ("执行中", "blue")
 _FINISHED_TOOL_PILL = ("已完成", "green")
 _FAILED_TOOL_PILL = ("失败", "red")
+# The turn ended while this tool was still going: it never reported a result, so calling it
+# 已完成 would be a lie, and it is the row a reader looks at to see WHERE the run stopped.
+_INTERRUPTED_TOOL_PILL = ("已中断", "orange")
 # A row, not a paragraph: this is the live action line, not a place to dump a whole command.
 _TOOL_ACTIVITY_TEXT_MAX_CHARS = 100
-# Verb-only action lines ("正在执行终端") repeat the tool-name pill and carry no target, so they add
-# nothing to the row. Matches exactly the bare phrases `_runtime_tool_summary` can return when it
-# finds no target; anything longer ("正在读取 session.py") keeps its line.
-_BARE_ACTION_PHRASE_RE = re.compile(
-    r"^正在(?:搜索|浏览|执行终端|编辑|读取|使用\s+\S+)$"
-)
 
 
 def _status_tag(label: str, color: str) -> str:
@@ -1419,26 +1457,29 @@ def _render_tool_activity_elements(
             now=now,
             text_size=text_size,
             running=turn_is_live and _tool_is_running(tool),
+            turn_over=not turn_is_live,
         )
         for index, tool in enumerate(selected)
     ]
 
 
 def _tool_activity_text(tool: ToolState) -> str:
-    """The live line for a tool: its friendly action plus target ("正在读取：session.py").
+    """The live line for a tool: its friendly action plus target ("读取文件：session.py").
 
     This is the text the header used to carry as a truncated one-liner. It belongs here, in the
     content area, where there is room for it — the header only answers "still working?".
     Sanitized through the header sanitizer (untrusted paths/commands/secrets) and capped.
 
-    Maintainer note: a VERB-ONLY line is dropped. `_runtime_tool_summary` falls back to the bare
-    action phrase when it cannot extract a target, which produced rows like
-    "已完成 · terminal · #4 · 正在执行终端" — the name pill already says `terminal`, so the phrase
-    repeated it and pushed the line's real information (status + name + ordinal) apart.
-    Only the targeted form earns a line; the tool still shows via its status pill + name.
+    Maintainer note: a line with NO TARGET is dropped. `_runtime_tool_summary` joins phrase and
+    target with "：", so a summary without it is a verb-only line ("执行命令") — the name pill
+    already says `terminal`, so the phrase repeated it and pushed the line's real information
+    (status + name + ordinal) apart; that produced rows like
+    "已完成 · terminal · #4 · 正在执行终端". Only the targeted form earns a line; the tool still
+    shows via its status pill + name. Testing the separator rather than a hardcoded phrase list
+    keeps this correct as phrases change.
     """
     summary = _runtime_tool_summary(tool.name, tool.detail)
-    if not summary or _BARE_ACTION_PHRASE_RE.match(summary.strip()):
+    if not summary or "：" not in summary:
         return ""
     text = _sanitize_runtime_header(summary)
     if len(text) > _TOOL_ACTIVITY_TEXT_MAX_CHARS:
@@ -1453,17 +1494,25 @@ def _tool_activity_row(
     now: float,
     text_size: str | None = None,
     running: bool | None = None,
+    turn_over: bool = False,
 ) -> Dict[str, Any]:
     if running is None:
         running = _tool_is_running(tool)
-    label, color = _RUNNING_TOOL_PILL if running else _tool_terminal_pill(tool)
+    if running:
+        label, color = _RUNNING_TOOL_PILL
+    elif turn_over and _tool_is_running(tool):
+        # Non-terminal status on a finished turn = the turn ended mid-tool. Report that honestly
+        # instead of 已完成 (a reader checking "where did it stop" reads exactly this pill).
+        label, color = _INTERRUPTED_TOOL_PILL
+    else:
+        label, color = _tool_terminal_pill(tool)
     parts = [_status_tag(label, color)]
     if tool.name:
         parts.append(_name_tag(tool.name))
     # Maintainer note (contract change): the numbers now precede the phrase. The row used to end
     # with the elapsed time ("… #4 · 正在执行终端：pytest -q · 12s"), which put the one thing that
     # changes between renders furthest from the status it belongs to. The user asked for time and
-    # count ahead of the phrase: "运行中 · terminal · 12s · #4 · 正在执行终端：pytest -q".
+    # count ahead of the phrase: "进行中 · terminal · 12s · #4 · 读取文件：pytest -q".
     if running and tool.started_at:
         parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
     if tool.ordinal:
@@ -1567,6 +1616,10 @@ def _render_timeline_elements(
                         item.status,
                         detail,
                         duration,
+                        # The panel row carries the same #N tally as the content-area row, so the
+                        # two can be matched up. Resolved from the live tool state (the timeline
+                        # entry itself does not track an ordinal).
+                        ordinal=_timeline_tool_ordinal(session, item),
                     ),
                     f"auxiliary_timeline_toolentry_{index}",
                     text_size=_role_text_size(
@@ -1633,12 +1686,25 @@ def _render_timeline_elements(
     return reasoning_elements
 
 
+_TIMELINE_PANEL_TITLE = "▸ 思考过程（点开查看）"
+
+
 def _timeline_panel(
     session: CardSession,
     elements: list[Dict[str, Any]],
     *,
     expanded: bool,
 ) -> Dict[str, Any]:
+    """The collapsible 思考过程 panel. Its header must LOOK tappable.
+
+    Maintainer note (contract change): the header used to read just "思考过程" — plain prose with
+    no affordance at all, so the user reported they could not tell the panel opens
+    ("思考过程这几个字目前看不出来 可以点开折叠"). The title now carries a leading triangle and an
+    explicit hint. Deliberately text-only: Feishu rejects a standalone text_tag element
+    (230099/200621) and no collapsible_panel header in this codebase has ever sent an `icon`, so a
+    new element type would be unverified against the live API — a plain_string hint cannot break
+    the card.
+    """
     return {
         "tag": "collapsible_panel",
         "element_id": "auxiliary_timeline",
@@ -1646,7 +1712,7 @@ def _timeline_panel(
         "header": {
             "title": {
                 "tag": "plain_text",
-                "content": "思考过程",
+                "content": _TIMELINE_PANEL_TITLE,
             },
             "vertical_align": "center",
         },
@@ -1669,15 +1735,54 @@ def _split_tool_timeline_detail(detail: str) -> tuple[str, str]:
     return "\n".join(lines).strip(), duration
 
 
+def _timeline_tool_ordinal(session: CardSession, item: Any) -> int:
+    """The ``#N`` for a 思考过程 tool row: that tool's call number within the turn.
+
+    Prefers the live tool state, which is authoritative. Falls back to the row's position among
+    the timeline's tool entries (``record_tool`` appends them in call order) for rows whose tool
+    state is no longer around.
+    """
+    tool_id = str(getattr(item, "tool_id", "") or "")
+    if tool_id:
+        tool = session.tools.get(tool_id)
+        ordinal = getattr(tool, "ordinal", 0) if tool is not None else 0
+        if ordinal:
+            return int(ordinal)
+    timeline = getattr(session, "timeline", None)
+    snapshot = timeline.snapshot() if timeline is not None else []
+    position = 0
+    seen: set[str] = set()
+    for entry in snapshot:
+        if getattr(entry, "kind", "") != "tool":
+            continue
+        entry_id = str(getattr(entry, "tool_id", "") or "")
+        if entry_id and entry_id in seen:
+            continue
+        if entry_id:
+            seen.add(entry_id)
+        position += 1
+        if entry_id and entry_id == tool_id:
+            return position
+    return 0
+
+
 def _render_tool_timeline_row(
     title: str,
     status: str,
     detail: str,
     duration: str,
+    ordinal: int = 0,
 ) -> str:
+    """One row inside 思考过程. `ordinal` is the tool's call number, shown as #N.
+
+    Maintainer note: the user asked the panel's tool rows to carry the same 井号 tally the
+    content-area rows use, so a row can be matched to the "#4" it refers to. It sits right after
+    the name and ahead of the duration, mirroring the header order (name → count → time → phrase).
+    """
     normalized_status = str(status or "running").strip().lower()
     safe_title = html.escape(str(title or "工具"), quote=False)
-    duration_suffix = f" · {duration}" if duration else ""
+    meta = " · ".join(part for part in (f"#{ordinal}" if ordinal else "", duration) if part)
+    meta_suffix = f" · {meta}" if meta else ""
     if normalized_status in {
         "completed",
         "success",
@@ -1688,19 +1793,19 @@ def _render_tool_timeline_row(
         "成功",
     }:
         color = "green"
-        headline = f"✓ **{safe_title}**{duration_suffix}"
+        headline = f"✓ **{safe_title}**{meta_suffix}"
     elif normalized_status in {"failed", "error", "失败", "已失败", "错误"}:
         color = "red"
-        headline = f"✕ **{safe_title}**{duration_suffix} · 失败"
+        headline = f"✕ **{safe_title}**{meta_suffix} · 失败"
     elif normalized_status in {"cancelled", "canceled", "已取消", "取消"}:
         color = "grey"
-        headline = f"⊘ **{safe_title}**{duration_suffix} · 已取消"
+        headline = f"⊘ **{safe_title}**{meta_suffix} · 已取消"
     elif normalized_status in {"queued", "waiting", "排队中", "等待中"}:
         color = "grey"
-        headline = f"○ **{safe_title}**{duration_suffix} · 等待中"
+        headline = f"○ **{safe_title}**{meta_suffix} · 等待中"
     else:
         color = "blue"
-        headline = f"{_spinner_frame()} **{safe_title}**{duration_suffix} · 进行中"
+        headline = f"{_spinner_frame()} **{safe_title}**{meta_suffix} · 执行中"
     lines = [f'<font color="{color}">{headline}</font>']
     for line in str(detail or "").splitlines():
         safe_line = html.escape(line, quote=False)
@@ -1723,7 +1828,7 @@ def _render_subagent_timeline_row(title: str, status: str, detail: str) -> str:
     elif normalized_status in {"queued", "waiting"}:
         color, headline = "grey", f"○ **{label}** · 等待中"
     else:
-        color, headline = "blue", f"{_spinner_frame()} **{label}** · 进行中"
+        color, headline = "blue", f"{_spinner_frame()} **{label}** · 执行中"
     lines = [f'<font color="{color}">{headline}</font>']
     for line in str(detail or "").splitlines():
         lines.append(f'<font color="grey">　{html.escape(line, quote=False)}</font>')
@@ -1833,8 +1938,11 @@ def _render_footer(
     *,
     display_status: str = "",
 ) -> str:
-    if session.status == "failed" or display_status == "failed":
-        return _status_tag("已停止", "red")
+    # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
+    # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
+    # exactly the context someone needs to see WHERE the run stopped. The stop is now a pill on
+    # top of the same fields; the user asked for the state to survive a stop.
+    failed = session.status == "failed" or display_status == "failed"
     if display_status == "waiting":
         interaction = session.active_interaction
         remaining_seconds = (
@@ -1844,17 +1952,25 @@ def _render_footer(
         )
         minutes = max(1, int(math.ceil(remaining_seconds / 60.0)))
         return f"等待选择 · ⏳ {minutes} 分钟后过期"
-    if session.status != "completed" and display_status != "completed":
+    if session.status != "completed" and display_status != "completed" and not failed:
         # A live clock: elapsed since the turn started, so a long silent stretch reads as
         # "it has been going 4 minutes" instead of an apparently frozen card. Feishu only
         # re-renders on an event (or during the ~12s animation window), so this stills
         # between events — each render shows the true elapsed time at that moment.
-        running = [
-            f"{_spinner_frame()} {_status_tag('执行中', 'blue')}",
-            _format_duration(max(0.0, _time.time() - float(session.created_at))),
-        ]
+        # Maintainer note (contract change): the tool count now leads the elapsed time, matching
+        # the title — the user asked for "工具 N · <time>" order in both places (it used to be
+        # time then count here).
+        running = [f"{_spinner_frame()} {_status_tag('执行中', 'blue')}"]
         if session.tool_count:
-            running.append(f"工具 {session.tool_count}")
+            # Maintainer note (contract change): hash before the count, matching the title.
+            running.append(f"工具 #{session.tool_count}")
+        running.append(_format_duration(max(0.0, _time.time() - float(session.created_at))))
+        # Maintainer note (contract change): the footer repeats the title's action phrase
+        # ("正在读取文件") so the state line reads the same wherever the eye lands — the user
+        # asked for it explicitly.
+        phrase = _latest_running_action_phrase(session)
+        if phrase:
+            running.append(phrase)
         return " · ".join(running)
     tokens = session.tokens if isinstance(session.tokens, dict) else {}
     input_tokens = _safe_int(tokens.get("input_tokens"))
@@ -1885,15 +2001,18 @@ def _render_footer(
         "subscription_usage": session.subscription_usage,
     }
     selected = []
+    if session.tool_count:
+        # Maintainer note (contract change): the count leads the other metrics, matching the title
+        # (it used to be appended last, after ctx); it carries a hash, per the user's request.
+        selected.append(f"工具 #{session.tool_count}")
     fields = DEFAULT_FOOTER_FIELDS if footer_fields is None else footer_fields
     for field in fields:
         value = values.get(field)
         if value:
             selected.append(value)
-    if session.tool_count:
-        selected.append(f"工具 {session.tool_count}")
     detail = " · ".join(selected) if selected else values["duration"]
-    return f"{_status_tag('已完成', 'green')} · {detail}"
+    pill = _status_tag("已停止", "red") if failed else _status_tag("已完成", "green")
+    return f"{pill} · {detail}"
 
 
 def _colored_model_label(model: str) -> str:

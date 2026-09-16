@@ -668,34 +668,93 @@ def _interaction_options(value: Any) -> list[InteractionOption]:
     return options
 
 
+# Tool name → the phrase the card shows for it.  Exact names win over the substring families
+# below, which is how `todo_list` avoids being read as "listing files" and `tool_search` avoids
+# being read as a web search.
+_TOOL_ACTION_PHRASES = {
+    "read_file": "读取文件",
+    "read_terminal": "读取终端输出",
+    "read_window": "读取窗口",
+    "write_file": "写入文件",
+    "patch": "编辑文件",
+    "search_files": "搜索文件",
+    "web_search": "搜索网页",
+    "x_search": "搜索推文",
+    "session_search": "搜索历史会话",
+    "tool_search": "搜索工具",
+    "web_extract": "浏览网页",
+    "terminal": "执行命令",
+    "todo_list": "整理待办",
+    "skill_view": "查看技能",
+    "skill_manage": "修改技能",
+    "skills_list": "查看技能列表",
+}
+
+# Substring → phrase, checked in order; first hit wins.  Covers the tools that are not named
+# above (plugins, MCP servers, new core tools) without enumerating every one of them.
+_TOOL_ACTION_FAMILIES = (
+    ("search", "搜索网页"),
+    ("query", "搜索网页"),
+    ("browser", "浏览网页"),
+    ("fetch", "浏览网页"),
+    ("web", "浏览网页"),
+    ("http", "浏览网页"),
+    ("terminal", "执行命令"),
+    ("shell", "执行命令"),
+    ("exec", "执行命令"),
+    ("command", "执行命令"),
+    ("code", "执行命令"),
+    ("write", "写入文件"),
+    ("edit", "编辑文件"),
+    ("patch", "编辑文件"),
+    ("read", "读取文件"),
+    ("open", "读取文件"),
+    ("glob", "搜索文件"),
+)
+
+
+def _search_tool_phrase(tool_name: str) -> str:
+    """The phrase for a tool, or "" when nothing matches (the caller falls back to 使用 X)."""
+    exact = _TOOL_ACTION_PHRASES.get(tool_name)
+    if exact:
+        return exact
+    for marker, phrase in _TOOL_ACTION_FAMILIES:
+        if marker in tool_name:
+            return phrase
+    return ""
+
+
 def _runtime_tool_summary(name: Any, preview: str) -> str:
+    """The action phrase + target for a tool ("读取文件：session.py").
+
+    Maintainer note (contract change): the phrases used to carry a 正在 prefix, and the verbs
+    were bare ("读取"). The user asked for two things: name the object (读取文件, not 读取), and
+    drop 正在 from the content-area row — there the status pill already reads 运行中/已完成, so the
+    prefix only repeated it. The header KEEPS 正在 (it is the status line); `_tool_action_phrase`
+    adds it back for the title. So this function returns the phrase WITHOUT the prefix.
+    """
     text = normalize_stream_text(preview).strip()
     if not text:
         return ""
     if text.startswith("正在"):
-        return text
+        # A preview that is already phrased ("正在读取：session.py"): drop the prefix and strip it
+        # down through the normal path so the object is named consistently.
+        text = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
+        if not text:
+            return ""
 
     tool_name = str(name or "").strip().lower()
     is_url = text.startswith(("http://", "https://"))
-    is_search = bool(_SEARCH_SITE_OPERATOR_RE.search(text))
 
-    if is_search or "search" in tool_name or "query" in tool_name:
-        action = "正在搜索"
-    elif is_url or any(
-        marker in tool_name for marker in ("browser", "fetch", "web", "http")
-    ):
-        action = "正在浏览"
-    elif any(
-        marker in tool_name for marker in ("terminal", "shell", "exec", "command", "code")
-    ):
-        action = "正在执行终端"
-    elif any(marker in tool_name for marker in ("write", "edit", "patch", "replace")):
-        action = "正在编辑"
-    elif any(marker in tool_name for marker in ("read", "open", "list", "glob")):
-        action = "正在读取"
+    if tool_name in _TOOL_ACTION_PHRASES:
+        action = _TOOL_ACTION_PHRASES[tool_name]
+    elif _SEARCH_SITE_OPERATOR_RE.search(text) or is_url:
+        action = "搜索网页" if _SEARCH_SITE_OPERATOR_RE.search(text) else "浏览网页"
     else:
+        action = _search_tool_phrase(tool_name)
+    if not action:
         readable_name = tool_name.replace("_", " ").strip() or "工具"
-        return f"正在使用 {readable_name}"
+        return f"使用 {readable_name}"
 
     target = _runtime_preview_target(text, action=action, is_url=is_url)
     return f"{action}：{target}" if target else action
@@ -709,10 +768,10 @@ def _runtime_preview_target(text: str, *, action: str, is_url: bool) -> str:
         return f"{host}{path}" if host else ""
 
     target = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
-    if action == "正在搜索":
+    if action == "搜索网页":
         target = _SEARCH_SITE_OPERATOR_RE.sub("", target).strip()
         target = " ".join(target.split())
-    if action in {"正在读取", "正在编辑"} and target.startswith(("/", "~/")):
+    if action in {"读取文件", "编辑文件", "写入文件"} and target.startswith(("/", "~/")):
         path = target.split(maxsplit=1)[0]
         target = path.rstrip("/").rsplit("/", 1)[-1]
     if target.lower().startswith(("参数:", "参数：", "args:", "arguments:")):

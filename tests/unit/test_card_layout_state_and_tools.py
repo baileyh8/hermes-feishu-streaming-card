@@ -77,7 +77,7 @@ def test_header_keeps_the_action_phrase_but_never_the_target():
     card = render_card(session, title="研发助手")
     title = card["header"]["title"]["content"]
 
-    assert title == "⏳ 研发助手 · 工具 1 · 正在执行终端"
+    assert title == "⏳ 研发助手 · 工具 #1 · 正在执行命令"
     assert "x" * 20 not in title
     # ...and the target is not lost: it renders in the content-area row instead.
     row = _elements(card, "tool_activity_0")[0]
@@ -102,15 +102,15 @@ def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
     )
 
     title = render_card(session, title="Sales Bot")["header"]["title"]["content"]
-    # Metrics first, action phrase last. The title carries only the VERB phrase (the target stays
-    # in the content-area row) — that is the pre-existing design, not something this test changes.
-    assert title == "⏳ Sales Bot · 1m12s · 工具 2 · 正在读取"
+    # Order: name → count (#N) → elapsed → action phrase. The title carries only the VERB phrase
+    # (the target stays in the content-area row) — pre-existing design, unchanged by this test.
+    assert title == "⏳ Sales Bot · 工具 #2 · 1m12s · 正在读取文件"
 
     session.status = "completed"
     session.duration = 152.0
     session.answer_text = "完成"
     done = render_card(session, title="Sales Bot")["header"]["title"]["content"]
-    assert done == "✅ Sales Bot · 2m32s · 工具 2"
+    assert done == "✅ Sales Bot · 工具 #2 · 2m32s"
 
 
 def test_tool_row_shows_state_name_ordinal_and_elapsed_time():
@@ -122,10 +122,10 @@ def test_tool_row_shows_state_name_ordinal_and_elapsed_time():
     row = _elements(render_card(session), "tool_activity_0")[0]
 
     assert row["tag"] == "markdown"
-    assert "<text_tag color='blue'>运行中</text_tag>" in row["content"]
+    assert "<text_tag color='blue'>执行中</text_tag>" in row["content"]
     assert "<text_tag color='neutral'>read_file</text_tag>" in row["content"]
     assert "#1" in row["content"]
-    assert "正在读取" in row["content"]
+    assert "读取文件" in row["content"]
     assert "session.py" in row["content"]
 
 
@@ -183,7 +183,7 @@ def test_verb_only_tool_line_is_dropped_from_the_row():
         "<text_tag color='green'>已完成</text_tag> · "
         "<text_tag color='neutral'>terminal</text_tag> · #1"
     )
-    assert "正在执行终端" not in row
+    assert "执行命令" not in row
 
     targeted = _session()
     targeted.apply(
@@ -192,7 +192,7 @@ def test_verb_only_tool_line_is_dropped_from_the_row():
     targeted.status = "completed"
     targeted.answer_text = "完成"
     # The same phrase WITH a target still earns its line.
-    assert "正在执行终端：pytest -q" in _elements(render_card(targeted), "tool_activity_0")[0][
+    assert "执行命令：pytest -q" in _elements(render_card(targeted), "tool_activity_0")[0][
         "content"
     ]
 
@@ -230,14 +230,16 @@ def test_footer_reports_state_elapsed_time_and_tool_count():
     session.apply(_tool_event(tool_id="t1", name="terminal"))
     running = render_card(session)["body"]["elements"][-1]["content"]
     assert "<text_tag color='blue'>执行中</text_tag>" in running
-    assert "工具 1" in running
+    assert "工具 #1" in running
 
     session.status = "completed"
     session.duration = 8.0
     session.answer_text = "答案"
     completed = render_card(session)["body"]["elements"][-1]["content"]
-    assert completed.startswith("<text_tag color='green'>已完成</text_tag> · 8s")
-    assert "工具 1" in completed
+    # Maintainer note (contract change): the count now leads the elapsed time and carries a hash,
+    # per the user's request (was "已完成 · 8s · … · 工具 1").
+    assert completed.startswith("<text_tag color='green'>已完成</text_tag> · 工具 #1 · 8s")
+    assert "工具 #1" in completed
 
 
 def test_footer_elapsed_time_grows_with_the_session(monkeypatch):

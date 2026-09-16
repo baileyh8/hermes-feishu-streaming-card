@@ -4,29 +4,29 @@
 <text x="56" y="74" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#374151">思考流更新</text>
 <rect x="56" y="96" width="484" height="560" rx="12" fill="#ffffff" stroke="#d6dbe6"/>
 <rect x="56" y="96" width="484" height="72" rx="12" fill="#4f46e5"/>
-<text x="84" y="129" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">Hermes Agent</text>
-<text x="84" y="152" font-family="Arial, sans-serif" font-size="14" fill="#eef2ff">正在使用 生成答案</text>
+<text x="84" y="129" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">⏳ Hermes Agent · 工具 #2 · 5s · 正在使用 生成答案</text>
+<text x="84" y="152" font-family="Arial, sans-serif" font-size="14" fill="#eef2ff"></text>
 <text x="84" y="212" font-family="Arial, sans-serif" font-size="14" fill="#111827">先检查输入参数，确认 Hermes hook 已经发出事件。</text>
 <text x="84" y="234" font-family="Arial, sans-serif" font-size="14" fill="#111827">再读取资料并整理回答结构。</text>
 <line x1="84" y1="374" x2="512" y2="374" stroke="#e5e7eb"/>
-<text x="84" y="402" font-family="Arial, sans-serif" font-size="13" fill="#374151">✓ 读取资料</text>
+<text x="84" y="402" font-family="Arial, sans-serif" font-size="13" fill="#374151">✓ 读取资料 · #1</text>
 <text x="84" y="422" font-family="Arial, sans-serif" font-size="13" fill="#374151">　docs</text>
-<text x="84" y="442" font-family="Arial, sans-serif" font-size="13" fill="#374151">⠴ 生成答案 · 进行中</text>
+<text x="84" y="442" font-family="Arial, sans-serif" font-size="13" fill="#374151">⠇ 生成答案 · #2 · 执行中</text>
 <text x="84" y="462" font-family="Arial, sans-serif" font-size="13" fill="#374151">　answer</text>
 <line x1="84" y1="520" x2="512" y2="520" stroke="#e5e7eb"/>
 <text x="84" y="558" font-family="Arial, sans-serif" font-size="14" fill="#374151"></text>
-<text x="84" y="616" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">⠴ 生成中</text>
+<text x="84" y="616" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">⠇ &lt;text_tag color=&#x27;blue&#x27;&gt;执行中&lt;/text_tag&gt; · 工具 #2 · 5s · 正在使用 生成答案</text>
 <text x="580" y="74" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#374151">完成态更新</text>
 <rect x="580" y="96" width="484" height="560" rx="12" fill="#ffffff" stroke="#d6dbe6"/>
 <rect x="580" y="96" width="484" height="72" rx="12" fill="#16a34a"/>
-<text x="608" y="129" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">Hermes Agent</text>
-<text x="608" y="152" font-family="Arial, sans-serif" font-size="14" fill="#eef2ff">已完成</text>
+<text x="608" y="129" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#ffffff">✅ Hermes Agent · 工具 #2 · 8s</text>
+<text x="608" y="152" font-family="Arial, sans-serif" font-size="14" fill="#eef2ff">本轮回复结束</text>
 <text x="608" y="212" font-family="Arial, sans-serif" font-size="14" fill="#111827">这是流式卡片的最终回答。思考内容已经被结果覆盖，工具调用次数</text>
 <text x="608" y="234" font-family="Arial, sans-serif" font-size="14" fill="#111827">保留。</text>
 <line x1="608" y1="374" x2="1036" y2="374" stroke="#e5e7eb"/>
-<text x="608" y="402" font-family="Arial, sans-serif" font-size="13" fill="#374151">✓ 读取资料</text>
-<text x="608" y="422" font-family="Arial, sans-serif" font-size="13" fill="#374151">✓ 生成答案</text>
+<text x="608" y="402" font-family="Arial, sans-serif" font-size="13" fill="#374151">✓ 读取资料 · #1</text>
+<text x="608" y="422" font-family="Arial, sans-serif" font-size="13" fill="#374151">✓ 生成答案 · #2</text>
 <line x1="608" y1="520" x2="1036" y2="520" stroke="#e5e7eb"/>
 <text x="608" y="558" font-family="Arial, sans-serif" font-size="14" fill="#374151"></text>
-<text x="608" y="616" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">8s · Unknown · ↑128 · ↓256 · ctx 0/0 0%</text>
+<text x="608" y="616" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">&lt;text_tag color=&#x27;green&#x27;&gt;已完成&lt;/text_tag&gt; · 工具 #2 · 8s · Unknown · ↑128 · ↓256 · ctx 0/0 0%</text>
 </svg>

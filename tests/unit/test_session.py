@@ -1438,8 +1438,8 @@ def test_tool_preview_replaces_header_without_touching_thinking_text():
         )
     )
 
-    assert session.latest_tool_preview == "正在读取：weather_client.py"
-    assert session.runtime_header_text == "正在读取：weather_client.py"
+    assert session.latest_tool_preview == "读取文件：weather_client.py"
+    assert session.runtime_header_text == "读取文件：weather_client.py"
     assert session.thinking_text == "先分析接口。"
 
 
@@ -1471,7 +1471,7 @@ def test_empty_tool_preview_preserves_previous_header():
         )
     )
 
-    assert session.latest_tool_preview == "正在读取：weather_client.py"
+    assert session.latest_tool_preview == "读取文件：weather_client.py"
 
 
 def test_interaction_temporarily_overrides_then_restores_preview():
@@ -1514,7 +1514,7 @@ def test_interaction_temporarily_overrides_then_restores_preview():
             },
         )
     )
-    assert session.runtime_header_text == "正在执行终端：pytest"
+    assert session.runtime_header_text == "执行命令：pytest"
 
 
 def test_completed_clears_header_but_failed_retains_preview():
@@ -1557,7 +1557,7 @@ def test_completed_clears_header_but_failed_retains_preview():
         )
     )
     assert failed.apply(event("message.failed", 2, {"error": "测试失败"}))
-    assert failed.runtime_header_text == "正在执行终端：pytest"
+    assert failed.runtime_header_text == "执行命令：pytest"
     assert not failed.apply(
         event(
             "tool.updated",
@@ -1570,7 +1570,7 @@ def test_completed_clears_header_but_failed_retains_preview():
             },
         )
     )
-    assert failed.runtime_header_text == "正在执行终端：pytest"
+    assert failed.runtime_header_text == "执行命令：pytest"
 
 
 def test_runtime_header_summarizes_search_url_and_private_file_path():
@@ -1587,7 +1587,7 @@ def test_runtime_header_summarizes_search_url_and_private_file_path():
             },
         )
     )
-    assert search.runtime_header_text == "正在搜索：广州 小时天气 降雨概率"
+    assert search.runtime_header_text == "搜索网页：广州 小时天气 降雨概率"
 
     assert search.apply(
         event(
@@ -1601,7 +1601,7 @@ def test_runtime_header_summarizes_search_url_and_private_file_path():
             },
         )
     )
-    assert search.runtime_header_text == "正在浏览：ventusky.com/zh/guangzhou"
+    assert search.runtime_header_text == "浏览网页：ventusky.com/zh/guangzhou"
 
     reader = CardSession(conversation_id="chat-1", message_id="msg-2", chat_id="oc_abc")
     assert reader.apply(
@@ -1617,7 +1617,7 @@ def test_runtime_header_summarizes_search_url_and_private_file_path():
             message_id="msg-2",
         )
     )
-    assert reader.runtime_header_text == "正在读取：weather_client.py"
+    assert reader.runtime_header_text == "读取文件：weather_client.py"
 
 
 def test_runtime_header_keeps_unknown_tools_specific_without_exposing_arguments():
@@ -1635,7 +1635,7 @@ def test_runtime_header_keeps_unknown_tools_specific_without_exposing_arguments(
         )
     )
 
-    assert session.runtime_header_text == "正在使用 memos skill get"
+    assert session.runtime_header_text == "使用 memos skill get"
 
 
 def test_pause_capability_never_extends_native_admission():

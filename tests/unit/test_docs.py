@@ -1290,8 +1290,12 @@ def test_docs_describe_e2e_visual_preview_materials():
     assert "</think>" not in svg
     assert '"thinking"' in preview_json
     assert '"completed"' in preview_json
-    assert "思考与工具" in preview_json
-    assert "2 次工具调用" in preview_json
+    # Maintainer note: these used to assert "思考与工具" / "2 次工具调用" — strings the card has not
+    # produced since the timeline panel was reworked (the docs asset was stale, only now
+    # regenerated). Assert what the generator actually emits: the panel header and the tool names.
+    assert "思考过程" in preview_json
+    assert "读取资料" in preview_json
+    assert "生成答案" in preview_json
     assert "端到端截图" in docs and "e2e-card-preview" in docs
 
 

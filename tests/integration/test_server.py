@@ -7852,13 +7852,13 @@ async def test_v4_runtime_header_and_interim_body_share_one_card(client):
         ),
     )
 
-    _, running = await wait_for_card_update(feishu_client, "正在读取：weather_client.py")
+    _, running = await wait_for_card_update(feishu_client, "读取文件：weather_client.py")
     # Maintainer note (contract change): was "⏳ 正在读取 · Hermes Agent". The user asked the title
     # to lead with the session name, then the running metrics, and put the action phrase LAST.
-    assert running["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 1 · 正在读取"
+    assert running["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #1 · 正在读取文件"
     # The target moved to the content-area tool row; the header stays one readable line.
     assert "subtitle" not in running["header"]
-    assert "正在读取：weather_client.py" in str(running)
+    assert "读取文件：weather_client.py" in str(running)
     assert "我先检查天气客户端。" in str(running)
     assert all(
         message_id == "feishu-message-1"
@@ -7886,8 +7886,8 @@ async def test_v4_runtime_header_and_interim_body_share_one_card(client):
     )
     # Maintainer note (contract change): was "✅ Hermes Agent" — the completed title now carries
     # duration + tool count too (duration 3.0 was posted above), phrase dropped.
-    assert completed["header"]["title"]["content"] == "✅ Hermes Agent · 3s · 工具 1"
-    assert "正在读取：weather_client.py" not in str(completed["header"])
+    assert completed["header"]["title"]["content"] == "✅ Hermes Agent · 工具 #1 · 3s"
+    assert "读取文件：weather_client.py" not in str(completed["header"])
     assert "gpt-5.5" in str(completed)
 
 
@@ -7951,9 +7951,9 @@ async def test_v4_interaction_restores_cached_preview_on_stable_v2_card(client):
     _, resumed = await wait_for_card_update(feishu_client, "已选择：允许一次")
     # Maintainer note (contract change): was "⏳ 正在读取 · Hermes Agent" — see the note in
     # test_v4_runtime_header_and_interim_body_share_one_card.
-    assert resumed["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 1 · 正在读取"
+    assert resumed["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #1 · 正在读取文件"
     assert "subtitle" not in resumed["header"]
-    assert "正在读取：weather_client.py" in str(resumed)
+    assert "读取文件：weather_client.py" in str(resumed)
     assert len(feishu_client.sent) == 2
     assert feishu_client.updated[-1][0] == "feishu-message-1"
 
@@ -8066,15 +8066,15 @@ async def test_interaction_promotion_finalizes_predecessor_snapshot(client):
     assert snapshot["header"] == {
         "template": "green",
         # Maintainer note (contract change): the completed title carries the metrics too
-        # ("✅ Scoped Hermes Agent · 工具 1"), per the user's request — see the note in
+        # ("✅ Scoped Hermes Agent · 工具 #1"), per the user's request — see the note in
         # test_v4_runtime_header_and_interim_body_share_one_card.
-        "title": {"tag": "plain_text", "content": "✅ Scoped Hermes Agent · 工具 1"},
+        "title": {"tag": "plain_text", "content": "✅ Scoped Hermes Agent · 工具 #1"},
         "subtitle": {"tag": "plain_text", "content": "已转入交互卡片"},
     }
     assert snapshot["config"]["summary"]["content"] == "已转入交互卡片"
     assert "我先检查天气客户端。" in str(snapshot)
     assert "read_file" in str(snapshot)
-    assert "正在读取：weather_client.py" not in str(snapshot["header"])
+    assert "读取文件：weather_client.py" not in str(snapshot["header"])
     assert interaction_buttons(snapshot) == []
     assert "approval-handoff" not in str(snapshot)
 
@@ -8109,12 +8109,12 @@ async def test_v4_preview_burst_coalesces_and_late_preview_cannot_reopen_card(
         )
     assert all(response.status == 200 for response in responses)
 
-    _, running = await wait_for_card_update(feishu_client, "正在读取：file-15.py")
+    _, running = await wait_for_card_update(feishu_client, "读取文件：file-15.py")
     # Maintainer note (contract change): was "⏳ 正在读取 · Hermes Agent" — the title now carries the
     # tool count (15 updates = 15 tool calls here), with the phrase last.
-    assert running["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 15 · 正在读取"
+    assert running["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #15 · 正在读取文件"
     assert "subtitle" not in running["header"]
-    assert "正在读取：file-15.py" in str(running)
+    assert "读取文件：file-15.py" in str(running)
 
     completed = await test_client.post(
         "/events",
@@ -11558,7 +11558,7 @@ async def test_parallel_message_sessions_update_their_own_feishu_cards(client):
     assert set(updates_by_message) == {"feishu-message-1", "feishu-message-2"}
     assert any("第一条完成" in card for card in updates_by_message["feishu-message-1"])
     assert any(
-        '<font color="blue">' in card and "**search** · 进行中" in card
+        '<font color="blue">' in card and "**search** · #1 · 执行中" in card
         for card in updates_by_message["feishu-message-2"]
     )
 
