@@ -320,6 +320,21 @@ class FeishuClient:
             json_body={"content": content},
         )
 
+    async def delete_message(self, message_id: str) -> None:
+        """Recall a message the bot itself posted.
+
+        Used to withdraw a dead approval card: once the runtime that asked for consent is gone,
+        the card can never be completed, and leaving it on screen invites a second dead click.
+        """
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("message_id is required")
+        token = await self._tenant_token()
+        await self._request_json(
+            "DELETE",
+            f"/im/v1/messages/{quote(message_id, safe='')}",
+            token=token,
+        )
+
     async def send_text_message(
         self,
         chat_id: str,

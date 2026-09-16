@@ -161,10 +161,12 @@ class FakeFeishuClient:
         self.sent = []
         self.sent_reply_in_thread = []
         self.updated = []
+        self.deleted = []
         self.texts = []
         self.texts_reply_in_thread = []
         self.operations = []
         self.fail_send = False
+        self.fail_delete = False
         self.fail_text = False
         self.send_delay = 0.0
         self.update_failures_remaining = 0
@@ -195,6 +197,12 @@ class FakeFeishuClient:
             raise RuntimeError(self.update_error_message)
         self.updated.append((message_id, card))
         self.operations.append("update")
+
+    async def delete_message(self, message_id):
+        if self.fail_delete:
+            raise RuntimeError("recall refused")
+        self.deleted.append(message_id)
+        self.operations.append("delete")
 
     async def send_text_message(
         self,
@@ -13235,6 +13243,44 @@ async def test_expired_approval_pauses_then_requires_fresh_explicit_consent(clie
     assert (await result.json())['choice'] == 'once'
 
 
+async def test_resume_refreshes_in_place_when_the_dead_card_cannot_be_recalled(client):
+    """Recall is best-effort: a refused recall refreshes that card instead of orphaning it."""
+    test_client, feishu_client = client
+    await test_client.post('/events', json=event_payload('message.started', 0))
+    await test_client.post('/events', json=event_payload('interaction.requested', 1, {
+        'interaction_id': 'pause-dead-recall-refused', 'kind': 'approval', 'prompt': 'Review',
+        'description': 'exact operation scope', 'pause_on_timeout': True, 'timeout_seconds': 300,
+        'options': [{'label': 'Allow once', 'value': 'once'}],
+    }, thread_id='omt_topic'))
+    session = test_client.app[SESSIONS_KEY]['hermes-message-1']
+    interaction = session.active_interaction
+    dead_card_id = interaction.feishu_message_id
+    interaction.requested_at -= 301
+    assert (await (await test_client.get('/interactions/pause-dead-recall-refused')).json())[
+        'status'
+    ] == 'paused'
+    await _wait_until(lambda: cards_edited_into(feishu_client, dead_card_id))
+    resume = interaction_buttons(cards_edited_into(feishu_client, dead_card_id)[-1])[0]['value']
+    cards_before = len(feishu_client.sent)
+    edits_before = len(cards_edited_into(feishu_client, dead_card_id))
+    feishu_client.fail_delete = True
+
+    interaction.last_waiter_poll_at -= 16  # stale by more than the runtime heartbeat window
+    response = await test_client.post('/card/actions', json={'event': {
+        'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'},
+        'action': {'value': resume},
+    }})
+    assert response.status == 200
+    await _wait_until(
+        lambda: len(cards_edited_into(feishu_client, dead_card_id)) > edits_before
+    )
+    assert feishu_client.deleted == []
+    assert len(feishu_client.sent) == cards_before
+    assert interaction.feishu_message_id == dead_card_id
+    assert interaction.status == 'pending'
+    assert interaction_buttons(cards_edited_into(feishu_client, dead_card_id)[-1])
+
+
 @pytest.mark.parametrize('outcome', ['not_sent', 'unknown'])
 async def test_paused_approval_notification_recovers_with_same_uuid(client, monkeypatch, outcome):
     test_client, feishu_client = client
@@ -13281,7 +13327,13 @@ async def test_paused_approval_notification_recovers_with_same_uuid(client, monk
     assert len(attempts) == 2
 
 
-async def test_paused_approval_cannot_resume_after_runtime_disappears(client):
+async def test_paused_approval_resume_after_runtime_disappears_reissues_without_consent(client):
+    """A dead runtime must not turn the resume button into a dead end.
+
+    Clicking resume is never consent. When the agent that asked is gone the card cannot be
+    completed, so it is withdrawn, the approval is renewed with a fresh token and window, and a
+    fresh card is posted — the decision stays available instead of failing with nothing to click.
+    """
     test_client, feishu_client = client
     await test_client.post('/events', json=event_payload('message.started', 0))
     await test_client.post('/events', json=event_payload('interaction.requested', 1, {
@@ -13292,15 +13344,25 @@ async def test_paused_approval_cannot_resume_after_runtime_disappears(client):
     interaction.requested_at -= 301
     await test_client.get('/interactions/pause-orphan')
     await _wait_until(lambda: cards_edited_into(feishu_client, interaction.feishu_message_id))
-    resume = interaction_buttons(
-        cards_edited_into(feishu_client, interaction.feishu_message_id)[-1]
-    )[0]['value']
+    dead_card_id = interaction.feishu_message_id
+    resume = interaction_buttons(cards_edited_into(feishu_client, dead_card_id)[-1])[0]['value']
+    withdrawn_token = interaction.callback_token
+    cards_before = len(feishu_client.sent)
     interaction.last_waiter_poll_at -= 16
     response = await test_client.post('/card/actions', json={'event': {
         'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'}, 'action': {'value': resume},
     }})
-    assert response.status == 409
-    assert interaction.status == 'paused' and interaction.choice == ''
+    assert response.status == 200
+    assert interaction.status == 'pending' and interaction.choice == ''
+    assert interaction.callback_token != withdrawn_token
+    await _wait_until(lambda: dead_card_id in feishu_client.deleted)
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)
+    assert interaction.feishu_message_id not in ('', dead_card_id)
+    replay = await test_client.post('/card/actions', json={'event': {
+        'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'}, 'action': {'value': resume},
+    }})
+    assert replay.status == 404  # the withdrawn token can never complete the renewed approval
+    assert interaction.choice == ''
 
 
 async def test_live_gateway_approval_wait_survives_expiry_until_fresh_choice(client, monkeypatch):

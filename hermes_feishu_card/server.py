@@ -6194,28 +6194,118 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
     task.add_done_callback(_log_background_task_failure)
 
 
+APPROVAL_RUNTIME_HEARTBEAT_SECONDS = 15.0
+
+
+def _approval_runtime_is_waiting(interaction: Any, *, now: float | None = None) -> bool:
+    """Whether the agent that asked for this approval is still blocked on it.
+
+    The live waiter heartbeats through ``GET /interactions/{id}``; a stale heartbeat means the turn
+    that asked is gone, so no decision taken on this card would reach it.
+    """
+    checked_at = time.time() if now is None else float(now)
+    return bool(
+        interaction.last_waiter_poll_at
+        and checked_at - interaction.last_waiter_poll_at <= APPROVAL_RUNTIME_HEARTBEAT_SECONDS
+    )
+
+
+def _deliver_renewed_approval_card(
+    app: web.Application,
+    session_key: str,
+    session: CardSession,
+    interaction: Any,
+    card: dict[str, Any],
+    stale_card_id: str,
+) -> None:
+    """Put a renewed approval in front of the user exactly once, replacing a dead card.
+
+    The runtime is gone, so the card the user just clicked can never be completed. Recall it and
+    post the renewed one; if Feishu refuses the recall, refresh that card in place instead — never
+    leave behind a card whose buttons cannot work.
+    """
+
+    async def deliver() -> None:
+        bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
+        if stale_card_id and await _delete_card_for_app(app, stale_card_id, bot_id):
+            if app[SESSIONS_KEY].get(session_key) is not session:
+                return
+            interaction.feishu_message_id = ""
+            result = await _send_card_for_app(
+                app,
+                session.chat_id,
+                card,
+                bot_id,
+                thread_id=interaction.thread_id or None,
+                reply_to_message_id=interaction.reply_to_message_id
+                or session.reply_to_message_id
+                or None,
+                reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
+                delivery_key=(
+                    f"{session_key}:approval-renewed:{interaction.interaction_id}:"
+                    f"{interaction.pause_generation}"
+                ),
+                delivery_kind="interaction",
+            )
+            if result.outcome == "delivered" and result.message_id:
+                interaction.feishu_message_id = result.message_id
+            return
+        if stale_card_id:
+            await _update_card_for_app(app, stale_card_id, card, bot_id)
+
+    task = asyncio.create_task(deliver())
+    tasks = app[PAUSED_APPROVAL_TASKS_KEY]
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
 async def _resume_paused_approval(request, session_key, session, interaction, token, chat_id):
-    lock = request.app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
+    """Re-arm an approval from the card the user still has, after its window expired.
+
+    Resuming is not consent: the withdrawn token is replaced and the complete original scope is
+    presented again with fresh buttons and a new window. Two shapes, chosen by whether the agent is
+    still waiting:
+      * waiting -> refresh that same card in place, so one approval never becomes two cards (#314);
+      * gone    -> that card is un-completable, so it is recalled and a fresh one is posted.
+    """
+    app = request.app
+    lock = app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
     async with lock:
-        if (request.app[SESSIONS_KEY].get(session_key) is not session
+        if (app[SESSIONS_KEY].get(session_key) is not session
                 or session.active_interaction is not interaction
                 or interaction.callback_token != token or session.chat_id != chat_id
                 or interaction.status != "paused" or not interaction.pause_on_timeout
                 or session.status in {"completed", "failed"}
                 or interaction.runtime_admission is not None):
             return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
-        if not interaction.last_waiter_poll_at or time.time() - interaction.last_waiter_poll_at > 15:
-            return web.json_response({"ok": False, "error": "approval runtime is not waiting"}, status=409)
-        # Resuming is not consent. Withdraw the resume token and present the
-        # complete original scope with fresh decision buttons and a new window.
+        runtime_waiting = _approval_runtime_is_waiting(interaction)
         interaction.status = "pending"
         interaction.callback_token = secrets.token_urlsafe(16)
         interaction.requested_at = time.time()
         interaction.error = ""
         session.updated_at = interaction.requested_at
-        _store_interaction_result(request.app, session)
-        card = _render_interaction_callback_card_for_app(request.app, session, session_key=session_key)
-    return web.json_response({"ok": True, "toast": {"type": "info", "content": "请重新确认完整操作"}, "card": card})
+        _store_interaction_result(app, session)
+        card = _render_interaction_callback_card_for_app(app, session, session_key=session_key)
+        stale_card_id = "" if runtime_waiting else str(
+            getattr(interaction, "feishu_message_id", "") or ""
+        )
+    if runtime_waiting:
+        return web.json_response(
+            {
+                "ok": True,
+                "toast": {"type": "info", "content": "请重新确认完整操作"},
+                "card": card,
+            }
+        )
+    _deliver_renewed_approval_card(
+        app, session_key, session, interaction, card, stale_card_id
+    )
+    return web.json_response(
+        {
+            "ok": True,
+            "toast": {"type": "info", "content": "原授权已失效，已重新发起审批"},
+        }
+    )
 
 
 async def _expire_pending_interaction(
@@ -7008,6 +7098,27 @@ async def _update_card(
     request: web.Request, message_id: str, card: dict[str, Any], bot_id: str | None
 ) -> bool:
     return await _update_card_for_app(request.app, message_id, card, bot_id)
+
+
+async def _delete_card_for_app(
+    app: web.Application,
+    message_id: str,
+    bot_id: str | None,
+) -> bool:
+    """Recall a card the bot posted; True when it is gone (or was already gone).
+
+    Best-effort by design: Feishu may refuse (missing scope, message too old), so callers must keep
+    a usable fallback rather than assuming the message disappeared.
+    """
+    if not message_id:
+        return False
+    try:
+        await _client_for_bot(app, bot_id).delete_message(message_id)
+    except Exception as exc:
+        app[DIAGNOSTICS_KEY]["last_delete_error"] = exc.__class__.__name__[:200]
+        logger.warning("Feishu card recall failed: %s", exc.__class__.__name__)
+        return False
+    return True
 
 
 async def _update_card_for_app(

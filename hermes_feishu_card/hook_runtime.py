@@ -3077,7 +3077,12 @@ def request_interaction_from_hermes_locals(
             prompt=prompt,
             options=options or [],
             description=description,
-            timeout_seconds=timeout_seconds,
+            # The card window is deliberately shorter than the wait below for approvals: an
+            # approval that expires while the waiter is still here can be re-armed from its card,
+            # whereas one that outlives the waiter leaves a button nothing can answer.
+            timeout_seconds=(
+                _approval_card_window(timeout_seconds) if kind == "approval" else timeout_seconds
+            ),
             multi_select=multi_select,
             allow_custom_input=allow_custom_input,
         )
@@ -3142,11 +3147,21 @@ def request_interaction_from_hermes_locals(
         poll_interval = _interaction_poll_interval(poll_interval_seconds)
         deadline = time.monotonic() + timeout
         pause_waiting = False
+        # This wait blocks the agent's execution thread. The gateway kills a run that reports no
+        # activity, which would strand the very card the user is about to click; heartbeat the way
+        # the core's own approval wait does.
+        try:
+            from tools.environments.base import touch_activity_if_due as _touch_activity
+        except Exception:
+            _touch_activity = None
+        _activity_state = {"last_touch": time.monotonic(), "start": time.monotonic()}
         while True:
             try:
                 result = _get_json_sync(url, config.timeout_seconds)
             except Exception:
                 result = None
+            if _touch_activity is not None:
+                _touch_activity(_activity_state, "waiting for user approval")
             if isinstance(result, dict) and result.get("status") in {"completed", "failed"}:
                 return result
             if (kind == "approval" and local_vars.get("_hfc_pause_approval") is True
@@ -9538,6 +9553,34 @@ def build_cron_event(local_vars: dict[str, Any]) -> dict[str, Any] | None:
             ),
         },
     }
+
+
+_APPROVAL_CARD_WINDOW_MARGIN_SECONDS = 60.0
+
+
+def _core_approval_timeout_seconds() -> float:
+    """The gateway's own approval wait (``approvals.timeout``), read from the core when available."""
+    try:
+        from tools.approval_context import _get_approval_timeout
+        value = float(_get_approval_timeout())
+    except Exception:
+        return 300.0
+    return value if math.isfinite(value) and value > 0 else 300.0
+
+
+def _approval_card_window(timeout_seconds: float | None) -> float:
+    """How long an approval card stays actionable, kept shorter than the agent's approval wait.
+
+    A card that outlives the waiting agent can never be completed: the user ends up clicking a
+    button whose runtime is gone. Expiring the card first makes the paused/resume cycle happen
+    while the waiter is still alive, so consent can always be re-armed.
+    """
+    if timeout_seconds is not None and math.isfinite(timeout_seconds) and timeout_seconds >= 0:
+        return timeout_seconds
+    env_value = _finite_float(os.environ.get("HERMES_FEISHU_CARD_INTERACTION_TIMEOUT_SECONDS"))
+    if env_value is not None and env_value >= 0:
+        return env_value
+    return max(30.0, _core_approval_timeout_seconds() - _APPROVAL_CARD_WINDOW_MARGIN_SECONDS)
 
 
 def _interaction_timeout(value: float | None) -> float:
