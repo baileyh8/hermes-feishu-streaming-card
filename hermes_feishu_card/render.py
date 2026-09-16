@@ -1231,6 +1231,9 @@ def _render_tool_summary(session: CardSession) -> str:
     return "\n".join(lines)
 
 
+_TIMELINE_WORK_KINDS = frozenset({"reasoning", "tool", "subagent"})
+
+
 def _render_timeline_elements(
     session: CardSession,
     *,
@@ -1362,7 +1365,15 @@ def _render_timeline_elements(
                 )
             )
     if panel_elements:
-        reasoning_elements.append(_timeline_panel(session, panel_elements, expanded=expanded))
+        # The panel is named for thinking and tool work. A timeline holding only notices (a deferred
+        # compression hint, a skill-loading note) is neither, and folding those into it produced
+        # "思考与工具 · 0 次工具调用" — a panel advertising zero of the thing it is named after while
+        # displaying unrelated content. Notices render standalone in that case, so the hint stays
+        # visible without a header that contradicts it.
+        if any(item.kind in _TIMELINE_WORK_KINDS for item in all_entries):
+            reasoning_elements.append(_timeline_panel(session, panel_elements, expanded=expanded))
+        else:
+            reasoning_elements.extend(panel_elements)
     return reasoning_elements
 
 

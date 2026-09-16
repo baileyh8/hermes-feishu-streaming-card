@@ -1871,12 +1871,14 @@ def test_render_timeline_styles_system_notices_as_compact_status_lines():
         )
     )
 
-    timeline = next(
-        item
-        for item in render_card(session, timeline_expanded=True)["body"]["elements"]
-        if item.get("element_id") == "auxiliary_timeline"
-    )
-    notice = next(item for item in timeline["elements"] if "上下文窗口提示" in item["content"])
+    # Contract change: a timeline holding ONLY notices no longer wraps them in the 思考与工具 panel
+    # — that produced a panel headed "思考与工具 · 0 次工具调用" over unrelated content. The notice
+    # keeps its compact quoted styling; it is a top-level element now. Notice styling inside the
+    # panel (when real think/tool work exists) stays covered by
+    # tests/unit/test_timeline_notice_panel.py.
+    elements = render_card(session, timeline_expanded=True)["body"]["elements"]
+    assert not any(item.get("tag") == "collapsible_panel" for item in elements)
+    notice = next(item for item in elements if "上下文窗口提示" in item.get("content", ""))
 
     assert notice["text_size"] == "x-small"
     assert notice["content"].startswith("> ")
