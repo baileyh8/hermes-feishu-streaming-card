@@ -72,6 +72,9 @@ class ToolState:
     status: str
     detail: str = ""
     started_at: float | None = None
+    # Which tool call this is, 1-based, counted across the session. Rendered as #N so a card
+    # showing one row out of many says WHICH call the reader is looking at.
+    ordinal: int = 0
 
 
 @dataclass
@@ -335,16 +338,23 @@ class CardSession:
                     previous_tool.detail,
                     resolved_detail,
                 )
+            if previous_tool is None or previous_is_terminal:
+                self._tool_call_count += 1
+                call_ordinal = self._tool_call_count
+            elif previous_tool.ordinal:
+                call_ordinal = previous_tool.ordinal
+            else:
+                # Pre-existing state (or a resumed session) with no ordinal recorded.
+                call_ordinal = self._tool_call_count
             self.tools[tool_id] = ToolState(
                 tool_id=tool_id,
                 name=resolved_name,
                 status=resolved_status,
                 detail=resolved_detail,
                 started_at=started_at,
+                ordinal=call_ordinal,
             )
             self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail)
-            if previous_tool is None or previous_is_terminal:
-                self._tool_call_count += 1
         elif event.event == "subagent.updated":
             child_id = event.data.get("child_id")
             if type(child_id) is str and child_id.strip():

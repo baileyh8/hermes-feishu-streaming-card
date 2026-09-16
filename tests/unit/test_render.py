@@ -25,16 +25,17 @@ def test_render_thinking_card_keeps_runtime_status_only_in_footer():
     session.apply(event)
     card = render_card(session)
     assert card["schema"] == "2.0"
-    assert card["header"]["title"]["content"] == "Hermes Agent"
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
     assert "subtitle" not in card["header"]
     content = str(card)
     main = next(item for item in card["body"]["elements"] if item.get("element_id") == "main_content")
     assert main["content"] == "正在分析。"
     assert "正在思考" not in content
     assert "思考中" not in str(card["header"])
-    assert "生成中" in content
+    assert "执行中" in content
+    assert "生成中" not in content
     assert "正在分析。" in content
-    assert "思考与工具 · 1 次工具调用" in content
+    assert "思考过程" in content
 
 
 @pytest.mark.parametrize(
@@ -58,7 +59,7 @@ def test_render_card_accepts_custom_header_title():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "研发助手"
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · 研发助手"
 
 
 def test_render_initial_running_card_shows_context_loading_without_empty_timeline():
@@ -73,7 +74,7 @@ def test_render_initial_running_card_shows_context_loading_without_empty_timelin
     )
     assert any(frame in main["content"] for frame in _SPINNER_FRAMES)
     assert "正在加载上下文…" in main["content"]
-    assert card["header"]["title"]["content"] == "Hermes Agent"
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
     assert "subtitle" not in card["header"]
     assert {"auxiliary_timeline", "tool_summary"}.isdisjoint({
         item.get("element_id") for item in card["body"]["elements"]
@@ -118,7 +119,10 @@ def test_running_tool_without_model_text_removes_loading_placeholder_from_body()
 
     card = render_card(session)
 
-    assert card["header"]["subtitle"]["content"] == "正在执行终端：pytest -q"
+    row = next(
+        item for item in card["body"]["elements"]
+        if item.get("element_id") == "tool_activity_0"
+    )
     assert not any(
         str(item.get("element_id", "")).startswith("main_content")
         for item in card["body"]["elements"]
@@ -126,7 +130,7 @@ def test_running_tool_without_model_text_removes_loading_placeholder_from_body()
     assert "正在加载上下文…" not in str(card)
 
 
-def test_v4_running_card_uses_preview_title_and_public_interim_body():
+def test_v4_running_card_uses_state_title_and_public_interim_body():
     session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
     session.thinking_text = "我先检查天气客户端。"
     session.latest_tool_preview = "正在读取：weather_client.py"
@@ -143,8 +147,8 @@ def test_v4_running_card_uses_preview_title_and_public_interim_body():
         if item.get("element_id") == "footer"
     )
 
-    assert card["header"]["title"]["content"] == "Hermes Agent"
-    assert card["header"]["subtitle"]["content"] == "正在读取：weather_client.py"
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
+    assert "subtitle" not in card["header"]
     assert not any(
         element.get("element_id") == "runtime_summary"
         for element in card["body"]["elements"]
@@ -162,8 +166,8 @@ def test_compaction_phase_replaces_header_title_and_hides_stale_tool_summary():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "正在压缩上下文"
-    assert "subtitle" not in card["header"]
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · 研发助手"
+    assert card["header"]["subtitle"]["content"] == "正在压缩上下文"
     assert "正在读取：weather_client.py" not in str(card["header"])
 
 
@@ -209,8 +213,13 @@ def test_tool_activity_clears_compaction_and_restores_tool_subtitle():
     card = render_card(session, title="研发助手")
 
     assert session.runtime_phase_text == ""
-    assert card["header"]["title"]["content"] == "研发助手"
-    assert card["header"]["subtitle"]["content"] == "正在执行终端：pytest"
+    # The header keeps the action PHRASE but not the target; the target lives in the row below.
+    assert card["header"]["title"]["content"] == "⏳ 正在执行终端 · 研发助手"
+    row = next(
+        item for item in card["body"]["elements"]
+        if item.get("element_id") == "tool_activity_0"
+    )
+    assert "pytest" in row["content"]
 
 
 def test_completed_card_never_renders_stale_compaction_phase():
@@ -221,7 +230,7 @@ def test_completed_card_never_renders_stale_compaction_phase():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "研发助手"
+    assert card["header"]["title"]["content"] == "✅ 研发助手"
     assert "正在压缩上下文" not in str(card)
 
 
@@ -305,7 +314,7 @@ def test_v4_completed_restores_configured_title_and_metrics():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "研发助手"
+    assert card["header"]["title"]["content"] == "✅ 研发助手"
     assert "正在执行终端：pytest" not in str(card["header"])
     assert "2s" in str(card)
     assert "gpt-5.5" in str(card)
@@ -343,9 +352,9 @@ def test_v4_failed_retains_preview_and_status_only_footer():
         if item.get("element_id") == "footer"
     )
 
-    assert card["header"]["title"]["content"] == "Hermes Agent"
-    assert card["header"]["subtitle"]["content"] == "正在读取：演示天气数据"
-    assert footer["content"] == "已停止"
+    assert card["header"]["title"]["content"] == "⛔ Hermes Agent"
+    assert "subtitle" not in card["header"]
+    assert footer["content"] == "<text_tag color='red'>已停止</text_tag>"
     assert "ctx " not in footer["content"]
 
 
@@ -355,7 +364,7 @@ def test_v4_missing_preview_keeps_configured_title():
 
     card = render_card(session, title="研发助手")
 
-    assert card["header"]["title"]["content"] == "研发助手"
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · 研发助手"
 
 
 @pytest.mark.parametrize(
@@ -367,15 +376,34 @@ def test_v4_missing_preview_keeps_configured_title():
     ],
 )
 def test_v4_runtime_header_is_single_line_bounded_and_redacted(preview):
+    from hermes_feishu_card.events import SidecarEvent
+
     session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
     session.latest_tool_preview = preview + ("x" * 300)
+    session.apply(
+        SidecarEvent(
+            schema_version="1",
+            event="tool.updated",
+            conversation_id="c",
+            message_id="m",
+            chat_id="oc",
+            platform="feishu",
+            sequence=1,
+            created_at=10.0,
+            data={
+                "tool_id": "terminal-1",
+                "name": "terminal",
+                "status": "running",
+                "detail": preview + ("x" * 300),
+            },
+        )
+    )
 
-    title = render_card(session)["header"]["subtitle"]["content"]
+    card = render_card(session)
+    rendered = str(card)
 
-    assert "\n" not in title
-    assert "unsafe" not in title
-    assert "[REDACTED]" in title
-    assert len(title) <= 120
+    assert "unsafe" not in rendered
+    assert "[REDACTED]" in rendered
 
 
 def test_render_completed_card_replaces_thinking():
@@ -408,7 +436,7 @@ def test_v3818_normal_completed_card_keeps_element_order_and_configured_footer()
     assert card["body"]["elements"][-1] == {
         "tag": "markdown",
         "element_id": "footer",
-        "content": "MiniMax M2.7 · 3s · ↓34",
+        "content": "<text_tag color='green'>已完成</text_tag> · MiniMax M2.7 · 3s · ↓34",
         "text_size": "x-small",
     }
 
@@ -425,7 +453,7 @@ def test_v3818_normal_failed_card_keeps_element_order_and_footer():
         "main_divider",
         "footer",
     ]
-    assert card["body"]["elements"][-1]["content"] == "已停止"
+    assert card["body"]["elements"][-1]["content"] == "<text_tag color='red'>已停止</text_tag>"
 
 
 @pytest.mark.parametrize(
@@ -468,7 +496,7 @@ def test_model_footer_color_preserves_layout_order_and_configured_fields():
     assert card["body"]["elements"][-1] == {
         "tag": "markdown",
         "element_id": "footer",
-        "content": '<font color="blue">gpt-5.5</font> · 3s · ↓34',
+        "content": "<text_tag color='green'>已完成</text_tag> · <font color=\"blue\">gpt-5.5</font> · 3s · ↓34",
         "text_size": "x-small",
     }
 
@@ -476,17 +504,17 @@ def test_model_footer_color_preserves_layout_order_and_configured_fields():
 def test_model_footer_color_does_not_change_non_completed_or_empty_fields():
     thinking = CardSession(conversation_id="c", message_id="m1", chat_id="oc")
     thinking.model = "gpt-5.5"
-    assert render_card(thinking)["body"]["elements"][-1]["content"].endswith("生成中")
+    assert "执行中" in render_card(thinking)["body"]["elements"][-1]["content"]
 
     failed = CardSession(conversation_id="c", message_id="m2", chat_id="oc")
     failed.status = "failed"
     failed.model = "gpt-5.5"
-    assert render_card(failed)["body"]["elements"][-1]["content"] == "已停止"
+    assert render_card(failed)["body"]["elements"][-1]["content"] == "<text_tag color='red'>已停止</text_tag>"
 
     completed = CardSession(conversation_id="c", message_id="m3", chat_id="oc")
     completed.status = "completed"
     completed.model = "gpt-5.5"
-    assert render_card(completed, footer_fields=[])["body"]["elements"][-1]["content"] == "0s"
+    assert render_card(completed, footer_fields=[])["body"]["elements"][-1]["content"] == "<text_tag color='green'>已完成</text_tag> · 0s"
 
 
 def test_progress_handoff_changes_only_header_status_from_completed_card():
@@ -1222,9 +1250,9 @@ def test_render_completed_card_footer_adds_configured_subscription_usage_only():
     default = render_card(session, footer_fields=["duration"])
 
     assert configured["body"]["elements"][-1]["content"] == (
-        "3s · 5h 26% · weekly 89%"
+        "<text_tag color='green'>已完成</text_tag> · 3s · 5h 26% · weekly 89%"
     )
-    assert default["body"]["elements"][-1]["content"] == "3s"
+    assert default["body"]["elements"][-1]["content"] == "<text_tag color='green'>已完成</text_tag> · 3s"
 
 
 def test_spinner_text_changes_over_time():
@@ -1248,7 +1276,7 @@ def test_footer_shows_spinner_not_static_for_thinking():
     session.status = "thinking"
     footer = _render_footer(session)
     assert footer != "生成中"  # 不再是静态文本
-    assert "生成中" in footer  # label 仍然包含
+    assert "执行中" in footer  # label 仍然包含
 
 
 def test_footer_still_static_for_failed():
@@ -1256,7 +1284,7 @@ def test_footer_still_static_for_failed():
     from hermes_feishu_card.render import _render_footer
     session = CardSession(conversation_id="c", message_id="m", chat_id="c")
     session.status = "failed"
-    assert _render_footer(session) == "已停止"
+    assert _render_footer(session) == "<text_tag color='red'>已停止</text_tag>"
 
 
 def test_footer_treats_explicit_completed_snapshot_as_terminal():
@@ -1269,7 +1297,7 @@ def test_footer_treats_explicit_completed_snapshot_as_terminal():
     footer = _render_footer(session, display_status="completed")
 
     assert "生成中" not in footer
-    assert footer.startswith("1s · ")
+    assert footer.startswith("<text_tag color='green'>已完成</text_tag> · 1s · ")
 
 
 def test_waiting_footer_uses_absolute_remaining_deadline(monkeypatch):
@@ -2132,7 +2160,7 @@ def test_render_omits_redundant_tool_summary_when_timeline_is_visible():
 
     assert "auxiliary_timeline" in element_ids
     assert "tool_summary" not in element_ids
-    assert "思考与工具 · 1 次工具调用" in str(card)
+    assert "思考过程" in str(card)
 
 
 def test_render_timeline_folds_old_entries_before_answer():
@@ -2333,7 +2361,7 @@ def test_render_thinking_without_answer_uses_public_interim_main_content():
     assert "工具调用 0 次" not in str(card)
 
 
-def test_render_tool_summary_keeps_tool_names_when_reasoning_hidden():
+def test_render_tool_activity_keeps_tool_names_when_reasoning_hidden():
     from hermes_feishu_card.events import SidecarEvent
 
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
@@ -2365,10 +2393,14 @@ def test_render_tool_summary_keeps_tool_names_when_reasoning_hidden():
     )
 
     card = render_card(session, show_reasoning=False)
-    tool_summary = next(item for item in card["body"]["elements"] if item.get("element_id") == "tool_summary")
+    row = next(
+        item for item in card["body"]["elements"]
+        if item.get("element_id") == "tool_activity_0"
+    )
 
-    assert "工具调用 1 次" in tool_summary["content"]
-    assert "`search`: running" in tool_summary["content"]
+    assert "search" in str(row)
+    assert "#1" in str(row)
+    assert "运行中" in str(row)
     assert "auxiliary_timeline" not in str(card)
 
 

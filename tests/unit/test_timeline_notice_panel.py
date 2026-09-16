@@ -72,7 +72,7 @@ def test_a_timeline_with_tool_work_still_uses_the_panel():
     panels = _panels(card)
 
     assert len(panels) == 1
-    assert panels[0]["header"]["title"]["content"] == "思考与工具 · 1 次工具调用"
+    assert panels[0]["header"]["title"]["content"] == "思考过程"
     assert "上下文压缩已推迟" in str(panels[0])
 
 
@@ -85,7 +85,7 @@ def test_reasoning_alone_still_earns_the_panel():
     card = render_card(session)
 
     assert len(_panels(card)) == 1
-    assert "思考与工具 · 1 次工具调用" in str(_panels(card)[0])
+    assert "思考过程" in str(_panels(card)[0])
 
 
 def test_a_session_with_nothing_to_show_has_no_panel():
