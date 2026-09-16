@@ -511,6 +511,11 @@ def interaction_buttons(card):
     return found
 
 
+def cards_edited_into(feishu_client, message_id):
+    """Every card pushed onto *message_id* — empty while a card still holds its first content."""
+    return [card for edited_id, card in feishu_client.updated if edited_id == message_id]
+
+
 def operations_action_payload(
     value,
     *,
@@ -13197,16 +13202,20 @@ async def test_expired_approval_pauses_then_requires_fresh_explicit_consent(clie
     old_choice = interaction_buttons(feishu_client.sent[-1][1])[0]['value']
     session = test_client.app[SESSIONS_KEY]['hermes-message-1']
     interaction = session.active_interaction
+    assert interaction.feishu_message_id  # the approval card is tracked so it can be reused
+    cards_sent = len(feishu_client.sent)
     interaction.requested_at -= 301
     result = await test_client.get('/interactions/pause-consent')
     assert (await result.json())['status'] == 'paused'
     assert interaction.choice == ''
-    await _wait_until(lambda: len(feishu_client.sent) == 3)
-    paused = feishu_client.sent[-1][1]
+    await _wait_until(lambda: cards_edited_into(feishu_client, interaction.feishu_message_id))
+    paused = cards_edited_into(feishu_client, interaction.feishu_message_id)[-1]
     resume = interaction_buttons(paused)[0]['value']
     assert 'exact operation scope' in str(paused)
     assert resume['token'] != old_choice['token']
-    assert feishu_client.sent[-1][2] == 'omt_topic'
+    # Reuse, not a repeat: the paused notice refreshed the approval card instead of being posted
+    # as a second card the user would have to read twice (#314).
+    assert len(feishu_client.sent) == cards_sent
 
     async def click(value):
         return await test_client.post('/card/actions', json={'event': {
@@ -13246,6 +13255,9 @@ async def test_paused_approval_notification_recovers_with_same_uuid(client, monk
 
     monkeypatch.setattr(feishu_client, 'send_card_delivery', delivery, raising=False)
     interaction = test_client.app[SESSIONS_KEY]['hermes-message-1'].active_interaction
+    # Exercise the fallback notice path: this approval's card was never recorded, so the notice is
+    # posted as its own message — whose retry must keep ONE delivery UUID and ONE consent token.
+    interaction.feishu_message_id = ''
     interaction.requested_at -= 301
     await test_client.get('/interactions/pause-retry')
     await _wait_until(lambda: not test_client.app[sidecar_server.PAUSED_APPROVAL_TASKS_KEY])
@@ -13279,8 +13291,10 @@ async def test_paused_approval_cannot_resume_after_runtime_disappears(client):
     interaction = test_client.app[SESSIONS_KEY]['hermes-message-1'].active_interaction
     interaction.requested_at -= 301
     await test_client.get('/interactions/pause-orphan')
-    await _wait_until(lambda: len(feishu_client.sent) == 3)
-    resume = interaction_buttons(feishu_client.sent[-1][1])[0]['value']
+    await _wait_until(lambda: cards_edited_into(feishu_client, interaction.feishu_message_id))
+    resume = interaction_buttons(
+        cards_edited_into(feishu_client, interaction.feishu_message_id)[-1]
+    )[0]['value']
     interaction.last_waiter_poll_at -= 16
     response = await test_client.post('/card/actions', json={'event': {
         'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'}, 'action': {'value': resume},
@@ -13312,9 +13326,11 @@ async def test_live_gateway_approval_wait_survives_expiry_until_fresh_choice(cli
         session = next(s for s in test_client.app[SESSIONS_KEY].values() if s.active_interaction)
         session.active_interaction.requested_at -= 301
         await _wait_until(lambda: session.active_interaction.status == 'paused')
-        await _wait_until(lambda: len(feishu_client.sent) == 3)
+        await _wait_until(lambda: cards_edited_into(feishu_client, session.active_interaction.feishu_message_id))
         assert not waiter.done()
-        resume = interaction_buttons(feishu_client.sent[-1][1])[0]['value']
+        resume = interaction_buttons(
+            cards_edited_into(feishu_client, session.active_interaction.feishu_message_id)[-1]
+        )[0]['value']
         async def choose(value):
             return await test_client.post('/card/actions', json={'event': {
                 'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'},
@@ -13342,6 +13358,9 @@ async def test_paused_approval_keeps_initial_reply_anchor_without_started_event(
     assert response.status == 200
     session = test_client.app[SESSIONS_KEY]['om_first']
     session.active_interaction.requested_at -= 301
+    # This approval's card was never recorded as delivered, so the notice has to be posted on its
+    # own — and it must still inherit the approval's place in the thread.
+    session.active_interaction.feishu_message_id = ''
     await test_client.get('/interactions/first-approval')
     await _wait_until(lambda: len(feishu_client.sent) == 2)
     assert feishu_client.sent[-1][2:] == ('omt_thread', 'om_inbound')
