@@ -267,3 +267,64 @@ async def test_lost_create_response_is_not_an_unknown_im_delivery(transport, mon
         await client.send_card('oc_group', card(), delivery_uuid='turn-1')
     assert error.value.outcome == 'not_sent'
     assert not client.cardkit.entities
+
+
+@pytest.mark.asyncio
+async def test_topic_card_without_reply_anchor_is_replied_into_its_topic(transport, monkeypatch):
+    """A topic-bound card must never fall through to an unanchored create.
+
+    Feishu's create API cannot address a topic: given only a thread_id it posts to the chat, and
+    in a topic group that post becomes a NEW topic — which is how heartbeat/notice cards detached
+    from the conversation they belonged to. With no reply anchor supplied, the client has to
+    resolve one INSIDE the topic and reply to it.
+    """
+    client, calls = transport
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, deepcopy(kwargs.get("json_body"))))
+        if path == "/im/v1/messages":
+            params = kwargs.get("params") or {}
+            assert method == "GET"
+            assert params.get("container_id_type") == "thread"
+            assert params.get("container_id") == "omt_topic"
+            return {"code": 0, "data": {"items": [{"message_id": "om_inside_topic"}]}}
+        if path == "/cardkit/v1/cards":
+            return {"code": 0, "data": {"card_id": "card_fixture"}}
+        if path.startswith("/im/"):
+            return {"code": 0, "data": {"message_id": "om_fixture"}}
+        return {"code": 0}
+
+    monkeypatch.setattr(client, "_request_json", request)
+
+    await client.send_card_delivery("oc_group", card(), thread_id="omt_topic")
+
+    paths = [(method, path) for method, path, _ in calls]
+    assert ("POST", "/im/v1/messages/om_inside_topic/reply") in paths
+    assert ("POST", "/im/v1/messages") not in paths
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_topic_anchor_warns_instead_of_silently_detaching(
+    transport, monkeypatch, caplog
+):
+    """When no anchor can be found the send still proceeds, but it says so.
+
+    The silent version of this failure is why stray topics went unnoticed: the card looked
+    delivered, it was simply delivered somewhere else.
+    """
+    client, calls = transport
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, deepcopy(kwargs.get("json_body"))))
+        if path == "/im/v1/messages" and method == "GET":
+            return {"code": 0, "data": {"items": []}}
+        if path == "/cardkit/v1/cards":
+            return {"code": 0, "data": {"card_id": "card_fixture"}}
+        return {"code": 0, "data": {"message_id": "om_fixture"}}
+
+    monkeypatch.setattr(client, "_request_json", request)
+
+    with caplog.at_level("WARNING"):
+        await client.send_card_delivery("oc_group", card(), thread_id="omt_topic")
+
+    assert any("no anchor inside topic omt_topic" in record.message for record in caplog.records)
