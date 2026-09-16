@@ -13515,3 +13515,119 @@ async def test_paused_approval_keeps_initial_reply_anchor_without_started_event(
     await _wait_until(lambda: len(feishu_client.sent) == 2)
     assert feishu_client.sent[-1][2:] == ('omt_thread', 'om_inbound')
     assert feishu_client.sent_reply_in_thread[-1] is True
+
+
+async def test_heartbeat_card_is_recalled_once_its_refreshes_stop(client, monkeypatch):
+    """A heartbeat is reassurance, not a permanent record.
+
+    The complaint was a ⏳ Working card lingering in the thread as noise. Every refresh re-arms the
+    recall deadline, so it survives while the agent is working; once refreshes stop (the turn
+    ended, or the run died) the card is recalled and its state dropped — otherwise the next
+    heartbeat would keep editing a message that no longer exists.
+    """
+    monkeypatch.setattr(sidecar_server, "HEARTBEAT_RECALL_SECONDS", 0.05)
+    test_client, feishu_client = client
+
+    text = "⏳ Working — 3 min — iteration 5/90, terminal"
+    notice = hook_runtime._hfc_classify_system_notice(text)
+    assert notice is not None
+    assert notice["notice_kind"] == "heartbeat"
+    message_id = hook_runtime._hfc_independent_notice_message_id(
+        "oc_1", text, notice, anchor="om_user_task"
+    )
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            1,
+            {
+                **notice,
+                "content": text,
+                "notice_scope": "independent",
+                "delivery_kind": "notice",
+                "reply_to_message_id": "om_user_task",
+            },
+            message_id=message_id,
+        ),
+    )
+
+    assert response.status == 200
+    assert len(feishu_client.sent) == 1
+    delivered_message_id = f"feishu-message-{len(feishu_client.sent)}"
+
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == [delivered_message_id]
+    assert message_id not in test_client.app[SESSIONS_KEY]
+
+
+async def test_a_refreshed_heartbeat_pushes_its_recall_deadline_out(client, monkeypatch):
+    """While refreshes keep arriving the card stays; the deadline tracks the LAST update."""
+    monkeypatch.setattr(sidecar_server, "HEARTBEAT_RECALL_SECONDS", 0.2)
+    test_client, feishu_client = client
+
+    texts = (
+        "⏳ Working — 3 min — iteration 5/90, terminal",
+        "⏳ Working — 6 min — iteration 9/90, terminal",
+    )
+    message_id = ""
+    for sequence, text in enumerate(texts, start=1):
+        notice = hook_runtime._hfc_classify_system_notice(text)
+        message_id = hook_runtime._hfc_independent_notice_message_id(
+            "oc_1", text, notice, anchor="om_user_task"
+        )
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "system.notice",
+                sequence,
+                {
+                    **notice,
+                    "content": text,
+                    "notice_scope": "independent",
+                    "delivery_kind": "notice",
+                    "reply_to_message_id": "om_user_task",
+                },
+                message_id=message_id,
+            ),
+        )
+
+    # One card, edited in place — never a second card — and not recalled while refreshing.
+    assert len(feishu_client.sent) == 1
+    await _wait_until(lambda: len(feishu_client.updated) == 1)
+    assert feishu_client.deleted == []
+
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == [f"feishu-message-{len(feishu_client.sent)}"]
+
+
+async def test_refused_recall_keeps_the_heartbeat_card_usable(client, monkeypatch):
+    """Feishu may refuse a recall; then the card must stay, and its state must survive."""
+    monkeypatch.setattr(sidecar_server, "HEARTBEAT_RECALL_SECONDS", 0.05)
+    test_client, feishu_client = client
+    feishu_client.fail_delete = True
+
+    text = "⏳ Working — 3 min — iteration 5/90, terminal"
+    notice = hook_runtime._hfc_classify_system_notice(text)
+    message_id = hook_runtime._hfc_independent_notice_message_id(
+        "oc_1", text, notice, anchor="om_user_task"
+    )
+    await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            1,
+            {
+                **notice,
+                "content": text,
+                "notice_scope": "independent",
+                "delivery_kind": "notice",
+                "reply_to_message_id": "om_user_task",
+            },
+            message_id=message_id,
+        ),
+    )
+
+    await _REAL_ASYNCIO_SLEEP(0.2)
+    assert feishu_client.deleted == []
+    assert message_id in test_client.app[SESSIONS_KEY]

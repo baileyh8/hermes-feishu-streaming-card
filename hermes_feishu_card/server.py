@@ -147,6 +147,13 @@ INTERACTION_RESULT_SESSION_KEYS_KEY = web.AppKey(
 )
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
+HEARTBEAT_RECALL_TASKS_KEY = web.AppKey("heartbeat_recall_tasks", dict)
+# A heartbeat card is reassurance while the agent works, not a permanent record: the core edits
+# it every agent.gateway_notify_interval, and each update re-arms this deadline. Once the updates
+# stop — the turn ended, or the run died — the card is recalled so the thread keeps only the
+# conversation. It must comfortably exceed the heartbeat interval, or a slow interval would recall
+# the card mid-run and the next tick would post a fresh one (visible as duplicates).
+HEARTBEAT_RECALL_SECONDS = 300.0
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -550,6 +557,7 @@ def create_app(
     app[RUNTIME_INTERACTION_RESERVATIONS_KEY] = {}
     app[FLUSH_CONTROLLERS_KEY] = {}
     app[CARD_ANIMATION_TASKS_KEY] = {}
+    app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -626,6 +634,7 @@ def create_app(
     app.on_startup.append(_start_runtime_integrity_monitor)
     app.on_cleanup.append(_stop_operations_diagnostics)
     app.on_cleanup.append(_stop_card_animations)
+    app.on_cleanup.append(_stop_heartbeat_recalls)
     app.on_cleanup.append(_stop_native_handoff_repairs)
     app.on_cleanup.append(_stop_runtime_cleanup)
     app.on_cleanup.append(_stop_runtime_integrity_monitor)
@@ -5190,6 +5199,16 @@ async def _apply_event_locked(
                 message_id = str(delivery.message_id)
                 feishu_message_ids[session_key] = message_id
                 message_bot_ids[session_key] = route.bot_id
+                if _is_heartbeat_notice(event):
+                    # A heartbeat is transient by nature: arm the recall deadline now and re-arm it
+                    # on every later edit, so it disappears once it stops carrying news.
+                    _schedule_heartbeat_recall(
+                        request.app,
+                        session_key=session_key,
+                        message_id=message_id,
+                        bot_id=route.bot_id,
+                        session=session,
+                    )
                 _ensure_card_animation(
                     request.app,
                     session_key=session_key,
@@ -5553,6 +5572,16 @@ async def _apply_event_locked(
                     feishu_message_id,
                     latest_card,
                     bot_id,
+                )
+            if updated and not is_terminal and _is_heartbeat_notice(event):
+                # Each heartbeat refresh pushes the recall deadline out; the card only goes away
+                # once the refreshes stop.
+                _schedule_heartbeat_recall(
+                    request.app,
+                    session_key=session_key,
+                    message_id=feishu_message_id,
+                    bot_id=bot_id,
+                    session=latest_session,
                 )
             if is_terminal and render_result.disposition == "card":
                 if updated:
@@ -7162,6 +7191,91 @@ async def _delete_card_for_app(
         logger.warning("Feishu card recall failed: %s", exc.__class__.__name__)
         return False
     return True
+
+
+def _is_heartbeat_notice(event: SidecarEvent) -> bool:
+    data = event.data if isinstance(event.data, dict) else {}
+    return (
+        event.event == "system.notice"
+        and str(data.get("notice_kind") or "").strip().lower() == "heartbeat"
+    )
+
+
+def _cancel_heartbeat_recall(app: web.Application, session_key: str) -> None:
+    tasks: Dict[str, asyncio.Task[None]] = app.get(HEARTBEAT_RECALL_TASKS_KEY) or {}
+    task = tasks.pop(session_key, None)
+    if task is not None and not task.done():
+        task.cancel()
+
+
+def _schedule_heartbeat_recall(
+    app: web.Application,
+    *,
+    session_key: str,
+    message_id: str,
+    bot_id: str | None,
+    session: CardSession | None,
+) -> None:
+    """(Re)arm the recall deadline for the heartbeat card of ``session_key``.
+
+    Called on every delivery/update of a heartbeat card, so the deadline tracks the LAST time the
+    card carried news: while the agent is working the card stays, and once it stops being refreshed
+    the card is recalled instead of lingering in the thread as noise.
+    """
+    if not session_key or not message_id:
+        return
+    tasks: Dict[str, asyncio.Task[None]] = app[HEARTBEAT_RECALL_TASKS_KEY]
+    _cancel_heartbeat_recall(app, session_key)
+    tasks[session_key] = asyncio.create_task(
+        _run_heartbeat_recall(
+            app,
+            session_key=session_key,
+            message_id=message_id,
+            bot_id=bot_id,
+            session=session,
+        )
+    )
+
+
+async def _run_heartbeat_recall(
+    app: web.Application,
+    *,
+    session_key: str,
+    message_id: str,
+    bot_id: str | None,
+    session: CardSession | None,
+) -> None:
+    try:
+        await asyncio.sleep(HEARTBEAT_RECALL_SECONDS)
+        if session is not None and app[SESSIONS_KEY].get(session_key) is not session:
+            # A newer card took over this key; its own task owns the deadline now.
+            return
+        if not await _delete_card_for_app(app, message_id, bot_id):
+            # Recall refused (scope, age): keep the state so the card stays usable, and let the
+            # next heartbeat re-arm the deadline.
+            return
+        app[FEISHU_MESSAGE_IDS_KEY].pop(session_key, None)
+        # Drop the session too: with the card gone, a later heartbeat must post a FRESH card. Left
+        # in place it would keep editing a recalled message — the 230011 failure loop.
+        _cleanup_failed_session_state(app, session_key, session)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.debug("Heartbeat recall failed: %s", exc)
+    finally:
+        tasks: Dict[str, asyncio.Task[None]] = app.get(HEARTBEAT_RECALL_TASKS_KEY) or {}
+        if tasks.get(session_key) is asyncio.current_task():
+            tasks.pop(session_key, None)
+
+
+async def _stop_heartbeat_recalls(app: web.Application) -> None:
+    tasks: Dict[str, asyncio.Task[None]] = app.get(HEARTBEAT_RECALL_TASKS_KEY) or {}
+    pending = [task for task in tasks.values() if not task.done()]
+    tasks.clear()
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _update_card_for_app(
