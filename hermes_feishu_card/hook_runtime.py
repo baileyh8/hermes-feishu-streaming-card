@@ -5939,6 +5939,38 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
         _HFC_NATIVE_HANDOFF_CHUNK.reset(token)
 
 
+async def _hfc_topic_anchor_for_send(
+    self: Any, thread_id: str, metadata: dict[str, Any] | None
+) -> str:
+    """Resolve a message id INSIDE ``thread_id`` so an unanchored topic send can reply into it.
+
+    ``metadata["reply_to_message_id"]`` is preferred (no extra API call); otherwise the newest
+    message in the topic is fetched. Any failure returns ``""`` so the caller keeps its previous
+    routing — never let an anchor lookup break a delivery.
+    """
+    candidate = _metadata_reply_to(metadata)
+    if candidate.startswith("om_"):
+        return candidate
+    fetch = getattr(self, "_fetch_last_message_in_thread", None)
+    if not callable(fetch):
+        return ""
+    try:
+        anchor = await fetch(thread_id)
+    except Exception as exc:
+        logger.warning(
+            "[hermes-feishu-card] topic anchor lookup failed for %s: %s", thread_id, exc
+        )
+        return ""
+    anchor = str(anchor or "").strip()
+    if not anchor:
+        logger.warning(
+            "[hermes-feishu-card] no anchor inside topic %s; falling back to an unanchored send, "
+            "which becomes a NEW topic in a topic group",
+            thread_id,
+        )
+    return anchor
+
+
 async def _hfc_send_raw_message_with_native_handoff_route(self: Any, **kwargs: Any) -> Any:
     original = getattr(type(self), "_hfc_original_send_raw_message", None)
     if not callable(original):
@@ -5956,13 +5988,24 @@ async def _hfc_send_raw_message_with_native_handoff_route(self: Any, **kwargs: A
             reply_to = metadata_reply_to
     send_kwargs = kwargs
     if thread_id and not reply_to:
-        # Feishu's create API accepts chat_id but not thread_id. Preserve the
-        # logical topic binding for native-handoff identity/UUID derivation,
-        # while making the actual unanchored create fall back to the parent chat.
+        # A topic send with no reply anchor cannot be addressed by Feishu: ``thread_id`` is not a
+        # supported receive_id for message.create, so an unanchored create silently becomes a NEW
+        # topic in a topic group. Media sends (image/file/voice/video) and the approval/update-prompt
+        # cards arrive with ``metadata["thread_id"]`` only — resolve an anchor INSIDE the topic and
+        # reply to it, instead of dropping the topic binding and posting to the parent chat.
+        anchor = await _hfc_topic_anchor_for_send(
+            self, thread_id, metadata if isinstance(metadata, dict) else None
+        )
         send_kwargs = dict(kwargs)
-        send_metadata = dict(metadata) if isinstance(metadata, dict) else {}
-        send_metadata.pop("thread_id", None)
-        send_kwargs["metadata"] = send_metadata
+        if anchor:
+            send_kwargs["reply_to"] = anchor
+            reply_to = anchor
+        else:
+            # No anchor reachable: preserve the logical topic binding for native-handoff
+            # identity/UUID derivation, while the unanchored create falls back to the parent chat.
+            send_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            send_metadata.pop("thread_id", None)
+            send_kwargs["metadata"] = send_metadata
     if _HFC_NATIVE_HANDOFF_SEND_TRACKER.get() is None:
         return await original(self, **send_kwargs)
     if thread_id:
