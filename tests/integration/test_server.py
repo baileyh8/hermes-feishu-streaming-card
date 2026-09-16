@@ -7853,8 +7853,10 @@ async def test_v4_runtime_header_and_interim_body_share_one_card(client):
     )
 
     _, running = await wait_for_card_update(feishu_client, "正在读取：weather_client.py")
-    assert running["header"]["title"]["content"] == "Hermes Agent"
-    assert running["header"]["subtitle"]["content"] == "正在读取：weather_client.py"
+    assert running["header"]["title"]["content"] == "⏳ 正在读取 · Hermes Agent"
+    # The target moved to the content-area tool row; the header stays one readable line.
+    assert "subtitle" not in running["header"]
+    assert "正在读取：weather_client.py" in str(running)
     assert "我先检查天气客户端。" in str(running)
     assert all(
         message_id == "feishu-message-1"
@@ -7880,7 +7882,7 @@ async def test_v4_runtime_header_and_interim_body_share_one_card(client):
         feishu_client,
         "广州今天有短时阵雨。",
     )
-    assert completed["header"]["title"]["content"] == "Hermes Agent"
+    assert completed["header"]["title"]["content"] == "✅ Hermes Agent"
     assert "正在读取：weather_client.py" not in str(completed["header"])
     assert "gpt-5.5" in str(completed)
 
@@ -7943,8 +7945,9 @@ async def test_v4_interaction_restores_cached_preview_on_stable_v2_card(client):
 
     assert response.status == 200
     _, resumed = await wait_for_card_update(feishu_client, "已选择：允许一次")
-    assert resumed["header"]["title"]["content"] == "Hermes Agent"
-    assert resumed["header"]["subtitle"]["content"] == "正在读取：weather_client.py"
+    assert resumed["header"]["title"]["content"] == "⏳ 正在读取 · Hermes Agent"
+    assert "subtitle" not in resumed["header"]
+    assert "正在读取：weather_client.py" in str(resumed)
     assert len(feishu_client.sent) == 2
     assert feishu_client.updated[-1][0] == "feishu-message-1"
 
@@ -8056,7 +8059,7 @@ async def test_interaction_promotion_finalizes_predecessor_snapshot(client):
     snapshot = predecessor_snapshots[0]
     assert snapshot["header"] == {
         "template": "green",
-        "title": {"tag": "plain_text", "content": "Scoped Hermes Agent"},
+        "title": {"tag": "plain_text", "content": "✅ Scoped Hermes Agent"},
         "subtitle": {"tag": "plain_text", "content": "已转入交互卡片"},
     }
     assert snapshot["config"]["summary"]["content"] == "已转入交互卡片"
@@ -8098,8 +8101,9 @@ async def test_v4_preview_burst_coalesces_and_late_preview_cannot_reopen_card(
     assert all(response.status == 200 for response in responses)
 
     _, running = await wait_for_card_update(feishu_client, "正在读取：file-15.py")
-    assert running["header"]["title"]["content"] == "Hermes Agent"
-    assert running["header"]["subtitle"]["content"] == "正在读取：file-15.py"
+    assert running["header"]["title"]["content"] == "⏳ 正在读取 · Hermes Agent"
+    assert "subtitle" not in running["header"]
+    assert "正在读取：file-15.py" in str(running)
 
     completed = await test_client.post(
         "/events",
@@ -10632,7 +10636,7 @@ async def test_card_config_customizes_header_title():
         await test_client.close()
 
     assert response.status == 200
-    assert feishu_client.sent[0][1]["header"]["title"]["content"] == "研发助手"
+    assert feishu_client.sent[0][1]["header"]["title"]["content"] == "⏳ 执行中 · 研发助手"
 
 
 async def test_invalid_event_returns_400_json(client):
@@ -10852,8 +10856,10 @@ async def test_compaction_notice_updates_existing_primary_card(client):
     assert len(feishu_client.sent) == 1
     await _wait_until(lambda: len(feishu_client.updated) == 1)
     updated_card = feishu_client.updated[0][1]
-    assert updated_card["header"]["title"]["content"] == "正在压缩上下文"
-    assert "subtitle" not in updated_card["header"]
+    # The phase no longer replaces the session title: the title still answers "is it still
+    # working?", and the phase renders beneath it.
+    assert updated_card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
+    assert updated_card["header"]["subtitle"]["content"] == "正在压缩上下文"
 
 
 async def test_compaction_first_creates_topic_primary_card_and_continues_stream(client):
@@ -10877,7 +10883,7 @@ async def test_compaction_first_creates_topic_primary_card_and_continues_stream(
     assert len(feishu_client.sent) == 1
     assert feishu_client.sent[0][2] == conversation_id
     assert feishu_client.sent[0][3] == message_id
-    assert feishu_client.sent[0][1]["header"]["title"]["content"] == "正在压缩上下文"
+    assert feishu_client.sent[0][1]["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
     assert message_id in test_client.app[SESSIONS_KEY]
 
     continued = await test_client.post(
@@ -11458,7 +11464,8 @@ async def test_replayed_started_with_higher_sequence_does_not_block_later_delta(
     assert len(feishu_client.sent) == 1
     assert len(feishu_client.updated) == 1
     assert "后续增量" in str(feishu_client.updated[0][1])
-    assert "生成中" in str(feishu_client.updated[0][1])
+    assert "执行中" in str(feishu_client.updated[0][1])
+    assert "生成中" not in str(feishu_client.updated[0][1])
 
 
 async def test_delta_after_completed_does_not_update_again(client):
@@ -12294,7 +12301,7 @@ async def test_started_card_title_uses_bot_over_profile_and_global():
 
     assert response.status == 200
     sent_card = factory.clients["sales"].sent[0][1]
-    assert sent_card["header"]["title"]["content"] == "Sales Bot"
+    assert sent_card["header"]["title"]["content"] == "⏳ 执行中 · Sales Bot"
 
 
 async def test_session_card_config_preserves_base_text_size_roles_on_profile_override():

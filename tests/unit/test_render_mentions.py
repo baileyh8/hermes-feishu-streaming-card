@@ -20,7 +20,7 @@ def test_render_accepts_mentions_enabled_kwarg_with_default():
 
     card = render_card(session, mentions_enabled=True)
 
-    assert card["header"]["title"]["content"] == "Hermes Agent"
+    assert card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
 
 
 def test_render_mentions_enabled_false_keeps_pending_approval_card():
