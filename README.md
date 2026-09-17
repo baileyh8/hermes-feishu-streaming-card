@@ -264,13 +264,11 @@ Hermes Gateway
 ## 文档入口
 
 - 详细使用手册：[中文](docs/user-guide.md) / [English](docs/user-guide.en.md)
-- 安装包说明：[README-install.md](README-install.md)
 - 架构说明：[中文](docs/architecture.md) / [English](docs/architecture.en.md)
 - 事件协议：[中文](docs/event-protocol.md) / [English](docs/event-protocol.en.md)
-- 安装安全：[中文](docs/installer-safety.md) / [English](docs/installer-safety.en.md)
+- 安装包与安全：[README-install.md](README-install.md)；[中文](docs/installer-safety.md) / [English](docs/installer-safety.en.md)
 - 迁移说明：[中文](docs/migration.md) / [English](docs/migration.en.md)
-- 端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)
-- 发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
+- 端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)；发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
 - 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)
 - [CardKit 流式更新](docs/wiki/cardkit-streaming.md)；[提及位置与审批暂停](docs/wiki/card-readability.md)。
 - 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md) 遇到 `manual_review_required` 时，先执行 `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`；V4.4.6 的 `integrity.next_command` 会给出可复制的只读诊断命令。迁移与启动顺序见 [Hermes 完整性排障](docs/wiki/hermes-decomposed-patcher.md)，本轮修复及待验证问题见 [Issues/PR 处理记录](docs/issue-triage-2026-09-15.md)。
