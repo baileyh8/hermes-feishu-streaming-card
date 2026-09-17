@@ -129,3 +129,17 @@ async def test_generated_heartbeat_hook_only_recalls_successful_fresh_sends(monk
     exec(compile(patched, '<heartbeat-flow>', 'exec'), namespace)
     await namespace['Gateway']()._notify_long_running(Adapter(), SimpleNamespace(platform='feishu', chat_id='test-chat'))
     assert calls == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('platform', ['notfeishu', 'feishu-preview'])
+async def test_notice_recall_does_not_guess_unknown_platform_names(monkeypatch, platform):
+    calls = []
+    async def schedule(*args, **kwargs):
+        calls.append(args)
+        return True
+    monkeypatch.setattr(hook_runtime, 'schedule_message_recall_async', schedule)
+    assert not await hook_runtime.recall_transient_thread_notice_async(
+        SimpleNamespace(platform=platform), HEARTBEAT,
+        SimpleNamespace(success=True, message_id='notice-fixture'))
+    assert calls == []

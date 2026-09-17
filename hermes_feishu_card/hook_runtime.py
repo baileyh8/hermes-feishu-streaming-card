@@ -9383,7 +9383,7 @@ async def recall_transient_thread_notice_async(candidate: Any, content: Any, res
         if getattr(result, "success", False) is not True:
             return False
         platform = getattr(_notice_source(candidate), "platform", "")
-        if "feishu" not in str(getattr(platform, "value", platform) or "").lower():
+        if str(getattr(platform, "value", platform) or "").lower() != "feishu":
             return False
         message_id = str(getattr(result, "message_id", "") or "")
         if not message_id:
