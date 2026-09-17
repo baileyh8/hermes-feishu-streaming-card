@@ -26,6 +26,11 @@ QUEUED_COMPLETE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_COMPLETE_PATCH_BEGIN"
 QUEUED_COMPLETE_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_COMPLETE_PATCH_END"
 QUEUED_FOLLOWUP_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FOLLOWUP_PATCH_BEGIN"
 QUEUED_FOLLOWUP_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FOLLOWUP_PATCH_END"
+# The busy-path send is the one fragment that CAPTURES an upstream statement (see
+# _apply_busy_recall_patch): the v1 suffix lets a future revision install beside a v0 block instead
+# of silently reusing it.
+BUSY_RECALL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_BUSY_RECALL_PATCH_BEGIN_V1"
+BUSY_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_BUSY_RECALL_PATCH_END_V1"
 QUEUED_FINAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_BEGIN"
 QUEUED_FINAL_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_END"
 REDIRECT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_REDIRECT_PATCH_BEGIN"
@@ -164,6 +169,7 @@ def apply_patch(
     content = _apply_queued_followup_patch(content)
     if strategy == "gateway_run_013_plus":
         content = _apply_redirect_patch(content)
+        content = _apply_busy_recall_patch(content)
         content = _apply_cron_patch(content)
         content = _apply_command_card_startup_patch(content)
         content = _apply_native_redelivery_patch(content)
@@ -580,6 +586,79 @@ def _apply_redirect_patch(content: str) -> str:
         hook = _render_redirect_hook_block(indent, newline)
         return "".join(lines[:index] + hook + lines[index:])
     return content
+
+
+def _render_busy_recall_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import recall_busy_redirect_ack_async as _hfc_recall_ack{newline}"
+        ),
+        f"{inner_indent}await _hfc_recall_ack(event, content, _hfc_recall_result){newline}",
+        *_render_hook_exception_handler(indent, newline),
+    ]
+
+
+def _apply_busy_recall_patch(content: str) -> str:
+    """Withdraw the busy-path redirect acknowledgement shortly after it is sent.
+
+    Every other fragment only ADDS code beside an anchor. This one captures the existing send
+    (``await adapter._send_with_retry(...)`` in ``_send_busy_reply``) as ``_hfc_recall_result``,
+    because the message id to recall lives only in that return value. The captured span is upstream's
+    own text with a single ``name = `` prefix, so a pristine restore + re-apply reproduces it, and
+    the install marker keeps re-application idempotent. When the statement's shape changes upstream
+    we leave the file untouched rather than guess at a rewrite.
+    """
+    if (
+        _find_simple_marker_block(
+            content,
+            BUSY_RECALL_PATCH_BEGIN,
+            BUSY_RECALL_PATCH_END,
+            "busy recall patch markers",
+        )
+        is not None
+    ):
+        return content
+
+    func = _find_async_function(_parse_content(content), "_send_busy_reply")
+    if func is None:
+        return content
+    target = next(
+        (
+            node
+            for node in func.body
+            if isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Await)
+            and isinstance(node.value.value, ast.Call)
+            and _same_expression(node.value.value.func, "adapter._send_with_retry")
+        ),
+        None,
+    )
+    if target is None or target.lineno is None or target.end_lineno is None:
+        return content
+
+    lines = content.splitlines(keepends=True)
+    start, end = target.lineno - 1, target.end_lineno - 1
+    if start < 0 or end < start or end >= len(lines):
+        return content
+    stripped = lines[start].lstrip()
+    if not stripped.startswith("await "):
+        return content
+    indent = lines[start][: len(lines[start]) - len(stripped)]
+    newline = _line_ending(lines[start]) or _detect_newline(content)
+    return "".join(
+        lines[:start]
+        + [
+            f"{indent}{BUSY_RECALL_PATCH_BEGIN}{newline}",
+            f"{indent}_hfc_recall_result = {stripped}",
+        ]
+        + lines[start + 1 : end + 1]
+        + _render_busy_recall_hook_block(indent, newline)
+        + [f"{indent}{BUSY_RECALL_PATCH_END}{newline}"]
+        + lines[end + 1 :]
+    )
 
 
 def _apply_slash_confirm_patch(content: str) -> str:
@@ -4306,6 +4385,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
     content = _apply_queued_complete_patch(content)
     content = _apply_queued_followup_patch(content)
     content = _apply_redirect_patch(content)
+    content = _apply_busy_recall_patch(content)
     for apply in (_apply_command_card_adapter_patch, _apply_hfc_command_patch,
                   _apply_slash_confirm_patch, _apply_command_card_startup_patch,
                   _apply_native_redelivery_patch, _apply_platform_notice_patch):

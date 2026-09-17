@@ -1077,9 +1077,32 @@ def test_completion_bad_metadata_uses_safe_defaults():
 
 
 def test_failed_visible_main_text_shows_error():
+    """The failure text is shown — and it must not REPLACE what the user was reading.
+
+    Maintainer note (contract change): this used to assert `visible_main_text == "失败原因"` while a
+    thinking delta had already been streamed. That pinned the erasure: both readers of the card's
+    main text return `answer_text` alone once the status is `failed`, so the in-progress content
+    disappeared and the card was left showing nothing but the error. The user reported exactly that
+    for an HTTP 403 arriving mid-turn (「这种以后能否不要覆盖掉正在做的事项内容」).
+
+    What this test guards now: the error is still visible AND the streamed content survives beside it.
+    """
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 1, {"text": "旧思考"}))
     assert session.apply(event("message.failed", 2, {"error": "失败原因"}))
+    assert session.status == "failed"
+    assert "失败原因" in session.visible_main_text
+    assert "旧思考" in session.visible_main_text
+
+
+def test_a_failure_with_nothing_streamed_still_reports_the_error_alone():
+    """Fallback path: with no streamed content at all, the error IS the content.
+
+    This is the shape the rewritten test above used to cover, kept explicit so the no-content
+    fallback stays tested rather than being dropped along with the old assertion.
+    """
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("message.failed", 1, {"error": "失败原因"}))
     assert session.status == "failed"
     assert session.visible_main_text == "失败原因"
 

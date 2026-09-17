@@ -24,6 +24,7 @@ from hermes_feishu_card import server as sidecar_server
 from hermes_feishu_card.bots import RouteResult
 from hermes_feishu_card.card_limits import inspect_card_limits
 from hermes_feishu_card.events import SidecarEvent
+from hermes_feishu_card.metrics import SidecarMetrics
 from hermes_feishu_card.delivery_policy import ChatDeliveryPolicy
 from hermes_feishu_card.event_auth import (
     sign_event_request,
@@ -2168,7 +2169,11 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
     assert body["delivery"] == {"mode": "live"}
     assert body["event_auth_required"] is False
     assert body["active_sessions"] == 0
-    assert body["metrics"] == {
+    # Behavior contract, not a snapshot. This used to compare the WHOLE metrics payload against the
+    # literal below, which made every new counter a failure while catching nothing extra: the set
+    # comparison catches what matters (a counter that stops being reported), and the literal pins
+    # what this test is about — a fresh sidecar reports zero for everything it knows.
+    expected_metrics = {
         "events_received": 0,
         "events_applied": 0,
         "events_ignored": 0,
@@ -2231,7 +2236,15 @@ async def test_health_reports_healthy_status_and_active_sessions(client):
         "sessions_collected": 0,
         "zombie_sessions_collected": 0,
         "flush_controllers_collected": 0,
+        "ephemeral_recalls_scheduled": 0,
+        "ephemeral_recalls_completed": 0,
+        "ephemeral_recall_failures": 0,
     }
+    reported_metrics = body["metrics"]
+    assert set(reported_metrics) == set(SidecarMetrics().snapshot())
+    assert {
+        key: reported_metrics[key] for key in expected_metrics
+    } == expected_metrics
     assert body["reply_index"] == {"entries": 0, "last_lookup": {}}
     assert body["cron"] == {"cards_sent": 0, "fallbacks": 0}
     assert body["profile_diagnostics"] == {}
@@ -13646,3 +13659,70 @@ async def test_session_heartbeat_never_recalls_final_answer(client, monkeypatch)
     await _REAL_ASYNCIO_SLEEP(0.15)
     assert feishu_client.deleted == []
     assert test_client.app[SESSIONS_KEY]
+
+
+async def test_recall_schedule_withdraws_a_message_once_its_delay_elapses(client):
+    """The gateway cannot delete its own Feishu messages, so it delegates the recall to the sidecar.
+
+    The busy path's redirect acknowledgement ("↪ Redirected current run") is read once and then only
+    clutter in the thread: the gateway patch captures its message id and asks for this recall.
+    """
+    test_client, feishu_client = client
+
+    response = await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_redirect_ack", "delay_seconds": 0.05},
+    )
+
+    assert response.status == 200
+    body = await response.json()
+    assert body["ok"] is True
+    assert body["message_id"] == "om_redirect_ack"
+    # Nothing is withdrawn before the delay elapses — the user must still be able to read the
+    # acknowledgement while the corrected turn starts.
+    assert feishu_client.deleted == []
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_redirect_ack"]
+    assert test_client.app[METRICS_KEY].ephemeral_recalls_scheduled == 1
+    assert test_client.app[METRICS_KEY].ephemeral_recalls_completed == 1
+    assert test_client.app[METRICS_KEY].ephemeral_recall_failures == 0
+
+
+async def test_recall_schedule_clamps_the_delay_and_requires_a_message_id(client):
+    """A caller may not pin a deletion far into the future, and an empty id is a client error."""
+    test_client, feishu_client = client
+
+    response = await test_client.post("/recall/schedule", json={"message_id": "om_soon"})
+    assert response.status == 200
+    # No delay_seconds → the default, not zero: a recall racing the send could delete nothing.
+    assert (await response.json())["delay_seconds"] == sidecar_server.EPHEMERAL_RECALL_DEFAULT_SECONDS
+
+    response = await test_client.post(
+        "/recall/schedule", json={"message_id": "om_far", "delay_seconds": 10_000}
+    )
+    assert response.status == 200
+    assert (await response.json())["delay_seconds"] == sidecar_server.EPHEMERAL_RECALL_MAX_SECONDS
+
+    response = await test_client.post("/recall/schedule", json={"message_id": "   "})
+    assert response.status == 400
+    assert "message_id" in (await response.json())["error"]
+
+    response = await test_client.post(
+        "/recall/schedule", json={"message_id": "om_x", "delay_seconds": "soon"}
+    )
+    assert response.status == 400
+
+
+async def test_a_refused_recall_is_counted_and_leaves_the_message_alone(client):
+    """Feishu may refuse (missing scope, message too old): that is a counted best-effort miss."""
+    test_client, feishu_client = client
+    feishu_client.fail_delete = True
+
+    response = await test_client.post(
+        "/recall/schedule", json={"message_id": "om_stuck", "delay_seconds": 0.05}
+    )
+
+    assert response.status == 200
+    await _wait_until(lambda: test_client.app[METRICS_KEY].ephemeral_recall_failures)
+    assert feishu_client.deleted == []
+    assert test_client.app[METRICS_KEY].ephemeral_recalls_completed == 0

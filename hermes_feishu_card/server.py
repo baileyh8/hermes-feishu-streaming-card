@@ -154,6 +154,15 @@ HEARTBEAT_RECALL_TASKS_KEY = web.AppKey("heartbeat_recall_tasks", dict)
 # conversation. It must comfortably exceed the heartbeat interval, or a slow interval would recall
 # the card mid-run and the next tick would post a fresh one (visible as duplicates).
 HEARTBEAT_RECALL_SECONDS = 300.0
+# Acknowledgements that are read once and then only clutter the thread — the core's
+# "↪ Redirected current run …" notice — are withdrawn shortly after they land. The core cannot do
+# it itself (its Feishu adapter has no delete implementation: BasePlatformAdapter.delete_message
+# returns False), so the gateway asks this sidecar, which owns the working Feishu delete path.
+EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
+# Upper bound on a requested delay: a caller must not be able to pin a message deletion far into the
+# future (a recall scheduled beyond the runtime's lifetime would simply never run).
+EPHEMERAL_RECALL_MAX_SECONDS = 600.0
+EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", set)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -558,6 +567,7 @@ def create_app(
     app[FLUSH_CONTROLLERS_KEY] = {}
     app[CARD_ANIMATION_TASKS_KEY] = {}
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
+    app[EPHEMERAL_RECALL_TASKS_KEY] = set()
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -627,6 +637,7 @@ def create_app(
     app.router.add_post("/commands", _commands)
     app.router.add_post("/runtime/events", _runtime_events)
     app.router.add_post("/delivery/policy", _delivery_policy)
+    app.router.add_post("/recall/schedule", _recall_schedule)
     app.router.add_post("/native-handoff/ack", _native_handoff_ack)
     app.router.add_post("/native-handoff/recover", _native_handoff_recover)
     app.router.add_post("/events", _events)
@@ -635,6 +646,7 @@ def create_app(
     app.on_cleanup.append(_stop_operations_diagnostics)
     app.on_cleanup.append(_stop_card_animations)
     app.on_cleanup.append(_stop_heartbeat_recalls)
+    app.on_cleanup.append(_stop_ephemeral_recalls)
     app.on_cleanup.append(_stop_native_handoff_repairs)
     app.on_cleanup.append(_stop_runtime_cleanup)
     app.on_cleanup.append(_stop_runtime_integrity_monitor)
@@ -7192,6 +7204,96 @@ async def _run_heartbeat_recall(
 async def _stop_heartbeat_recalls(app: web.Application) -> None:
     tasks: Dict[str, asyncio.Task[None]] = app.get(HEARTBEAT_RECALL_TASKS_KEY) or {}
     pending = [task for task in tasks.values() if not task.done()]
+    tasks.clear()
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def _recall_schedule(request: web.Request) -> web.Response:
+    """Withdraw one bot message ``delay_seconds`` after it was posted.
+
+    The gateway asks for this on acknowledgements the user reads once ("↪ Redirected current run …"):
+    leaving them keeps a stale instruction in the thread forever. Best-effort by design — a refusal
+    (missing scope, message too old) leaves the message in place and is counted, never raised.
+    """
+    rejection = await _authenticate_sensitive_request(request)
+    if rejection is not None:
+        return rejection
+    try:
+        payload = json.loads(await request.read() or b"{}")
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"ok": False, "error": "payload must be an object"}, status=400)
+    message_id = _safe_command_string(payload.get("message_id"))
+    if not message_id:
+        return web.json_response({"ok": False, "error": "message_id is required"}, status=400)
+    delay = EPHEMERAL_RECALL_DEFAULT_SECONDS
+    raw_delay = payload.get("delay_seconds")
+    if raw_delay is not None:
+        try:
+            delay = float(raw_delay)
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"ok": False, "error": "delay_seconds must be a number"}, status=400
+            )
+    # Caller owns the delay: only the upper bound is enforced (see EPHEMERAL_RECALL_MAX_SECONDS).
+    # No floor, because the sidecar has no way to know what "too soon" means for the caller — the
+    # send already happened by the time the request arrives.
+    delay = min(max(delay, 0.0), EPHEMERAL_RECALL_MAX_SECONDS)
+    _schedule_ephemeral_recall(
+        request.app,
+        message_id=message_id,
+        delay_seconds=delay,
+        bot_id=_safe_command_string(payload.get("bot_id")) or None,
+    )
+    return web.json_response({"ok": True, "message_id": message_id, "delay_seconds": delay})
+
+
+def _schedule_ephemeral_recall(
+    app: web.Application,
+    *,
+    message_id: str,
+    delay_seconds: float,
+    bot_id: str | None,
+) -> None:
+    tasks: set[asyncio.Task[None]] = app[EPHEMERAL_RECALL_TASKS_KEY]
+    task = asyncio.create_task(
+        _run_ephemeral_recall(
+            app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id
+        )
+    )
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    app[METRICS_KEY].ephemeral_recalls_scheduled += 1
+
+
+async def _run_ephemeral_recall(
+    app: web.Application,
+    *,
+    message_id: str,
+    delay_seconds: float,
+    bot_id: str | None,
+) -> None:
+    metrics: SidecarMetrics = app[METRICS_KEY]
+    try:
+        await asyncio.sleep(delay_seconds)
+        if await _delete_card_for_app(app, message_id, bot_id):
+            metrics.ephemeral_recalls_completed += 1
+        else:
+            metrics.ephemeral_recall_failures += 1
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        metrics.ephemeral_recall_failures += 1
+        logger.debug("Ephemeral recall failed: %s", exc)
+
+
+async def _stop_ephemeral_recalls(app: web.Application) -> None:
+    tasks: set[asyncio.Task[None]] = app.get(EPHEMERAL_RECALL_TASKS_KEY) or set()
+    pending = [task for task in tasks if not task.done()]
     tasks.clear()
     for task in pending:
         task.cancel()

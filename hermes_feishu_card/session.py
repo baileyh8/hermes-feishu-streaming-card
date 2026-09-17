@@ -510,7 +510,7 @@ class CardSession:
             if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
                 self.status = "failed"
                 self.answer_text = (
-                    self.answer_text.rstrip()
+                    self._adopt_in_progress_content()
                     + "\n\n> "
                     + _UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome]
                 ).lstrip()
@@ -521,11 +521,29 @@ class CardSession:
             self.status = "failed"
             error = event.data.get("error")
             error = error if isinstance(error, str) and error.strip() else "消息处理失败"
-            partial = self.answer_text.rstrip()
+            partial = self._adopt_in_progress_content()
             self.answer_text = partial + "\n\n> " + error if partial else error
         self.updated_at = time.time()
         self.refresh_display_status_source()
         return True
+
+    def _adopt_in_progress_content(self) -> str:
+        """Promote the content the user was reading, so a failure cannot erase it.
+
+        Maintainer note (contract change): while a turn runs, the card streams whatever has arrived —
+        the answer once there is one, otherwise the in-progress reasoning (`visible_main_text` and
+        `render._primary_text_for_session` both fall back to `thinking_text`). BOTH readers return
+        only `answer_text` once the status is `failed`, so a failure landing before any answer was
+        produced left the card showing nothing but the error. The user reported exactly that for an
+        HTTP 403 arriving mid-turn: 「这种以后能否不要覆盖掉正在做的事项内容」.
+
+        Promoting the streamed text first makes a no-answer failure behave like the partial-answer
+        case that already worked: the work in progress stays where it was, and the failure text is
+        appended below it as a quote.
+        """
+        if not self.answer_text.strip() and self.thinking_text.strip():
+            self.answer_text = self.thinking_text.strip()
+        return self.answer_text.rstrip()
 
     def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:
         preface = normalize_stream_text(self.answer_text).strip()
@@ -687,6 +705,7 @@ _TOOL_ACTION_PHRASES = {
     "web_extract": "浏览网页",
     "terminal": "执行命令",
     "todo_list": "整理待办",
+    "delegate_task": "分派子任务",
     "skill_view": "查看技能",
     "skill_manage": "修改技能",
     "skills_list": "查看技能列表",
@@ -754,11 +773,14 @@ def _runtime_tool_summary(name: Any, preview: str) -> str:
         action = "搜索网页" if _SEARCH_SITE_OPERATOR_RE.search(text) else "浏览网页"
     else:
         action = _search_tool_phrase(tool_name)
-    if not action:
-        readable_name = tool_name.replace("_", " ").strip() or "工具"
-        return f"使用 {readable_name}"
 
     target = _runtime_preview_target(text, action=action, is_url=is_url)
+    if not action:
+        readable_name = tool_name.replace("_", " ").strip() or "工具"
+        # An unrecognised tool (plugin, MCP server, new core tool) still has to name what it was
+        # asked to do: the bare "使用 delegate task" is the same content-free row the targeted form
+        # exists to avoid. The header is unaffected — it reads only the phrase before "：".
+        return f"使用 {readable_name}：{target}" if target else f"使用 {readable_name}"
     return f"{action}：{target}" if target else action
 
 
@@ -769,7 +791,12 @@ def _runtime_preview_target(text: str, *, action: str, is_url: bool) -> str:
         path = parsed.path.rstrip("/")
         return f"{host}{path}" if host else ""
 
-    target = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
+    target = text
+    # A preview that already carries the action phrase ("执行命令：pytest -q") must not be phrased a
+    # second time — that produced rows like "执行命令：命令：pytest -q".
+    if action and target.startswith(action):
+        target = target[len(action) :].lstrip("：: ").strip()
+    target = _RUNTIME_ACTION_PREFIX_RE.sub("", target).strip()
     if action == "搜索网页":
         target = _SEARCH_SITE_OPERATOR_RE.sub("", target).strip()
         target = " ".join(target.split())

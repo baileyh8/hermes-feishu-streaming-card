@@ -240,9 +240,13 @@ def _render_card_unchecked(
         session,
         footer_fields,
         display_status=display_status,
+        # Maintainer note (contract change): the "本轮回复结束" note used to be prefixed OUTSIDE
+        # this call, which buried the state pill behind it
+        # ("本轮回复结束 · 已完成 · 工具 #2 · …"). The user asked for the pill to lead
+        # ("已完成 · 本轮回复结束 · 工具 #2 · …"), so the note is handed in and inserted AFTER
+        # the pill — see _render_footer.
+        completion_note="本轮回复结束" if native_reply_completed else "",
     )
-    if native_reply_completed:
-        footer = f"本轮回复结束 · {footer}"
     if session.delivery_kind == "notice" and session.notice_title:
         configured_title = session.notice_title
     else:
@@ -744,7 +748,7 @@ def _tool_action_phrase(tool: ToolState) -> str:
     and removed from the content-area row, where the 运行中/已完成 status pill already says it.
     `_runtime_tool_summary` therefore returns the phrase WITHOUT the prefix.
     """
-    summary = _runtime_tool_summary(tool.name, tool.detail)
+    summary = _runtime_tool_summary(tool.name, _tool_detail_lines(tool.detail)[0])
     if summary:
         phrase = summary.split("：", 1)[0].split(":", 1)[0].strip()
         if phrase:
@@ -1393,6 +1397,20 @@ _FAILED_TOOL_PILL = ("失败", "red")
 _INTERRUPTED_TOOL_PILL = ("已中断", "orange")
 # A row, not a paragraph: this is the live action line, not a place to dump a whole command.
 _TOOL_ACTIVITY_TEXT_MAX_CHARS = 100
+# A tool's stored detail is MULTI-LINE: the tool preview, then "参数: …", then "耗时: …" (see
+# session._tool_detail_from_event_data). The action line must read the part that names the work.
+# Maintainer note (contract change): the argument line used to be treated as "no target" and the
+# whole row's action was dropped, so a run whose preview was missing rendered as bare
+# "执行中 · terminal · #4" — the user could not tell what the agent was doing. The arguments are now
+# the fallback target instead: naming the work beats an empty row.
+_TOOL_ARGUMENT_LINE_RE = re.compile(r"^(?:参数|args|arguments)\s*[:：]\s*(.*)$", re.IGNORECASE)
+# Meta lines already rendered elsewhere in the row (duration in the row, failure in its own pill).
+_TOOL_META_LINE_RE = re.compile(r"^(?:耗时|用时|失败|错误|duration|elapsed|error)\s*[:：]", re.IGNORECASE)
+# Which argument names the work. First match wins; the rest is a JSON blob the reader does not need.
+_TOOL_ARGUMENT_KEY_PRIORITY = (
+    "command", "cmd", "file_path", "path", "file", "pattern", "query", "url", "text",
+    "code", "prompt", "task", "name", "goal", "message",
+)
 
 
 def _status_tag(label: str, color: str) -> str:
@@ -1467,25 +1485,104 @@ def _render_tool_activity_elements(
     ]
 
 
+def _tool_detail_lines(detail: str) -> tuple[str, str]:
+    """Split a stored detail into (the line naming the work, leftover parameters).
+
+    A stored detail is MULTI-LINE: the tool's own preview, then "参数: {json}", then "耗时: 12s"
+    (see session._tool_detail_from_event_data). The preview names the work; the arguments line
+    carries the rest. Both halves are returned so each can have its own row — a single joined line
+    read as noise.
+
+    Maintainer note (contract change): the arguments used to be treated as "no target" and the whole
+    row's action was dropped, so a run whose preview was missing rendered as a bare
+    "执行中 · terminal · #4" and the user could not tell what the agent was doing. Arguments now name
+    the work when there is no preview, and whatever is left over becomes the parameter row.
+    """
+    preview = ""
+    arguments = ""
+    for raw in str(detail or "").splitlines():
+        line = raw.strip()
+        if not line or _TOOL_META_LINE_RE.match(line):
+            continue
+        match = _TOOL_ARGUMENT_LINE_RE.match(line)
+        if match:
+            arguments = arguments or match.group(1)
+            continue
+        preview = preview or line
+
+    pairs = _tool_argument_pairs(arguments)
+    if preview:
+        # The preview is the work; the parameters are everything it does not already say.
+        return preview, _format_tool_arguments([pair for pair in pairs if pair[1] != preview])
+    for key, value in pairs:
+        if key.lower() in _TOOL_ARGUMENT_KEY_PRIORITY:
+            return value, _format_tool_arguments(
+                [pair for pair in pairs if pair[1] != value]
+            )
+    # Unrecognised shape: keep the text as the work, without also echoing it as "parameters".
+    return arguments, ""
+
+
+def _tool_argument_pairs(raw: str) -> list[tuple[str, str]]:
+    """The scalar entries of a stored arguments object, in event order.
+
+    The stored arguments are a compact JSON object. Dumped verbatim they are noise in a chat line
+    ('{"command": "pytest -q", "timeout": 120}'), so the entries are unpacked into key=value pairs;
+    nested/complex values are skipped rather than printed as a blob.
+    """
+    text = str(raw or "").strip()
+    if not text.startswith("{"):
+        return []
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    return [
+        (str(key), str(value))
+        for key, value in parsed.items()
+        if isinstance(value, (str, int, float, bool)) and str(value).strip()
+    ]
+
+
+def _format_tool_arguments(pairs: list[tuple[str, str]]) -> str:
+    return " ".join(f"{key}={value}" for key, value in pairs)
+
+
 def _tool_activity_text(tool: ToolState) -> str:
-    """The live line for a tool: its friendly action plus target ("读取文件：session.py").
+    """The live action line for a tool: its friendly action plus target ("读取文件：session.py").
 
     This is the text the header used to carry as a truncated one-liner. It belongs here, in the
     content area, where there is room for it — the header only answers "still working?".
     Sanitized through the header sanitizer (untrusted paths/commands/secrets) and capped.
 
-    Maintainer note: a line with NO TARGET is dropped. `_runtime_tool_summary` joins phrase and
-    target with "：", so a summary without it is a verb-only line ("执行命令") — the name pill
-    already says `terminal`, so the phrase repeated it and pushed the line's real information
-    (status + name + ordinal) apart; that produced rows like
-    "已完成 · terminal · #4 · 正在执行终端". Only the targeted form earns a line; the tool still
-    shows via its status pill + name. Testing the separator rather than a hardcoded phrase list
-    keeps this correct as phrases change.
+    Maintainer note: the target comes from `_tool_detail_lines`, not from the raw detail — a stored
+    detail is multi-line, and only one of those lines belongs on this row. A line with NO TARGET is
+    still dropped: `_runtime_tool_summary` joins phrase and target with "：", so a summary without it
+    is a verb-only line ("执行命令") — the name pill already says `terminal`, so the phrase repeated
+    it and pushed the line's real information (status + name + ordinal) apart. Testing the separator
+    rather than a hardcoded phrase list keeps this correct as phrases change.
     """
-    summary = _runtime_tool_summary(tool.name, tool.detail)
+    target, _ = _tool_detail_lines(tool.detail)
+    if not target:
+        return ""
+    summary = _runtime_tool_summary(tool.name, target)
     if not summary or "：" not in summary:
         return ""
-    text = _sanitize_runtime_header(summary)
+    return _cap_activity_text(summary)
+
+
+def _tool_activity_params(tool: ToolState) -> str:
+    """The parameter row for a tool, if it has any the action line does not already carry."""
+    _, params = _tool_detail_lines(tool.detail)
+    if not params:
+        return ""
+    return f"参数: {_cap_activity_text(params)}"
+
+
+def _cap_activity_text(text: str) -> str:
+    text = _sanitize_runtime_header(text)
     if len(text) > _TOOL_ACTIVITY_TEXT_MAX_CHARS:
         return text[: _TOOL_ACTIVITY_TEXT_MAX_CHARS - 1].rstrip() + "…"
     return text
@@ -1521,13 +1618,22 @@ def _tool_activity_row(
         parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
     if tool.ordinal:
         parts.append(f"#{tool.ordinal}")
+    # Maintainer note (contract change): this was ONE line — status, tool name, duration, ordinal and
+    # the action all joined by " · ". The user's report was that cramming them together is confusing
+    # ("不然都挤在一行 很混乱"), and asked for three rows: status information, then the action, then
+    # the parameters. Only the first row is unconditional; the action row is dropped when the tool
+    # has no target to name, and the parameter row when its arguments carry nothing new.
+    lines = [" · ".join(parts)]
     action = _tool_activity_text(tool)
     if action:
-        parts.append(action)
+        lines.append(action)
+    params = _tool_activity_params(tool)
+    if params:
+        lines.append(params)
     element: Dict[str, Any] = {
         "tag": "markdown",
         "element_id": f"tool_activity_{index}",
-        "content": " · ".join(parts),
+        "content": "\n".join(lines),
     }
     _set_text_size(element, text_size)
     return element
@@ -1941,6 +2047,7 @@ def _render_footer(
     footer_fields: list[str] | tuple[str, ...] | None = None,
     *,
     display_status: str = "",
+    completion_note: str = "",
 ) -> str:
     # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
     # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
@@ -1955,7 +2062,30 @@ def _render_footer(
             else 300.0
         )
         minutes = max(1, int(math.ceil(remaining_seconds / 60.0)))
-        return f"等待选择 · ⏳ {minutes} 分钟后过期"
+        # Maintainer note (contract change): the waiting footer used to show ONLY the expiry
+        # countdown, which hid how much work the paused turn had already done. The user asked for
+        # the consumption line in EVERY state — running, stopped, and waiting on a decision — so
+        # the tool count and elapsed time lead here too (matching the other two footers), and the
+        # token figures follow when the turn has already reported them (they are usually absent
+        # mid-turn: the core only sends tokens with turn.completed, so an approval that fires
+        # during the run legitimately shows no counts rather than a fake ↑0 ↓0).
+        waiting: list[str] = []
+        if session.tool_count:
+            waiting.append(f"工具 #{session.tool_count}")
+        if session.created_at:
+            # Only once there is a second to show: a freshly-armed approval would otherwise read
+            # "0s · 等待选择 · ⏳ 5 分钟后过期", which is noise, not information.
+            elapsed = max(0.0, _time.time() - float(session.created_at))
+            if elapsed >= 1.0:
+                waiting.append(_format_duration(elapsed))
+        waiting.append("等待选择")
+        waiting.append(f"⏳ {minutes} 分钟后过期")
+        tokens = session.tokens if isinstance(session.tokens, dict) else {}
+        input_tokens = _safe_int(tokens.get("input_tokens"))
+        output_tokens = _safe_int(tokens.get("output_tokens"))
+        if input_tokens or output_tokens:
+            waiting.append(f"↑{_format_count(input_tokens)} · ↓{_format_count(output_tokens)}")
+        return " · ".join(waiting)
     if session.status != "completed" and display_status != "completed" and not failed:
         # A live clock: elapsed since the turn started, so a long silent stretch reads as
         # "it has been going 4 minutes" instead of an apparently frozen card. Feishu only
@@ -2016,6 +2146,13 @@ def _render_footer(
             selected.append(value)
     detail = " · ".join(selected) if selected else values["duration"]
     pill = _status_tag("已停止", "red") if failed else _status_tag("已完成", "green")
+    # Maintainer note (contract change): the state pill must LEAD the footer. The
+    # "本轮回复结束" note used to be prefixed outside this function, so the reader saw
+    # "本轮回复结束 · 已完成 · 工具 #2 · …" and the state was buried mid-line. The note now
+    # lands right after the pill: "已完成 · 本轮回复结束 · 工具 #2 · …". Only the native-reply
+    # completion path passes a note, so every other state string is byte-identical to before.
+    if completion_note:
+        return f"{pill} · {completion_note} · {detail}"
     return f"{pill} · {detail}"
 
 
