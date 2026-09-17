@@ -3816,6 +3816,21 @@ def _locate_extracted_clarify_helper(content: str):
     helper = _find_direct_class_function_node(turn_runner, EXTRACTED_CLARIFY_HELPER)
     if helper is None:
         return None
+    caller = _find_direct_class_function_node(turn_runner, "_clarify_callback_sync")
+    tuple_call = caller is not None and any(
+        isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], (ast.Tuple, ast.List))
+        and len(node.targets[0].elts) == 2
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Attribute)
+        and isinstance(node.value.func.value, ast.Name)
+        and node.value.func.value.id == "self"
+        and node.value.func.attr == EXTRACTED_CLARIFY_HELPER
+        for node in ast.walk(caller)
+    )
+    if not isinstance(helper, ast.FunctionDef) or not tuple_call:
+        raise ValueError("Hermes extracted clarify return/call contract changed")
     if not _binds_turn_context(helper):
         raise ValueError(
             "Hermes extracted clarify seam no longer binds the TurnRunner context "

@@ -134,3 +134,12 @@ def test_extracted_seam_falls_through_when_the_platform_has_no_answer(monkeypatc
     result, native_sends = _call_extracted_seam(monkeypatch, None)
     assert result == ("native-response", True)
     assert len(native_sends) == 1
+
+@pytest.mark.parametrize('before,after', [
+    ('response, _answered = self._ask_clarify_question', 'response = self._ask_clarify_question'),
+    ('def _ask_clarify_question(', 'async def _ask_clarify_question('),
+])
+def test_extracted_seam_rejects_return_or_async_contract_drift(before, after):
+    original = FIXTURE.read_text()
+    with pytest.raises(ValueError, match='contract'):
+        patcher.apply_gateway_fragment(original.replace(before, after), TARGET)

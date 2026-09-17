@@ -32,7 +32,7 @@ clarify 的缝合点在 Hermes `242ff24ff7`（2026-09-16）后随 `_clarify_call
 定位改按 helper 自身的 TurnRunner 上下文绑定判定：helper 存在即视为该布局并在其中注入。
 该 helper 的契约是 `(response, answered)` 且调用方会解包，因此它的 hook 返回
 `(answer, True)`；helper 存在但上下文绑定或 `question` / `choices` / `multi_select`
-签名漂移时拒绝安装，不留下半注入状态。单问与批问都经过该 helper，一张卡对应一个问题。
+签名漂移、helper 改为 async 或 callback 不再解包二元返回值时拒绝安装，不留下半注入状态。单问与批问都经过该 helper，一张卡对应一个问题。
 
 ## Exact Base 边界
 

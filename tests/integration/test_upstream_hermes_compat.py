@@ -21,7 +21,7 @@ SOURCES = json.loads(
 )
 
 
-@pytest.mark.parametrize("baseline", ["stable", "main", "production", "historical", "image"])
+@pytest.mark.parametrize("baseline", ["stable", "main", "production", "historical", "image", "extracted"])
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):
     configured = os.environ.get(f"HFC_UPSTREAM_{baseline.upper()}_ROOT")
     if not configured:
@@ -49,7 +49,7 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     detection = detect_hermes(target)
     assert detection.supported, detection.reason
     assert detection.version == expected.get("version", "0.21.0")
-    assert detection.decomposed == (baseline == "main")
+    assert detection.decomposed == (baseline in {"main", "extracted"})
     assert cli.main(["install", "--hermes-dir", str(target), "--yes"]) == 0
     installed = {name: (target / name).read_bytes() for name in originals}
     assert installed != originals

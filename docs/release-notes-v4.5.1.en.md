@@ -2,6 +2,8 @@
 
 Based on PR #310 by [mouyong](https://github.com/mouyong), with maintainer corrections.
 
+- Support Hermes `6005aa1fd9` extracted clarify helper with the two-value return contract; reject signature, context, call-shape and async drift. Pin real-source installation/repeat/diagnosis/restore in CI (#316/#317).
+
 - Normalize CardKit element IDs to stable unique values of at most 20 characters across creation and updates (#306). Log only hashed request/entity diagnostics.
 - Preserve background-task source anchors and resolve missing attachment/card topic anchors (#305/#313).
 - Preserve partial output on failed completion and retain approval questions, scope and outcomes (#307/#312).
