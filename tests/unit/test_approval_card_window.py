@@ -15,6 +15,18 @@ from hermes_feishu_card import hook_runtime
 @pytest.fixture(autouse=True)
 def _no_env_override(monkeypatch):
     monkeypatch.delenv("HERMES_FEISHU_CARD_INTERACTION_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("HERMES_FEISHU_CARD_ENABLED", "true")
+    monkeypatch.delenv("HERMES_FEISHU_CARD_PROFILE_ID", raising=False)
+    hook_runtime.reset_runtime_state()
+    # Window propagation must not depend on a locally running sidecar's policy.
+    # Exercise the real gate with an explicit card disposition, without network I/O.
+    monkeypatch.setattr(
+        hook_runtime,
+        "_fetch_delivery_policy_sync",
+        lambda *_args, **_kwargs: {"ok": True, "disposition": "card", "ttl_ms": 1000},
+    )
+    yield
+    hook_runtime.reset_runtime_state()
 
 
 def test_window_ends_before_the_agent_stops_waiting(monkeypatch):
