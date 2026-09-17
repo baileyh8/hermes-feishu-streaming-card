@@ -40,6 +40,10 @@ THINKING_DELTA_PATCH_BEGIN = "# HERMES_FEISHU_CARD_THINKING_DELTA_PATCH_BEGIN"
 THINKING_DELTA_PATCH_END = "# HERMES_FEISHU_CARD_THINKING_DELTA_PATCH_END"
 CLARIFY_PATCH_BEGIN = "# HERMES_FEISHU_CARD_CLARIFY_PATCH_BEGIN"
 CLARIFY_PATCH_END = "# HERMES_FEISHU_CARD_CLARIFY_PATCH_END"
+# Hermes 242ff24ff7 (2026-09-16) extracted the clarify body into this helper; its
+# caller unpacks ``(response, answered)``, unlike the callback it came from.
+EXTRACTED_CLARIFY_HELPER = "_ask_clarify_question"
+EXTRACTED_CLARIFY_ARGS = ("question", "choices", "multi_select")
 APPROVAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_APPROVAL_PATCH_BEGIN"
 APPROVAL_PATCH_END = "# HERMES_FEISHU_CARD_APPROVAL_PATCH_END"
 STATUS_PATCH_BEGIN = "# HERMES_FEISHU_CARD_STATUS_PATCH_BEGIN"
@@ -3780,10 +3784,6 @@ def _render_clarify_hook_block(indent: str, newline: str, *, returns_tuple: bool
 def _render_extracted_clarify_hook_block(indent: str, newline: str):
     """Clarify hook for Hermes' extracted ``_ask_clarify_question`` seam."""
     return _render_clarify_hook_block(indent, newline, returns_tuple=True)
-
-
-EXTRACTED_CLARIFY_HELPER = "_ask_clarify_question"
-EXTRACTED_CLARIFY_ARGS = ("question", "choices", "multi_select")
 
 
 def _locate_extracted_clarify_helper(content: str):
