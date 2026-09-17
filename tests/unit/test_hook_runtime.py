@@ -13305,3 +13305,19 @@ def test_paused_approval_outage_does_not_turn_into_denial(monkeypatch):
         poll_interval_seconds=0,
     )
     assert result['choice'] == 'once'
+
+@pytest.mark.parametrize('text,title,level', [
+    ('⏳ Gateway is restarting and is not accepting new work right now.', 'Gateway 正在重启', 'warning'),
+    ('♻ Gateway restarted successfully. Your session continues.', 'Gateway 重启完成', 'success'),
+])
+def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, title, level):
+    notice = hook_runtime._hfc_classify_system_notice(text)
+    assert notice['notice_kind'] == 'gateway-restart'
+    assert notice['title'] == title
+    assert notice['level'] == level
+    assert notice['notice_terminal'] is True
+    payload = hook_runtime._hfc_build_system_notice_payload(chat_id='oc_fixture', content=text,
+        reply_to='om_anchor', metadata={'thread_id': 'omt_fixture'}, context={},
+        notice=notice, notice_scope='independent', message_id='notice_restart')
+    assert payload['data']['content'] == notice['content']
+    assert '预计' not in payload['data']['content']

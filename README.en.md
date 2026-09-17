@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.5.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.5.1
 bash install-docker.sh
 ```
 
@@ -180,6 +180,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.5.1](docs/release-notes-v4.5.1.en.md) | CardKit ID limits, topic delivery, approval lifecycle and restart feedback |
 | [v4.5.0](docs/release-notes-v4.5.0.en.md) | Topic and mobile interaction fixes, CardKit streaming, requester mentions and live approval pause |
 | [v4.4.6](docs/release-notes-v4.4.6.en.md) | Recover terminal delivery, accept current Hermes attachment anchors, preserve incomplete outcomes and interaction context |
 | [v4.4.5](docs/release-notes-v4.4.5.en.md) | Preserve unsuccessful and superseded turn outcomes; support the verified split-ledger contract with stronger stability regressions |

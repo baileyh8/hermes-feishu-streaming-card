@@ -6181,21 +6181,10 @@ def _expired_interaction_response(card: dict[str, Any]) -> web.Response:
 
 
 def _approval_card_needs_reissue(interaction: Any) -> bool:
-    """Whether a click on this approval must re-issue it instead of deciding.
+    """Route expired approvals to renewal or an explicit expired-card response.
 
-    Maintainer note (contract change — see the accompanying test rewrite):
-    An approval whose window had closed answered every option with 409
-    "interaction already completed" and left the card on screen unchanged. From the user's side
-    that is a broken button: the card still shows live options, clicking does nothing, and nothing
-    says why (reported as "点 1/2 没反应，卡也不能再点了"). The old behavior treated the click as an
-    invalid decision; the product rule is the opposite — a card that can no longer carry a decision
-    must return the user to one that can, for EVERY option, not just the renewal button, and for
-    every shape of expiry (paused, failed, or pending past its deadline).
-
-    What this intentionally does NOT change: consent is never taken from the dead card. The
-    withdrawn token is replaced, ``interaction.choice`` stays empty, and replaying the old option
-    still 404s — see ``_resume_paused_approval`` and ``test_zero_timeout_approval_reissues_on_a_
-    late_choice_without_consenting``.
+    Renewal still requires a live pausable waiter; an expired native admission
+    or a vanished runtime can only receive an explanation, never new consent.
     """
     if interaction.kind != "approval":
         return False
@@ -6269,73 +6258,8 @@ def _approval_runtime_is_waiting(interaction: Any, *, now: float | None = None) 
     )
 
 
-def _deliver_renewed_approval_card(
-    app: web.Application,
-    session_key: str,
-    session: CardSession,
-    interaction: Any,
-    card: dict[str, Any],
-    stale_card_id: str,
-) -> None:
-    """Put a renewed approval in front of the user exactly once, replacing a dead card.
-
-    The runtime is gone, so the card the user just clicked can never be completed. Recall it and
-    post the renewed one; if Feishu refuses the recall, refresh that card in place instead — never
-    leave behind a card whose buttons cannot work.
-    """
-
-    async def deliver() -> None:
-        bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
-        if stale_card_id and await _delete_card_for_app(app, stale_card_id, bot_id):
-            if app[SESSIONS_KEY].get(session_key) is not session:
-                return
-            interaction.feishu_message_id = ""
-            result = await _send_card_for_app(
-                app,
-                session.chat_id,
-                card,
-                bot_id,
-                thread_id=interaction.thread_id or None,
-                reply_to_message_id=interaction.reply_to_message_id
-                or session.reply_to_message_id
-                or None,
-                reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
-                delivery_key=(
-                    f"{session_key}:approval-renewed:{interaction.interaction_id}:"
-                    f"{interaction.pause_generation}"
-                ),
-                delivery_kind="interaction",
-            )
-            if result.outcome == "delivered" and result.message_id:
-                interaction.feishu_message_id = result.message_id
-            return
-        if stale_card_id:
-            await _update_card_for_app(app, stale_card_id, card, bot_id)
-
-    task = asyncio.create_task(deliver())
-    tasks = app[PAUSED_APPROVAL_TASKS_KEY]
-    tasks.add(task)
-    task.add_done_callback(tasks.discard)
-
-
 async def _resume_paused_approval(request, session_key, session, interaction, token, chat_id):
-    """Re-arm an approval from the card the user still has, after its window expired.
-
-    Resuming is not consent: the withdrawn token is replaced and the complete original scope is
-    presented again with fresh buttons and a new window. Any operation on an expired approval
-    lands here — the dedicated button and every stale option alike — because a card that can no
-    longer carry a decision must lead the user back to a usable one. Two shapes, chosen by whether
-    the agent is still waiting:
-      * waiting -> refresh that same card in place, so one approval never becomes two cards (#314);
-      * gone    -> that card is un-completable, so it is recalled and a fresh one is posted.
-
-    Maintainer note (contract change): the guards below used to require ``status == "paused"`` and
-    ``runtime_admission is None``. Real gateway approvals always carry a runtime admission, so
-    they expired into ``failed`` and could never reach this path at all — the feature was written
-    but dead for exactly the cards it was meant for. They now accept ``failed`` and any admission;
-    what still guards the call is identity (same session, same interaction, same token, same chat)
-    plus the 15s staleness window, which is what makes a stale click harmless rather than a replay.
-    """
+    """Refresh consent only while the original pausable waiter is still alive."""
     app = request.app
     lock = app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
     async with lock:
@@ -6344,13 +6268,22 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
                 or interaction.callback_token != token or session.chat_id != chat_id
                 or interaction.kind != "approval"):
             return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
-        # A still-pending approval whose window just closed is the same situation as one that
-        # already stopped being usable: settle it first, so the renewal below has one shape to
-        # handle and the expired card can never be mistaken for a live one.
         interaction.expire()
         if interaction.status not in {"paused", "failed"}:
             return web.json_response({"ok": False, "error": "interaction not found"}, status=404)
-        runtime_waiting = _approval_runtime_is_waiting(interaction)
+        if (session.status in {"completed", "failed"}
+                or interaction.status != "paused" or not interaction.pause_on_timeout
+                or interaction.runtime_admission is not None
+                or not _approval_runtime_is_waiting(interaction)):
+            # A new card cannot resurrect a stopped runtime or expired native admission.
+            # Explain the dead request in place; retain its exact scope for review.
+            interaction.status = "failed"
+            interaction.error = "原审批任务已结束或授权已过期，请重新发送原请求。"
+            interaction.callback_token = secrets.token_urlsafe(16)
+            _store_interaction_result(app, session)
+            card = _render_interaction_callback_card_for_app(app, session, session_key=session_key)
+            return web.json_response({"ok": False, "error": "interaction expired",
+                "toast": {"type": "warning", "content": interaction.error}, "card": card}, status=409)
         interaction.status = "pending"
         interaction.callback_token = secrets.token_urlsafe(16)
         interaction.requested_at = time.time()
@@ -6358,26 +6291,8 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
         session.updated_at = interaction.requested_at
         _store_interaction_result(app, session)
         card = _render_interaction_callback_card_for_app(app, session, session_key=session_key)
-        stale_card_id = "" if runtime_waiting else str(
-            getattr(interaction, "feishu_message_id", "") or ""
-        )
-    if runtime_waiting:
-        return web.json_response(
-            {
-                "ok": True,
-                "toast": {"type": "info", "content": "审批已过期，请重新审批"},
-                "card": card,
-            }
-        )
-    _deliver_renewed_approval_card(
-        app, session_key, session, interaction, card, stale_card_id
-    )
-    return web.json_response(
-        {
-            "ok": True,
-            "toast": {"type": "info", "content": "审批已过期，已重新发起，请重新审批"},
-        }
-    )
+    return web.json_response({"ok": True,
+        "toast": {"type": "info", "content": "审批已过期，请查看完整操作后重新审批"}, "card": card})
 
 
 async def _expire_pending_interaction(
@@ -7222,7 +7137,8 @@ def _schedule_heartbeat_recall(
     card carried news: while the agent is working the card stays, and once it stops being refreshed
     the card is recalled instead of lingering in the thread as noise.
     """
-    if not session_key or not message_id:
+    if (not session_key or not message_id or session is None
+            or session.delivery_kind != "notice" or session.notice_kind != "heartbeat"):
         return
     tasks: Dict[str, asyncio.Task[None]] = app[HEARTBEAT_RECALL_TASKS_KEY]
     _cancel_heartbeat_recall(app, session_key)
@@ -7249,6 +7165,11 @@ async def _run_heartbeat_recall(
         await asyncio.sleep(HEARTBEAT_RECALL_SECONDS)
         if session is not None and app[SESSIONS_KEY].get(session_key) is not session:
             # A newer card took over this key; its own task owns the deadline now.
+            return
+        if (session is None or session.delivery_kind != "notice"
+                or session.notice_kind != "heartbeat"
+                or session.status in {"completed", "failed"}
+                or app[FEISHU_MESSAGE_IDS_KEY].get(session_key) != message_id):
             return
         if not await _delete_card_for_app(app, message_id, bot_id):
             # Recall refused (scope, age): keep the state so the card stays usable, and let the

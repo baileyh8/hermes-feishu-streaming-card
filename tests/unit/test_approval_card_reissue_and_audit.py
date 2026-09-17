@@ -227,3 +227,15 @@ def test_a_pending_approval_is_masked_too():
 
     assert "./deploy.sh prod" in text
     assert "abc123" not in text
+
+
+def test_mobile_approval_explains_expand_before_full_scope_and_consent():
+    session = CardSession(conversation_id='c', message_id='m', chat_id='oc')
+    session.active_interaction = _approval(requested_at=time.time())
+    session.active_interaction.description = '完整命令\n' + ('echo review-scope\n' * 40)
+    card = render_legacy_interaction_callback_card(session)
+    assert '展开仅查看内容，不会提交授权' in card['elements'][0]['content']
+    assert 'echo review-scope' in str(card)
+    scope_index = next(i for i,e in enumerate(card['elements']) if 'echo review-scope' in str(e))
+    action_index = next(i for i,e in enumerate(card['elements']) if e['tag'] == 'action')
+    assert scope_index < action_index

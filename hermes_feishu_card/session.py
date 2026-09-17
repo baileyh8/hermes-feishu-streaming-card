@@ -186,6 +186,7 @@ class CardSession:
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
+    notice_kind: str = ""
     notice_title: str = ""
     notice_level: str = "info"
     terminal_disposition: str = ""
@@ -441,6 +442,7 @@ class CardSession:
                 self.reply_to_message_id = reply_to_message_id
             if scope == "independent" or self.delivery_kind == "notice":
                 self.delivery_kind = "notice"
+                self.notice_kind = str(event.data.get("notice_kind") or "")
                 self.notice_title = title
                 self.notice_level = level
                 self.answer_text = content or title

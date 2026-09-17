@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.5.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.5.1
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.5.1](docs/release-notes-v4.5.1.md) | 修复 CardKit 长 ID、话题投递、审批状态与重启反馈 |
 | [v4.5.0](docs/release-notes-v4.5.0.md) | 话题通知与手机交互修复，CardKit 流式更新、正文提及和审批暂停 |
 | [v4.4.6](docs/release-notes-v4.4.6.md) | 恢复终局投递，兼容新 Hermes 附件契约，保留未完成状态与交互内容 |
 | [v4.4.5](docs/release-notes-v4.4.5.md) | 修复失败与被替代任务误报完成；支持已验证的拆分账本契约，补强稳定性测试规则 |

@@ -4851,6 +4851,22 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         return background_notice
     text = raw_text.strip()
     lowered = text.lower()
+    if text == "⏳ Gateway is restarting and is not accepting new work right now.":
+        return {
+            "title": "Gateway 正在重启", "level": "warning",
+            "notice_kind": "gateway-restart", "notice_id": "gateway-restart-wait",
+            "notice_terminal": True,
+            "content": "Gateway 正在重启，暂不接受新任务。当前这条请求尚未开始执行。\n\n"
+                       "重启耗时取决于正在收尾的任务和启动过程；收到重启完成通知后，请重新发送请求。",
+        }
+    if text in {"♻ Gateway restarted successfully. Your session continues.",
+                "♻️ Gateway restarted successfully. Your session continues."}:
+        return {
+            "title": "Gateway 重启完成", "level": "success",
+            "notice_kind": "gateway-restart", "notice_id": "gateway-restart-ready",
+            "notice_terminal": True,
+            "content": "Gateway 已重启完成，会话已保留。现在可以发送新任务。",
+        }
     if text.startswith("📬 No home channel is set for Feishu."):
         return {
             "title": "默认投递位置未设置", "level": "info",
@@ -5153,7 +5169,7 @@ def _hfc_build_system_notice_payload(
         "chat_id": chat_id,
         "conversation_id": conversation_id,
         "message_id": message_id,
-        "content": content,
+        "content": notice.get("content", content),
         "_hfc_notice_title": notice.get("title") or "运行提示",
         "_hfc_notice_level": notice.get("level") or "info",
         "_hfc_notice_kind": notice.get("notice_kind") or "system",

@@ -11,6 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
+import logging
 import time
 from typing import Any
 from urllib.parse import quote
@@ -18,10 +19,56 @@ from urllib.parse import quote
 from .card_limits import serialize_card_for_delivery
 
 
+logger = logging.getLogger(__name__)
+
 MAX_ENTITIES = 4096
 ENTITY_RETENTION_SECONDS = 7200.0
 STREAM_LIFETIME_SECONDS = 540.0
 MIN_MUTATION_INTERVAL = 0.125
+
+
+def _normalize_element_ids(card: dict[str, Any]) -> dict[str, Any]:
+    """Keep CardKit IDs globally unique and within its 20-character API limit.
+
+    Feishu rejects distinct long timeline IDs with 300301. Normalize before
+    both entity creation and diffing, so incremental updates address the same
+    short IDs as full replacements. Never change the caller's render snapshot.
+    """
+    result = deepcopy(card)
+    reserved: set[str] = set()
+    def reserve(node: Any) -> None:
+        if isinstance(node, dict):
+            value = node.get('element_id')
+            if isinstance(value, str) and 1 <= len(value) <= 20:
+                reserved.add(value)
+            for value in node.values():
+                reserve(value)
+        elif isinstance(node, list):
+            for value in node:
+                reserve(value)
+    reserve(result)
+    seen: set[str] = set()
+    def visit(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            value = node.get('element_id')
+            if isinstance(value, str):
+                candidate = value
+                if not 1 <= len(value) <= 20 or value in seen:
+                    salt = 0
+                    while True:
+                        candidate = 'hfc_' + sha256(f'{value}:{path}:{salt}'.encode()).hexdigest()[:16]
+                        if candidate not in seen and candidate not in reserved:
+                            break
+                        salt += 1
+                node['element_id'] = candidate
+                seen.add(candidate)
+            for key, value in node.items():
+                visit(value, f'{path}/{key}')
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                visit(value, f'{path}/{index}')
+    visit(result, '')
+    return result
 
 
 def _text_partition(card: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
@@ -81,6 +128,7 @@ class CardKitTransport:
 
     async def send(self, chat_id: str, card: dict[str, Any], **kwargs: Any) -> Any:
         from .feishu_client import FeishuAPIError
+        card = _normalize_element_ids(card)
         serialized = serialize_card_for_delivery(card)
         delivery_uuid = kwargs.get('delivery_uuid')
         # Scope idempotency to the delivery, not changing spinner/content snapshots.
@@ -133,10 +181,25 @@ class CardKitTransport:
         body = {**body, 'sequence': entity.sequence,
                 'uuid': sha256(f'{entity.card_id}:{entity.sequence}'.encode()).hexdigest()[:40]}
         token = await self.client._tenant_token()
-        await self.client._request_json(
-            method, f'/cardkit/v1/cards/{quote(entity.card_id, safe="")}{suffix}',
-            token=token, json_body=body,
-        )
+        from .feishu_client import FeishuAPIError
+        try:
+            await self.client._request_json(
+                method, f'/cardkit/v1/cards/{quote(entity.card_id, safe="")}{suffix}',
+                token=token, json_body=body,
+            )
+        except FeishuAPIError as exc:
+            # Correlate failing payloads without logging conversation text or IDs.
+            payload = json.dumps(body, ensure_ascii=False, sort_keys=True).encode()
+            code = str(exc.api_code or '')
+            logger.warning(
+                'CardKit mutation failed: entity_hash=%s payload_sha256=%s bytes=%s '
+                'sequence=%s operation=%s api_code=%s',
+                sha256(entity.card_id.encode()).hexdigest()[:12], sha256(payload).hexdigest(),
+                len(payload), entity.sequence,
+                'content' if suffix.endswith('/content') else ('settings' if suffix else 'full'),
+                code if code.isdigit() and len(code) <= 10 else 'unknown',
+            )
+            raise
         entity.touched_at = time.monotonic()
 
     async def update(self, message_id: str, card: dict[str, Any]) -> bool:
@@ -145,7 +208,7 @@ class CardKitTransport:
             return False
         serialize_card_for_delivery(card)
         async with entity.lock:
-            final = deepcopy(card)
+            final = _normalize_element_ids(card)
             config = final.setdefault('config', {})
             requested_streaming = config.get('streaming_mode') is True
             if entity.streaming and (

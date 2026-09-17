@@ -527,6 +527,10 @@ def _render_legacy_callback_card(
             "elements": elements,
         }
 
+    if interaction.kind == "approval":
+        elements.append({"tag": "markdown", "content":
+            "请核对下方完整操作后，单击授权按钮一次。若手机显示“展开”，展开仅查看内容，不会提交授权。"})
+
     # Mobile clients truncate long headers without exposing their full text.
     # Keep the complete question in the body before options and controls.
     prompt = normalize_stream_text(interaction.prompt).strip()
