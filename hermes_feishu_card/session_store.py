@@ -38,7 +38,10 @@ class SessionStore:
         body['tools'] = {k: asdict(v) for k, v in session.tools.items()}
         body['timeline'] = asdict(session.timeline)
         body['normalizers'] = [session.thinking_normalizer._pending, session.answer_normalizer._pending]
-        record = dict(version=1, key=key, session=body, message_id=message_id,
+        prefix = f"{profile_id}:" if profile_id else ""
+        if not key.startswith(prefix) or not key[len(prefix):]:
+            raise ValueError("checkpoint turn scope mismatch")
+        record = dict(version=1, key=key, turn_id=key[len(prefix):], session=body, message_id=message_id,
                       bot_id=bot_id, profile_id=profile_id, aliases=aliases, client_identity=client_identity,
                       had_interaction=(session.active_interaction is not None and session.active_interaction.status in {"pending","paused"}),
                       saved_at=time.time())
@@ -81,7 +84,10 @@ class SessionStore:
                     continue
                 if not 0 <= time.time() - r['saved_at'] <= RETENTION_SECONDS:
                     continue
-                if not all(isinstance(r[k], str) for k in ('key','message_id','profile_id')):
+                if not all(isinstance(r[k], str) for k in ('key','turn_id','message_id','profile_id')):
+                    continue
+                prefix = f"{r['profile_id']}:" if r['profile_id'] else ''
+                if not r['turn_id'] or r['key'] != prefix + r['turn_id']:
                     continue
                 if not r['message_id'] or r['bot_id'] is not None and not isinstance(r['bot_id'],str):
                     continue

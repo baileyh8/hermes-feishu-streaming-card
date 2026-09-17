@@ -286,3 +286,46 @@ async def test_changed_app_identity_does_not_restore_old_card(tmp_path):
         await asyncio.sleep(.01)
         assert not http.app[SESSIONS_KEY]
         assert len(fake.updated)==updates
+
+@pytest.mark.asyncio
+async def test_restart_keeps_canonical_turn_distinct_from_transport_message(tmp_path):
+    fake=Client()
+    def ev(name,n,data):
+        e=event(name,n,data);e['message_id']='internal_transport';e['turn_id']='canonical_turn';return e
+    async with TestClient(TestServer(create_app(fake,session_store_directory=tmp_path))) as http:
+        await http.post('/events',json=ev('message.started',0,{}))
+        await http.post('/events',json=ev('answer.delta',1,{'text':'CANONICAL_PARTIAL'}))
+    async with TestClient(TestServer(create_app(fake,session_store_directory=tmp_path))) as http:
+        assert 'canonical_turn' in http.app[SESSIONS_KEY]
+        r=await http.post('/events',json=ev('message.completed',2,{'answer':'failure','turn_outcome':'failed'}))
+        assert (await r.json())['applied']
+        assert len(fake.sent)==1
+        assert 'CANONICAL_PARTIAL' in http.app[SESSIONS_KEY]['canonical_turn'].answer_text
+
+@pytest.mark.asyncio
+async def test_restart_does_not_refill_original_after_terminal_recovery_send(tmp_path,monkeypatch):
+    from hermes_feishu_card import server
+    from hermes_feishu_card.session_store import SessionStore
+    class Failing(Client):
+        fail=True
+        async def update_card_message(self,mid,card):
+            if self.fail:raise RuntimeError('fixture failed update')
+            await super().update_card_message(mid,card)
+    fake=Failing()
+    monkeypatch.setattr(server,'UPDATE_MAX_ATTEMPTS',1)
+    async def exhausted(*a,**kw):return False
+    monkeypatch.setattr(server,'_retry_terminal_update',exhausted)
+    async with TestClient(TestServer(create_app(fake,session_store_directory=tmp_path,card_config={'flush_interval_ms':0}))) as http:
+        await http.post('/events',json=event('message.started',0))
+        await http.post('/events',json=event('message.completed',1,{'answer':'FINAL_RECOVERY'}))
+        for _ in range(100):
+            if next(iter(http.app[SESSIONS_KEY].values())).terminal_delivery_state=='recovered':break
+            await asyncio.sleep(.01)
+        else:raise AssertionError('recovery did not finish')
+    assert len(fake.sent)==2
+    assert SessionStore(tmp_path).load()[0]['session'].terminal_delivery_state=='recovered'
+    fake.fail=False;updates=len(fake.updated)
+    async with TestClient(TestServer(create_app(fake,session_store_directory=tmp_path))) as http:
+        await asyncio.sleep(.02)
+        await http.post('/events',json=event('message.completed',1,{'answer':'FINAL_RECOVERY'}))
+        assert len(fake.sent)==2 and len(fake.updated)==updates

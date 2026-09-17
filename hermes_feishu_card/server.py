@@ -4638,7 +4638,7 @@ async def _restore_card_checkpoints(app):
             continue
         data = {'profile_id':profile} if profile else {}
         probe = SidecarEvent.from_dict(dict(schema_version='1', event='message.completed',
-            conversation_id=session.conversation_id, message_id=session.message_id,
+            conversation_id=session.conversation_id, message_id=session.message_id, turn_id=record["turn_id"],
             chat_id=session.chat_id, platform='feishu', sequence=0, created_at=time.time(), data=data))
         route = _resolve_route(SimpleNamespace(app=app), probe)
         if route is None or (route.bot_id or None) != (record['bot_id'] or None):
@@ -4661,7 +4661,7 @@ async def _restore_card_checkpoints(app):
         for key, session, revision in restored:
             def current():
                 return app[SESSIONS_KEY].get(key) is session and session.updated_at == revision
-            if not current():
+            if not current() or session.terminal_delivery_state in {"recovered", "unknown"}:
                 continue
             display = copy.deepcopy(session)
             if display.status not in {'completed','failed'}:
@@ -4670,9 +4670,11 @@ async def _restore_card_checkpoints(app):
                 display.answer_text += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
                 display.timeline.complete()
             try:
-                await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
+                updated = await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
                     _render_session_card_for_app(app, display, session_key=key), app[MESSAGE_BOT_IDS_KEY].get(key),
                     is_current=current), timeout=10)
+                if not updated:
+                    app[DIAGNOSTICS_KEY]["card_restore_update"] = "failed"
             except (asyncio.TimeoutError, OSError):
                 app[DIAGNOSTICS_KEY]['card_restore_update'] = 'failed'
     app[SESSION_RESTORE_TASK_KEY] = asyncio.create_task(refresh())
@@ -5742,6 +5744,8 @@ async def _apply_event_locked_inner(
                     latest_session,
                     event,
                 )
+            if is_terminal and request.app[SESSIONS_KEY].get(session_key) is latest_session:
+                _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             return updated
 
         if is_terminal:
