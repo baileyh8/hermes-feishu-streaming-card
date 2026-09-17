@@ -13663,6 +13663,73 @@ async def test_session_heartbeat_never_recalls_final_answer(client, monkeypatch)
     assert test_client.app[SESSIONS_KEY]
 
 
+async def test_an_independent_heartbeat_gets_its_own_card_and_spares_the_turn(client, monkeypatch):
+    """A heartbeat must not ride on the turn's card — only its own card can ever be withdrawn.
+
+    Production shape, and the reason this needs its own test: the heartbeat's status metadata
+    carries the user's message as `reply_to_message_id`, and the turn's session is live under that
+    very id. The reply_to alias would therefore hand the heartbeat the TURN's session key and fold
+    ⏳ Working into the turn's card. From there it can never be withdrawn — /recall/schedule refuses
+    an owned session card (409), and the card recall path wants delivery_kind=="notice" — so the
+    line stays in the thread for good, which is what the user reported ("变成卡片的时候好像不会
+    自动撤销了").
+
+    Asserted here: the heartbeat lands on its OWN card, its recall deletes only that card, and the
+    turn keeps rendering (its session, its card and its final answer all survive).
+    """
+    monkeypatch.setattr(sidecar_server, "HEARTBEAT_RECALL_SECONDS", 0.05)
+    test_client, feishu_client = client
+
+    # The turn owns the user's message id, and its card is the first thing sent.
+    await test_client.post(
+        "/events", json=event_payload("message.started", 1, {}, message_id="om_user_task")
+    )
+    assert len(feishu_client.sent) == 1
+
+    text = "⏳ Working — 18 min — iteration 39/150, terminal"
+    notice = hook_runtime._hfc_classify_system_notice(text)
+    assert notice is not None
+    heartbeat_id = hook_runtime._hfc_independent_notice_message_id(
+        "oc_abc", text, notice, anchor="om_user_task"
+    )
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            2,
+            {
+                **notice,
+                "content": text,
+                "notice_scope": "independent",
+                "delivery_kind": "notice",
+                "reply_to_message_id": "om_user_task",
+            },
+            message_id=heartbeat_id,
+        ),
+    )
+
+    assert response.status == 200
+    # A second, SEPARATE card: the heartbeat did not resolve onto the turn's session.
+    assert len(feishu_client.sent) == 2
+    assert heartbeat_id in test_client.app[SESSIONS_KEY]
+    assert "om_user_task" in test_client.app[SESSIONS_KEY]
+
+    # Its own recall fires; the turn's card is untouched.
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["feishu-message-2"]
+    assert heartbeat_id not in test_client.app[SESSIONS_KEY]
+    assert "om_user_task" in test_client.app[SESSIONS_KEY]
+
+    # ...and the turn still completes onto its own card.
+    await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 3, {"answer": "完整答案"}, message_id="om_user_task"),
+    )
+    turn = test_client.app[SESSIONS_KEY]["om_user_task"]
+    assert turn.answer_text == "完整答案"
+
+
 async def test_recall_schedule_withdraws_a_message_once_its_delay_elapses(client):
     """The gateway cannot delete its own Feishu messages, so it delegates the recall to the sidecar.
 

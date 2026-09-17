@@ -240,12 +240,14 @@ def _render_card_unchecked(
         session,
         footer_fields,
         display_status=display_status,
-        # Maintainer note (contract change): the "本轮回复结束" note used to be prefixed OUTSIDE
-        # this call, which buried the state pill behind it
-        # ("本轮回复结束 · 已完成 · 工具 #2 · …"). The user asked for the pill to lead
-        # ("已完成 · 本轮回复结束 · 工具 #2 · …"), so the note is handed in and inserted AFTER
-        # the pill — see _render_footer.
-        completion_note="本轮回复结束" if native_reply_completed else "",
+        # Maintainer note (contract change): the footer no longer repeats "本轮回复结束" at all.
+        # The user asked for it to go from the footer ("footer 区域不显示本轮回复结束"), and only
+        # the native-reply rail ever had it there — that rail drops the whole header
+        # (`if not native_reply_completed: card["header"] = header`), so this note was its only
+        # completion marker. It is a third telling of one fact: the state pill right beside it
+        # already reads 已完成, the header sub-title says "本轮回复结束" on every other completed
+        # card (`_render_status`), and the completion rail posts a standalone native message
+        # ("✅ 本轮回复结束（用时 …）") that the user sees as its own line.
     )
     if session.delivery_kind == "notice" and session.notice_title:
         configured_title = session.notice_title
@@ -434,11 +436,24 @@ def _uses_legacy_callback_card(
     session: CardSession, *, interaction_mode: str
 ) -> bool:
     interaction = session.active_interaction
-    return (
-        interaction is not None
-        and interaction.status == "pending"
-        and _normalize_interaction_mode(interaction_mode) == "callback"
-    )
+    if (
+        interaction is None
+        or interaction.status != "pending"
+        or _normalize_interaction_mode(interaction_mode) != "callback"
+    ):
+        return False
+    if str(getattr(interaction, "feishu_message_id", "") or "").strip():
+        # Maintainer note (contract change): an interaction that already has a message of its own
+        # must not turn the session card into a second copy of it.
+        #
+        # `feishu_message_id` is recorded only by the two deliveries that send an interaction as a
+        # STANDALONE card (both use delivery_kind="interaction"), i.e. the approval card the user
+        # clicks. Answering True here made the SESSION's card take the same approval shape, so one
+        # approval appeared as two cards — the double-track the user reported ("双轨审批卡"). The
+        # session card now stays a streaming card; _render_interaction_elements keeps its rows out of
+        # it, and the header still announces 待审批：… so the pending decision is not hidden.
+        return False
+    return True
 
 
 def render_legacy_interaction_callback_card(
@@ -1058,6 +1073,27 @@ def _render_interaction_elements(
 ) -> list[Dict[str, Any]]:
     interaction = session.active_interaction
     if interaction is None:
+        return []
+    if (
+        interaction.status == "pending"
+        and str(getattr(interaction, "feishu_message_id", "") or "").strip()
+    ):
+        # Maintainer note (contract change): a PENDING interaction that already owns a card of its
+        # own must not be rendered here as well.
+        #
+        # `feishu_message_id` is recorded only by the two paths that deliver an interaction as a
+        # STANDALONE card (both pass delivery_kind="interaction") — that is the approval card sitting
+        # in front of the user. This function used to draw the same prompt, description, options and
+        # buttons into the streaming card unconditionally, so one approval could appear twice: once
+        # in the turn's card (where the buttons are inert) and once in the real approval card. The
+        # user reported the double-track ("双轨审批卡").
+        #
+        # ONLY the pending case is suppressed. Once the interaction is decided, this card is where a
+        # reader of the conversation sees the outcome ("已选择：…" / "交互已过期") and that row must
+        # stay — gating on `feishu_message_id` alone silently removed it from every decided card.
+        #
+        # Nothing is lost while pending either: the card's title already reads 待审批：… then
+        # (_runtime_header_summary), and the standalone card is the surface that accepts the click.
         return []
 
     elements: list[Dict[str, Any]] = []
@@ -1785,14 +1821,30 @@ def _render_timeline_elements(
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
-    # NEWEST FIRST. The user asked for the panel to read in reverse order so the most recent work is
-    # the first thing they see ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). A live log's useful
-    # end is its LAST entry, and this panel is appended to the bottom of a card that is read
-    # downward — so the newest work used to be the furthest thing from the reader's eye.
+    # NEWEST FIRST — for the PANEL. The user asked for the panel to read in reverse order so the most
+    # recent work is the first thing they see ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). A live
+    # log's useful end is its LAST entry, and this panel is appended to the bottom of a card that is
+    # read downward — so the newest work used to be the furthest thing from the reader's eye.
     # Only the DISPLAY order flips: _select_timeline_entries still decides which entries fit (it
     # keeps the newest window and guarantees the latest reasoning is included).
-    entries = list(reversed(entries))
-    for index, item in enumerate(entries):
+    #
+    # Maintainer note (contract change): the reasoning entries that render into the CARD BODY are the
+    # exception, and they keep chronological order. Body thinking is prose the reader follows
+    # FORWARD ("思考 1", then "思考 2"), not a log they scan for the latest state — newest-first made
+    # the body read bottom-up, which is what the user reported ("正文的思考应该正序"). `index` still
+    # carries each entry's original position, so element ids are unchanged and identical entries are
+    # still selected; only the order they are written in differs per surface.
+    panel_order = [(i, e) for i, e in reversed(list(enumerate(entries)))]
+    if reasoning_format == "code":
+        # "code" puts reasoning in the body (see the target_elements split below) and tools in the
+        # panel, so the two orders can differ. Any other format folds reasoning into the panel,
+        # where newest-first applies to everything.
+        ordered = [(i, e) for i, e in enumerate(entries) if e.kind == "reasoning"] + [
+            (i, e) for i, e in panel_order if e.kind != "reasoning"
+        ]
+    else:
+        ordered = panel_order
+    for index, item in ordered:
         if item.kind == "reasoning":
             content = _limit_text(
                 item.content,
@@ -2174,7 +2226,6 @@ def _render_footer(
     footer_fields: list[str] | tuple[str, ...] | None = None,
     *,
     display_status: str = "",
-    completion_note: str = "",
 ) -> str:
     # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
     # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
@@ -2250,6 +2301,30 @@ def _render_footer(
     used_context = _safe_int(context.get("used_tokens"))
     max_context = _safe_int(context.get("max_tokens"))
     context_percent = round(used_context / max_context * 100) if max_context > 0 else 0
+    pill = _status_tag("已停止", "red") if failed else _status_tag("已完成", "green")
+    # Maintainer note (contract change): a card that received NO metric now shows the state pill
+    # alone — the metrics row is not rendered at all.
+    #
+    # This footer is reached by notice-only cards too ("Gateway 重启完成", "Gateway 正在重启"): they
+    # render through a CardSession that never carried a turn's metrics, so the line came out
+    # "已完成 · 0s · Unknown · ↑0 · ↓0 · ctx 0/0 0%" — five fields of pure noise that read as broken
+    # data rather than information. The user asked for that line to go ("为什么是 unknown。0。
+    # 如果这样的话感觉不需要展示这一行"). The guard must be HERE, before `values` is built: the zeroed
+    # strings ("0s", "Unknown", "↑0", "ctx 0/0 0%") are all TRUTHY, so an emptiness check on the
+    # rendered values cannot tell "no data" from "real data" — it would pass every field through.
+    # `subscription_usage` counts as real data on its own: it is the plan-quota line
+    # ("5h 26% · weekly 89%") a turn can report with no duration/model/token figures at all.
+    # A turn that reported any metric keeps its full line, so nothing real is ever hidden.
+    if not (
+        duration > 0
+        or model != "Unknown"
+        or input_tokens
+        or output_tokens
+        or max_context
+        or session.tool_count
+        or session.subscription_usage
+    ):
+        return pill
     values = {
         "duration": _format_duration(duration),
         "model": _colored_model_label(model),
@@ -2271,15 +2346,14 @@ def _render_footer(
         value = values.get(field)
         if value:
             selected.append(value)
-    detail = " · ".join(selected) if selected else values["duration"]
-    pill = _status_tag("已停止", "red") if failed else _status_tag("已完成", "green")
-    # Maintainer note (contract change): the state pill must LEAD the footer. The
-    # "本轮回复结束" note used to be prefixed outside this function, so the reader saw
-    # "本轮回复结束 · 已完成 · 工具 #2 · …" and the state was buried mid-line. The note now
-    # lands right after the pill: "已完成 · 本轮回复结束 · 工具 #2 · …". Only the native-reply
-    # completion path passes a note, so every other state string is byte-identical to before.
-    if completion_note:
-        return f"{pill} · {completion_note} · {detail}"
+    # Every configured field came back empty (or `footer_fields` is empty): the pill IS the footer.
+    if not selected:
+        return pill
+    detail = " · ".join(selected)
+    # Maintainer note (contract change): the state pill leads the footer and nothing else follows it
+    # but the metrics. The "本轮回复结束" note that used to sit here (first ahead of the pill, then
+    # behind it) is gone — the user asked for it to leave the footer, and the completed state plus
+    # the header sub-title / native completion line already carry it.
     return f"{pill} · {detail}"
 
 

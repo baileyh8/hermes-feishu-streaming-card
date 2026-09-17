@@ -4578,12 +4578,20 @@ def test_native_feishu_system_notice_edit_updates_same_card(monkeypatch):
 
     sent, edited = asyncio.run(run())
 
-    assert sent.message_id == "om_user_task"
-    assert edited.message_id == "om_user_task"
+    # Maintainer note (contract change): the heartbeat used to be anchored to the TURN's message
+    # (notice_scope="session", event id = the user's message id), which is what folded ⏳ Working into
+    # the turn's card and — because /recall/schedule refuses an owned session card — put it beyond
+    # recall. It now has its own notice card. What this test pins is unchanged: the heartbeat and its
+    # edit address ONE card, and the card carries the turn as its reply anchor.
+    assert sent.message_id == edited.message_id
+    assert sent.message_id.startswith("notice_")
+    assert sent.message_id != "om_user_task"
     assert adapter.text_sent == []
     assert adapter.edited == []
     assert len(posted) == 2
-    assert posted[0]["message_id"] == posted[1]["message_id"] == "om_user_task"
+    assert posted[0]["message_id"] == posted[1]["message_id"] == sent.message_id
+    assert posted[0]["data"]["notice_scope"] == posted[1]["data"]["notice_scope"] == "independent"
+    assert posted[0]["data"]["reply_to_message_id"] == "om_user_task"
     assert posted[0]["data"]["notice_id"] == posted[1]["data"]["notice_id"]
     assert "iteration 2/90" in posted[1]["data"]["content"]
 
@@ -4802,13 +4810,12 @@ def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
     assert sent.message_id == "om_native_warning"
     assert edited.message_id.startswith("notice_")
     assert len(posted) == 4
-    independent = [
-        payload
-        for payload in posted
-        if payload["data"]["notice_scope"] == "independent"
-    ]
-    assert len(independent) == 2
-    assert independent[0]["message_id"] == independent[1]["message_id"]
+    # Contract change: the heartbeat no longer tries the turn's session first, so EVERY attempt is an
+    # independent notice. The property this test is named for still holds — the attempts of one call
+    # all address the SAME notice card instead of stacking a new one per attempt.
+    assert all(payload["data"]["notice_scope"] == "independent" for payload in posted)
+    assert posted[0]["message_id"] == posted[1]["message_id"]
+    assert posted[2]["message_id"] == posted[3]["message_id"]
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():
@@ -13321,3 +13328,52 @@ def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, tit
         notice=notice, notice_scope='independent', message_id='notice_restart')
     assert payload['data']['content'] == notice['content']
     assert '预计' not in payload['data']['content']
+
+
+def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
+    """The restart-completion notice goes out as the shared online line, not a card.
+
+    Maintainer note (contract change): it rendered as a "Gateway 重启完成" card — the same news the
+    home channel gets, in different words, with a status pill and a metrics row it never had. The
+    user asked for the plain line instead ("可以改成不发卡片。发♻️ Gateway online — Hermes is back
+    and ready."), so the notice declares `plain_text` and no card payload may be posted.
+    """
+    sent = []
+
+    class FakeAdapter:
+        async def _hfc_original_send(self, chat_id, content, reply_to=None, metadata=None):
+            sent.append((chat_id, content))
+            return SimpleNamespace(success=True, message_id="om_plain")
+
+    def no_card(*args, **kwargs):
+        pytest.fail("the restart-completion notice must not post a card payload")
+
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", no_card)
+
+    result = asyncio.run(
+        hook_runtime._hfc_send_system_notice_card(
+            FakeAdapter(),
+            chat_id="oc_fixture",
+            content="♻ Gateway restarted successfully. Your session continues.",
+        )
+    )
+
+    assert result.success is True
+    assert sent == [("oc_fixture", hook_runtime._HFC_GATEWAY_ONLINE_TEXT)]
+    assert "Gateway 重启完成" not in sent[0][1]
+
+
+def test_only_the_restart_completion_notice_skips_the_card():
+    """Every other notice keeps the card path — only the completion line is a plain text notice."""
+    ready = hook_runtime._hfc_classify_system_notice(
+        "♻ Gateway restarted successfully. Your session continues."
+    )
+    waiting = hook_runtime._hfc_classify_system_notice(
+        "⏳ Gateway is restarting and is not accepting new work right now."
+    )
+    compression = hook_runtime._hfc_classify_system_notice("ℹ️ 上下文压缩已推迟")
+
+    assert hook_runtime._hfc_notice_plain_text(ready) == hook_runtime._HFC_GATEWAY_ONLINE_TEXT
+    assert hook_runtime._hfc_notice_plain_text(waiting) is None
+    assert hook_runtime._hfc_notice_plain_text(compression) is None
+    assert hook_runtime._hfc_notice_plain_text(None) is None

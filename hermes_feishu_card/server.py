@@ -151,12 +151,18 @@ INTERACTION_RESULT_SESSION_KEYS_KEY = web.AppKey(
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
 HEARTBEAT_RECALL_TASKS_KEY = web.AppKey("heartbeat_recall_tasks", dict)
-# A heartbeat card is reassurance while the agent works, not a permanent record: the core edits
-# it every agent.gateway_notify_interval, and each update re-arms this deadline. Once the updates
-# stop — the turn ended, or the run died — the card is recalled so the thread keeps only the
-# conversation. It must comfortably exceed the heartbeat interval, or a slow interval would recall
-# the card mid-run and the next tick would post a fresh one (visible as duplicates).
-HEARTBEAT_RECALL_SECONDS = 300.0
+# A heartbeat card is reassurance while the agent works, not a permanent record: every update
+# re-arms this deadline, so the card survives exactly as long as the heartbeats keep coming.
+#
+# Maintainer note (contract change): this was 300s, sized to "comfortably exceed the heartbeat
+# interval" so that a slow interval could not recall the card mid-run. That reasoning only applies
+# while the card is the ONLY status surface — it is not: the turn's own card shows the live tool row
+# throughout. The user asked for the heartbeat to behave like the other transient notices ("文案之前
+# 发出去 15 秒会撤回"), and re-arming makes the shorter window safe anyway: while updates flow the
+# deadline keeps moving, so the card is only withdrawn once they STOP for this long. The 15s matches
+# EPHEMERAL_RECALL_DEFAULT_SECONDS below (the "↪ Redirected" acknowledgement), so both
+# read-once-then-gone surfaces now share one window.
+HEARTBEAT_RECALL_SECONDS = 15.0
 # Acknowledgements that are read once and then only clutter the thread — the core's
 # "↪ Redirected current run …" notice — are withdrawn shortly after they land. The core cannot do
 # it itself (its Feishu adapter has no delete implementation: BasePlatformAdapter.delete_message
@@ -4469,6 +4475,26 @@ def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
     # tool updates) whose Hermes-internal message_id may differ.
     if event.event == "message.started":
         return direct_key
+    if _is_independent_notice_event(event):
+        # An independent notice only joins a session that is ITSELF a notice session — never the
+        # turn's. That distinction is the whole fix, and both halves are load-bearing:
+        #
+        #   * orphaned heartbeat (no turn session for the anchor yet): the notice's own card IS the
+        #     card the turn will complete onto, so the alias MUST keep working — that is
+        #     test_orphaned_heartbeats_update_one_running_notice_card.
+        #   * live turn (a session already owns the anchor): resolving through the alias folds the
+        #     ⏳ Working line into the turn's card, where nothing can ever withdraw it —
+        #     /recall/schedule refuses an owned session card (409) and the card recall path wants
+        #     delivery_kind=="notice". The user reported exactly that ("变成卡片的时候好像不会自动
+        #     撤销了"). The notice takes its own key instead.
+        for alias_key in _session_alias_keys_for_event(event):
+            active_key = _active_session_key(app, alias_key)
+            if active_key is None:
+                continue
+            existing = app[SESSIONS_KEY].get(active_key)
+            if existing is not None and existing.delivery_kind == "notice":
+                return active_key
+        return direct_key
     for alias_key in _session_alias_keys_for_event(event):
         active_key = _active_session_key(app, alias_key)
         if active_key is not None:
@@ -4481,6 +4507,15 @@ def _register_session_aliases(
     event: SidecarEvent,
     canonical_key: str,
 ) -> None:
+    if _is_independent_notice_event(event):
+        # Register the anchor alias ONLY while nothing else owns it. The mirror of
+        # _resolve_session_key's guard, and it exists for the reverse hazard: _active_session_key
+        # consults the alias table, so an alias pointing the TURN's key (reply_to_message_id) at this
+        # notice's session would let the turn's later events drift into the heartbeat's card.
+        # When the anchor is already owned — a live turn — the notice stays separate instead.
+        if any(app[SESSIONS_KEY].get(key) is not None
+               for key in _session_alias_keys_for_event(event)):
+            return
     aliases: Dict[str, str] = app[SESSION_ALIASES_KEY]
     keys = {
         _session_key(event),

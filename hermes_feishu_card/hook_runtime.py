@@ -4904,11 +4904,21 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         }
     if text in {"♻ Gateway restarted successfully. Your session continues.",
                 "♻️ Gateway restarted successfully. Your session continues."}:
+        # Maintainer note (contract change): this notice is delivered as PLAIN TEXT, not a card.
+        #
+        # It used to render as a card titled "Gateway 重启完成" — a duplicate of the home-channel
+        # line in different words, arriving with a status pill and a metrics row it never had
+        # ("已完成 · 0s · Unknown · ↑0 · ↓0 · ctx 0/0 0%"). The user asked for the two surfaces to
+        # read the same and for the card to go: "可以改成不发卡片。发♻️ Gateway online — Hermes is
+        # back and ready." `_hfc_send_system_notice_card` honours `plain_text` by sending exactly
+        # this line through the adapter's own text send; `title`/`level`/`content` stay for the
+        # classification contract and any caller that still renders one.
         return {
             "title": "Gateway 重启完成", "level": "success",
             "notice_kind": "gateway-restart", "notice_id": "gateway-restart-ready",
             "notice_terminal": True,
             "content": "Gateway 已重启完成，会话已保留。现在可以发送新任务。",
+            "plain_text": _HFC_GATEWAY_ONLINE_TEXT,
         }
     if text.startswith("📬 No home channel is set for Feishu."):
         return {
@@ -5038,6 +5048,48 @@ def _hfc_content_notice_id(kind: str, content: str) -> str:
     return f"{kind}:{digest}"
 
 
+_HFC_GATEWAY_ONLINE_TEXT = "♻️ Gateway online — Hermes is back and ready."
+
+
+def _hfc_notice_plain_text(notice: Any) -> str | None:
+    """Wording for a notice the gateway should deliver as PLAIN TEXT instead of a card.
+
+    Only the restart-completion notice declares this (see `_hfc_classify_system_notice`): its card
+    duplicated the home-channel line in different words and carried a metrics row it never had. A
+    notice without the key keeps the card path, which is every other notice.
+    """
+    if not isinstance(notice, dict):
+        return None
+    value = notice.get("plain_text")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+async def _hfc_send_plain_notice(
+    adapter: Any,
+    *,
+    chat_id: str,
+    text: str,
+    reply_to: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Send a notice as an ordinary text message — no card, no render, no card bookkeeping.
+
+    Goes through the adapter's pre-hook ``send`` (``_hfc_original_send``), so this is the same
+    plain Feishu text path the core itself uses. Reporting success back to the caller is what stops
+    the core from ALSO sending its own copy of the notice.
+    """
+    original = getattr(type(adapter), "_hfc_original_send", None)
+    if not callable(original):
+        return _send_result(False, error="original Feishu send unavailable")
+    try:
+        return await original(adapter, chat_id, text, reply_to=reply_to, metadata=metadata)
+    except Exception as exc:
+        # `delivery_disposition=native` is the callers' signal to fall back to the core's own text
+        # send, so a failed plain send degrades to the original wording rather than a lost notice.
+        _hfc_warn(f"plain notice send failed: {_hfc_exception_summary(exc)}")
+        return _send_result(False, error="delivery_disposition=native")
+
+
 async def _hfc_send_system_notice_card(
     adapter: Any,
     *,
@@ -5050,6 +5102,18 @@ async def _hfc_send_system_notice_card(
     notice = _hfc_classify_system_notice(content)
     if notice is None:
         return _send_result(False, error="not a system notice")
+    plain_text = _hfc_notice_plain_text(notice)
+    if plain_text is not None:
+        # Deliberately BEFORE the card policy gate: the delivery format of this notice is its own
+        # contract, not a per-chat card/native decision — `bindings.native_chats` is chat-scoped and
+        # would strip the streaming cards from the chat as well.
+        return await _hfc_send_plain_notice(
+            adapter,
+            chat_id=chat_id,
+            text=plain_text,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
     if not await _hfc_direct_card_allowed_async(chat_id):
         return _send_result(False, error="delivery_disposition=native")
     try:
@@ -5061,11 +5125,35 @@ async def _hfc_send_system_notice_card(
             context = {}
         message_id = str(existing_message_id or context.get("message_id") or "").strip()
         if message_id and not message_id.startswith("notice_"):
-            anchored_scope = (
-                "independent"
-                if notice.get("notice_kind") == "background-task"
-                else "session"
-            )
+            notice_kind = str(notice.get("notice_kind") or "")
+            # Maintainer note (contract change): a HEARTBEAT now takes the independent scope too.
+            #
+            # It used to be anchored to the turn (scope="session"), which folded the ⏳ Working line
+            # into the turn's own card — and from there NOTHING could ever withdraw it. Both recall
+            # paths are closed to a session-scoped notice: the card path requires
+            # delivery_kind=="notice" (a session notice is "chat"), and /recall/schedule refuses an
+            # owned session card outright (409) because deleting it would delete the answer, not the
+            # ping. So every finished turn kept its last ⏳ Working line for good.
+            #
+            # The user asked for the behaviour the plain-text heartbeat used to have ("文案之前发出去
+            # 15 秒会撤回"); the independent notice is the surface that can honor it, and it is the one
+            # this codebase already prepared for a heartbeat: _hfc_independent_notice_message_id has a
+            # heartbeat branch keyed on (chat_id, anchor), and the sidecar has a heartbeat recall path
+            # keyed on delivery_kind=="notice". background-task keeps the scope it always had.
+            if notice_kind == "heartbeat":
+                anchored_scope = "independent"
+                # The event must NOT carry the anchor as its own id. The sidecar's session key IS the
+                # event's message id (server._session_key), so an anchor id would key this heartbeat
+                # onto the TURN's session — the very card this change is separating from. The
+                # independent id is stable per anchor, which is what lets a later heartbeat update its
+                # own notice instead of stacking a new one every tick.
+                message_id = _hfc_independent_notice_message_id(
+                    chat_id, str(content or ""), notice, anchor=message_id
+                )
+            elif notice_kind == "background-task":
+                anchored_scope = "independent"
+            else:
+                anchored_scope = "session"
             payload = _hfc_build_system_notice_payload(
                 chat_id=chat_id,
                 content=str(content or ""),
