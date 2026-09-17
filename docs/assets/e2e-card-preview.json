@@ -8,6 +8,12 @@
           "tag": "markdown"
         },
         {
+          "content": "<text_tag color='green'>已完成</text_tag> · <text_tag color='neutral'>生成答案</text_tag> · #2",
+          "element_id": "tool_activity_0",
+          "tag": "markdown",
+          "text_size": "x-small"
+        },
+        {
           "border": {
             "color": "grey",
             "corner_radius": "8px"
@@ -15,13 +21,13 @@
           "element_id": "auxiliary_timeline",
           "elements": [
             {
-              "content": "<font color=\"green\">✓ **读取资料**</font>",
+              "content": "<font color=\"green\">✓ **读取资料** · #1</font>",
               "element_id": "auxiliary_timeline_toolentry_0",
               "tag": "markdown",
               "text_size": "x-small"
             },
             {
-              "content": "<font color=\"green\">✓ **生成答案**</font>",
+              "content": "<font color=\"green\">✓ **生成答案** · #2</font>",
               "element_id": "auxiliary_timeline_toolentry_1",
               "tag": "markdown",
               "text_size": "x-small"
@@ -30,7 +36,7 @@
           "expanded": false,
           "header": {
             "title": {
-              "content": "思考与工具 · 2 次工具调用",
+              "content": "▸ 思考过程（点开查看）",
               "tag": "plain_text"
             },
             "vertical_align": "center"
@@ -43,7 +49,7 @@
           "tag": "hr"
         },
         {
-          "content": "8s · Unknown · ↑128 · ↓256 · ctx 0/0 0%",
+          "content": "<text_tag color='green'>已完成</text_tag> · 工具 #2 · 8s · Unknown · ↑128 · ↓256 · ctx 0/0 0%",
           "element_id": "footer",
           "tag": "markdown",
           "text_size": "x-small"
@@ -52,18 +58,18 @@
     },
     "config": {
       "summary": {
-        "content": "已完成"
+        "content": "这是流式卡片的最终回答。思考内容已经被结果覆盖，工具调用次数保留。"
       },
       "update_multi": true
     },
     "header": {
       "subtitle": {
-        "content": "已完成",
+        "content": "本轮回复结束",
         "tag": "plain_text"
       },
       "template": "green",
       "title": {
-        "content": "Hermes Agent",
+        "content": "✅ Hermes Agent · 工具 #2 · 8s",
         "tag": "plain_text"
       }
     },
@@ -78,6 +84,12 @@
           "tag": "markdown"
         },
         {
+          "content": "<text_tag color='blue'>执行中</text_tag> · <text_tag color='neutral'>生成答案</text_tag> · 2s · #2",
+          "element_id": "tool_activity_0",
+          "tag": "markdown",
+          "text_size": "x-small"
+        },
+        {
           "border": {
             "color": "grey",
             "corner_radius": "8px"
@@ -85,13 +97,13 @@
           "element_id": "auxiliary_timeline",
           "elements": [
             {
-              "content": "<font color=\"green\">✓ **读取资料**</font>\n<font color=\"grey\">　docs</font>",
+              "content": "<font color=\"green\">✓ **读取资料** · #1</font>\n<font color=\"grey\">　docs</font>",
               "element_id": "auxiliary_timeline_toolentry_0",
               "tag": "markdown",
               "text_size": "x-small"
             },
             {
-              "content": "<font color=\"blue\">⠴ **生成答案** · 进行中</font>\n<font color=\"grey\">　answer</font>",
+              "content": "<font color=\"blue\">⠇ **生成答案** · #2 · 执行中</font>\n<font color=\"grey\">　answer</font>",
               "element_id": "auxiliary_timeline_toolentry_1",
               "tag": "markdown",
               "text_size": "x-small"
@@ -100,7 +112,7 @@
           "expanded": false,
           "header": {
             "title": {
-              "content": "思考与工具 · 2 次工具调用",
+              "content": "▸ 思考过程（点开查看）",
               "tag": "plain_text"
             },
             "vertical_align": "center"
@@ -113,7 +125,7 @@
           "tag": "hr"
         },
         {
-          "content": "⠴ 生成中",
+          "content": "⠇ <text_tag color='blue'>执行中</text_tag> · 工具 #2 · 5s · 正在使用 生成答案",
           "element_id": "footer",
           "tag": "markdown",
           "text_size": "x-small"
@@ -127,13 +139,9 @@
       "update_multi": true
     },
     "header": {
-      "subtitle": {
-        "content": "正在使用 生成答案",
-        "tag": "plain_text"
-      },
       "template": "indigo",
       "title": {
-        "content": "Hermes Agent",
+        "content": "⏳ Hermes Agent · 工具 #2 · 5s · 正在使用 生成答案",
         "tag": "plain_text"
       }
     },

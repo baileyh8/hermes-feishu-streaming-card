@@ -58,5 +58,23 @@
       "gateway/platforms/base.py": "7d7f9351be0b4e2270056a2e61946db2a6eb2e59dd667a601d033528bbdce73a",
       "hermes_cli/__init__.py": "fd84470016147d1ed16b8655a60fd5e5c118c26a1a9816d1276933d32c337ff5"
     }
+  },
+  "extracted": {
+    "commit": "6005aa1fd9aac8b1024ace50fec8cd1c85a04bae",
+    "source": "https://github.com/NousResearch/hermes-agent",
+    "version": "0.21.3",
+    "sha256": {
+      "gateway/run.py": "7bcdeb08fe7ba8a70f8f6a67126d969d02d4baf103d5c3c1a9e1a0e1d7dd06bc",
+      "gateway/run_turn.py": "19b943e8ea5ce17093a2f601a8aa1c7c5210a6e7c41a1be894d49ef12690488f",
+      "gateway/run_turn_runner.py": "b01c13b9da2631a00ac5b30dad927dff678fff3cb0d0d120ee4ca9ce04503c66",
+      "gateway/run_inbound.py": "532b3b92384bbac200898a3999bd14756d549793b726e7f9177e59b1797ff316",
+      "gateway/run_busy.py": "bfc6fb9e407a82c58eed1100b5bb772a72f877e98a281f5356d7e7436304b306",
+      "gateway/run_startup.py": "7e3a9eacc8e6513bde8a2527aa87de7c415c17303081e5a7ecbba930f4ecdb9e",
+      "gateway/run_notifications.py": "cb96a365b9560cc5247f7abb5e1afaf62838d9bbee266e68eba9f36262fa3da3",
+      "cron/scheduler.py": "b1fff9fa16dfeccffe02d5ee9260e8e82c909c718bd5f50d50a77275e5ef3d33",
+      "cron/scheduler_delivery.py": "649d6b7e91211bcbb9914624ed3709544a4171d2e8b36c19c15961b492a2e63d",
+      "gateway/platforms/base.py": "4a356394aa49f30ec5f5d4b36d99c430fe9fc8b58317b13edea64aac1d382e45",
+      "hermes_cli/__init__.py": "0d78a58a9f27f32adfdac959e89767cecde93a424bcfbd39d64fb95f6cf13e6c"
+    }
   }
 }

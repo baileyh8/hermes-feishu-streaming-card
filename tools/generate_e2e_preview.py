@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 import textwrap
+import time
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,14 +44,17 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_preview_cards() -> dict[str, dict[str, Any]]:
+    now = time.time()
     thinking = CardSession(
         conversation_id="preview-conversation",
         message_id="preview-message",
         chat_id="oc_preview",
     )
+    # Anchor the turn 5 seconds back so the preview shows a realistic "5s" instead of "0s".
+    thinking.created_at = now - 5.0
     for event in (
-        _event("thinking.delta", 0, {"text": "<think>先检查输入参数，确认 Hermes hook 已经发出事件。"}),
-        _event("thinking.delta", 1, {"text": "\n再读取资料并整理回答结构。</think>"}),
+        _event("thinking.delta", 0, {"text": "<think>先检查输入参数，确认 Hermes hook 已经发出事件。"}, now),
+        _event("thinking.delta", 1, {"text": "\n再读取资料并整理回答结构。</think>"}, now),
         _event(
             "tool.updated",
             2,
@@ -60,6 +64,7 @@ def build_preview_cards() -> dict[str, dict[str, Any]]:
                 "status": "已完成",
                 "detail": "docs",
             },
+            now,
         ),
         _event(
             "tool.updated",
@@ -70,6 +75,7 @@ def build_preview_cards() -> dict[str, dict[str, Any]]:
                 "status": "运行中",
                 "detail": "answer",
             },
+            now,
         ),
     ):
         thinking.apply(event)
@@ -79,16 +85,19 @@ def build_preview_cards() -> dict[str, dict[str, Any]]:
         message_id="preview-message",
         chat_id="oc_preview",
     )
+    completed.created_at = now - 8.0
     for event in (
         _event(
             "tool.updated",
             0,
             {"tool_id": "read-docs", "name": "读取资料", "status": "已完成"},
+            now,
         ),
         _event(
             "tool.updated",
             1,
             {"tool_id": "compose", "name": "生成答案", "status": "已完成"},
+            now,
         ),
         _event(
             "message.completed",
@@ -98,6 +107,7 @@ def build_preview_cards() -> dict[str, dict[str, Any]]:
                 "duration": 8.4,
                 "tokens": {"input_tokens": 128, "output_tokens": 256},
             },
+            now,
         ),
     ):
         completed.apply(event)
@@ -108,7 +118,10 @@ def build_preview_cards() -> dict[str, dict[str, Any]]:
     }
 
 
-def _event(event: str, sequence: int, data: dict[str, Any]) -> SidecarEvent:
+def _event(event: str, sequence: int, data: dict[str, Any], now: float) -> SidecarEvent:
+    # Timestamps are relative to now so the preview shows a realistic elapsed time ("5s") instead
+    # of the thousands of hours you get from a hardcoded past epoch. Only formatted durations end
+    # up in the card JSON, so the generated assets stay stable.
     return SidecarEvent(
         schema_version="1",
         event=event,
@@ -117,7 +130,7 @@ def _event(event: str, sequence: int, data: dict[str, Any]) -> SidecarEvent:
         chat_id="oc_preview",
         platform="feishu",
         sequence=sequence,
-        created_at=1777017600.0 + sequence,
+        created_at=now - (5.0 - sequence),
         data=data,
     )
 

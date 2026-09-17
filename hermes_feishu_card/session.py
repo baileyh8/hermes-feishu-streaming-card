@@ -24,6 +24,19 @@ MIN_PRESERVED_STREAMED_ANSWER_CHARS = 64
 MAX_SHORT_COMPLETION_POSTSCRIPT_CHARS = 240
 MIN_STREAMED_ANSWER_TO_POSTSCRIPT_RATIO = 3
 
+# Unsuccessful turn outcomes (the gateway reports these once the provider/API call
+# failed, the turn was interrupted, or no completion was confirmed).  On these the
+# completed "answer" is only an error notice, so it must be appended to whatever
+# already streamed instead of replacing it — otherwise the card blanks out the
+# answer the user was watching.  The notices double as the membership set so the
+# two can never drift apart.  (#307)
+_UNSUCCESSFUL_TURN_OUTCOME_NOTICES = {
+    "failed": "本轮执行失败，任务完成情况请以实际结果为准。",
+    "interrupted": "本轮已中断，任务尚未确认完成。",
+    "incomplete": "本轮已结束，但 Hermes 未报告执行完成。",
+}
+_UNSUCCESSFUL_TURN_OUTCOMES = frozenset(_UNSUCCESSFUL_TURN_OUTCOME_NOTICES)
+
 _RUNTIME_ACTION_PREFIX_RE = re.compile(
     r"^(?:正在)?(?:读取|执行(?:终端)?|编辑|写入|搜索|查询|浏览|访问|打开)\s*[:：]?\s*",
     re.IGNORECASE,
@@ -59,6 +72,9 @@ class ToolState:
     status: str
     detail: str = ""
     started_at: float | None = None
+    # Which tool call this is, 1-based, counted across the session. Rendered as #N so a card
+    # showing one row out of many says WHICH call the reader is looking at.
+    ordinal: int = 0
 
 
 @dataclass
@@ -95,6 +111,9 @@ class InteractionState:
     reply_in_thread: bool = False
     runtime_admission: object | None = field(default=None, repr=False)
     runtime_turn_id: str = field(default="", repr=False)
+    # The approval card's own Feishu message id, recorded when the card is delivered. A timed-out
+    # approval refreshes THAT card in place instead of sending a second paused card (#314).
+    feishu_message_id: str = ""
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission
@@ -167,6 +186,7 @@ class CardSession:
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
+    notice_kind: str = ""
     notice_title: str = ""
     notice_level: str = "info"
     terminal_disposition: str = ""
@@ -319,16 +339,23 @@ class CardSession:
                     previous_tool.detail,
                     resolved_detail,
                 )
+            if previous_tool is None or previous_is_terminal:
+                self._tool_call_count += 1
+                call_ordinal = self._tool_call_count
+            elif previous_tool.ordinal:
+                call_ordinal = previous_tool.ordinal
+            else:
+                # Pre-existing state (or a resumed session) with no ordinal recorded.
+                call_ordinal = self._tool_call_count
             self.tools[tool_id] = ToolState(
                 tool_id=tool_id,
                 name=resolved_name,
                 status=resolved_status,
                 detail=resolved_detail,
                 started_at=started_at,
+                ordinal=call_ordinal,
             )
             self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail)
-            if previous_tool is None or previous_is_terminal:
-                self._tool_call_count += 1
         elif event.event == "subagent.updated":
             child_id = event.data.get("child_id")
             if type(child_id) is str and child_id.strip():
@@ -415,6 +442,7 @@ class CardSession:
                 self.reply_to_message_id = reply_to_message_id
             if scope == "independent" or self.delivery_kind == "notice":
                 self.delivery_kind = "notice"
+                self.notice_kind = str(event.data.get("notice_kind") or "")
                 self.notice_title = title
                 self.notice_level = level
                 self.answer_text = content or title
@@ -431,9 +459,15 @@ class CardSession:
         elif event.event == "message.completed":
             if self.active_interaction is not None:
                 self.active_interaction.runtime_admission = None
+            outcome = event.data.get("turn_outcome")
+            failed_outcome = (
+                isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES
+            )
             completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
             if completed_answer.strip():
-                completed_answer = self._prepare_completed_answer(completed_answer)
+                completed_answer = self._prepare_completed_answer(
+                    completed_answer, failed_outcome=failed_outcome
+                )
             self.timeline.complete()
             self.status = "completed"
             self.latest_tool_preview = ""
@@ -473,16 +507,12 @@ class CardSession:
                     for attachment in attachments
                     if isinstance(attachment, dict) and isinstance(attachment.get("name"), str)
                 ]
-            outcome = event.data.get("turn_outcome")
-            outcome_notices = {
-                "failed": "本轮执行失败，任务完成情况请以实际结果为准。",
-                "interrupted": "本轮已中断，任务尚未确认完成。",
-                "incomplete": "本轮已结束，但 Hermes 未报告执行完成。",
-            }
-            if isinstance(outcome, str) and outcome in outcome_notices:
+            if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
                 self.status = "failed"
                 self.answer_text = (
-                    self.answer_text.rstrip() + "\n\n> " + outcome_notices[outcome]
+                    self._adopt_in_progress_content()
+                    + "\n\n> "
+                    + _UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome]
                 ).lstrip()
         elif event.event == "message.failed":
             if self.active_interaction is not None:
@@ -491,11 +521,29 @@ class CardSession:
             self.status = "failed"
             error = event.data.get("error")
             error = error if isinstance(error, str) and error.strip() else "消息处理失败"
-            partial = self.answer_text.rstrip()
+            partial = self._adopt_in_progress_content()
             self.answer_text = partial + "\n\n> " + error if partial else error
         self.updated_at = time.time()
         self.refresh_display_status_source()
         return True
+
+    def _adopt_in_progress_content(self) -> str:
+        """Promote the content the user was reading, so a failure cannot erase it.
+
+        Maintainer note (contract change): while a turn runs, the card streams whatever has arrived —
+        the answer once there is one, otherwise the in-progress reasoning (`visible_main_text` and
+        `render._primary_text_for_session` both fall back to `thinking_text`). BOTH readers return
+        only `answer_text` once the status is `failed`, so a failure landing before any answer was
+        produced left the card showing nothing but the error. The user reported exactly that for an
+        HTTP 403 arriving mid-turn: 「这种以后能否不要覆盖掉正在做的事项内容」.
+
+        Promoting the streamed text first makes a no-answer failure behave like the partial-answer
+        case that already worked: the work in progress stays where it was, and the failure text is
+        appended below it as a quote.
+        """
+        if not self.answer_text.strip() and self.thinking_text.strip():
+            self.answer_text = self.thinking_text.strip()
+        return self.answer_text.rstrip()
 
     def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:
         preface = normalize_stream_text(self.answer_text).strip()
@@ -509,11 +557,22 @@ class CardSession:
         self.timeline.insert_completed_reasoning(preface, self._answer_archive_index)
         self._answer_archive_index = None
 
-    def _prepare_completed_answer(self, completed_answer: str) -> str:
+    def _prepare_completed_answer(
+        self, completed_answer: str, *, failed_outcome: bool = False
+    ) -> str:
         preface = normalize_stream_text(self.answer_text).strip()
         final = normalize_stream_text(completed_answer).strip()
         if not preface or final == preface:
             return final
+
+        if failed_outcome:
+            # The closing text of an unsuccessful turn is a postscript, not a rewrite:
+            # keep everything that already streamed and append the provider/error notice
+            # below it.  The archive/length gates further down exist for successful
+            # completions and would otherwise drop the streamed answer outright.  (#307)
+            if final in preface:
+                return preface
+            return f"{preface}\n\n---\n\n{final}"
 
         if self._answer_archive_index is not None:
             stripped = _strip_preface_prefix(final, preface)
@@ -629,36 +688,99 @@ def _interaction_options(value: Any) -> list[InteractionOption]:
     return options
 
 
+# Tool name → the phrase the card shows for it.  Exact names win over the substring families
+# below, which is how `todo_list` avoids being read as "listing files" and `tool_search` avoids
+# being read as a web search.
+_TOOL_ACTION_PHRASES = {
+    "read_file": "读取文件",
+    "read_terminal": "读取终端输出",
+    "read_window": "读取窗口",
+    "write_file": "写入文件",
+    "patch": "编辑文件",
+    "search_files": "搜索文件",
+    "web_search": "搜索网页",
+    "x_search": "搜索推文",
+    "session_search": "搜索历史会话",
+    "tool_search": "搜索工具",
+    "web_extract": "浏览网页",
+    "terminal": "执行命令",
+    "todo_list": "整理待办",
+    "delegate_task": "分派子任务",
+    "skill_view": "查看技能",
+    "skill_manage": "修改技能",
+    "skills_list": "查看技能列表",
+}
+
+# Substring → phrase, checked in order; first hit wins.  Covers the tools that are not named
+# above (plugins, MCP servers, new core tools) without enumerating every one of them.
+_TOOL_ACTION_FAMILIES = (
+    ("search", "搜索网页"),
+    ("query", "搜索网页"),
+    ("browser", "浏览网页"),
+    ("fetch", "浏览网页"),
+    ("web", "浏览网页"),
+    ("http", "浏览网页"),
+    ("terminal", "执行命令"),
+    ("shell", "执行命令"),
+    ("exec", "执行命令"),
+    ("command", "执行命令"),
+    ("code", "执行命令"),
+    ("write", "写入文件"),
+    ("edit", "编辑文件"),
+    ("patch", "编辑文件"),
+    ("read", "读取文件"),
+    ("open", "读取文件"),
+    ("glob", "搜索文件"),
+)
+
+
+def _search_tool_phrase(tool_name: str) -> str:
+    """The phrase for a tool, or "" when nothing matches (the caller falls back to 使用 X)."""
+    exact = _TOOL_ACTION_PHRASES.get(tool_name)
+    if exact:
+        return exact
+    for marker, phrase in _TOOL_ACTION_FAMILIES:
+        if marker in tool_name:
+            return phrase
+    return ""
+
+
 def _runtime_tool_summary(name: Any, preview: str) -> str:
+    """The action phrase + target for a tool ("读取文件：session.py").
+
+    Maintainer note (contract change): the phrases used to carry a 正在 prefix, and the verbs
+    were bare ("读取"). The user asked for two things: name the object (读取文件, not 读取), and
+    drop 正在 from the content-area row — there the status pill already reads 运行中/已完成, so the
+    prefix only repeated it. The header KEEPS 正在 (it is the status line); `_tool_action_phrase`
+    adds it back for the title. So this function returns the phrase WITHOUT the prefix.
+    """
     text = normalize_stream_text(preview).strip()
     if not text:
         return ""
     if text.startswith("正在"):
-        return text
+        # A preview that is already phrased ("正在读取：session.py"): drop the prefix and strip it
+        # down through the normal path so the object is named consistently.
+        text = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
+        if not text:
+            return ""
 
     tool_name = str(name or "").strip().lower()
     is_url = text.startswith(("http://", "https://"))
-    is_search = bool(_SEARCH_SITE_OPERATOR_RE.search(text))
 
-    if is_search or "search" in tool_name or "query" in tool_name:
-        action = "正在搜索"
-    elif is_url or any(
-        marker in tool_name for marker in ("browser", "fetch", "web", "http")
-    ):
-        action = "正在浏览"
-    elif any(
-        marker in tool_name for marker in ("terminal", "shell", "exec", "command", "code")
-    ):
-        action = "正在执行终端"
-    elif any(marker in tool_name for marker in ("write", "edit", "patch", "replace")):
-        action = "正在编辑"
-    elif any(marker in tool_name for marker in ("read", "open", "list", "glob")):
-        action = "正在读取"
+    if tool_name in _TOOL_ACTION_PHRASES:
+        action = _TOOL_ACTION_PHRASES[tool_name]
+    elif _SEARCH_SITE_OPERATOR_RE.search(text) or is_url:
+        action = "搜索网页" if _SEARCH_SITE_OPERATOR_RE.search(text) else "浏览网页"
     else:
-        readable_name = tool_name.replace("_", " ").strip() or "工具"
-        return f"正在使用 {readable_name}"
+        action = _search_tool_phrase(tool_name)
 
     target = _runtime_preview_target(text, action=action, is_url=is_url)
+    if not action:
+        readable_name = tool_name.replace("_", " ").strip() or "工具"
+        # An unrecognised tool (plugin, MCP server, new core tool) still has to name what it was
+        # asked to do: the bare "使用 delegate task" is the same content-free row the targeted form
+        # exists to avoid. The header is unaffected — it reads only the phrase before "：".
+        return f"使用 {readable_name}：{target}" if target else f"使用 {readable_name}"
     return f"{action}：{target}" if target else action
 
 
@@ -669,11 +791,16 @@ def _runtime_preview_target(text: str, *, action: str, is_url: bool) -> str:
         path = parsed.path.rstrip("/")
         return f"{host}{path}" if host else ""
 
-    target = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
-    if action == "正在搜索":
+    target = text
+    # A preview that already carries the action phrase ("执行命令：pytest -q") must not be phrased a
+    # second time — that produced rows like "执行命令：命令：pytest -q".
+    if action and target.startswith(action):
+        target = target[len(action) :].lstrip("：: ").strip()
+    target = _RUNTIME_ACTION_PREFIX_RE.sub("", target).strip()
+    if action == "搜索网页":
         target = _SEARCH_SITE_OPERATOR_RE.sub("", target).strip()
         target = " ".join(target.split())
-    if action in {"正在读取", "正在编辑"} and target.startswith(("/", "~/")):
+    if action in {"读取文件", "编辑文件", "写入文件"} and target.startswith(("/", "~/")):
         path = target.split(maxsplit=1)[0]
         target = path.rstrip("/").rsplit("/", 1)[-1]
     if target.lower().startswith(("参数:", "参数：", "args:", "arguments:")):

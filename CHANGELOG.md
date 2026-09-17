@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.5.1 — 2026-09-17
+
+### Fixed
+- Preserve in-progress reasoning on early failures, improve tool activity rows, and recall transient redirect acknowledgements with bounded deduplication and reversible patches (latest PR #310 through `a9fd806`).
+- Support the extracted Hermes clarify helper with its `(response, answered)` contract, reject call/async drift, and pin the real upstream source in CI (#316/#317).
+- Normalize CardKit element IDs to unique stable values of at most 20 characters before create, incremental updates and full updates. Reproduce and verify the long timeline ID failure against real unsent Feishu entities (#306).
+- Preserve source-message anchors for background work and resolve missing topic anchors for attachments and cards (#305/#313, based on @mouyong's PR #310).
+- Retain streamed text on failed completion, and retain approval questions, operation scope and outcomes (#307/#312).
+- Reuse paused approval cards, keep the original waiter alive, and explain expired/orphaned approvals without manufacturing a new live request (#314). Add an explicit mobile expand-versus-consent hint (#282; device acceptance remains open).
+- Distinguish restart rejection and restart completion notices from running heartbeats; preserve completed conversation cards when transient heartbeats expire (#311).
+- Improve execution titles, tool activity and collapsible-panel affordances (#304).
+
 ## V4.5.0 — 2026-09-15
 
 ### Added

@@ -27,6 +27,13 @@ message ID、Gateway loop 和 session；approval 未被 sidecar 接管时保留�
 已经接管但失败/超时则返回拒绝，避免在原话题外再次开启原生审批。
 completion 从调用方复制 `_turn_seconds`，不修改原始 `agent_result` 对象。
 
+clarify 的缝合点在 Hermes `242ff24ff7`（2026-09-16）后随 `_clarify_callback_sync` 的函数体
+一起抽到 `_ask_clarify_question`，`ctx = self._ctx` 绑定也随之迁移，旧的锚点不再命中。
+定位改按 helper 自身的 TurnRunner 上下文绑定判定：helper 存在即视为该布局并在其中注入。
+该 helper 的契约是 `(response, answered)` 且调用方会解包，因此它的 hook 返回
+`(answer, True)`；helper 存在但上下文绑定或 `question` / `choices` / `multi_select`
+签名漂移、helper 改为 async 或 callback 不再解包二元返回值时拒绝安装，不留下半注入状态。单问与批问都经过该 helper，一张卡对应一个问题。
+
 ## Exact Base 边界
 
 必须同时验证 `_process_message_background`、`_extract_response_content`、
@@ -111,6 +118,9 @@ Docker 建议依次完成：安装 HFC 包与 hook、必要的完整性迁移、
 `tests/fixtures/hermes_decomposed/` 包含 8 个注入目标和两个 facade，无凭据、无运行环境。
 `tests/unit/test_decomposed_patcher.py` 验证 CLI install/uninstall、重复安装、LF/CRLF
 及无末尾换行的逐字往返、事务回滚、拒绝漂移、版本复核与生成 hook 的实际执行。
+`tests/fixtures/hermes_extracted_clarify.py` 与 `tests/unit/test_extracted_clarify_patcher.py`
+覆盖抽取后的 clarify 缝合点：注入位置、元组返回值、重复安装、逐字还原、上下文绑定与
+参数漂移拒绝、hook 实际执行与无应答时的原生回退。
 这些测试不代替真实 Feishu/Lark smoke；模拟 CLI 测试仅替换 runtime package/SDK provisioning。
 
 ```bash

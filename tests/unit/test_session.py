@@ -50,6 +50,62 @@ def test_unknown_completion_outcome_retains_legacy_behavior(outcome):
     assert session.answer_text == "普通答案"
 
 
+_STREAMED_ANSWER = "这是一轮正在进行的流式回答。" * 4
+_PROVIDER_FAILURE = (
+    "\u26a0\ufe0f The model provider failed after retries. I kept raw provider "
+    "details out of chat; check gateway logs for diagnostics."
+)
+
+
+@pytest.mark.parametrize("outcome", ["failed", "interrupted", "incomplete"])
+@pytest.mark.parametrize("tool_event_between", [False, True])
+def test_unsuccessful_completion_keeps_streamed_answer(outcome, tool_event_between):
+    """An unsuccessful turn appends its notice; it never blanks the streamed answer. (#307)
+
+    Both shapes matter: a tool event between the streamed text and the completion is
+    what arms the answer archive, so it used to take a different branch to the same
+    data loss.
+    """
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("message.started", 1, {"display_status": "running"}))
+    assert session.apply(event("answer.delta", 2, {"text": _STREAMED_ANSWER}))
+    sequence = 3
+    if tool_event_between:
+        assert session.apply(event("tool.updated", sequence, {
+            "tool_id": "t1", "name": "terminal", "status": "running",
+        }))
+        sequence += 1
+
+    assert session.apply(event("message.completed", sequence, {
+        "answer": _PROVIDER_FAILURE, "turn_outcome": outcome,
+    }))
+
+    assert session.status == "failed"
+    assert _STREAMED_ANSWER in session.answer_text
+    assert _PROVIDER_FAILURE in session.answer_text
+    assert "本轮" in session.answer_text
+    # The answer the user was reading still reads first; the failure notice follows it.
+    assert session.answer_text.index(
+        _STREAMED_ANSWER
+    ) < session.answer_text.index(_PROVIDER_FAILURE)
+
+
+def test_unsuccessful_completion_keeps_short_streamed_answer():
+    """Length gates meant for success must not delete an unsuccessful turn's text. (#307)
+
+    A completion shorter than the 3:1 ratio gate used to send the streamed text to the
+    reasoning archive and leave the body holding only the error notice.
+    """
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("answer.delta", 1, {"text": "短答案，仍在流式输出中。"}))
+    assert session.apply(event("message.completed", 2, {
+        "answer": _PROVIDER_FAILURE, "turn_outcome": "failed",
+    }))
+
+    assert "短答案，仍在流式输出中。" in session.answer_text
+    assert _PROVIDER_FAILURE in session.answer_text
+
+
 def test_thinking_accumulates_and_strips_tags():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 1, {"text": "<think>先分析"}))
@@ -1021,9 +1077,32 @@ def test_completion_bad_metadata_uses_safe_defaults():
 
 
 def test_failed_visible_main_text_shows_error():
+    """The failure text is shown — and it must not REPLACE what the user was reading.
+
+    Maintainer note (contract change): this used to assert `visible_main_text == "失败原因"` while a
+    thinking delta had already been streamed. That pinned the erasure: both readers of the card's
+    main text return `answer_text` alone once the status is `failed`, so the in-progress content
+    disappeared and the card was left showing nothing but the error. The user reported exactly that
+    for an HTTP 403 arriving mid-turn (「这种以后能否不要覆盖掉正在做的事项内容」).
+
+    What this test guards now: the error is still visible AND the streamed content survives beside it.
+    """
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     assert session.apply(event("thinking.delta", 1, {"text": "旧思考"}))
     assert session.apply(event("message.failed", 2, {"error": "失败原因"}))
+    assert session.status == "failed"
+    assert "失败原因" in session.visible_main_text
+    assert "旧思考" in session.visible_main_text
+
+
+def test_a_failure_with_nothing_streamed_still_reports_the_error_alone():
+    """Fallback path: with no streamed content at all, the error IS the content.
+
+    This is the shape the rewritten test above used to cover, kept explicit so the no-content
+    fallback stays tested rather than being dropped along with the old assertion.
+    """
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    assert session.apply(event("message.failed", 1, {"error": "失败原因"}))
     assert session.status == "failed"
     assert session.visible_main_text == "失败原因"
 
@@ -1382,8 +1461,8 @@ def test_tool_preview_replaces_header_without_touching_thinking_text():
         )
     )
 
-    assert session.latest_tool_preview == "正在读取：weather_client.py"
-    assert session.runtime_header_text == "正在读取：weather_client.py"
+    assert session.latest_tool_preview == "读取文件：weather_client.py"
+    assert session.runtime_header_text == "读取文件：weather_client.py"
     assert session.thinking_text == "先分析接口。"
 
 
@@ -1415,7 +1494,7 @@ def test_empty_tool_preview_preserves_previous_header():
         )
     )
 
-    assert session.latest_tool_preview == "正在读取：weather_client.py"
+    assert session.latest_tool_preview == "读取文件：weather_client.py"
 
 
 def test_interaction_temporarily_overrides_then_restores_preview():
@@ -1458,7 +1537,7 @@ def test_interaction_temporarily_overrides_then_restores_preview():
             },
         )
     )
-    assert session.runtime_header_text == "正在执行终端：pytest"
+    assert session.runtime_header_text == "执行命令：pytest"
 
 
 def test_completed_clears_header_but_failed_retains_preview():
@@ -1501,7 +1580,7 @@ def test_completed_clears_header_but_failed_retains_preview():
         )
     )
     assert failed.apply(event("message.failed", 2, {"error": "测试失败"}))
-    assert failed.runtime_header_text == "正在执行终端：pytest"
+    assert failed.runtime_header_text == "执行命令：pytest"
     assert not failed.apply(
         event(
             "tool.updated",
@@ -1514,7 +1593,7 @@ def test_completed_clears_header_but_failed_retains_preview():
             },
         )
     )
-    assert failed.runtime_header_text == "正在执行终端：pytest"
+    assert failed.runtime_header_text == "执行命令：pytest"
 
 
 def test_runtime_header_summarizes_search_url_and_private_file_path():
@@ -1531,7 +1610,7 @@ def test_runtime_header_summarizes_search_url_and_private_file_path():
             },
         )
     )
-    assert search.runtime_header_text == "正在搜索：广州 小时天气 降雨概率"
+    assert search.runtime_header_text == "搜索网页：广州 小时天气 降雨概率"
 
     assert search.apply(
         event(
@@ -1545,7 +1624,7 @@ def test_runtime_header_summarizes_search_url_and_private_file_path():
             },
         )
     )
-    assert search.runtime_header_text == "正在浏览：ventusky.com/zh/guangzhou"
+    assert search.runtime_header_text == "浏览网页：ventusky.com/zh/guangzhou"
 
     reader = CardSession(conversation_id="chat-1", message_id="msg-2", chat_id="oc_abc")
     assert reader.apply(
@@ -1561,7 +1640,7 @@ def test_runtime_header_summarizes_search_url_and_private_file_path():
             message_id="msg-2",
         )
     )
-    assert reader.runtime_header_text == "正在读取：weather_client.py"
+    assert reader.runtime_header_text == "读取文件：weather_client.py"
 
 
 def test_runtime_header_keeps_unknown_tools_specific_without_exposing_arguments():
@@ -1579,7 +1658,7 @@ def test_runtime_header_keeps_unknown_tools_specific_without_exposing_arguments(
         )
     )
 
-    assert session.runtime_header_text == "正在使用 memos skill get"
+    assert session.runtime_header_text == "使用 memos skill get"
 
 
 def test_pause_capability_never_extends_native_admission():

@@ -2,7 +2,10 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.5.0`. This cycle adds topic notice routing, mobile interaction readability, requester mentions, CardKit entity streaming and live Gateway approval pause. Exact historical Hermes source and container UID checks supplement the release gates. Client acceptance and publication evidence remain separate from automated contracts.
+Current release candidate: `4.5.1`. This cycle adds topic notice routing, mobile interaction readability, requester mentions, CardKit entity streaming and live Gateway approval pause. Exact historical Hermes source and container UID checks supplement the release gates. Client acceptance and publication evidence remain separate from automated contracts.
+
+This candidate fixes CardKit IDs, topic routing and approval lifecycle. Real unsent entities passed; full tests, exact merge CI and public installation must pass before release. Mobile field acceptance remains open.
+
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
 

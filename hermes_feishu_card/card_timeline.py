@@ -2,7 +2,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-TERMINAL_TOOL_STATUSES = {"completed", "failed", "cancelled", "canceled"}
+TERMINAL_TOOL_STATUSES = {
+    "completed",
+    "failed",
+    "cancelled",
+    "canceled",
+    # The card also renders localized statuses (see _render_tool_timeline_row), so a Chinese
+    # terminal status must count as terminal here too — otherwise a "已完成" tool is treated as
+    # still running and the row gets labelled 执行中 / 已中断.
+    "已完成",
+    "完成",
+    "成功",
+    "已失败",
+    "失败",
+    "错误",
+    "已取消",
+    "取消",
+}
 TERMINAL_SUBAGENT_STATUSES = {
     "completed",
     "success",

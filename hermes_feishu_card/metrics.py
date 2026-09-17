@@ -67,6 +67,10 @@ class SidecarMetrics:
     sessions_collected: int = 0
     zombie_sessions_collected: int = 0
     flush_controllers_collected: int = 0
+    # Short-lived message recall (the gateway asks the sidecar to withdraw an acknowledgement).
+    ephemeral_recalls_scheduled: int = 0
+    ephemeral_recalls_completed: int = 0
+    ephemeral_recall_failures: int = 0
 
     def snapshot(self) -> dict[str, int]:
         return asdict(self)

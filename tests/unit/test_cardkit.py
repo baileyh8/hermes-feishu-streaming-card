@@ -246,7 +246,7 @@ async def test_empty_content_uses_full_update_instead_of_invalid_text_api(transp
 
 
 @pytest.mark.asyncio
-async def test_long_element_identifier_uses_full_card_contract(transport):
+async def test_long_element_identifier_uses_normalized_incremental_contract(transport):
     client, calls = transport
     initial = card('prior')
     initial['body']['elements'][0]['element_id'] = 'reasoning_entry_identifier_too_long'
@@ -254,7 +254,8 @@ async def test_long_element_identifier_uses_full_card_contract(transport):
     changed = deepcopy(initial)
     changed['body']['elements'][0]['content'] = 'next'
     await client.update_card_message('om_fixture', changed)
-    assert calls[-1][:2] == ('PUT', '/cardkit/v1/cards/card_fixture')
+    sent_id = json.loads(calls[0][2]['data'])['body']['elements'][0]['element_id']
+    assert calls[-1][:2] == ('PUT', f'/cardkit/v1/cards/card_fixture/elements/{sent_id}/content')
 
 
 @pytest.mark.asyncio
@@ -267,3 +268,119 @@ async def test_lost_create_response_is_not_an_unknown_im_delivery(transport, mon
         await client.send_card('oc_group', card(), delivery_uuid='turn-1')
     assert error.value.outcome == 'not_sent'
     assert not client.cardkit.entities
+
+
+@pytest.mark.asyncio
+async def test_topic_card_without_reply_anchor_is_replied_into_its_topic(transport, monkeypatch):
+    """A topic-bound card must never fall through to an unanchored create.
+
+    Feishu's create API cannot address a topic: given only a thread_id it posts to the chat, and
+    in a topic group that post becomes a NEW topic — which is how heartbeat/notice cards detached
+    from the conversation they belonged to. With no reply anchor supplied, the client has to
+    resolve one INSIDE the topic and reply to it.
+    """
+    client, calls = transport
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, deepcopy(kwargs.get("json_body"))))
+        if path == "/im/v1/messages":
+            params = kwargs.get("params") or {}
+            assert method == "GET"
+            assert params.get("container_id_type") == "thread"
+            assert params.get("container_id") == "omt_topic"
+            return {"code": 0, "data": {"items": [{"message_id": "om_inside_topic"}]}}
+        if path == "/cardkit/v1/cards":
+            return {"code": 0, "data": {"card_id": "card_fixture"}}
+        if path.startswith("/im/"):
+            return {"code": 0, "data": {"message_id": "om_fixture"}}
+        return {"code": 0}
+
+    monkeypatch.setattr(client, "_request_json", request)
+
+    await client.send_card_delivery("oc_group", card(), thread_id="omt_topic")
+
+    paths = [(method, path) for method, path, _ in calls]
+    assert ("POST", "/im/v1/messages/om_inside_topic/reply") in paths
+    assert ("POST", "/im/v1/messages") not in paths
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_topic_anchor_warns_instead_of_silently_detaching(
+    transport, monkeypatch, caplog
+):
+    """When no anchor can be found the send still proceeds, but it says so.
+
+    The silent version of this failure is why stray topics went unnoticed: the card looked
+    delivered, it was simply delivered somewhere else.
+    """
+    client, calls = transport
+
+    async def request(method, path, **kwargs):
+        calls.append((method, path, deepcopy(kwargs.get("json_body"))))
+        if path == "/im/v1/messages" and method == "GET":
+            return {"code": 0, "data": {"items": []}}
+        if path == "/cardkit/v1/cards":
+            return {"code": 0, "data": {"card_id": "card_fixture"}}
+        return {"code": 0, "data": {"message_id": "om_fixture"}}
+
+    monkeypatch.setattr(client, "_request_json", request)
+
+    with caplog.at_level("WARNING"):
+        await client.send_card_delivery("oc_group", card(), thread_id="omt_topic")
+
+    assert any("no anchor inside topic: thread_hash=" in record.message for record in caplog.records)
+    assert "omt_topic" not in caplog.text
+
+@pytest.mark.asyncio
+async def test_cardkit_shortens_long_timeline_ids_before_create_and_update(transport):
+    client, calls = transport
+    initial = card()
+    for i in range(15):
+        initial['body']['elements'].append({'tag': 'markdown',
+            'element_id': f'auxiliary_timeline_toolentry_{i}', 'content': f'tool {i}'})
+    await client.send_card('oc_group', initial, delivery_uuid='long-ids')
+    sent = json.loads(calls[0][2]['data'])
+    ids = [e['element_id'] for e in sent['body']['elements']]
+    assert all(1 <= len(i) <= 20 for i in ids)
+    assert len(ids) == len(set(ids))
+    changed = deepcopy(initial)
+    changed['body']['elements'][-1]['content'] = 'tool finished'
+    await client.update_card_message('om_fixture', changed)
+    assert calls[-1][1].endswith(f'/elements/{ids[-1]}/content')
+    assert initial['body']['elements'][-1]['element_id'] == 'auxiliary_timeline_toolentry_14'
+    changed['config']['streaming_mode'] = False
+    await client.update_card_message('om_fixture', changed)
+    final = json.loads(calls[-1][2]['card']['data'])
+    assert [e['element_id'] for e in final['body']['elements']] == ids
+
+
+def test_cardkit_normalization_repairs_nested_duplicate_ids_without_mutating_input():
+    original = card()
+    original['body']['elements'].append({'tag': 'column_set', 'element_id': 'main_content',
+       'columns': [{'tag': 'column', 'elements': [{'tag': 'markdown',
+       'element_id': 'main_content', 'content': 'private text'}]}]})
+    result = cardkit._normalize_element_ids(original)
+    ids = []
+    def visit(node):
+        if isinstance(node, dict):
+            if 'element_id' in node: ids.append(node['element_id'])
+            for value in node.values(): visit(value)
+        elif isinstance(node, list):
+            for value in node: visit(value)
+    visit(result)
+    assert len(ids) == len(set(ids))
+    assert original['body']['elements'][-1]['element_id'] == 'main_content'
+    assert result == cardkit._normalize_element_ids(original)
+
+@pytest.mark.asyncio
+async def test_cardkit_failure_diagnostics_do_not_expose_body_or_identifiers(transport, monkeypatch, caplog):
+    client, calls = transport
+    await client.send_card('oc_group', card(), delivery_uuid='sensitive-uuid')
+    async def reject(*args, **kwargs):
+        raise FeishuAPIError('private upstream response', api_code=300301)
+    monkeypatch.setattr(client, '_request_json', reject)
+    with pytest.raises(FeishuAPIError), caplog.at_level('WARNING'):
+        await client.update_card_message('om_fixture', card('private answer text'))
+    assert 'payload_sha256=' in caplog.text and 'api_code=300301' in caplog.text
+    for secret in ('private answer text', 'card_fixture', 'om_fixture', 'sensitive-uuid', 'private upstream response'):
+        assert secret not in caplog.text
