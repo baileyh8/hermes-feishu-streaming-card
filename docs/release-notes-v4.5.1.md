@@ -19,3 +19,5 @@
 2026-09-17 报告者已在 #305、#307、#311、#312、#313、#314 明确确认 PR #310 实测通过；#290 确认为用户技能相关。以上是贡献者现场证据，与维护者自动化及未发送实体测试分别记录。#282 最新线索为小屏幕展开与授权按钮重叠，仍未确认最终修复。
 
 包含 #310 截至 `a9fd806` 的补充：失败前尚无答案时保留已显示的思考内容；工具活动分行呈现；重定向提示 15 秒后撤回。维护者补齐撤回补丁的 LF/CRLF 逐字还原和损坏检测、调度去重/容量/有限延迟检查，以及禁止撤回承载正文的卡片。
+
+- V4.5.1：感谢 [mouyong](https://github.com/mouyong) 的 [PR #310](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/310)，以及 #282、#304、#305、#307、#311–#314、#318 的现场反馈和复测；[lanx214](https://github.com/lanx214) 的 [Issue #316](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/316) 和 [PR #317](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/317) 提供 Hermes clarify 抽取兼容修复；[qqqq560204-maker](https://github.com/qqqq560204-maker) 在 [Issue #306](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/306) 提供 CardKit 300301 诊断线索。两项 PR 保留原始提交作者，维护者补充安全边界与回归验证。#282 仍待移动端复验。
