@@ -219,12 +219,13 @@ def test_tool_activity_clears_compaction_and_restores_tool_subtitle():
     card = render_card(session, title="研发助手")
 
     assert session.runtime_phase_text == ""
-    # The header keeps the action PHRASE but not the target; the target lives in the row below.
+    # The header's second row now names the CONCRETE work; the title stays an identity line.
     # Maintainer note (contract change): the phrase used to lead the title ("⏳ 正在执行终端 ·
-    # 研发助手"). The user asked for the phrase LAST, with the running time and tool count
-    # ahead of it, so the title now reads name → metrics → phrase. The property this test guards
-    # (the phrase survives in the header, the target "pytest" does not) is unchanged.
-    assert card["header"]["title"]["content"] == "⏳ 研发助手 · 工具 #1 · 正在执行命令"
+    # 研发助手"), then sat LAST on the title line, then moved to the row beneath it. The user then
+    # asked for the concrete action there ("标题行这边的第二个行像工具行那样看到具体的工具动作"), so
+    # the sub-title carries phrase + target now, same source as the content-area tool row.
+    assert card["header"]["title"]["content"] == "⏳ 研发助手 · 工具 #1"
+    assert card["header"]["subtitle"]["content"] == "执行命令：pytest"
     row = next(
         item for item in card["body"]["elements"]
         if item.get("element_id") == "tool_activity_0"
@@ -283,7 +284,12 @@ def test_tool_row_is_three_rows_status_then_action_then_parameters():
     rows = _tool_activity_row(tool, index=0, now=1_000_012.0)["content"].splitlines()
 
     assert len(rows) == 3
-    assert rows[0].endswith("#4") and "terminal" in rows[0] and "12s" in rows[0]
+    # The ordinal precedes the duration, matching the header ("工具 #N · 1m12s"): the count names the
+    # tool, the time qualifies it. Asserted as an ORDER, not just presence — presence alone would
+    # pass with the two swapped, which is exactly what the user reported ("时间调整到编号后面").
+    assert "terminal" in rows[0] and "#4" in rows[0] and "12s" in rows[0]
+    assert rows[0].index("#4") < rows[0].index("12s")
+    assert rows[0].endswith("12s")
     assert "执行命令" not in rows[0]  # the action must not share the status row
     assert rows[1] == "执行命令：pytest -q"
     # The command named the work already, so only its siblings count as parameters.
