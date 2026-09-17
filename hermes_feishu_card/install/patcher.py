@@ -219,22 +219,7 @@ def _apply_turn_callbacks(content: str, *, strategy: str) -> str:
         required_callback_args=("text", "already_streamed"),
         allow_turn_context=True,
     )
-    content = _apply_callback_patch(
-        content,
-        callback_name="_clarify_callback_sync",
-        begin_marker=CLARIFY_PATCH_BEGIN,
-        end_marker=CLARIFY_PATCH_END,
-        renderer=_render_clarify_hook_block,
-        required_outer_names=(
-            "source",
-            "event_message_id",
-            "_status_chat_id",
-            "session_key",
-            "_run_still_current",
-        ),
-        required_callback_args=("question", "choices"),
-        allow_turn_context=True,
-    )
+    content = _apply_clarify_patch(content)
     content = _apply_callback_patch(
         content,
         callback_name="_approval_notify_sync",
@@ -2742,6 +2727,14 @@ def _find_simple_owned_patch(
         expected_blocks.append(
             _render_turn_context_hook_block(renderer, indent, newline)
         )
+    if renderer is _render_clarify_hook_block:
+        # The extracted ``_ask_clarify_question`` seam answers with ``(answer, True)``,
+        # so its block is the same hook carrying the answered flag.
+        expected_blocks.append(
+            _render_turn_context_hook_block(
+                _render_extracted_clarify_hook_block, indent, newline
+            )
+        )
     actual = lines[begin_index : end_index + 1]
     if actual not in expected_blocks:
         raise ValueError(f"corrupt {error_label}")
@@ -3744,7 +3737,15 @@ def _render_thinking_delta_hook_block(indent: str, newline: str):
     ]
 
 
-def _render_clarify_hook_block(indent: str, newline: str):
+def _render_clarify_hook_block(indent: str, newline: str, *, returns_tuple: bool = False):
+    """Render the clarify interception block.
+
+    ``returns_tuple`` targets Hermes' extracted ``_ask_clarify_question`` seam
+    (commit 242ff24ff7, 2026-09-16): that helper's contract is
+    ``(response, answered)`` and its caller unpacks both values, so an intercepted
+    answer has to come back as ``(answer, True)``. The pre-extraction seam returned
+    the answer string itself.
+    """
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     return [
@@ -3766,10 +3767,97 @@ def _render_clarify_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"kind\": \"clarify\",{newline}",
         f"{deeper_indent}}}, interaction_id=\"clarify_\" + _hfc_uuid4().hex[:10], question=question, choices=choices, multi_select=locals().get(\"multi_select\", False)){newline}",
         f"{deeper_indent}if _hfc_clarify_response is not None:{newline}",
-        f"{deeper_indent}    return _hfc_clarify_response{newline}",
+        (
+            f"{deeper_indent}    return _hfc_clarify_response, True{newline}"
+            if returns_tuple
+            else f"{deeper_indent}    return _hfc_clarify_response{newline}"
+        ),
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{CLARIFY_PATCH_END}{newline}",
     ]
+
+
+def _render_extracted_clarify_hook_block(indent: str, newline: str):
+    """Clarify hook for Hermes' extracted ``_ask_clarify_question`` seam."""
+    return _render_clarify_hook_block(indent, newline, returns_tuple=True)
+
+
+EXTRACTED_CLARIFY_HELPER = "_ask_clarify_question"
+EXTRACTED_CLARIFY_ARGS = ("question", "choices", "multi_select")
+
+
+def _locate_extracted_clarify_helper(content: str):
+    """Return the extracted clarify helper when this Hermes routes clarify there.
+
+    Hermes ``242ff24ff7`` (2026-09-16) moved the clarify body out of
+    ``_clarify_callback_sync`` into ``_ask_clarify_question``; both the
+    single-question path and every batch question go through that helper. The
+    extraction took the ``ctx = self._ctx`` binding with it, which is exactly what
+    the legacy seam is located by, so the seam has to be identified from the helper.
+
+    ``None`` means the pre-extraction layout. Drift raises: the hook has to know
+    which contract to answer, and silently installing nothing would leave a
+    half-patched gateway that loses clarify cards without saying so.
+    """
+    tree = _parse_content(content)
+    turn_runner = _find_turn_runner_node(tree)
+    if turn_runner is None:
+        return None
+    helper = _find_direct_class_function_node(turn_runner, EXTRACTED_CLARIFY_HELPER)
+    if helper is None:
+        return None
+    if not _binds_turn_context(helper):
+        raise ValueError(
+            "Hermes extracted clarify seam no longer binds the TurnRunner context "
+            f"({EXTRACTED_CLARIFY_HELPER})"
+        )
+    missing = [
+        name
+        for name in EXTRACTED_CLARIFY_ARGS
+        if name not in _function_argument_names(helper)
+    ]
+    if missing:
+        raise ValueError(
+            "Hermes extracted clarify seam signature changed "
+            f"({EXTRACTED_CLARIFY_HELPER} lost {', '.join(missing)})"
+        )
+    return helper
+
+
+def _apply_clarify_patch(content: str) -> str:
+    """Install the clarify hook on whichever seam this Hermes exposes.
+
+    The seam is chosen from the source rather than from what is already installed:
+    a repeat install must keep the spelling that matches the seam, because the
+    extracted helper is unpacked as ``(response, answered)`` while the
+    pre-extraction callback returns the answer string itself.
+    """
+    if _locate_extracted_clarify_helper(content) is not None:
+        return _apply_callback_patch(
+            content,
+            callback_name=EXTRACTED_CLARIFY_HELPER,
+            begin_marker=CLARIFY_PATCH_BEGIN,
+            end_marker=CLARIFY_PATCH_END,
+            renderer=_render_extracted_clarify_hook_block,
+            required_callback_args=EXTRACTED_CLARIFY_ARGS,
+            allow_turn_context=True,
+        )
+    return _apply_callback_patch(
+        content,
+        callback_name="_clarify_callback_sync",
+        begin_marker=CLARIFY_PATCH_BEGIN,
+        end_marker=CLARIFY_PATCH_END,
+        renderer=_render_clarify_hook_block,
+        required_outer_names=(
+            "source",
+            "event_message_id",
+            "_status_chat_id",
+            "session_key",
+            "_run_still_current",
+        ),
+        required_callback_args=("question", "choices"),
+        allow_turn_context=True,
+    )
 
 
 def _render_approval_hook_block(indent: str, newline: str):
