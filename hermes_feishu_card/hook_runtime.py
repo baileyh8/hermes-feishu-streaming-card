@@ -74,7 +74,7 @@ DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 # correction.") tells the user their correction landed. Once read it is only a stale instruction in
 # the thread, so the sidecar withdraws it this many seconds later. Steer / queued / interrupt
 # acknowledgements state something the user still needs and are deliberately left alone.
-BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
+BUSY_REDIRECT_ACK_MARKER = "↪ Redirected current run"
 BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
@@ -5892,7 +5892,7 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
         raise RuntimeError("original Feishu retry helper unavailable")
     tracker = _HFC_NATIVE_HANDOFF_SEND_TRACKER.get()
     if not isinstance(tracker, dict):
-        return await original(
+        response = await original(
             self,
             chat_id=chat_id,
             msg_type=msg_type,
@@ -5900,6 +5900,8 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
             reply_to=reply_to,
             metadata=metadata,
         )
+        await recall_busy_redirect_ack_async(msg_type, payload, response)
+        return response
     fallback_ordinal = tracker.get("fallback_ordinal")
     if msg_type == "text" and isinstance(fallback_ordinal, int):
         ordinal = fallback_ordinal
@@ -5921,6 +5923,7 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
             reply_to=reply_to,
             metadata=metadata,
         )
+        await recall_busy_redirect_ack_async(msg_type, payload, response)
         succeeded = _native_handoff_response_succeeded(self, response)
         required[ordinal] = succeeded
         failures = tracker.setdefault("failures", {})
@@ -9318,28 +9321,51 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
     return _open_json_request(req, timeout)
 
 
-async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) -> bool:
-    """Withdraw the busy-path redirect acknowledgement once the user has read it.
+async def recall_busy_redirect_ack_async(msg_type: Any, payload: Any, response: Any) -> bool:
+    """Withdraw the busy-path redirect acknowledgement once it has been delivered.
 
     ``↪ Redirected current run. I'll adjust using your correction.`` confirms the correction was
-    taken; after that it is a stale instruction sitting in the thread, so it is recalled a few
-    seconds later. Other busy replies (steer, queued, interrupt) state something the user still
-    needs, so only the redirect acknowledgement is withdrawn. Best-effort throughout: a failed
-    request must never disturb the send that already succeeded.
+    taken; after that it is a stale instruction sitting in the thread. Other busy replies (steer,
+    queued, interrupt) state something the user still needs, so only the redirect acknowledgement is
+    withdrawn.
+
+    Called from the ``_feishu_send_with_retry`` wrapper — the one place that sees both the outgoing
+    text and the delivered message id. The gateway cannot delete its own Feishu messages (its adapter
+    inherits the ``return False`` default), so the sidecar performs the recall. Best-effort
+    throughout: a failed request must never disturb a send that already succeeded.
     """
     try:
-        if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
+        if BUSY_REDIRECT_ACK_MARKER not in str(payload or ""):
             return False
-        source = getattr(event, "source", None)
-        platform = getattr(source, "platform", "")
-        if "feishu" not in str(getattr(platform, "value", platform) or "").lower():
+        message_id = _response_message_id(response)
+        if not message_id:
             return False
         return await schedule_message_recall_async(
-            str(getattr(result, "message_id", "") or ""),
+            message_id,
             delay_seconds=BUSY_REDIRECT_ACK_RECALL_SECONDS,
         )
     except Exception:
         return False
+
+
+def _response_message_id(response: Any) -> str:
+    """The message id of a delivered Feishu send, across the shapes the SDK returns.
+
+    The lark client hands back an object with ``.data.message_id``; a bare dict (or a test double)
+    carries the same value under keys. Unknown shapes return "" rather than raising — the caller is
+    best-effort by contract.
+    """
+    data = getattr(response, "data", None)
+    if data is None and isinstance(response, dict):
+        data = response.get("data")
+    for source in (data, response):
+        for name in ("message_id",):
+            value = getattr(source, name, None)
+            if value is None and isinstance(source, dict):
+                value = source.get(name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
 
 
 async def schedule_message_recall_async(
