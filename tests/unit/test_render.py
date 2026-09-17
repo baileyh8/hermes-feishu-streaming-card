@@ -1915,7 +1915,9 @@ def test_render_tool_timeline_uses_compact_semantic_event_rows():
         for item in timeline["elements"]
         if str(item.get("element_id", "")).startswith("auxiliary_timeline_toolentry_")
     ]
-    completed, running, failed = (row["content"] for row in rows)
+    # Newest first (see test_render_timeline_reads_newest_first): the row for the LAST event leads, so
+    # the unpack order is the reverse of the order the events were applied in.
+    failed, running, completed = (row["content"] for row in rows)
 
     assert completed.startswith('<font color="green">✓ **terminal** · #1 · 250ms</font>')
     assert '<font color="grey">　参数: ' in completed
@@ -2368,6 +2370,49 @@ def test_render_omits_redundant_tool_summary_when_timeline_is_visible():
     assert "auxiliary_timeline" in element_ids
     assert "tool_summary" not in element_ids
     assert "思考过程" in str(card)
+
+
+def test_render_timeline_reads_newest_first():
+    """The 思考过程 panel is ordered newest → oldest, so the latest work is read first.
+
+    Maintainer note (contract change): the panel used to be chronological (oldest first). Because the
+    panel sits at the BOTTOM of a card that is read downward, the entry the reader most wants ("what
+    is happening now?") was the furthest from their eye — the user asked for reverse order
+    ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). Selection is unchanged: the same entries are
+    shown, only the order they are written in flips.
+    """
+    from hermes_feishu_card.events import SidecarEvent
+
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    for index in range(3):
+        session.apply(
+            SidecarEvent(
+                schema_version="1",
+                event="tool.updated",
+                conversation_id="chat-1",
+                message_id="msg-1",
+                chat_id="oc_abc",
+                platform="feishu",
+                sequence=index + 1,
+                created_at=0.0,
+                data={
+                    "tool_id": f"tool-{index}",
+                    "name": f"step_{index}",
+                    "status": "completed",
+                },
+            )
+        )
+
+    card = render_card(session, max_timeline_items=10)
+    timeline = next(
+        item for item in card["body"]["elements"] if item.get("element_id") == "auxiliary_timeline"
+    )
+    content = "".join(item["content"] for item in timeline["elements"])
+
+    newest = content.index("step_2")
+    middle = content.index("step_1")
+    oldest = content.index("step_0")
+    assert newest < middle < oldest
 
 
 def test_render_timeline_folds_old_entries_before_answer():

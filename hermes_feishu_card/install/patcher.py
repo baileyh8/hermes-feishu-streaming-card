@@ -2955,6 +2955,17 @@ def _find_simple_owned_patch(
         expected_blocks.append(
             _render_turn_context_hook_block(renderer, indent, newline)
         )
+    if renderer is _render_queued_final_hook_block:
+        expected_blocks.extend([
+            _render_v452_queued_final_hook_block(indent, newline),
+            _render_pr310_queued_final_hook_block(indent, newline),
+        ])
+    if renderer is _render_stable_tool_lifecycle_hook_block:
+        # v4.5.2 installed blocks predate the dedicated reasoning callback.
+        expected_blocks.extend([
+            [line for line in block if "_hfc_bind_reasoning" not in line]
+            for block in list(expected_blocks)
+        ])
     if renderer is _render_clarify_hook_block:
         # The extracted ``_ask_clarify_question`` seam answers with ``(answer, True)``,
         # so its block is the same hook carrying the answered flag.
@@ -3612,7 +3623,7 @@ def _render_queued_followup_hook_block(indent: str, newline: str):
     ]
 
 
-def _render_queued_final_hook_block(indent: str, newline: str):
+def _render_v452_queued_final_hook_block(indent: str, newline: str):
     inner = _child_indent(indent)
     deeper = _child_indent(inner)
     return [
@@ -3623,6 +3634,56 @@ def _render_queued_final_hook_block(indent: str, newline: str):
         f"{deeper}followup_result = {{**followup_result, \"_hfc_queued_final_attempted\": True}}{newline}",
         f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": followup_result.get(\"final_response\", \"\"), \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result}}{newline}",
         f"{deeper}_hfc_final_event_name = \"message.failed\" if followup_result.get(\"failed\") or followup_result.get(\"interrupted\") else \"message.completed\"{newline}",
+        f"{deeper}if await _hfc_emit_async(_hfc_final_locals, event_name=_hfc_final_event_name):{newline}",
+        f"{deeper}    followup_result = {{**followup_result, \"_hfc_queued_final_delivered\": True}}{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{QUEUED_FINAL_PATCH_END}{newline}",
+    ]
+
+
+def _render_pr310_queued_final_hook_block(indent: str, newline: str):
+    inner = _child_indent(indent)
+    deeper = _child_indent(inner)
+    return [
+        f"{indent}{QUEUED_FINAL_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import emit_from_hermes_locals_async as _hfc_emit_async{newline}",
+        f"{inner}if pending_event is not None and isinstance(followup_result, dict) and not followup_result.get(\"_hfc_queued_final_delivered\") and not followup_result.get(\"_hfc_queued_final_attempted\"):{newline}",
+        f"{deeper}followup_result = {{**followup_result, \"_hfc_queued_final_attempted\": True}}{newline}",
+        f"{deeper}_hfc_final_answer = followup_result.get(\"final_response\") or followup_result.get(\"error\") or \"任务已中断\"{newline}",
+        f"{deeper}_hfc_final_metrics = {{\"duration\": followup_result.get(\"_hfc_turn_seconds\"), \"model\": followup_result.get(\"model\", \"\"), \"tokens\": {{\"input_tokens\": followup_result.get(\"input_tokens\", 0), \"output_tokens\": followup_result.get(\"output_tokens\", 0)}}, \"context\": {{\"used_tokens\": followup_result.get(\"last_prompt_tokens\", 0), \"max_tokens\": followup_result.get(\"context_length\", 0)}}}}{newline}",
+        f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": _hfc_final_answer, \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result, **_hfc_final_metrics}}{newline}",
+        f"{deeper}# A queued follow-up ends with the completed envelope even when it failed. Only that{newline}",
+        f"{deeper}# branch reads duration/model/tokens/context, and the failure still reaches the card{newline}",
+        f"{deeper}# because the turn result travels as agent_result (the sidecar derives turn_outcome{newline}",
+        f"{deeper}# from it). Emitting message.failed here produced a context-free card - no tool count,{newline}",
+        f"{deeper}# no duration, no model - so it said nothing about where the run stopped.{newline}",
+        f"{deeper}_hfc_final_event_name = \"message.completed\"{newline}",
+        f"{deeper}if await _hfc_emit_async(_hfc_final_locals, event_name=_hfc_final_event_name):{newline}",
+        f"{deeper}    followup_result = {{**followup_result, \"_hfc_queued_final_delivered\": True}}{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{QUEUED_FINAL_PATCH_END}{newline}",
+    ]
+
+
+def _render_queued_final_hook_block(indent: str, newline: str):
+    inner = _child_indent(indent)
+    deeper = _child_indent(inner)
+    return [
+        f"{indent}{QUEUED_FINAL_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import emit_from_hermes_locals_async as _hfc_emit_async{newline}",
+        f"{inner}if pending_event is not None and isinstance(followup_result, dict) and not followup_result.get(\"_hfc_queued_final_delivered\") and not followup_result.get(\"_hfc_queued_final_attempted\"):{newline}",
+        f"{deeper}followup_result = {{**followup_result, \"_hfc_queued_final_attempted\": True}}{newline}",
+        f"{deeper}_hfc_final_answer = followup_result.get(\"final_response\") or followup_result.get(\"error\") or \"\"{newline}",
+        f"{deeper}_hfc_final_metrics = {{\"duration\": followup_result.get(\"_hfc_turn_seconds\"), \"model\": followup_result.get(\"model\", \"\"), \"tokens\": {{\"input_tokens\": followup_result.get(\"input_tokens\", 0), \"output_tokens\": followup_result.get(\"output_tokens\", 0)}}, \"context\": {{\"used_tokens\": followup_result.get(\"last_prompt_tokens\", 0), \"max_tokens\": followup_result.get(\"context_length\", 0)}}}}{newline}",
+        f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": _hfc_final_answer, \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result, **_hfc_final_metrics}}{newline}",
+        f"{deeper}# A queued follow-up ends with the completed envelope even when it failed. Only that{newline}",
+        f"{deeper}# branch reads duration/model/tokens/context, and the failure still reaches the card{newline}",
+        f"{deeper}# because the turn result travels as agent_result (the sidecar derives turn_outcome{newline}",
+        f"{deeper}# from it). Emitting message.failed here produced a context-free card - no tool count,{newline}",
+        f"{deeper}# no duration, no model - so it said nothing about where the run stopped.{newline}",
+        f"{deeper}_hfc_final_event_name = \"message.completed\"{newline}",
         f"{deeper}if await _hfc_emit_async(_hfc_final_locals, event_name=_hfc_final_event_name):{newline}",
         f"{deeper}    followup_result = {{**followup_result, \"_hfc_queued_final_delivered\": True}}{newline}",
         *_render_hook_exception_handler(indent, newline),
@@ -3748,6 +3809,8 @@ def _render_turn_context_hook_block(renderer, indent: str, newline: str):
     """Adapt a legacy closure hook to Hermes' ``TurnRunner`` context seam."""
     block = renderer(indent, newline)
     replacements = (
+        ("_hfc_bind_reasoning(agent, source, event_message_id, _loop_for_step, _run_still_current)",
+         "_hfc_bind_reasoning(agent, _hfc_turn_ctx.source, _hfc_turn_ctx.event_message_id, _hfc_turn_ctx._loop_for_step, _hfc_turn_ctx._run_still_current)"),
         ("_hfc_bind_agent_turn(agent, source)", "_hfc_bind_agent_turn(agent, _hfc_turn_ctx.source)"),
         ("_run_still_current()", "_hfc_turn_ctx._run_still_current()"),
         ('"source": source,', '"source": _hfc_turn_ctx.source,'),
@@ -3840,6 +3903,8 @@ def _render_stable_tool_lifecycle_hook_block(indent: str, newline: str):
         f"{indent}try:{newline}",
         f"{inner_indent}from hermes_feishu_card.hook_runtime import bind_agent_turn_identity as _hfc_bind_agent_turn{newline}",
         f"{inner_indent}_hfc_bind_agent_turn(agent, source){newline}",
+        f"{inner_indent}from hermes_feishu_card.hook_runtime import bind_agent_reasoning as _hfc_bind_reasoning{newline}",
+        f"{inner_indent}_hfc_bind_reasoning(agent, source, event_message_id, _loop_for_step, _run_still_current){newline}",
         (
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import emit_from_hermes_locals_threadsafe as _hfc_emit_stable_threadsafe{newline}"

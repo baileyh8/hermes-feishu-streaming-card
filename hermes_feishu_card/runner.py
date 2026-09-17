@@ -296,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             expected_runtime_package_version=__version__,
             runtime_integrity_state_directory=state_dir(),
+            session_store_directory=state_dir(),
             delivery_policy=delivery_policy,
         ),
         host=_listener_hosts(str(server["host"])),

@@ -72,7 +72,7 @@ def test_long_running_recall_leaves_source_without_the_anchor_unchanged():
 async def test_only_transient_notices_are_withdrawn(monkeypatch):
     calls = []
 
-    async def schedule(message_id, *, delay_seconds=15.0, bot_id=""):
+    async def schedule(message_id, *, delay_seconds=15.0, bot_id="", route=None):
         calls.append((message_id, delay_seconds))
         return True
 

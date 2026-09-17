@@ -135,6 +135,8 @@ from .maintenance_update import (
 )
 
 FEISHU_CLIENT_KEY = web.AppKey("feishu_client", Any)
+SESSION_STORE_KEY = web.AppKey("session_checkpoint_store", object)
+SESSION_RESTORE_TASK_KEY = web.AppKey("session_restore_task", object)
 SESSIONS_KEY = web.AppKey("sessions", dict)
 FEISHU_MESSAGE_IDS_KEY = web.AppKey("feishu_message_ids", dict)
 SESSION_ALIASES_KEY = web.AppKey("session_aliases", dict)
@@ -499,6 +501,7 @@ def create_app(
     delivery_policy: Any = None,
     native_handoff_store: NativeHandoffStore | None = None,
     shutdown_callback: Callable[[], None] | None = None,
+    session_store_directory: str | Path | None = None,
 ) -> web.Application:
     valid_transport_root = (
         isinstance(operations_transport_root_secret, bytes)
@@ -643,6 +646,16 @@ def create_app(
     app.router.add_post("/native-handoff/ack", _native_handoff_ack)
     app.router.add_post("/native-handoff/recover", _native_handoff_recover)
     app.router.add_post("/events", _events)
+    app[SESSION_STORE_KEY] = None
+    if session_store_directory is not None:
+        from .session_store import SessionStore
+        try:
+            app[SESSION_STORE_KEY] = SessionStore(session_store_directory)
+            app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "ready"
+        except (OSError, ValueError):
+            app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "unavailable"
+    app.on_startup.append(_restore_card_checkpoints)
+    app.on_cleanup.append(_stop_card_restore)
     app.on_startup.append(_start_runtime_cleanup)
     app.on_startup.append(_start_runtime_integrity_monitor)
     app.on_cleanup.append(_stop_operations_diagnostics)
@@ -3614,6 +3627,7 @@ async def _events(request: web.Request) -> web.Response:
             )
             try:
                 response = await asyncio.shield(completion_task)
+                _checkpoint_session(request.app, _resolve_session_key(request.app, event), _policy_profile_id(event) or "")
             except asyncio.CancelledError:
                 response = await completion_task
                 cancelled_after_runtime_delivery = True
@@ -4579,7 +4593,110 @@ def _reply_in_thread_for_event(event: SidecarEvent) -> bool:
     return False
 
 
-async def _apply_event_locked(
+def _checkpoint_client_identity(app, bot_id):
+    client = _client_for_bot(app, bot_id)
+    config = getattr(client, 'config', None)
+    app_id = getattr(config, 'app_id', '')
+    base_url = getattr(config, 'base_url', '')
+    material = json.dumps([str(app_id), str(base_url), type(client).__module__, type(client).__qualname__])
+    return hashlib.sha256(material.encode()).hexdigest()
+
+
+def _checkpoint_session(app, key, profile_id):
+    store = app.get(SESSION_STORE_KEY)
+    session = app[SESSIONS_KEY].get(key)
+    mid = app[FEISHU_MESSAGE_IDS_KEY].get(key)
+    if store is None or session is None or not mid:
+        return
+    try:
+        aliases = {a:k for a,k in app[SESSION_ALIASES_KEY].items() if k == key}
+        store.save(key, session, mid, app[MESSAGE_BOT_IDS_KEY].get(key), profile_id, aliases,
+                   _checkpoint_client_identity(app, app[MESSAGE_BOT_IDS_KEY].get(key)))
+        if not app[DIAGNOSTICS_KEY].get("card_checkpoint_failures"):
+            app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "ready"
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError):
+        # Existing delivery stays fail-open; never turn a local disk failure into a duplicate send.
+        app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "unavailable"
+        app[DIAGNOSTICS_KEY]["card_checkpoint_failures"] = app[DIAGNOSTICS_KEY].get("card_checkpoint_failures", 0) + 1
+
+
+async def _restore_card_checkpoints(app):
+    store = app.get(SESSION_STORE_KEY)
+    if store is None:
+        return
+    try:
+        records = store.load()
+    except (OSError, ValueError):
+        app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "unavailable"
+        return
+    restored = []
+    from types import SimpleNamespace
+    for record in records:
+        key, session = record['key'], record['session']
+        profile = record['profile_id']
+        if _policy_decision(app, session.chat_id, profile_id=profile).disposition != CARD_DISPOSITION:
+            continue
+        data = {'profile_id':profile} if profile else {}
+        probe = SidecarEvent.from_dict(dict(schema_version='1', event='message.completed',
+            conversation_id=session.conversation_id, message_id=session.message_id, turn_id=record["turn_id"],
+            chat_id=session.chat_id, platform='feishu', sequence=0, created_at=time.time(), data=data))
+        route = _resolve_route(SimpleNamespace(app=app), probe)
+        if route is None or (route.bot_id or None) != (record['bot_id'] or None):
+            continue
+        if record.get("client_identity") != _checkpoint_client_identity(app, record["bot_id"]):
+            continue
+        if key != _session_key(probe):
+            continue
+        app[SESSIONS_KEY][key] = session
+        app[FEISHU_MESSAGE_IDS_KEY][key] = record['message_id']
+        app[MESSAGE_BOT_IDS_KEY][key] = record['bot_id']
+        app[SESSION_CARD_CONFIGS_KEY][key] = _resolve_session_card_config(app, record['bot_id'], probe)
+        for alias, target in record['aliases'].items():
+            if target == key and isinstance(alias, str):
+                app[SESSION_ALIASES_KEY][alias] = key
+        restored.append((key, session, session.updated_at))
+    app[DIAGNOSTICS_KEY]['card_checkpoints_restored'] = len(restored)
+
+    async def refresh():
+        for key, session, revision in restored:
+            def current():
+                return app[SESSIONS_KEY].get(key) is session and session.updated_at == revision
+            if not current() or session.terminal_delivery_state in {"recovered", "unknown"}:
+                continue
+            display = copy.deepcopy(session)
+            if display.status not in {'completed','failed'}:
+                display.status = 'failed'
+                display.display_status = ''
+                display.answer_text += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
+                display.timeline.complete()
+            try:
+                updated = await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
+                    _render_session_card_for_app(app, display, session_key=key), app[MESSAGE_BOT_IDS_KEY].get(key),
+                    is_current=current), timeout=10)
+                if not updated:
+                    app[DIAGNOSTICS_KEY]["card_restore_update"] = "failed"
+            except (asyncio.TimeoutError, OSError):
+                app[DIAGNOSTICS_KEY]['card_restore_update'] = 'failed'
+    app[SESSION_RESTORE_TASK_KEY] = asyncio.create_task(refresh())
+
+
+async def _stop_card_restore(app):
+    task = app.get(SESSION_RESTORE_TASK_KEY)
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _apply_event_locked(request, event, *, advance_sequence=True):
+    result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
+    key = _resolve_session_key(request.app, event)
+    profile = _policy_profile_id(event)
+    if profile is not None:
+        _checkpoint_session(request.app, key, profile)
+    return result
+
+
+async def _apply_event_locked_inner(
     request: web.Request,
     event: SidecarEvent,
     *,
@@ -5627,6 +5744,8 @@ async def _apply_event_locked(
                     latest_session,
                     event,
                 )
+            if is_terminal and request.app[SESSIONS_KEY].get(session_key) is latest_session:
+                _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             return updated
 
         if is_terminal:
@@ -7249,11 +7368,41 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     # No floor, because the sidecar has no way to know what "too soon" means for the caller — the
     # send already happened by the time the request arrives.
     delay = min(max(delay, 0.0), EPHEMERAL_RECALL_MAX_SECONDS)
+    bot_id = _safe_command_string(payload.get("bot_id")) or None
+    route_data = payload.get("route")
+    clients = request.app[FEISHU_CLIENT_KEY]
+    if route_data is not None and not isinstance(route_data, dict):
+        return web.json_response({"ok":False,"error":"invalid recall route"}, status=400)
+    if bot_id is None and (route_data is not None or isinstance(clients, dict)):
+        route_data = dict(route_data or {})
+        profile = route_data.get('profile_id') or 'default'
+        if isinstance(clients, dict) and profile not in clients:
+            if profile == 'default' and len(clients) == 1:
+                profile = next(iter(clients))
+            else:
+                return web.json_response({"ok":False,"error":"recall route is ambiguous"}, status=409)
+        if not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile):
+            return web.json_response({"ok":False,"error":"invalid recall profile"}, status=400)
+        chat = _safe_command_string(route_data.get('chat_id'))
+        if not chat:
+            return web.json_response({"ok":False,"error":"recall chat is required"}, status=400)
+        probe = SidecarEvent.from_dict(dict(schema_version='1', event='system.notice',
+            conversation_id=_safe_command_string(route_data.get('conversation_id')) or chat,
+            message_id=message_id, chat_id=chat, platform='feishu', sequence=0,
+            created_at=time.time(), data={'profile_id':profile}))
+        route = _resolve_route(request, probe)
+        if route is None:
+            return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
+        bot_id = route.bot_id or None
+    try:
+        _client_for_bot(request.app, bot_id)
+    except (RuntimeError, ValueError, KeyError):
+        return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
     scheduled = _schedule_ephemeral_recall(
         request.app,
         message_id=message_id,
         delay_seconds=delay,
-        bot_id=_safe_command_string(payload.get("bot_id")) or None,
+        bot_id=bot_id,
     )
     if not scheduled:
         return web.json_response({"ok": False, "error": "recall capacity reached"}, status=429)

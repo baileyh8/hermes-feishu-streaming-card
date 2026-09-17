@@ -87,6 +87,33 @@ def test_header_action_row_names_the_work_and_stays_within_the_cap():
     assert "pytest" in row["content"]
 
 
+def test_content_tool_row_carries_a_long_command_whole_even_though_the_header_caps_it():
+    """The row the user reads is NOT capped at the header's length — it shares the panel's budget.
+
+    Maintainer note (contract change): the header sub-title and the content-area tool row used to
+    share one 100-char cap, and that made the content row the LEAST complete surface in the card: a
+    long command was cut with an ellipsis there while the 思考过程 panel below carried the same
+    command up to its own (larger) budget. The user reported exactly that ("正文里面的工具行的执行
+    命令和参数没有像 timeline 里面那样子比较全"). The two still share one source and one sanitizer —
+    the header keeps a short cap because it is a one-line identity strip; the content row takes the
+    card's tool-detail budget so it agrees with the panel instead of disagreeing with it.
+    """
+    session = _session()
+    long_command = "grep -aE " + ("x" * 250) + " /var/log/gateway.log"
+    session.apply(_tool_event(tool_id="t1", name="terminal", detail=long_command))
+
+    card = render_card(session, title="研发助手")
+    row = _elements(card, "tool_activity_0")[0]["content"]
+    subtitle = card["header"]["subtitle"]["content"]
+
+    # The command reaches the row whole — no ellipsis, same as the panel below.
+    assert long_command in row
+    assert "…" not in row
+    # ...while the header stays a one-line strip.
+    assert len(subtitle) <= 100
+    assert long_command not in subtitle
+
+
 def test_completed_header_subtitle_keeps_the_completion_note():
     """A finished turn owns the second row: "本轮回复结束" is not displaced by a tool phrase.
 
