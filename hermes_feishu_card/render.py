@@ -309,6 +309,9 @@ def _render_card_unchecked(
             text_sizes=text_sizes,
             used_text_size_roles=used_text_size_roles,
             display_status=display_status,
+            # The content rows get the card's tool-detail budget — the same one the 思考过程 panel
+            # uses, so a command reads the same length on both surfaces.
+            max_chars=max_tool_result_chars,
         )
     )
     elements.extend(tool_activity_elements)
@@ -801,7 +804,9 @@ def _latest_running_action_text(session: CardSession) -> str:
     if not running:
         return ""
     latest = max(running, key=lambda tool: tool.started_at or 0.0)
-    return _tool_activity_text(latest) or _tool_action_phrase(latest)
+    return _tool_activity_text(
+        latest, max_chars=_HEADER_ACTION_TEXT_MAX_CHARS
+    ) or _tool_action_phrase(latest)
 
 
 def _last_tool_action_text(session: CardSession) -> str:
@@ -814,7 +819,9 @@ def _last_tool_action_text(session: CardSession) -> str:
     if not tools:
         return ""
     latest = max(tools, key=lambda tool: (tool.ordinal or 0, tool.started_at or 0.0))
-    return _tool_activity_text(latest) or _tool_action_phrase(latest)
+    return _tool_activity_text(
+        latest, max_chars=_HEADER_ACTION_TEXT_MAX_CHARS
+    ) or _tool_action_phrase(latest)
 
 
 def _header_action_text(session: CardSession, *, display_status: str) -> str:
@@ -825,8 +832,17 @@ def _header_action_text(session: CardSession, *, display_status: str) -> str:
     ("标题的正在使用之类的，放到第二行"), carrying only the verb phrase. They then asked to see the
     CONCRETE action there exactly as the tool row shows it ("标题行这边的第二个行像工具行那样看到
     具体的工具动作"), so it now reuses ``_tool_activity_text`` — the same source, the same header
-    sanitizer and the same 100-char cap as the content-area tool block, so the two surfaces can
-    never disagree about what is running.
+    sanitizer as the content-area tool block, so the two can never disagree about WHICH tool is
+    running.
+
+    Maintainer note (contract change): the two surfaces no longer share a character BUDGET. They did
+    (both 100), and that made the content row the least complete surface in the card — the header cap
+    exists to stop a one-line identity strip from taking over, and applying it to the row the user
+    actually reads cut a long command short while the 思考过程 panel below showed the same command in
+    full ("正文里面的工具行的执行命令和参数没有像 timeline 里面那样子比较全"). The header keeps
+    ``_HEADER_ACTION_TEXT_MAX_CHARS``; the content rows take the card's tool-detail budget. Both still
+    cap the SAME string from the same source, so they cannot disagree about which tool is running —
+    only about how much of its command fits on their own row.
 
     Empty while an interaction is pending, matching ``_runtime_header_summary``: the title is then
     the prompt itself ("待审批：…"), and a tool line underneath it would read as a second subject.
@@ -951,16 +967,25 @@ def _is_initial_loading(session: CardSession) -> bool:
     )
 
 
-def _sanitize_runtime_header(text: str) -> str:
+def _sanitize_runtime_header(
+    text: str, *, max_chars: int = RUNTIME_HEADER_MAX_CHARS
+) -> str:
+    """Strip fences/markdown noise and redact secrets, then cap.
+
+    ``max_chars`` defaults to the HEADER budget because that is where this started (a sub-title is a
+    one-line strip). Content-area rows pass their own budget: leaving this at the header's 120 held
+    those rows to 120 chars no matter what the card configured, which is why they read as truncated
+    next to the 思考过程 panel.
+    """
     normalized = normalize_stream_text(str(text or ""))
     normalized = _RUNTIME_FENCE_RE.sub("", normalized)
     normalized = " ".join(normalized.split())
     normalized = _redact_tool_detail(normalized)
     normalized = _RUNTIME_SECRET_FLAG_RE.sub(r"\1[REDACTED]", normalized)
     normalized = _RUNTIME_URL_SECRET_RE.sub(r"\1[REDACTED]", normalized)
-    if len(normalized) <= RUNTIME_HEADER_MAX_CHARS:
+    if max_chars <= 0 or len(normalized) <= max_chars:
         return normalized
-    return normalized[: RUNTIME_HEADER_MAX_CHARS - 1].rstrip() + "…"
+    return normalized[: max_chars - 1].rstrip() + "…"
 
 
 def _render_known_requester_mentions(text: str, session: CardSession) -> str:
@@ -1449,7 +1474,22 @@ _FAILED_TOOL_PILL = ("失败", "red")
 # 已完成 would be a lie, and it is the row a reader looks at to see WHERE the run stopped.
 _INTERRUPTED_TOOL_PILL = ("已中断", "orange")
 # A row, not a paragraph: this is the live action line, not a place to dump a whole command.
-_TOOL_ACTIVITY_TEXT_MAX_CHARS = 100
+# The header's sub-title keeps its short cap: it is a one-line identity strip at the top of the
+# card, and mobile clients truncate long headers without exposing the full text. The CONTENT-AREA
+# tool rows are deliberately NOT capped this short — see _TOOL_ACTIVITY_TEXT_MAX_CHARS.
+_HEADER_ACTION_TEXT_MAX_CHARS = 100
+# Budget for the content-area tool rows (the action + parameter lines under the answer). Same budget
+# the 思考过程 panel gives a tool's detail, so the two surfaces show the same command.
+#
+# Maintainer note (contract change): these rows used to share the header's 100-char cap, on the
+# reasoning that the two surfaces "can never disagree about what is running". In practice that made
+# the content row the LEAST complete surface in the card — a long command was cut at 100 chars with
+# an ellipsis while the panel below showed the same command up to 600. The user reported exactly that
+# ("正文里面的工具行的执行命令和参数没有像 timeline 里面那样子比较全"). The surfaces still share one
+# source (_tool_activity_text) and one sanitizer; only the budget differs, by design, per surface.
+# render_card passes the card's configured max_tool_result_chars through; this default keeps direct
+# callers (and the config default in config.py) in step.
+_TOOL_ACTIVITY_TEXT_MAX_CHARS = 600
 # A tool's stored detail is MULTI-LINE: the tool preview, then "参数: …", then "耗时: …" (see
 # session._tool_detail_from_event_data). The action line must read the part that names the work.
 # Maintainer note (contract change): the argument line used to be treated as "no target" and the
@@ -1492,6 +1532,7 @@ def _render_tool_activity_elements(
     text_sizes: Mapping[str, Any] | None = None,
     used_text_size_roles: set[str] | None = None,
     display_status: str = "",
+    max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
 ) -> list[Dict[str, Any]]:
     """Show what the agent is doing RIGHT NOW, right under the answer.
 
@@ -1533,6 +1574,7 @@ def _render_tool_activity_elements(
             text_size=text_size,
             running=turn_is_live and _tool_is_running(tool),
             turn_over=not turn_is_live,
+            max_chars=max_chars,
         )
         for index, tool in enumerate(selected)
     ]
@@ -1603,7 +1645,9 @@ def _format_tool_arguments(pairs: list[tuple[str, str]]) -> str:
     return " ".join(f"{key}={value}" for key, value in pairs)
 
 
-def _tool_activity_text(tool: ToolState) -> str:
+def _tool_activity_text(
+    tool: ToolState, *, max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS
+) -> str:
     """The live action line for a tool: its friendly action plus target ("读取文件：session.py").
 
     This is the text the header used to carry as a truncated one-liner. It belongs here, in the
@@ -1623,21 +1667,35 @@ def _tool_activity_text(tool: ToolState) -> str:
     summary = _runtime_tool_summary(tool.name, target)
     if not summary or "：" not in summary:
         return ""
-    return _cap_activity_text(summary)
+    return _cap_activity_text(summary, max_chars)
 
 
-def _tool_activity_params(tool: ToolState) -> str:
-    """The parameter row for a tool, if it has any the action line does not already carry."""
+def _tool_activity_params(
+    tool: ToolState, *, max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS
+) -> str:
+    """The parameter row for a tool, if it has any the action line does not already carry.
+
+    Same budget as the action row (see _TOOL_ACTIVITY_TEXT_MAX_CHARS): the parameters are where a
+    long command's flags and arguments live, so capping this row shorter than the panel below would
+    hide exactly the part that explains the call.
+    """
     _, params = _tool_detail_lines(tool.detail)
     if not params:
         return ""
-    return f"参数: {_cap_activity_text(params)}"
+    return f"参数: {_cap_activity_text(params, max_chars)}"
 
 
-def _cap_activity_text(text: str) -> str:
-    text = _sanitize_runtime_header(text)
-    if len(text) > _TOOL_ACTIVITY_TEXT_MAX_CHARS:
-        return text[: _TOOL_ACTIVITY_TEXT_MAX_CHARS - 1].rstrip() + "…"
+def _cap_activity_text(text: str, limit: int) -> str:
+    """Sanitize then cap, so an untrusted command cannot smuggle text past the limit.
+
+    The budget is handed to the sanitizer as well: its default cap belongs to the header, and
+    leaving it in place silently held these rows to 120 chars whatever the card configured.
+    """
+    text = _sanitize_runtime_header(
+        text, max_chars=limit if limit > 0 else RUNTIME_HEADER_MAX_CHARS
+    )
+    if limit > 0 and len(text) > limit:
+        return text[: limit - 1].rstrip() + "…"
     return text
 
 
@@ -1649,6 +1707,7 @@ def _tool_activity_row(
     text_size: str | None = None,
     running: bool | None = None,
     turn_over: bool = False,
+    max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
 ) -> Dict[str, Any]:
     if running is None:
         running = _tool_is_running(tool)
@@ -1681,10 +1740,10 @@ def _tool_activity_row(
     # the parameters. Only the first row is unconditional; the action row is dropped when the tool
     # has no target to name, and the parameter row when its arguments carry nothing new.
     lines = [" · ".join(parts)]
-    action = _tool_activity_text(tool)
+    action = _tool_activity_text(tool, max_chars=max_chars)
     if action:
         lines.append(action)
-    params = _tool_activity_params(tool)
+    params = _tool_activity_params(tool, max_chars=max_chars)
     if params:
         lines.append(params)
     element: Dict[str, Any] = {
@@ -1726,19 +1785,13 @@ def _render_timeline_elements(
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
-    if folded:
-        panel_elements.extend(
-            _timeline_markdown_elements(
-                f"> 已折叠 {folded} 条早期思考/工具记录",
-                "auxiliary_timeline_folded",
-                text_size=_role_text_size(
-                    text_sizes,
-                    "notice",
-                    default="x-small",
-                    used_roles=used_text_size_roles,
-                ),
-            )
-        )
+    # NEWEST FIRST. The user asked for the panel to read in reverse order so the most recent work is
+    # the first thing they see ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). A live log's useful
+    # end is its LAST entry, and this panel is appended to the bottom of a card that is read
+    # downward — so the newest work used to be the furthest thing from the reader's eye.
+    # Only the DISPLAY order flips: _select_timeline_entries still decides which entries fit (it
+    # keeps the newest window and guarantees the latest reasoning is included).
+    entries = list(reversed(entries))
     for index, item in enumerate(entries):
         if item.kind == "reasoning":
             content = _limit_text(
@@ -1840,6 +1893,23 @@ def _render_timeline_elements(
                     ),
                 )
             )
+    if folded:
+        # The folded entries are the EARLIEST ones, and the panel now reads newest-first — so the line
+        # that stands for them belongs at the BOTTOM, below the oldest entry still shown. Emitting it
+        # first (as it did in chronological order) would put a "here is where the history was cut"
+        # marker above the newest work, which reads as if the cut happened at the top.
+        panel_elements.extend(
+            _timeline_markdown_elements(
+                f"> 已折叠 {folded} 条早期思考/工具记录",
+                "auxiliary_timeline_folded",
+                text_size=_role_text_size(
+                    text_sizes,
+                    "notice",
+                    default="x-small",
+                    used_roles=used_text_size_roles,
+                ),
+            )
+        )
     if panel_elements:
         # The panel is named for thinking and tool work. A timeline holding only notices (a deferred
         # compression hint, a skill-loading note) is neither, and folding those into it produced

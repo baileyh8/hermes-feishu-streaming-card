@@ -97,6 +97,21 @@ TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
 TERMINAL_TIMEOUT_SECONDS = 10.0
+# A terminal event is the last thing that will ever update a card, and the sidecar's session table
+# is memory-only, so a terminal event that never lands leaves that card wrong forever. Measured
+# live (issue 320): a gateway restart auto-resumed the session it interrupted, and that turn's
+# `message.completed` was POSTed while the sidecar was 28s into a stop/start window — the send
+# failed, the exception was swallowed, and the card stayed on "执行中" with no way to repair it.
+# Retry only while the failure means "the sidecar never ruled on this request", and keep a total
+# budget because this await sits inline in the gateway's turn path.
+#
+# The window has to outlast a real sidecar restart, not the 28s that one incident happened to hit:
+# a stop/start cycle measures 34-42s end to end (the `start` half alone spends ~30s on integrity
+# checks before /health reports ready), and a gateway restart may take the sidecar down with it.
+# 68s of backoff under a 75s budget covers that with margin; the cost is only paid on a delivery
+# that would otherwise strand the card.
+TERMINAL_DELIVERY_RETRY_DELAYS = (1.0, 2.0, 5.0, 10.0, 20.0, 30.0)
+TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS = 75.0
 NATIVE_HANDOFF_PROTOCOL = "hfc-native-handoff-v2"
 NATIVE_HANDOFF_MAX_LIFETIME_SECONDS = 3600.0
 NATIVE_HANDOFF_PLAN_PROTOCOL = "hfc-feishu-delivery-plan-v1"
@@ -1990,11 +2005,15 @@ async def emit_from_hermes_locals_async(
             payload = build_event(event_name, event_locals)
             if payload is None:
                 return False
-            result = await _post_json_ordered_response(
-                config.event_url,
-                payload,
-                _timeout_for_event(config, event_name),
-            )
+            if event_name in {"message.completed", "message.failed"}:
+                # Terminal events get a bounded retry: losing one strands the card.
+                result = await _post_terminal_with_retry(config, payload, event_name)
+            else:
+                result = await _post_json_ordered_response(
+                    config.event_url,
+                    payload,
+                    _timeout_for_event(config, event_name),
+                )
             if event_name == "message.completed":
                 _register_native_handoff_descriptor(payload, result)
             applied = _event_was_applied(
@@ -9302,6 +9321,91 @@ async def _post_json_ordered_response(
         return await _post_json_response(url, payload, timeout)
     async with lock:
         return await _post_json_response(url, payload, timeout)
+
+
+def _terminal_delivery_retryable(exc: BaseException) -> bool:
+    """Whether a failed terminal POST is worth repeating.
+
+    Only failures that mean "the sidecar never ruled on this request" qualify: transport errors
+    (connection refused, timeout, DNS) and 5xx. A 4xx is a deliberate refusal, so repeating it
+    would fight the admission logic and delay the turn for nothing.
+
+    Repeating is safe because applying a terminal event twice is idempotent: the sidecar reports
+    applied=True for a session that is already terminal, so a request that did land before its
+    response was lost cannot double-apply.
+    """
+    if isinstance(exc, urlerror.HTTPError):
+        code = exc.code
+        return isinstance(code, int) and 500 <= code < 600
+    return isinstance(exc, (urlerror.URLError, TimeoutError, OSError))
+
+
+async def _post_terminal_with_retry(
+    config: RuntimeConfig, payload: dict[str, Any], event_name: str
+) -> Any:
+    """POST a terminal event, repeating only while the request looks lost.
+
+    The lock is taken per attempt rather than held across the backoff, so a sleeping retry does
+    not block other events for the same turn; reordering is harmless here because a terminal event
+    belongs last anyway and the sidecar ignores repeats of an applied terminal event.
+    Every attempt is logged. A retry can only happen when a terminal event was not delivered, which
+    is precisely the state that strands a card — so the log is the only trace of the outage that
+    caused it, and the trace that proves the retry worked.
+    """
+    timeout = _timeout_for_event(config, event_name)
+    deadline = time.monotonic() + TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS
+    attempt = 0
+    identity = payload.get("turn_id") or payload.get("message_id") or "?"
+    while True:
+        try:
+            result = await _post_json_ordered_response(config.event_url, payload, timeout)
+        except Exception as exc:  # noqa: BLE001
+            if attempt >= len(TERMINAL_DELIVERY_RETRY_DELAYS) or not _terminal_delivery_retryable(exc):
+                if attempt:
+                    logger.warning(
+                        "[hermes-feishu-card] %s %s: gave up after %d retries (%s: %s)"
+                        " — the card stays unfinished",
+                        event_name,
+                        identity,
+                        attempt,
+                        type(exc).__name__,
+                        exc,
+                    )
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "[hermes-feishu-card] %s %s: retry budget of %.1fs exhausted after %d retries"
+                    " — the card stays unfinished",
+                    event_name,
+                    identity,
+                    TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS,
+                    attempt,
+                )
+                raise
+            delay = min(TERMINAL_DELIVERY_RETRY_DELAYS[attempt], remaining)
+            logger.warning(
+                "[hermes-feishu-card] %s %s: not delivered (%s: %s) — retry %d/%d in %.1fs",
+                event_name,
+                identity,
+                type(exc).__name__,
+                exc,
+                attempt + 1,
+                len(TERMINAL_DELIVERY_RETRY_DELAYS),
+                delay,
+            )
+            await asyncio.sleep(delay)
+            attempt += 1
+            continue
+        if attempt:
+            logger.warning(
+                "[hermes-feishu-card] %s %s: delivered after %d retr%s",
+                event_name,
+                identity,
+                attempt,
+                "y" if attempt == 1 else "ies",
+            )
+        return result
 
 
 def _send_lock(url: str, payload: dict[str, Any]) -> asyncio.Lock | None:
