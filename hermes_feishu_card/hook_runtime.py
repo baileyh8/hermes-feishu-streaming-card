@@ -97,6 +97,15 @@ TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
 TERMINAL_TIMEOUT_SECONDS = 10.0
+# A terminal event is the last thing that will ever update a card, and the sidecar's session table
+# is memory-only, so a terminal event that never lands leaves that card wrong forever. Measured
+# live (issue 320): a gateway restart auto-resumed the session it interrupted, and that turn's
+# `message.completed` was POSTed while the sidecar was 28s into a stop/start window — the send
+# failed, the exception was swallowed, and the card stayed on "执行中" with no way to repair it.
+# Retry only while the failure means "the sidecar never ruled on this request", and keep a total
+# budget because this await sits inline in the gateway's turn path.
+TERMINAL_DELIVERY_RETRY_DELAYS = (1.0, 2.0, 5.0, 10.0, 15.0)
+TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS = 45.0
 NATIVE_HANDOFF_PROTOCOL = "hfc-native-handoff-v2"
 NATIVE_HANDOFF_MAX_LIFETIME_SECONDS = 3600.0
 NATIVE_HANDOFF_PLAN_PROTOCOL = "hfc-feishu-delivery-plan-v1"
@@ -1990,11 +1999,15 @@ async def emit_from_hermes_locals_async(
             payload = build_event(event_name, event_locals)
             if payload is None:
                 return False
-            result = await _post_json_ordered_response(
-                config.event_url,
-                payload,
-                _timeout_for_event(config, event_name),
-            )
+            if event_name in {"message.completed", "message.failed"}:
+                # Terminal events get a bounded retry: losing one strands the card.
+                result = await _post_terminal_with_retry(config, payload, event_name)
+            else:
+                result = await _post_json_ordered_response(
+                    config.event_url,
+                    payload,
+                    _timeout_for_event(config, event_name),
+                )
             if event_name == "message.completed":
                 _register_native_handoff_descriptor(payload, result)
             applied = _event_was_applied(
@@ -9302,6 +9315,50 @@ async def _post_json_ordered_response(
         return await _post_json_response(url, payload, timeout)
     async with lock:
         return await _post_json_response(url, payload, timeout)
+
+
+def _terminal_delivery_retryable(exc: BaseException) -> bool:
+    """Whether a failed terminal POST is worth repeating.
+
+    Only failures that mean "the sidecar never ruled on this request" qualify: transport errors
+    (connection refused, timeout, DNS) and 5xx. A 4xx is a deliberate refusal, so repeating it
+    would fight the admission logic and delay the turn for nothing.
+
+    Repeating is safe because applying a terminal event twice is idempotent: the sidecar reports
+    applied=True for a session that is already terminal, so a request that did land before its
+    response was lost cannot double-apply.
+    """
+    if isinstance(exc, urlerror.HTTPError):
+        code = exc.code
+        return isinstance(code, int) and 500 <= code < 600
+    return isinstance(exc, (urlerror.URLError, TimeoutError, OSError))
+
+
+async def _post_terminal_with_retry(
+    config: RuntimeConfig, payload: dict[str, Any], event_name: str
+) -> Any:
+    """POST a terminal event, repeating only while the request looks lost.
+
+    The lock is taken per attempt rather than held across the backoff, so a sleeping retry does
+    not block other events for the same turn; reordering is harmless here because a terminal event
+    belongs last anyway and the sidecar ignores repeats of an applied terminal event.
+    """
+    timeout = _timeout_for_event(config, event_name)
+    deadline = time.monotonic() + TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS
+    attempt = 0
+    while True:
+        try:
+            return await _post_json_ordered_response(config.event_url, payload, timeout)
+        except Exception as exc:  # noqa: BLE001
+            if attempt >= len(TERMINAL_DELIVERY_RETRY_DELAYS):
+                raise
+            if not _terminal_delivery_retryable(exc):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            await asyncio.sleep(min(TERMINAL_DELIVERY_RETRY_DELAYS[attempt], remaining))
+            attempt += 1
 
 
 def _send_lock(url: str, payload: dict[str, Any]) -> asyncio.Lock | None:
