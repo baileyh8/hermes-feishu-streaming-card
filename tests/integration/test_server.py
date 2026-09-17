@@ -7870,9 +7870,9 @@ async def test_v4_runtime_header_and_interim_body_share_one_card(client):
     # to lead with the session name and the running metrics; the action phrase then moved OFF the
     # title onto the header's second row ("标题的正在使用之类的，放到第二行").
     assert running["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #1"
-    assert running["header"]["subtitle"]["content"] == "正在读取文件"
-    # The target moved to the content-area tool row; the header carries the phrase but never it.
-    assert "weather_client.py" not in str(running["header"])
+    assert running["header"]["subtitle"]["content"] == "读取文件：weather_client.py"
+    # The user asked the second row to name the concrete work, so the target IS in the header now
+    # (capped); it also still renders in the content-area tool row.
     assert "读取文件：weather_client.py" in str(running)
     assert "我先检查天气客户端。" in str(running)
     assert all(
@@ -7967,7 +7967,7 @@ async def test_v4_interaction_restores_cached_preview_on_stable_v2_card(client):
     # Maintainer note (contract change): was "⏳ 正在读取 · Hermes Agent" — see the note in
     # test_v4_runtime_header_and_interim_body_share_one_card. The phrase is the second row now.
     assert resumed["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #1"
-    assert resumed["header"]["subtitle"]["content"] == "正在读取文件"
+    assert resumed["header"]["subtitle"]["content"] == "读取文件：weather_client.py"
     assert "读取文件：weather_client.py" in str(resumed)
     assert len(feishu_client.sent) == 2
     assert feishu_client.updated[-1][0] == "feishu-message-1"
@@ -8128,8 +8128,7 @@ async def test_v4_preview_burst_coalesces_and_late_preview_cannot_reopen_card(
     # Maintainer note (contract change): was "⏳ 正在读取 · Hermes Agent" — the title now carries the
     # tool count (15 updates = 15 tool calls here); the action phrase is the header's second row.
     assert running["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #15"
-    assert running["header"]["subtitle"]["content"] == "正在读取文件"
-    assert "file-15.py" not in str(running["header"])
+    assert running["header"]["subtitle"]["content"] == "读取文件：file-15.py"
     assert "读取文件：file-15.py" in str(running)
 
     completed = await test_client.post(

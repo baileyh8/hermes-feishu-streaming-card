@@ -219,13 +219,13 @@ def test_tool_activity_clears_compaction_and_restores_tool_subtitle():
     card = render_card(session, title="研发助手")
 
     assert session.runtime_phase_text == ""
-    # The header keeps the action PHRASE but not the target; the target lives in the row below.
+    # The header's second row now names the CONCRETE work; the title stays an identity line.
     # Maintainer note (contract change): the phrase used to lead the title ("⏳ 正在执行终端 ·
-    # 研发助手"), then sat LAST on the title line. The user asked for it on the row beneath the
-    # title ("标题的正在使用之类的，放到第二行"), so it is the header sub-title now. The property this
-    # test guards (the phrase survives in the header, the target "pytest" does not) is unchanged.
+    # 研发助手"), then sat LAST on the title line, then moved to the row beneath it. The user then
+    # asked for the concrete action there ("标题行这边的第二个行像工具行那样看到具体的工具动作"), so
+    # the sub-title carries phrase + target now, same source as the content-area tool row.
     assert card["header"]["title"]["content"] == "⏳ 研发助手 · 工具 #1"
-    assert card["header"]["subtitle"]["content"] == "正在执行命令"
+    assert card["header"]["subtitle"]["content"] == "执行命令：pytest"
     row = next(
         item for item in card["body"]["elements"]
         if item.get("element_id") == "tool_activity_0"

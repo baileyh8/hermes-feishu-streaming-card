@@ -60,14 +60,14 @@ def test_header_leads_with_the_state_and_keeps_the_session_name():
     assert render_card(failed, title="研发助手")["header"]["title"]["content"] == "⛔ 研发助手"
 
 
-def test_header_keeps_the_action_phrase_but_never_the_target():
-    """The phrase ("正在执行命令") survives on the header's SECOND row; the long command never appears.
+def test_header_action_row_names_the_work_and_stays_within_the_cap():
+    """The second row names the CONCRETE work ("执行命令：pytest -q") — capped, never on the title.
 
-    Maintainer note (contract change): the header used to lead with the phrase
-    ("⏳ 正在执行终端 · 研发助手"), then carried it LAST on the title line. The user asked for it on
-    its own row ("标题的正在使用之类的，放到第二行"), so it is now the header sub-title. The two
-    properties this test has always guarded are unchanged: the phrase survives, and the target
-    (command/path) never reaches the header.
+    Maintainer note (contract change): the target used to be banned from the header entirely ("the
+    header only answers 'still working?'"). The user then asked to see the concrete action on the
+    second row exactly as the tool row shows it ("标题行这边的第二个行像工具行那样看到具体的工具
+    动作"), so the target DOES reach the sub-title now. What still holds: the title stays an identity
+    line, and the 100-char cap keeps a long command from taking over the header.
     """
     session = _session()
     long_command = "pytest -q " + ("x" * 200)
@@ -78,10 +78,11 @@ def test_header_keeps_the_action_phrase_but_never_the_target():
     subtitle = card["header"]["subtitle"]["content"]
 
     assert title == "⏳ 研发助手 · 工具 #1"
-    assert subtitle == "正在执行命令"
+    assert subtitle.startswith("执行命令：pytest -q")
+    assert len(subtitle) <= 100
+    assert long_command not in subtitle  # the 200-char command is never carried whole
     assert "x" * 20 not in title
-    assert long_command not in subtitle
-    # ...and the target is not lost: it renders in the content-area row instead.
+    # ...and the target is not lost either: the content-area row carries the same line.
     row = _elements(card, "tool_activity_0")[0]
     assert "pytest" in row["content"]
 
@@ -126,11 +127,10 @@ def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
 
     title = render_card(session, title="Sales Bot")["header"]["title"]["content"]
     subtitle = render_card(session, title="Sales Bot")["header"]["subtitle"]["content"]
-    # Order: name → count (#N) → elapsed. The action phrase left the title for the row beneath it
-    # (see test_header_keeps_the_action_phrase_but_never_the_target); the target of the phrase stays
-    # in the content-area row.
+    # Order: name → count (#N) → elapsed. The action left the title for the row beneath it and now
+    # names the CONCRETE work (see test_header_action_row_names_the_work_and_stays_within_the_cap).
     assert title == "⏳ Sales Bot · 工具 #2 · 1m12s"
-    assert subtitle == "正在读取文件"
+    assert subtitle == "读取文件：session.py"
 
     session.status = "completed"
     session.duration = 152.0
