@@ -13295,15 +13295,14 @@ async def test_resume_refreshes_in_place_when_the_dead_card_cannot_be_recalled(c
         'context': {'open_chat_id': 'oc_abc'}, 'operator': {'open_id': 'ou_user'},
         'action': {'value': resume},
     }})
-    assert response.status == 200
-    await _wait_until(
-        lambda: len(cards_edited_into(feishu_client, dead_card_id)) > edits_before
-    )
+    assert response.status == 409
+    body = await response.json()
+    assert '重新发送原请求' in body['toast']['content']
+    assert not interaction_buttons(body['card'])
     assert feishu_client.deleted == []
     assert len(feishu_client.sent) == cards_before
     assert interaction.feishu_message_id == dead_card_id
-    assert interaction.status == 'pending'
-    assert interaction_buttons(cards_edited_into(feishu_client, dead_card_id)[-1])
+    assert interaction.status == 'failed'
 
 
 async def test_any_option_on_an_expired_approval_reissues_it_instead_of_a_dead_button(client):

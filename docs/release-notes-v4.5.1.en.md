@@ -12,3 +12,5 @@ Based on PR #310 by [mouyong](https://github.com/mouyong), with maintainer corre
 - Restrict heartbeat recall to independent heartbeat notices; preserve conversation answers.
 
 Validation includes automated regressions and real unsent CardKit entities, with no chat messages sent. Mobile UI and reporter-specific background/restart workflows still require field acceptance.
+
+On 2026-09-17 the reporter confirmed PR #310 passed #305, #307 and #311–#314, and attributed #290 to a user skill. This is contributor field evidence, separate from maintainer automation. #282 now points to possible mobile expand/approval overlap; its final fix remains unverified.
