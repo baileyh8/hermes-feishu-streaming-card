@@ -231,7 +231,8 @@ class FeishuClient:
             )
         except Exception as exc:
             logger.warning(
-                "[feishu-card] thread anchor lookup failed for %s: %s", thread_id, exc
+                "[feishu-card] thread anchor lookup failed: thread_hash=%s error_kind=%s",
+                sha256(thread_id.encode()).hexdigest()[:12], type(exc).__name__
             )
             return ""
         items = (body.get("data") or {}).get("items") or []
@@ -240,8 +241,8 @@ class FeishuClient:
             if isinstance(message_id, str) and message_id.startswith("om_"):
                 return message_id
         logger.warning(
-            "[feishu-card] no anchor inside topic %s; that card would have started a new topic",
-            thread_id,
+            "[feishu-card] no anchor inside topic: thread_hash=%s; unanchored fallback",
+            sha256(thread_id.encode()).hexdigest()[:12],
         )
         return ""
 

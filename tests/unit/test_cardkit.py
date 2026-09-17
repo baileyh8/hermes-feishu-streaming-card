@@ -328,7 +328,8 @@ async def test_unresolvable_topic_anchor_warns_instead_of_silently_detaching(
     with caplog.at_level("WARNING"):
         await client.send_card_delivery("oc_group", card(), thread_id="omt_topic")
 
-    assert any("no anchor inside topic omt_topic" in record.message for record in caplog.records)
+    assert any("no anchor inside topic: thread_hash=" in record.message for record in caplog.records)
+    assert "omt_topic" not in caplog.text
 
 @pytest.mark.asyncio
 async def test_cardkit_shortens_long_timeline_ids_before_create_and_update(transport):

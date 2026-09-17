@@ -5974,15 +5974,16 @@ async def _hfc_topic_anchor_for_send(
         anchor = await fetch(thread_id)
     except Exception as exc:
         logger.warning(
-            "[hermes-feishu-card] topic anchor lookup failed for %s: %s", thread_id, exc
+            "[hermes-feishu-card] topic anchor lookup failed: thread_hash=%s error_kind=%s",
+            sha256(thread_id.encode()).hexdigest()[:12], type(exc).__name__
         )
         return ""
     anchor = str(anchor or "").strip()
     if not anchor:
         logger.warning(
-            "[hermes-feishu-card] no anchor inside topic %s; falling back to an unanchored send, "
+            "[hermes-feishu-card] no anchor inside topic thread_hash=%s; falling back to an unanchored send, "
             "which becomes a NEW topic in a topic group",
-            thread_id,
+            sha256(thread_id.encode()).hexdigest()[:12],
         )
     return anchor
 
