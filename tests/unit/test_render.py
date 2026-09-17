@@ -232,6 +232,127 @@ def test_tool_activity_clears_compaction_and_restores_tool_subtitle():
     assert "pytest" in row["content"]
 
 
+def test_tool_row_names_the_work_when_only_the_arguments_are_known():
+    """A tool whose preview line is missing must still say what the agent is doing.
+
+    The stored detail is multi-line ("preview\\n参数: …\\n耗时: …" — see
+    session._tool_detail_from_event_data). When the preview line is absent the arguments used to be
+    discarded as "no target", so the row rendered as a bare "执行中 · terminal · #2" and the reader
+    could not tell what the running agent was doing. The arguments now carry the row instead.
+    """
+    from hermes_feishu_card.render import _tool_activity_row
+
+    tool = ToolState(
+        tool_id="t1",
+        name="terminal",
+        status="running",
+        detail='参数: {"command": "git status --short"}\n耗时: 12s',
+        ordinal=2,
+        started_at=0.0,
+    )
+
+    row = _tool_activity_row(tool, index=0, now=12.0)
+
+    assert "执行命令：git status --short" in row["content"]
+    # The arguments blob is an implementation detail of the event, not something to read.
+    assert '{"command"' not in row["content"]
+    # Meta lines have their own slot in the row (the elapsed time); they are not the target.
+    assert "耗时" not in row["content"]
+
+
+def test_tool_row_is_three_rows_status_then_action_then_parameters():
+    """Status / action / parameters get a row each — cramming them together reads as noise.
+
+    The user's report was that one joined line ("执行中 · terminal · #2 · 执行命令：pytest -q 参数: …")
+    is confusing ("不然都挤在一行 很混乱"). Row 1 is the status, row 2 the action, row 3 the parameters;
+    the parameter row only exists when the arguments carry something the action does not.
+    """
+    from hermes_feishu_card.render import _tool_activity_row
+
+    tool = ToolState(
+        tool_id="t1",
+        name="terminal",
+        status="running",
+        detail='参数: {"command": "pytest -q", "timeout": 120}',
+        ordinal=4,
+        # Epoch-sized: the duration is only added while a running tool has a start time, and a small
+        # value like 0.0 (or `now - 12` with a small `now`) is falsy and silently drops it.
+        started_at=1_000_000.0,
+    )
+
+    rows = _tool_activity_row(tool, index=0, now=1_000_012.0)["content"].splitlines()
+
+    assert len(rows) == 3
+    assert rows[0].endswith("#4") and "terminal" in rows[0] and "12s" in rows[0]
+    assert "执行命令" not in rows[0]  # the action must not share the status row
+    assert rows[1] == "执行命令：pytest -q"
+    # The command named the work already, so only its siblings count as parameters.
+    assert rows[2] == "参数: timeout=120"
+
+
+def test_tool_row_drops_the_parameter_row_when_it_would_only_repeat_the_action():
+    """No fourth copy of the same value: a lone argument that named the work leaves no parameter row."""
+    from hermes_feishu_card.render import _tool_activity_row
+
+    tool = ToolState(
+        tool_id="t1",
+        name="read_file",
+        status="completed",
+        detail='参数: {"path": "/Users/mac/render.py"}',
+        ordinal=1,
+    )
+
+    rows = _tool_activity_row(tool, index=0, now=0.0)["content"].splitlines()
+
+    assert rows == [
+        "<text_tag color='green'>已完成</text_tag> · <text_tag color='neutral'>read_file</text_tag> · #1",
+        "读取文件：render.py",
+    ]
+
+
+def test_tool_row_reads_its_first_detail_line_only_and_never_repeats_the_phrase():
+    """One line, phrased once: a multi-line detail must not be flattened or phrased twice."""
+    from hermes_feishu_card.render import _tool_activity_row, _tool_activity_text
+
+    preview_and_meta = ToolState(
+        tool_id="t1",
+        name="terminal",
+        status="completed",
+        detail='pytest -q\n参数: {"command": "pytest -q"}\n耗时: 12s',
+    )
+    assert _tool_activity_text(preview_and_meta) == "执行命令：pytest -q"
+
+    already_phrased = ToolState(
+        tool_id="t2", name="terminal", status="completed", detail="执行命令：pytest -q"
+    )
+    assert _tool_activity_text(already_phrased) == "执行命令：pytest -q"
+
+    # A detail that is ONLY meta says nothing the row does not already say.
+    meta_only = ToolState(tool_id="t3", name="terminal", status="completed", detail="耗时: 12s")
+    assert _tool_activity_text(meta_only) == ""
+    row = _tool_activity_row(meta_only, index=0, now=0.0)
+    assert "耗时" not in row["content"]
+
+
+def test_unrecognised_tool_row_still_names_its_task():
+    """A plugin/MCP tool falls back to "使用 <tool>" — which must also carry the target.
+
+    "使用 delegate task" on its own is the same content-free row the targeted form exists to avoid;
+    the header is unaffected because it reads only the phrase before "：".
+    """
+    from hermes_feishu_card.render import _tool_activity_text
+
+    known = ToolState(
+        tool_id="t1", name="delegate_task", status="running", detail='参数: {"goal": "分析日志"}'
+    )
+    assert _tool_activity_text(known) == "分派子任务：分析日志"
+
+    unknown = ToolState(
+        tool_id="t2", name="mystery_tool", status="running", detail="参数: some raw text"
+    )
+    assert _tool_activity_text(unknown) == "使用 mystery tool：some raw text"
+
+
 def test_completed_card_never_renders_stale_compaction_phase():
     session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
     session.status = "completed"
@@ -350,7 +471,35 @@ def test_v4_completed_reply_card_uses_only_native_feishu_quote_header():
         for item in card["body"]["elements"]
         if item.get("element_id") == "footer"
     )
-    assert footer["content"].startswith("本轮回复结束 · ")
+    # Maintainer note (contract change): this used to assert startswith("本轮回复结束 · "), which
+    # pinned the note AHEAD of the state pill ("本轮回复结束 · 已完成 · 工具 #2 · …"). The user
+    # asked for the state to lead ("已完成 · 本轮回复结束 · 工具 #2 · …"), so the note now follows
+    # the pill. Asserting the ORDER of the two pieces keeps this a behaviour contract instead of a
+    # frozen snapshot of the whole footer line.
+    content = footer["content"]
+    assert "本轮回复结束" in content
+    assert content.index("已完成") < content.index("本轮回复结束")
+
+
+def test_v4_plain_completed_reply_card_footer_claims_no_completion_note():
+    """A turn the user never replied to must not claim 本轮回复结束 in its footer.
+
+    The note is only meaningful on the native-quote completion rail; leaking it into the plain
+    completion footer would claim a reply that never happened.
+    """
+
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.status = "completed"
+    session.answer_text = "最终答案"
+
+    card = render_card(session, title="Hermes Agent")
+    footer = next(
+        item
+        for item in card["body"]["elements"]
+        if item.get("element_id") == "footer"
+    )
+
+    assert "本轮回复结束" not in footer["content"]
 
 
 def test_v4_failed_retains_preview_and_status_only_footer():
@@ -1361,9 +1510,14 @@ def test_waiting_footer_uses_absolute_remaining_deadline(monkeypatch):
     )
     monkeypatch.setattr(render_module._time, "time", lambda: 160.0)
 
-    assert _render_footer(session, display_status="waiting") == (
-        "等待选择 · ⏳ 1 分钟后过期"
-    )
+    footer = _render_footer(session, display_status="waiting")
+
+    # Maintainer note (contract change): this used to pin the WHOLE line. The user asked for the
+    # consumption line to survive every state, so the tool count and elapsed time now lead the
+    # waiting footer too (see _render_footer). What this test protects is the deadline itself —
+    # an absolute remaining time, not a per-render re-computed one — so it anchors the tail.
+    assert footer.endswith("等待选择 · ⏳ 1 分钟后过期")
+    assert "工具 #" not in footer  # nothing ran, so no phantom tool count
 
 
 def test_render_card_compacts_tables_over_limit_by_default_without_losing_prose():

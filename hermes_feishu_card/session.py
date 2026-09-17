@@ -703,6 +703,7 @@ _TOOL_ACTION_PHRASES = {
     "web_extract": "浏览网页",
     "terminal": "执行命令",
     "todo_list": "整理待办",
+    "delegate_task": "分派子任务",
     "skill_view": "查看技能",
     "skill_manage": "修改技能",
     "skills_list": "查看技能列表",
@@ -770,11 +771,14 @@ def _runtime_tool_summary(name: Any, preview: str) -> str:
         action = "搜索网页" if _SEARCH_SITE_OPERATOR_RE.search(text) else "浏览网页"
     else:
         action = _search_tool_phrase(tool_name)
-    if not action:
-        readable_name = tool_name.replace("_", " ").strip() or "工具"
-        return f"使用 {readable_name}"
 
     target = _runtime_preview_target(text, action=action, is_url=is_url)
+    if not action:
+        readable_name = tool_name.replace("_", " ").strip() or "工具"
+        # An unrecognised tool (plugin, MCP server, new core tool) still has to name what it was
+        # asked to do: the bare "使用 delegate task" is the same content-free row the targeted form
+        # exists to avoid. The header is unaffected — it reads only the phrase before "：".
+        return f"使用 {readable_name}：{target}" if target else f"使用 {readable_name}"
     return f"{action}：{target}" if target else action
 
 
@@ -785,7 +789,12 @@ def _runtime_preview_target(text: str, *, action: str, is_url: bool) -> str:
         path = parsed.path.rstrip("/")
         return f"{host}{path}" if host else ""
 
-    target = _RUNTIME_ACTION_PREFIX_RE.sub("", text).strip()
+    target = text
+    # A preview that already carries the action phrase ("执行命令：pytest -q") must not be phrased a
+    # second time — that produced rows like "执行命令：命令：pytest -q".
+    if action and target.startswith(action):
+        target = target[len(action) :].lstrip("：: ").strip()
+    target = _RUNTIME_ACTION_PREFIX_RE.sub("", target).strip()
     if action == "搜索网页":
         target = _SEARCH_SITE_OPERATOR_RE.sub("", target).strip()
         target = " ".join(target.split())
