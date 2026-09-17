@@ -175,6 +175,7 @@ def apply_patch(
     if strategy == "gateway_run_013_plus":
         content = _apply_redirect_patch(content)
         content = _apply_busy_recall_patch(content)
+        content = _apply_long_running_recall_patch(content)
         content = _apply_cron_patch(content)
         content = _apply_command_card_startup_patch(content)
         content = _apply_native_redelivery_patch(content)
@@ -730,17 +731,26 @@ def _apply_long_running_recall_patch(content: str) -> str:
         content, LONG_RUNNING_RECALL_PATCH_BEGIN, LONG_RUNNING_RECALL_PATCH_END,
         _render_long_running_notice_hook_block, "long running recall patch markers")
     tree = _parse_content(content)
-    assign = next(
-        (
+    assignments = [
             node for node in ast.walk(tree)
             if isinstance(node, ast.Assign) and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "_heartbeat_msg_id"
             and isinstance(node.value, ast.Call) and _same_expression(node.value.func, "str")
-            and node.value.args and _same_expression(node.value.args[0], "_notify_res.message_id")
-        ),
-        None,
-    )
-    if assign is None or assign.lineno is None or assign.end_lineno is None:
+            and len(node.value.args) == 1 and not node.value.keywords
+            and _same_expression(node.value.args[0], "_notify_res.message_id")
+    ]
+    if len(assignments) != 1:
+        return content
+    assign = assignments[0]
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    scope = parents.get(assign)
+    while scope is not None and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        scope = parents.get(scope)
+    if not isinstance(scope, ast.AsyncFunctionDef) or scope.name not in {
+        "_notify_long_running", "_run_agent_notify_long_running",
+    }:
+        return content
+    if assign.lineno is None or assign.end_lineno is None:
         return content
     owners = [
         node for node in ast.walk(tree)
@@ -752,6 +762,30 @@ def _apply_long_running_recall_patch(content: str) -> str:
     # The INNERMOST owner: the branch that only runs after a fresh send. The outermost one would
     # also fire on the in-place edit path, re-arming the withdrawal for a message nobody re-sent.
     owner = max(owners, key=lambda node: node.lineno)
+    if assign not in owner.body or not _same_expression(
+        owner.test,
+        'getattr(_notify_res, "success", False) and getattr(_notify_res, "message_id", None)',
+    ):
+        return content
+    fresh_send = parents.get(owner)
+    if not isinstance(fresh_send, ast.If) or not _same_expression(
+        fresh_send.test, 'not (_notify_res and getattr(_notify_res, "success", False))',
+    ) or owner not in fresh_send.body:
+        return content
+    index = fresh_send.body.index(owner)
+    if index == 0:
+        return content
+    send = fresh_send.body[index - 1]
+    if not (isinstance(send, ast.Assign) and len(send.targets) == 1
+            and isinstance(send.targets[0], ast.Name) and send.targets[0].id == "_notify_res"
+            and isinstance(send.value, ast.Await) and isinstance(send.value.value, ast.Call)):
+        return content
+    call = send.value.value
+    if not (any(_same_expression(call.func, name) for name in ("adapter.send", "_notify_adapter.send"))
+            and len(call.args) == 2 and _same_expression(call.args[0], "source.chat_id")
+            and _same_expression(call.args[1], "_heartbeat_text")
+            and all(keyword.arg == "metadata" for keyword in call.keywords)):
+        return content
     lines = content.splitlines(keepends=True)
     last = owner.end_lineno
     if last is None or last - 1 >= len(lines) or not _line_ending(lines[last - 1]):
@@ -3498,6 +3532,9 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}_hfc_turn_ctx = locals().get(\"turn_ctx\"){newline}",
         f"{deeper_indent}_hfc_source = locals().get(\"source\") or getattr(_hfc_turn_ctx, \"source\", None){newline}",
         f"{deeper_indent}_hfc_message_id = locals().get(\"event_message_id\") or getattr(_hfc_turn_ctx, \"event_message_id\", None){newline}",
+        f"{deeper_indent}_hfc_delivery_result = locals().get(\"_delivery_result\"){newline}",
+        f"{deeper_indent}if not isinstance(_hfc_delivery_result, dict):{newline}",
+        f"{deeper_indent}    _hfc_delivery_result = result if isinstance(result, dict) else {{}}{newline}",
         f"{deeper_indent}_hfc_completed_locals = {{{newline}",
         f"{deeper_indent}    **locals(),{newline}",
         f"{deeper_indent}    \"source\": _hfc_source,{newline}",
@@ -3507,7 +3544,7 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         # takes its success branch: the answer that already streamed to the user gets archived
         # into the reasoning panel and the raw provider error is left as the card body. Passing
         # the result through lets the sidecar render the interrupted turn correctly instead.
-        f"{deeper_indent}    \"agent_result\": result if isinstance(result, dict) else {{}},{newline}",
+        f"{deeper_indent}    \"agent_result\": _hfc_delivery_result,{newline}",
         f"{deeper_indent}    \"duration\": result.get(\"duration\", 0.0) if isinstance(result, dict) else 0.0,{newline}",
         f"{deeper_indent}    \"model\": result.get(\"model\", \"\") if isinstance(result, dict) else \"\",{newline}",
         f"{deeper_indent}    \"tokens\": {{{newline}",

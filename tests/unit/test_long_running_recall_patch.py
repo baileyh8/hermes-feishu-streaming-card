@@ -95,3 +95,37 @@ async def test_only_transient_notices_are_withdrawn(monkeypatch):
     assert not await hook_runtime.recall_transient_thread_notice_async(
         feishu, HEARTBEAT, SimpleNamespace(success=True, message_id=""))
     assert calls == []
+
+
+@pytest.mark.parametrize("source", [
+    SOURCE + SOURCE.replace("class Gateway:", "class OtherGateway:"),
+    SOURCE.replace("_notify_long_running", "_send_ordinary_answer"),
+    SOURCE.replace("adapter.send(source.chat_id, _heartbeat_text)", "adapter.send(source.chat_id, answer)"),
+    SOURCE.replace("str(_notify_res.message_id)", "str(_notify_res.message_id, encoding='utf8')"),
+])
+def test_long_running_recall_rejects_ambiguous_or_drifted_source(source):
+    assert patcher._apply_long_running_recall_patch(source) == source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('edit_success,send_success,expected', [(True, True, ['notice-1']), (False, True, ['notice-1', 'notice-2']), (False, False, [])])
+async def test_generated_heartbeat_hook_only_recalls_successful_fresh_sends(monkeypatch, edit_success, send_success, expected):
+    calls = []
+    async def schedule(message_id, **kwargs):
+        calls.append(message_id)
+        return True
+    monkeypatch.setattr(hook_runtime, 'schedule_message_recall_async', schedule)
+    class Adapter:
+        sends = 0
+        async def send(self, chat_id, text):
+            self.sends += 1
+            return SimpleNamespace(success=send_success, message_id=f'notice-{self.sends}')
+        async def edit_message(self, *args):
+            return SimpleNamespace(success=edit_success, message_id='notice-1')
+    source = SOURCE.replace('        while True:',
+        f'        _heartbeat_msg_id = None\n        _heartbeat_text = {HEARTBEAT!r}\n        cleanup = False\n        cleanup_ids = []\n        for _ in range(2):')
+    patched = patcher._apply_long_running_recall_patch(source)
+    namespace = {}
+    exec(compile(patched, '<heartbeat-flow>', 'exec'), namespace)
+    await namespace['Gateway']()._notify_long_running(Adapter(), SimpleNamespace(platform='feishu', chat_id='test-chat'))
+    assert calls == expected

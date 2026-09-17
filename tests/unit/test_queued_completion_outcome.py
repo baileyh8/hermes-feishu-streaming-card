@@ -20,7 +20,7 @@ CONV_ID = "omt_topic"
 MSG_ID = "om_old"
 
 
-def _run_block(block: str, *, first_response: str, result: dict):
+def _run_block(monkeypatch, block: str, *, first_response: str, result: dict, finalized_result=None):
     """Execute the generated block inside a host shaped like the upstream call site."""
     seen = []
 
@@ -28,7 +28,7 @@ def _run_block(block: str, *, first_response: str, result: dict):
         seen.append(hook_runtime.build_event(event_name, local_vars))
         return True
 
-    hook_runtime.emit_from_hermes_locals_async = emit
+    monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_async", emit)
     source = SimpleNamespace(
         platform="feishu", chat_id=CHAT_ID, thread_id=CONV_ID, _hfc_turn_id=MSG_ID
     )
@@ -39,6 +39,7 @@ def _run_block(block: str, *, first_response: str, result: dict):
         f"    first_response = {first_response!r}\n"
         "    _already_streamed = False\n"
         f"    result = {result!r}\n"
+        + (f"    _delivery_result = {finalized_result!r}\n" if finalized_result is not None else "")
         + block
         + "    return _already_streamed\n",
         namespace,
@@ -74,7 +75,7 @@ def test_queued_completion_reports_the_failed_outcome(monkeypatch):
     """A failed turn must be announced as failed, not inferred from the presence of text."""
     block = "".join(patcher._render_queued_complete_hook_block("    ", "\n"))
     event = _run_block(
-        block,
+        monkeypatch, block,
         first_response="HTTP 403: 预扣费额度失败",
         result={"failed": True, "final_response": "HTTP 403: 预扣费额度失败",
                 "duration": 12.5, "model": "deepseek-flash",
@@ -88,7 +89,7 @@ def test_queued_completion_keeps_the_answer_the_user_was_reading(monkeypatch):
     """The failure must be appended to the streamed answer, and the answer must not be archived."""
     block = "".join(patcher._render_queued_complete_hook_block("    ", "\n"))
     event = _run_block(
-        block,
+        monkeypatch, block,
         first_response="HTTP 403: 预扣费额度失败",
         result={"failed": True, "final_response": "HTTP 403: 预扣费额度失败",
                 "duration": 12.5, "model": "deepseek-flash",
@@ -105,7 +106,7 @@ def test_queued_completion_leaves_a_successful_turn_alone(monkeypatch):
     """Guard against over-reaching: a successful turn gains no outcome and keeps its answer."""
     block = "".join(patcher._render_queued_complete_hook_block("    ", "\n"))
     event = _run_block(
-        block,
+        monkeypatch, block,
         first_response="正常回答",
         result={"duration": 1.0, "model": "deepseek-flash", "input_tokens": 1,
                 "output_tokens": 2, "last_prompt_tokens": 3, "context_length": 9},
@@ -125,7 +126,7 @@ def test_queued_completion_passes_the_result_it_was_given(monkeypatch):
         captured["agent_result"] = local_vars.get("agent_result")
         return True
 
-    hook_runtime.emit_from_hermes_locals_async = emit
+    monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_async", emit)
     source = SimpleNamespace(
         platform="feishu", chat_id=CHAT_ID, thread_id=CONV_ID, _hfc_turn_id=MSG_ID
     )
@@ -142,3 +143,23 @@ def test_queued_completion_passes_the_result_it_was_given(monkeypatch):
     )
     asyncio.run(namespace["run"](context))
     assert captured.get("agent_result", {}).get("marker") == "unique"
+
+
+def test_finalized_failure_takes_precedence_over_raw_result(monkeypatch):
+    block = "".join(patcher._render_queued_complete_hook_block("    ", "\n"))
+    event = _run_block(monkeypatch, block, first_response="provider failed",
+                       result={}, finalized_result={"failed": True, "duration": 7.5})
+    assert event["data"]["turn_outcome"] == "failed"
+    sess, streamed = _drive(event["data"])
+    assert sess.status == "failed"
+    assert streamed.strip() in sess.answer_text
+
+
+def test_finalized_success_does_not_inherit_raw_failure(monkeypatch):
+    block = "".join(patcher._render_queued_complete_hook_block("    ", "\n"))
+    event = _run_block(monkeypatch, block, first_response="recovered answer",
+                       result={"failed": True}, finalized_result={"final_response": "recovered answer"})
+    assert event["data"].get("turn_outcome") is None
+    sess, _ = _drive(event["data"])
+    assert sess.status == "completed"
+    assert sess.answer_text.strip() == "recovered answer"
