@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.5.2 — 2026-09-17
+
+### Fixed
+- Preserve queued-turn failure outcomes and streamed answers, preferring finalized Hermes delivery results (#318).
+- Recall successful fresh heartbeat notices through a unique, reversible source contract; preserve ordinary replies and owned answer cards (#321).
+- Move concrete tool work to the subtitle and order ordinal before duration, retaining approval and terminal states (PR #310, @mouyong).
+
 ## V4.5.1 — 2026-09-17
 
 ### Fixed

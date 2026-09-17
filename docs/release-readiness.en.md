@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.5.1`. This cycle adds topic notice routing, mobile interaction readability, requester mentions, CardKit entity streaming and live Gateway approval pause. Exact historical Hermes source and container UID checks supplement the release gates. Client acceptance and publication evidence remain separate from automated contracts.
+Current release candidate: `4.5.2`. This cycle fixes queued failure outcomes and transient notices (#318/#321). #319/#320 remain open pending runtime evidence; production and mobile acceptance are not claimed.
 
 This candidate fixes CardKit IDs, topic routing and approval lifecycle. Real unsent entities passed; full tests, exact merge CI and public installation must pass before release. Mobile field acceptance remains open.
 

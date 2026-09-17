@@ -60,15 +60,14 @@ def test_header_leads_with_the_state_and_keeps_the_session_name():
     assert render_card(failed, title="研发助手")["header"]["title"]["content"] == "⛔ 研发助手"
 
 
-def test_header_keeps_the_action_phrase_but_never_the_target():
-    """The phrase ("正在执行终端") stays, now AFTER the metrics; the long command never appears.
+def test_header_action_row_names_the_work_and_stays_within_the_cap():
+    """The second row names the CONCRETE work ("执行命令：pytest -q") — capped, never on the title.
 
-    Maintainer note (contract change): the header used to lead with the phrase
-    ("⏳ 正在执行终端 · 研发助手"). The user asked for the phrase to move to the back so the
-    numbers they want to read (elapsed, tool count) sit next to the state — see
-    test_header_carries_elapsed_time_and_tool_count. The two properties this test has always
-    guarded are unchanged: the phrase survives, and the target (command/path) never reaches the
-    title.
+    Maintainer note (contract change): the target used to be banned from the header entirely ("the
+    header only answers 'still working?'"). The user then asked to see the concrete action on the
+    second row exactly as the tool row shows it ("标题行这边的第二个行像工具行那样看到具体的工具
+    动作"), so the target DOES reach the sub-title now. What still holds: the title stays an identity
+    line, and the 100-char cap keeps a long command from taking over the header.
     """
     session = _session()
     long_command = "pytest -q " + ("x" * 200)
@@ -76,12 +75,37 @@ def test_header_keeps_the_action_phrase_but_never_the_target():
 
     card = render_card(session, title="研发助手")
     title = card["header"]["title"]["content"]
+    subtitle = card["header"]["subtitle"]["content"]
 
-    assert title == "⏳ 研发助手 · 工具 #1 · 正在执行命令"
+    assert title == "⏳ 研发助手 · 工具 #1"
+    assert subtitle.startswith("执行命令：pytest -q")
+    assert len(subtitle) <= 100
+    assert long_command not in subtitle  # the 200-char command is never carried whole
     assert "x" * 20 not in title
-    # ...and the target is not lost: it renders in the content-area row instead.
+    # ...and the target is not lost either: the content-area row carries the same line.
     row = _elements(card, "tool_activity_0")[0]
     assert "pytest" in row["content"]
+
+
+def test_completed_header_subtitle_keeps_the_completion_note():
+    """A finished turn owns the second row: "本轮回复结束" is not displaced by a tool phrase.
+
+    The sub-title now prefers the action phrase (see
+    test_header_keeps_the_action_phrase_but_never_the_target). A completed turn normally has no
+    running tool, but a turn CAN end with a tool still marked running (interrupted mid-call). The
+    completion note must win in that case too — it is the only line that says the reply is over, and
+    losing it to a stale phrase would make a finished card read as still working.
+    """
+    session = _session()
+    session.apply(_tool_event(tool_id="t1", name="terminal", detail="pytest -q"))
+    session.status = "completed"
+    session.duration = 152.0
+    session.answer_text = "完成"
+
+    card = render_card(session, title="Sales Bot")
+
+    assert card["header"]["title"]["content"] == "✅ Sales Bot · 工具 #1 · 2m32s"
+    assert card["header"]["subtitle"]["content"] == "本轮回复结束"
 
 
 def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
@@ -102,9 +126,11 @@ def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
     )
 
     title = render_card(session, title="Sales Bot")["header"]["title"]["content"]
-    # Order: name → count (#N) → elapsed → action phrase. The title carries only the VERB phrase
-    # (the target stays in the content-area row) — pre-existing design, unchanged by this test.
-    assert title == "⏳ Sales Bot · 工具 #2 · 1m12s · 正在读取文件"
+    subtitle = render_card(session, title="Sales Bot")["header"]["subtitle"]["content"]
+    # Order: name → count (#N) → elapsed. The action left the title for the row beneath it and now
+    # names the CONCRETE work (see test_header_action_row_names_the_work_and_stays_within_the_cap).
+    assert title == "⏳ Sales Bot · 工具 #2 · 1m12s"
+    assert subtitle == "读取文件：session.py"
 
     session.status = "completed"
     session.duration = 152.0

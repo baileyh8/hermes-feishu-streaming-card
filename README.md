@@ -139,7 +139,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.5.1
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.5.2
 bash install-docker.sh
 ```
 
@@ -179,6 +179,7 @@ bash install-docker.sh
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.5.2](docs/release-notes-v4.5.2.md) | 排队任务失败保留正文、心跳提示安全撤回 |
 | [v4.5.1](docs/release-notes-v4.5.1.md) | 修复 CardKit 长 ID、话题投递、审批状态与重启反馈 |
 | [v4.5.0](docs/release-notes-v4.5.0.md) | 话题通知与手机交互修复，CardKit 流式更新、正文提及和审批暂停 |
 | [v4.4.6](docs/release-notes-v4.4.6.md) | 恢复终局投递，兼容新 Hermes 附件契约，保留未完成状态与交互内容 |
@@ -267,15 +268,14 @@ Hermes Gateway
 - 架构说明：[中文](docs/architecture.md) / [English](docs/architecture.en.md)
 - 事件协议：[中文](docs/event-protocol.md) / [English](docs/event-protocol.en.md)
 - 安装包与安全：[README-install.md](README-install.md)；[中文](docs/installer-safety.md) / [English](docs/installer-safety.en.md)
-- 迁移说明：[中文](docs/migration.md) / [English](docs/migration.en.md)
-- 端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)；发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
+- 迁移说明：[中文](docs/migration.md) / [English](docs/migration.en.md)；端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)；发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
 - 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)
 - [CardKit 流式更新](docs/wiki/cardkit-streaming.md)；[提及位置与审批暂停](docs/wiki/card-readability.md)。
 - 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md) 遇到 `manual_review_required` 时，先执行 `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`；V4.4.6 的 `integrity.next_command` 会给出可复制的只读诊断命令。迁移与启动顺序见 [Hermes 完整性排障](docs/wiki/hermes-decomposed-patcher.md)，本轮修复及待验证问题见 [Issues/PR 处理记录](docs/issue-triage-2026-09-15.md)。
 
 ## 贡献者
 
-- V4.5.1：感谢 [mouyong](https://github.com/mouyong) 的 [PR #310](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/310)，以及 #282、#304、#305、#307、#311–#314、#318 的现场反馈和复测；[lanx214](https://github.com/lanx214) 的 [Issue #316](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/316) 和 [PR #317](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/317) 提供 Hermes clarify 抽取兼容修复；[qqqq560204-maker](https://github.com/qqqq560204-maker) 在 [Issue #306](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/306) 提供 CardKit 300301 诊断线索。两项 PR 保留原始提交作者，维护者补充安全边界与回归验证。#282 仍待移动端复验。
+- V4.5.1–V4.5.2：感谢 [mouyong](https://github.com/mouyong) 的 [PR #310](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/310)，以及 #282、#304、#305、#307、#311–#314、#318/#321 的现场反馈、复测及排队结果、心跳撤回修复；[lanx214](https://github.com/lanx214) 的 [Issue #316](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/316) 和 [PR #317](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/317) 提供 Hermes clarify 抽取兼容修复；[qqqq560204-maker](https://github.com/qqqq560204-maker) 与 [7360403-coder](https://github.com/7360403-coder) 在 [Issue #306](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/306) 提供 CardKit 300301 诊断线索。两项 PR 保留原始提交作者，维护者补充安全边界与回归验证。#282 已按报告者意愿关闭，未认定手机问题已修复。
 
 - V4.4.5–V4.4.6: [tidytorch](https://github.com/tidytorch) (#286/#291), [Jentlezhi](https://github.com/Jentlezhi) (#292), [sp960817](https://github.com/sp960817), [Cyber-Yichen](https://github.com/Cyber-Yichen), [shichenshuo-star](https://github.com/shichenshuo-star), [ywarmy](https://github.com/ywarmy) (#288/#294/#296), [7360403-coder](https://github.com/7360403-coder) (#298), [mouyong](https://github.com/mouyong) (#276/#280/#282/#289/#301). 感谢代码、测试和现场证据；保留 #291/#292 原始提交作者身份。
 ### V4.4.3
