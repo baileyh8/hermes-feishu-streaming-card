@@ -70,6 +70,12 @@ from .runtime_control import reset_runtime_control_for_tests, start_runtime_cont
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
+# The busy path's redirect acknowledgement ("↪ Redirected current run. I'll adjust using your
+# correction.") tells the user their correction landed. Once read it is only a stale instruction in
+# the thread, so the sidecar withdraws it this many seconds later. Steer / queued / interrupt
+# acknowledgements state something the user still needs and are deliberately left alone.
+BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
+BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
 TERMINAL_TIMEOUT_SECONDS = 10.0
@@ -9312,6 +9318,62 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
     return _open_json_request(req, timeout)
 
 
+async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) -> bool:
+    """Withdraw the busy-path redirect acknowledgement once the user has read it.
+
+    ``↪ Redirected current run. I'll adjust using your correction.`` confirms the correction was
+    taken; after that it is a stale instruction sitting in the thread, so it is recalled a few
+    seconds later. Other busy replies (steer, queued, interrupt) state something the user still
+    needs, so only the redirect acknowledgement is withdrawn. Best-effort throughout: a failed
+    request must never disturb the send that already succeeded.
+    """
+    try:
+        if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
+            return False
+        source = getattr(event, "source", None)
+        platform = getattr(source, "platform", "")
+        if "feishu" not in str(getattr(platform, "value", platform) or "").lower():
+            return False
+        return await schedule_message_recall_async(
+            str(getattr(result, "message_id", "") or ""),
+            delay_seconds=BUSY_REDIRECT_ACK_RECALL_SECONDS,
+        )
+    except Exception:
+        return False
+
+
+async def schedule_message_recall_async(
+    message_id: str,
+    *,
+    delay_seconds: float = 15.0,
+    bot_id: str = "",
+) -> bool:
+    """Ask the sidecar to withdraw ``message_id`` ``delay_seconds`` after it was posted.
+
+    Used for acknowledgements the user reads once and that then only clutter the thread — the
+    core's "↪ Redirected current run …" notice. The gateway's own adapter cannot delete (its Feishu
+    implementation inherits the ``return False`` default), so the sidecar owns this path.
+    """
+    try:
+        recall_id = str(message_id or "").strip()
+        if not recall_id:
+            return False
+        config = load_runtime_config()
+        if not config.enabled:
+            return False
+        payload: dict[str, Any] = {
+            "message_id": recall_id,
+            "delay_seconds": float(delay_seconds),
+        }
+        if bot_id:
+            payload["bot_id"] = str(bot_id)
+        url = f"{_summary_base_url(config.event_url)}/recall/schedule"
+        result = await _post_json_ordered_response(url, payload, config.timeout_seconds)
+        return isinstance(result, dict) and result.get("ok") is True
+    except Exception:
+        return False
+
+
 def _post_headers(url: str, body: bytes) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     path = parse.urlsplit(url).path.rstrip("/")
@@ -9366,6 +9428,7 @@ def _is_sensitive_sidecar_path(path: str) -> bool:
     normalized = str(path or "").rstrip("/")
     return (
         normalized.endswith("/card/actions")
+        or normalized.endswith("/recall/schedule")
         or "/interactions/" in normalized
         or ("/messages/" in normalized and normalized.endswith("/summary"))
     )
