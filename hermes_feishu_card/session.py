@@ -508,7 +508,7 @@ class CardSession:
             if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
                 self.status = "failed"
                 self.answer_text = (
-                    self.answer_text.rstrip()
+                    self._adopt_in_progress_content()
                     + "\n\n> "
                     + _UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome]
                 ).lstrip()
@@ -519,11 +519,29 @@ class CardSession:
             self.status = "failed"
             error = event.data.get("error")
             error = error if isinstance(error, str) and error.strip() else "消息处理失败"
-            partial = self.answer_text.rstrip()
+            partial = self._adopt_in_progress_content()
             self.answer_text = partial + "\n\n> " + error if partial else error
         self.updated_at = time.time()
         self.refresh_display_status_source()
         return True
+
+    def _adopt_in_progress_content(self) -> str:
+        """Promote the content the user was reading, so a failure cannot erase it.
+
+        Maintainer note (contract change): while a turn runs, the card streams whatever has arrived —
+        the answer once there is one, otherwise the in-progress reasoning (`visible_main_text` and
+        `render._primary_text_for_session` both fall back to `thinking_text`). BOTH readers return
+        only `answer_text` once the status is `failed`, so a failure landing before any answer was
+        produced left the card showing nothing but the error. The user reported exactly that for an
+        HTTP 403 arriving mid-turn: 「这种以后能否不要覆盖掉正在做的事项内容」.
+
+        Promoting the streamed text first makes a no-answer failure behave like the partial-answer
+        case that already worked: the work in progress stays where it was, and the failure text is
+        appended below it as a quote.
+        """
+        if not self.answer_text.strip() and self.thinking_text.strip():
+            self.answer_text = self.thinking_text.strip()
+        return self.answer_text.rstrip()
 
     def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:
         preface = normalize_stream_text(self.answer_text).strip()
