@@ -9347,6 +9347,8 @@ async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) 
     try:
         if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
             return False
+        if getattr(result, "success", False) is not True:
+            return False
         source = getattr(event, "source", None)
         platform = getattr(source, "platform", "")
         if "feishu" not in str(getattr(platform, "value", platform) or "").lower():

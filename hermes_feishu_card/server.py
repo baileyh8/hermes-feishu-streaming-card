@@ -7,6 +7,7 @@ from contextlib import suppress
 from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -162,7 +163,8 @@ EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
 # Upper bound on a requested delay: a caller must not be able to pin a message deletion far into the
 # future (a recall scheduled beyond the runtime's lifetime would simply never run).
 EPHEMERAL_RECALL_MAX_SECONDS = 600.0
-EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", set)
+EPHEMERAL_RECALL_MAX_PENDING = 1024
+EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -567,7 +569,7 @@ def create_app(
     app[FLUSH_CONTROLLERS_KEY] = {}
     app[CARD_ANIMATION_TASKS_KEY] = {}
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
-    app[EPHEMERAL_RECALL_TASKS_KEY] = set()
+    app[EPHEMERAL_RECALL_TASKS_KEY] = {}
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -7239,35 +7241,38 @@ async def _recall_schedule(request: web.Request) -> web.Response:
             return web.json_response(
                 {"ok": False, "error": "delay_seconds must be a number"}, status=400
             )
+    if not math.isfinite(delay):
+        return web.json_response({"ok": False, "error": "delay_seconds must be finite"}, status=400)
+    if message_id in request.app[FEISHU_MESSAGE_IDS_KEY].values():
+        return web.json_response({"ok": False, "error": "owned session card cannot be recalled"}, status=409)
     # Caller owns the delay: only the upper bound is enforced (see EPHEMERAL_RECALL_MAX_SECONDS).
     # No floor, because the sidecar has no way to know what "too soon" means for the caller — the
     # send already happened by the time the request arrives.
     delay = min(max(delay, 0.0), EPHEMERAL_RECALL_MAX_SECONDS)
-    _schedule_ephemeral_recall(
+    scheduled = _schedule_ephemeral_recall(
         request.app,
         message_id=message_id,
         delay_seconds=delay,
         bot_id=_safe_command_string(payload.get("bot_id")) or None,
     )
+    if not scheduled:
+        return web.json_response({"ok": False, "error": "recall capacity reached"}, status=429)
     return web.json_response({"ok": True, "message_id": message_id, "delay_seconds": delay})
 
 
-def _schedule_ephemeral_recall(
-    app: web.Application,
-    *,
-    message_id: str,
-    delay_seconds: float,
-    bot_id: str | None,
-) -> None:
-    tasks: set[asyncio.Task[None]] = app[EPHEMERAL_RECALL_TASKS_KEY]
-    task = asyncio.create_task(
-        _run_ephemeral_recall(
-            app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id
-        )
-    )
-    tasks.add(task)
-    task.add_done_callback(tasks.discard)
+def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id) -> bool:
+    tasks = app[EPHEMERAL_RECALL_TASKS_KEY]
+    key = (bot_id or "", message_id)
+    if key in tasks:
+        return True
+    if len(tasks) >= EPHEMERAL_RECALL_MAX_PENDING:
+        return False
+    task = asyncio.create_task(_run_ephemeral_recall(
+        app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id))
+    tasks[key] = task
+    task.add_done_callback(lambda done: tasks.pop(key, None) if tasks.get(key) is done else None)
     app[METRICS_KEY].ephemeral_recalls_scheduled += 1
+    return True
 
 
 async def _run_ephemeral_recall(
@@ -7280,6 +7285,9 @@ async def _run_ephemeral_recall(
     metrics: SidecarMetrics = app[METRICS_KEY]
     try:
         await asyncio.sleep(delay_seconds)
+        if message_id in app[FEISHU_MESSAGE_IDS_KEY].values():
+            metrics.ephemeral_recall_failures += 1
+            return
         if await _delete_card_for_app(app, message_id, bot_id):
             metrics.ephemeral_recalls_completed += 1
         else:
@@ -7292,8 +7300,8 @@ async def _run_ephemeral_recall(
 
 
 async def _stop_ephemeral_recalls(app: web.Application) -> None:
-    tasks: set[asyncio.Task[None]] = app.get(EPHEMERAL_RECALL_TASKS_KEY) or set()
-    pending = [task for task in tasks if not task.done()]
+    tasks = app.get(EPHEMERAL_RECALL_TASKS_KEY, {})
+    pending = [task for task in tasks.values() if not task.done()]
     tasks.clear()
     for task in pending:
         task.cancel()

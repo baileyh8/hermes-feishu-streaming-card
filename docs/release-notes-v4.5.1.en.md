@@ -16,3 +16,5 @@ Based on PR #310 by [mouyong](https://github.com/mouyong), with maintainer corre
 Validation includes automated regressions and real unsent CardKit entities, with no chat messages sent. Mobile UI and reporter-specific background/restart workflows still require field acceptance.
 
 On 2026-09-17 the reporter confirmed PR #310 passed #305, #307 and #311–#314, and attributed #290 to a user skill. This is contributor field evidence, separate from maintainer automation. #282 now points to possible mobile expand/approval overlap; its final fix remains unverified.
+
+Includes PR #310 through `a9fd806`: preserve visible reasoning on early failures, split tool activity into readable rows, and recall redirect acknowledgements after 15 seconds. Maintainer regressions cover LF/CRLF exact patch reversal, corrupt captures, bounded/deduplicated recalls and protection of owned answer cards.

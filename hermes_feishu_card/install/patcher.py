@@ -1,4 +1,5 @@
 import ast
+import textwrap
 
 from .patch_descriptors import (
     HYBRID_PATCH_DESCRIPTORS,
@@ -601,6 +602,35 @@ def _render_busy_recall_hook_block(indent: str, newline: str):
     ]
 
 
+def _remove_busy_recall_patch(content: str) -> str:
+    block = _find_simple_marker_block(content, BUSY_RECALL_PATCH_BEGIN,
+                                     BUSY_RECALL_PATCH_END, "busy recall patch markers")
+    if block is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    begin, end = block
+    indent = lines[begin][:len(lines[begin]) - len(lines[begin].lstrip())]
+    newline = _line_ending(lines[begin]) or _detect_newline(content)
+    hook = _render_busy_recall_hook_block(indent, newline)
+    captured = lines[begin + 1:end]
+    prefix = indent + "_hfc_recall_result = "
+    if (len(captured) <= len(hook) or captured[-len(hook):] != hook
+            or not captured[0].startswith(prefix + "await ")):
+        raise ValueError("corrupt busy recall patch")
+    original = captured[:-len(hook)]
+    original[0] = indent + original[0][len(prefix):]
+    try:
+        body = ast.parse(textwrap.dedent("".join(original))).body
+    except SyntaxError as exc:
+        raise ValueError("corrupt busy recall capture") from exc
+    if (len(body) != 1 or not isinstance(body[0], ast.Expr)
+            or not isinstance(body[0].value, ast.Await)
+            or not isinstance(body[0].value.value, ast.Call)
+            or not _same_expression(body[0].value.value.func, "adapter._send_with_retry")):
+        raise ValueError("corrupt busy recall capture")
+    return "".join(lines[:begin] + original + lines[end + 1:])
+
+
 def _apply_busy_recall_patch(content: str) -> str:
     """Withdraw the busy-path redirect acknowledgement shortly after it is sent.
 
@@ -620,28 +650,29 @@ def _apply_busy_recall_patch(content: str) -> str:
         )
         is not None
     ):
+        _remove_busy_recall_patch(content)  # Validate captured code before accepting ownership.
         return content
 
     func = _find_async_function(_parse_content(content), "_send_busy_reply")
     if func is None:
         return content
-    target = next(
-        (
-            node
-            for node in func.body
-            if isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Await)
-            and isinstance(node.value.value, ast.Call)
-            and _same_expression(node.value.value.func, "adapter._send_with_retry")
-        ),
-        None,
-    )
+    targets = [
+        node for node in func.body
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Await)
+        and isinstance(node.value.value, ast.Call)
+        and _same_expression(node.value.value.func, "adapter._send_with_retry")
+    ]
+    target = targets[0] if len(targets) == 1 else None
     if target is None or target.lineno is None or target.end_lineno is None:
         return content
 
     lines = content.splitlines(keepends=True)
     start, end = target.lineno - 1, target.end_lineno - 1
     if start < 0 or end < start or end >= len(lines):
+        return content
+    if not _line_ending(lines[end]):
+        # Optional cleanup must not turn a valid EOF send into invalid Python.
         return content
     stripped = lines[start].lstrip()
     if not stripped.startswith("await "):
@@ -874,6 +905,7 @@ def _apply_hfc_command_patch(content: str) -> str:
 
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
+    content = _remove_busy_recall_patch(content)
     from .provider_route import remove_provider_route_patch
     content = remove_provider_route_patch(content)
     content = _remove_simple_owned_patch(
@@ -1037,6 +1069,7 @@ def remove_cron_patch_lenient(content: str) -> str:
 
 def remove_patch_lenient(content: str) -> str:
     """Remove owned patch markers, accepting older generated block bodies."""
+    content = _remove_busy_recall_patch(content)
     owned_complete_block = _find_simple_marker_block(
         content,
         COMPLETE_PATCH_BEGIN,

@@ -13726,3 +13726,32 @@ async def test_a_refused_recall_is_counted_and_leaves_the_message_alone(client):
     await _wait_until(lambda: test_client.app[METRICS_KEY].ephemeral_recall_failures)
     assert feishu_client.deleted == []
     assert test_client.app[METRICS_KEY].ephemeral_recalls_completed == 0
+
+@pytest.mark.parametrize('delay', ['nan', 'inf', '-inf'])
+async def test_recall_rejects_nonfinite_delays(client, delay):
+    http, fake = client
+    response = await http.post('/recall/schedule', json={'message_id':'om_ack', 'delay_seconds':delay})
+    assert response.status == 400
+    assert fake.deleted == []
+
+
+async def test_recall_deduplicates_and_bounds_pending_tasks(client, monkeypatch):
+    http, fake = client
+    monkeypatch.setattr(sidecar_server, 'EPHEMERAL_RECALL_MAX_PENDING', 1)
+    payload = {'message_id':'om_ack', 'delay_seconds':60}
+    assert (await http.post('/recall/schedule', json=payload)).status == 200
+    assert (await http.post('/recall/schedule', json=payload)).status == 200
+    assert len(http.app[sidecar_server.EPHEMERAL_RECALL_TASKS_KEY]) == 1
+    assert (await http.post('/recall/schedule', json={**payload,'message_id':'om_other'})).status == 429
+    assert http.app[METRICS_KEY].ephemeral_recalls_scheduled == 1
+
+
+async def test_recall_never_removes_owned_answer_even_after_schedule(client):
+    http, fake = client
+    http.app[FEISHU_MESSAGE_IDS_KEY]['fixture'] = 'om_owned'
+    response = await http.post('/recall/schedule', json={'message_id':'om_owned', 'delay_seconds':0})
+    assert response.status == 409
+    assert (await http.post('/recall/schedule', json={'message_id':'om_later', 'delay_seconds':0.03})).status == 200
+    http.app[FEISHU_MESSAGE_IDS_KEY]['fixture'] = 'om_later'
+    await _REAL_ASYNCIO_SLEEP(0.1)
+    assert fake.deleted == []

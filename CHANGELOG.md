@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 ## V4.5.1 — 2026-09-17
 
 ### Fixed
+- Preserve in-progress reasoning on early failures, improve tool activity rows, and recall transient redirect acknowledgements with bounded deduplication and reversible patches (latest PR #310 through `a9fd806`).
 - Support the extracted Hermes clarify helper with its `(response, answered)` contract, reject call/async drift, and pin the real upstream source in CI (#316/#317).
 - Normalize CardKit element IDs to unique stable values of at most 20 characters before create, incremental updates and full updates. Reproduce and verify the long timeline ID failure against real unsent Feishu entities (#306).
 - Preserve source-message anchors for background work and resolve missing topic anchors for attachments and cards (#305/#313, based on @mouyong's PR #310).
