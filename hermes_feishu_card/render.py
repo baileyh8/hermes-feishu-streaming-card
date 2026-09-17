@@ -254,6 +254,7 @@ def _render_card_unchecked(
             title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
         )
     runtime_summary = _runtime_header_summary(session)
+    header_action = _header_action_phrase(session, display_status=display_status)
     header_title = _header_title_with_state(
         session,
         configured_title,
@@ -377,7 +378,14 @@ def _render_card_unchecked(
         "template": status["template"],
         "title": {"tag": "plain_text", "content": header_title},
     }
-    if runtime_summary:
+    # Maintainer note (contract change): the sub-title now prefers the ACTION phrase, so the title's
+    # last segment ("正在读取文件") sits on the row beneath it — the user asked for that split
+    # ("标题的正在使用之类的，放到第二行"). The phase ("生成中"/"思考中") only takes the slot when no
+    # tool is running, and "本轮回复结束" keeps it for a completed turn (both are mutually exclusive
+    # with a running tool by construction — see ``_header_action_phrase``).
+    if header_action:
+        header["subtitle"] = {"tag": "plain_text", "content": header_action}
+    elif runtime_summary:
         header["subtitle"] = {"tag": "plain_text", "content": runtime_summary}
     elif status["subtitle"]:
         header["subtitle"] = {"tag": "plain_text", "content": status["subtitle"]}
@@ -778,6 +786,28 @@ def _last_tool_action_phrase(session: CardSession) -> str:
     return _tool_action_phrase(latest)
 
 
+def _header_action_phrase(session: CardSession, *, display_status: str) -> str:
+    """The ACTION phrase for the header's SUB-TITLE — "正在读取文件", "正在执行命令".
+
+    Maintainer note (contract change): this phrase used to be the LAST segment of the title
+    ("⏳ Sales Bot · 工具 #2 · 1m12s · 正在读取文件"). The user asked for it on its own row
+    ("标题的正在使用之类的，放到第二行"), so the title keeps only the identity (name + metrics) and
+    this moves to the header sub-title — the line that sits directly under the title.
+
+    Empty while an interaction is pending, matching ``_runtime_header_summary``: the title is then
+    the prompt itself ("待审批：…"), and a tool phrase underneath it would read as a second subject.
+    A COMPLETED turn is also empty — its sub-title slot belongs to "本轮回复结束".
+    """
+    interaction = session.active_interaction
+    if interaction is not None and interaction.status == "pending":
+        return ""
+    if display_status == "completed" or session.status == "completed":
+        return ""
+    if display_status == "failed" or session.status == "failed":
+        return _last_tool_action_phrase(session)
+    return _latest_running_action_phrase(session)
+
+
 def _header_title_with_state(
     session: CardSession,
     configured_title: str,
@@ -803,32 +833,25 @@ def _header_title_with_state(
         return f"✅ {configured_title}" + (f" · {metrics}" if metrics else "")
     if display_status == "failed":
         # Maintainer note (contract change): this used to collapse to "⛔ <name>", which hid where
-        # the run stopped. Keep the metrics and the action phrase (of the LAST tool, since nothing
-        # is running any more) so a reader can see the stopping point.
+        # the run stopped. The metrics stay for that reason; the action phrase moved to the
+        # sub-title (see ``_header_action_phrase``) so the title stays an identity line.
         parts = [f"⛔ {configured_title}"]
         if metrics:
             parts.append(metrics)
-        phrase = _last_tool_action_phrase(session)
-        if phrase:
-            parts.append(phrase)
         return " · ".join(parts)
-    phrase = _latest_running_action_phrase(session)
-    if not metrics and not phrase:
-        # Nothing measured and nothing to describe: keep the legacy wording rather than a bare
-        # "⏳ <name>", which reads as a label instead of a state.
+    if not metrics:
+        # Nothing measured: keep the legacy wording rather than a bare "⏳ <name>", which reads as
+        # a label instead of a state. What it is doing now lives on the sub-title.
         return f"⏳ 执行中 · {configured_title}"
     # Maintainer note (contract change): the reader's order is name → metrics → prose. The title
     # used to lead with the phrase ("⏳ 正在读取 · Sales Bot") and carry no numbers at all, so the
     # elapsed time and tool count lived only in the footer. The user asked for both in the title,
-    # both AFTER the name, with the action phrase LAST:
-    # "⏳ Sales Bot · 工具 3 · 1m12s · 正在读取文件". The name stays first because it is what
+    # both AFTER the name: "⏳ Sales Bot · 工具 3 · 1m12s". The name stays first because it is what
     # identifies WHICH conversation is still working.
-    parts = [f"⏳ {configured_title}"]
-    if metrics:
-        parts.append(metrics)
-    if phrase:
-        parts.append(phrase)
-    return " · ".join(parts)
+    # Maintainer note (contract change 2): the action phrase was then the title's LAST segment
+    # ("… · 正在读取文件"). The user asked for it on the next row ("标题的正在使用之类的，放到第二行"),
+    # so it is rendered as the header sub-title instead.
+    return f"⏳ {configured_title} · {metrics}"
 
 
 def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str:

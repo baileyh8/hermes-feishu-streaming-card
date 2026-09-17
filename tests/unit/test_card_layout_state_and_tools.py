@@ -61,14 +61,13 @@ def test_header_leads_with_the_state_and_keeps_the_session_name():
 
 
 def test_header_keeps_the_action_phrase_but_never_the_target():
-    """The phrase ("正在执行终端") stays, now AFTER the metrics; the long command never appears.
+    """The phrase ("正在执行命令") survives on the header's SECOND row; the long command never appears.
 
     Maintainer note (contract change): the header used to lead with the phrase
-    ("⏳ 正在执行终端 · 研发助手"). The user asked for the phrase to move to the back so the
-    numbers they want to read (elapsed, tool count) sit next to the state — see
-    test_header_carries_elapsed_time_and_tool_count. The two properties this test has always
-    guarded are unchanged: the phrase survives, and the target (command/path) never reaches the
-    title.
+    ("⏳ 正在执行终端 · 研发助手"), then carried it LAST on the title line. The user asked for it on
+    its own row ("标题的正在使用之类的，放到第二行"), so it is now the header sub-title. The two
+    properties this test has always guarded are unchanged: the phrase survives, and the target
+    (command/path) never reaches the header.
     """
     session = _session()
     long_command = "pytest -q " + ("x" * 200)
@@ -76,12 +75,36 @@ def test_header_keeps_the_action_phrase_but_never_the_target():
 
     card = render_card(session, title="研发助手")
     title = card["header"]["title"]["content"]
+    subtitle = card["header"]["subtitle"]["content"]
 
-    assert title == "⏳ 研发助手 · 工具 #1 · 正在执行命令"
+    assert title == "⏳ 研发助手 · 工具 #1"
+    assert subtitle == "正在执行命令"
     assert "x" * 20 not in title
+    assert long_command not in subtitle
     # ...and the target is not lost: it renders in the content-area row instead.
     row = _elements(card, "tool_activity_0")[0]
     assert "pytest" in row["content"]
+
+
+def test_completed_header_subtitle_keeps_the_completion_note():
+    """A finished turn owns the second row: "本轮回复结束" is not displaced by a tool phrase.
+
+    The sub-title now prefers the action phrase (see
+    test_header_keeps_the_action_phrase_but_never_the_target). A completed turn normally has no
+    running tool, but a turn CAN end with a tool still marked running (interrupted mid-call). The
+    completion note must win in that case too — it is the only line that says the reply is over, and
+    losing it to a stale phrase would make a finished card read as still working.
+    """
+    session = _session()
+    session.apply(_tool_event(tool_id="t1", name="terminal", detail="pytest -q"))
+    session.status = "completed"
+    session.duration = 152.0
+    session.answer_text = "完成"
+
+    card = render_card(session, title="Sales Bot")
+
+    assert card["header"]["title"]["content"] == "✅ Sales Bot · 工具 #1 · 2m32s"
+    assert card["header"]["subtitle"]["content"] == "本轮回复结束"
 
 
 def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
@@ -102,9 +125,12 @@ def test_header_carries_elapsed_time_and_tool_count(monkeypatch):
     )
 
     title = render_card(session, title="Sales Bot")["header"]["title"]["content"]
-    # Order: name → count (#N) → elapsed → action phrase. The title carries only the VERB phrase
-    # (the target stays in the content-area row) — pre-existing design, unchanged by this test.
-    assert title == "⏳ Sales Bot · 工具 #2 · 1m12s · 正在读取文件"
+    subtitle = render_card(session, title="Sales Bot")["header"]["subtitle"]["content"]
+    # Order: name → count (#N) → elapsed. The action phrase left the title for the row beneath it
+    # (see test_header_keeps_the_action_phrase_but_never_the_target); the target of the phrase stays
+    # in the content-area row.
+    assert title == "⏳ Sales Bot · 工具 #2 · 1m12s"
+    assert subtitle == "正在读取文件"
 
     session.status = "completed"
     session.duration = 152.0
