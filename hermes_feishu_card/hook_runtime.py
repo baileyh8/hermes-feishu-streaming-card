@@ -8931,6 +8931,66 @@ def _hfc_thread_metadata_for_target_with_feishu_reply_anchor(
     return routed
 
 
+async def _wait_for_startup_card_policy(source) -> None:
+    """Give a restarting sidecar a bounded chance before a boot-resume pins native.
+
+    A valid native policy and deliberate HTTP refusal return immediately. This
+    does not pin/override policy, publish an event, or resume an agent itself.
+    """
+    config = load_runtime_config()
+    if not config.enabled or _platform_name({}, source) != "feishu":
+        return
+    profile, provenance = _profile_identity({}, source, None)
+    chat = _first_attr_string(source, ("chat_id",))
+    if not chat or provenance.startswith("sanitized_"):
+        return
+    payload = {"schema_version":"1", "profile_id":profile, "chat_id":chat,
+               "conversation_id":_first_attr_string(source,("thread_id",)) or chat}
+    deadline = time.monotonic() + TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS
+    for delay in (0.0, *TERMINAL_DELIVERY_RETRY_DELAYS):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        if delay:
+            await asyncio.sleep(min(delay, remaining))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        try:
+            # Query only. Normal admission runs in the original handler afterwards.
+            await asyncio.wait_for(_post_json_ordered_response(
+                f"{_summary_base_url(config.event_url)}/delivery/policy", payload,
+                min(config.timeout_seconds, remaining)), timeout=remaining)
+            return
+        except Exception as exc:
+            if not _terminal_delivery_retryable(exc):
+                return
+
+
+def _install_startup_resume_wait(runner_type) -> bool:
+    import inspect
+    original = getattr(runner_type, "_run_startup_resume_event", None)
+    if getattr(original, "_hfc_startup_policy_wait", False):
+        return True
+    if not inspect.iscoroutinefunction(original):
+        return False
+    parameters = list(inspect.signature(original).parameters.values())
+    if ([p.name for p in parameters] != ["self","adapter","event","session_key"]
+            or any(p.kind != inspect.Parameter.POSITIONAL_OR_KEYWORD for p in parameters)):
+        return False
+
+    async def resume(self, adapter, event, session_key):
+        try:
+            await _wait_for_startup_card_policy(getattr(event, "source", None))
+        except Exception:
+            pass
+        return await original(self, adapter, event, session_key)
+    resume._hfc_startup_policy_wait = True
+    resume._hfc_original_callback = original
+    setattr(runner_type, "_run_startup_resume_event", resume)
+    return True
+
+
 def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) -> bool:
     try:
         _remember_gateway_runner(runner)
@@ -8946,6 +9006,7 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
             _HFC_FEISHU_DELIVERY_CONTEXT.set(None)
             return False
         runner_type = type(runner)
+        _install_startup_resume_wait(runner_type)
         if callable(getattr(runner_type, "_thread_metadata_for_target", None)):
             _hfc_install_policy_adapter_method(
                 runner_type,
@@ -9343,69 +9404,38 @@ def _terminal_delivery_retryable(exc: BaseException) -> bool:
 async def _post_terminal_with_retry(
     config: RuntimeConfig, payload: dict[str, Any], event_name: str
 ) -> Any:
-    """POST a terminal event, repeating only while the request looks lost.
+    """Bound the whole attempt, including queueing for the per-turn lock.
 
-    The lock is taken per attempt rather than held across the backoff, so a sleeping retry does
-    not block other events for the same turn; reordering is harmless here because a terminal event
-    belongs last anyway and the sidecar ignores repeats of an applied terminal event.
-    Every attempt is logged. A retry can only happen when a terminal event was not delivered, which
-    is precisely the state that strands a card — so the log is the only trace of the outage that
-    caused it, and the trace that proves the retry worked.
+    Cancelling the async transport does not prove a remote request was not applied;
+    retries retain the original event identity and require server-side deduplication.
+    Logs deliberately exclude message IDs, URLs and exception bodies.
     """
-    timeout = _timeout_for_event(config, event_name)
     deadline = time.monotonic() + TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS
-    attempt = 0
-    identity = payload.get("turn_id") or payload.get("message_id") or "?"
-    while True:
+    timeout = _timeout_for_event(config, event_name)
+    for attempt in range(len(TERMINAL_DELIVERY_RETRY_DELAYS) + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError("terminal delivery budget exhausted")
         try:
-            result = await _post_json_ordered_response(config.event_url, payload, timeout)
-        except Exception as exc:  # noqa: BLE001
-            if attempt >= len(TERMINAL_DELIVERY_RETRY_DELAYS) or not _terminal_delivery_retryable(exc):
-                if attempt:
-                    logger.warning(
-                        "[hermes-feishu-card] %s %s: gave up after %d retries (%s: %s)"
-                        " — the card stays unfinished",
-                        event_name,
-                        identity,
-                        attempt,
-                        type(exc).__name__,
-                        exc,
-                    )
+            result = await asyncio.wait_for(
+                _post_json_ordered_response(config.event_url, payload, min(timeout, remaining)),
+                timeout=remaining,
+            )
+        except Exception as exc:
+            if not _terminal_delivery_retryable(exc):
+                raise
+            if attempt == len(TERMINAL_DELIVERY_RETRY_DELAYS):
+                logger.warning("terminal delivery retries exhausted (%s)", type(exc).__name__)
                 raise
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                logger.warning(
-                    "[hermes-feishu-card] %s %s: retry budget of %.1fs exhausted after %d retries"
-                    " — the card stays unfinished",
-                    event_name,
-                    identity,
-                    TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS,
-                    attempt,
-                )
-                raise
-            delay = min(TERMINAL_DELIVERY_RETRY_DELAYS[attempt], remaining)
-            logger.warning(
-                "[hermes-feishu-card] %s %s: not delivered (%s: %s) — retry %d/%d in %.1fs",
-                event_name,
-                identity,
-                type(exc).__name__,
-                exc,
-                attempt + 1,
-                len(TERMINAL_DELIVERY_RETRY_DELAYS),
-                delay,
-            )
-            await asyncio.sleep(delay)
-            attempt += 1
-            continue
-        if attempt:
-            logger.warning(
-                "[hermes-feishu-card] %s %s: delivered after %d retr%s",
-                event_name,
-                identity,
-                attempt,
-                "y" if attempt == 1 else "ies",
-            )
-        return result
+                raise asyncio.TimeoutError("terminal delivery budget exhausted") from None
+            logger.warning("terminal delivery retry %d (%s)", attempt + 1, type(exc).__name__)
+            await asyncio.sleep(min(TERMINAL_DELIVERY_RETRY_DELAYS[attempt], remaining))
+        else:
+            if attempt:
+                logger.warning("terminal delivery recovered after %d retries", attempt)
+            return result
 
 
 def _send_lock(url: str, payload: dict[str, Any]) -> asyncio.Lock | None:
@@ -9492,7 +9522,14 @@ async def recall_transient_thread_notice_async(candidate: Any, content: Any, res
         message_id = str(getattr(result, "message_id", "") or "")
         if not message_id:
             return False
-        return await schedule_message_recall_async(message_id, delay_seconds=delay)
+        source = _notice_source(candidate)
+        profile, provenance = _profile_identity({}, source, None)
+        if provenance.startswith("sanitized_"):
+            return False
+        route = {"profile_id": profile,
+                 "chat_id": _first_attr_string(source, ("chat_id",)) or "",
+                 "conversation_id": _first_attr_string(source, ("thread_id",)) or ""}
+        return await schedule_message_recall_async(message_id, delay_seconds=delay, route=route)
     except Exception:
         return False
 
@@ -9517,6 +9554,7 @@ async def schedule_message_recall_async(
     *,
     delay_seconds: float = 15.0,
     bot_id: str = "",
+    route: dict[str, str] | None = None,
 ) -> bool:
     """Ask the sidecar to withdraw ``message_id`` ``delay_seconds`` after it was posted.
 
@@ -9537,6 +9575,8 @@ async def schedule_message_recall_async(
         }
         if bot_id:
             payload["bot_id"] = str(bot_id)
+        if route is not None:
+            payload["route"] = dict(route)
         url = f"{_summary_base_url(config.event_url)}/recall/schedule"
         result = await _post_json_ordered_response(url, payload, config.timeout_seconds)
         return isinstance(result, dict) and result.get("ok") is True
@@ -10647,6 +10687,77 @@ def _first_string(source: dict[str, Any], names: tuple[str, ...]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def bind_agent_reasoning(agent, source, message_id, loop, run_still_current) -> bool:
+    """Bind reasoning to one turn, retaining native fallback and stream boundaries.
+
+    Stream chunks are never string-deduplicated (repeated tokens are legitimate).
+    Only an exact post-response snapshot of already accepted streamed reasoning
+    is omitted. A digest keeps this comparison bounded without retaining content.
+    """
+    import inspect
+    previous = getattr(agent, "reasoning_callback", None)
+    if getattr(previous, "_hfc_reasoning_wrapper", False):
+        previous = getattr(previous, "_hfc_original_callback", None)
+    agent.reasoning_callback = previous
+    stream = getattr(agent, "_fire_reasoning_delta", None)
+    if getattr(stream, "_hfc_reasoning_stream_wrapper", False):
+        stream = stream._hfc_original_callback
+        agent._fire_reasoning_delta = stream
+    token = object()
+    agent._hfc_reasoning_owner = token
+    if _platform_name({}, source) != "feishu" or not callable(run_still_current):
+        return False
+    if not isinstance(message_id, str) or not message_id or loop is None or loop.is_closed():
+        return False
+    state = {"streaming":False, "hash":sha256(), "bytes":0, "accepted":True}
+
+    def reasoning(text):
+        if getattr(agent, "_hfc_reasoning_owner", None) is not token or not run_still_current():
+            return
+        accepted = False
+        if isinstance(text, str) and text:
+            raw = text.encode('utf-8', errors='replace')
+            duplicate = (not state['streaming'] and state['accepted'] and state['bytes'] == len(raw)
+                         and state['hash'].digest() == sha256(raw).digest())
+            if state['streaming']:
+                state['hash'].update(raw)
+                state['bytes'] += len(raw)
+            else:
+                state.update(hash=sha256(), bytes=0, accepted=True)
+            if duplicate:
+                return
+            accepted = emit_from_hermes_locals_threadsafe(
+                {"source": source, "message_id": message_id, "text": text, "_hfc_loop": loop},
+                event_name="thinking.delta",
+            )
+            if state['streaming'] and not accepted:
+                state['accepted'] = False
+        if not accepted and callable(previous):
+            previous(text)
+    reasoning._hfc_reasoning_wrapper = True
+    reasoning._hfc_original_callback = previous
+    agent.reasoning_callback = reasoning
+    if callable(stream):
+        try:
+            parameters = list(inspect.signature(stream).parameters.values())
+        except (TypeError, ValueError):
+            parameters = []
+        if (len(parameters) == 1 and parameters[0].name == 'text'
+                and parameters[0].kind == inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            def stream_reasoning(text):
+                if getattr(agent, '_hfc_reasoning_owner', None) is not token:
+                    return
+                state['streaming'] = True
+                try:
+                    return stream(text)
+                finally:
+                    state['streaming'] = False
+            stream_reasoning._hfc_reasoning_stream_wrapper = True
+            stream_reasoning._hfc_original_callback = stream
+            agent._fire_reasoning_delta = stream_reasoning
+    return True
 
 
 def bind_agent_turn_identity(agent: Any, source: Any) -> bool:

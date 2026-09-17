@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## V4.6.0 — 2026-09-17
+
+### Fixed
+- Route transient recall through the sending profile/chat binding; reject ambiguous multi-profile routes (#323).
+- Wire structured reasoning once per agent turn, preserve repeated stream tokens, and omit exact post-response duplicates (#319).
+- Bound terminal request and lock waits within the retry deadline; redact retry logs (PR #310).
+- Restore owned card display checkpoints after sidecar restart without recreating approvals or execution; wait for sidecar policy during known startup-resume dispatch (#320).
+- Preserve queued-final metrics and distinguish empty successful answers from interruption; improve tool detail budgets and timeline display order (PR #310).
+
+### Boundaries
+- Private checkpoints are bounded and expire after 24 hours. No retroactive recovery of cards without a checkpoint; native handoff retains its own ledger.
+- Original contributions by @mouyong are retained; @zhangzq and @qqqq560204-maker supplied the #319/#323 evidence.
+
 ## V4.5.2 — 2026-09-17
 
 ### Fixed

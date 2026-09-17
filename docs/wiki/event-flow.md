@@ -319,3 +319,7 @@ those services have been restored.
 Once the sidecar stops, the maintenance process updates the original Feishu
 card directly. Group, non-Feishu, alias, and parameterized update commands
 remain on Hermes' native path.
+
+## 卡片检查点与启动恢复
+
+普通会话卡的投递身份与展示快照可以在独立 runner 的私有状态目录中有界恢复；执行、审批和 native handoff 的原有权限边界保持独立。具体恢复限制、故障语义和验证见 [卡片重启恢复](card-restart-recovery.md)。

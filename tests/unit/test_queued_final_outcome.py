@@ -164,3 +164,9 @@ def test_a_missing_answer_falls_back_to_the_error_instead_of_an_empty_card():
     _header, body, _footer = _render(payload)
     assert RAW_ERROR[:30] in body
     assert body.strip()
+
+
+def test_successful_empty_followup_does_not_claim_interruption():
+    payload = _emit_payload({"final_response":"", "completed":True})
+    assert "任务已中断" not in str(payload["data"])
+    assert payload["data"].get("turn_outcome") not in {"failed", "interrupted"}

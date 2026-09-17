@@ -6,7 +6,7 @@
 
 - Hermes Gateway 内部变量和事件结构会变。
 - Feishu/Lark 卡片 API 与 WebSocket 交互路径有多条 fallback。
-- sidecar 状态是进程内内存，不能依赖持久化恢复。
+- sidecar 执行与授权状态仍是进程内内存；卡片展示可以从有界私有检查点恢复，不能据此恢复执行或旧审批。详见 [卡片重启恢复](card-restart-recovery.md)。
 
 小文档改动可以直接做；涉及 `hook_runtime.py`、`server.py`、`patcher.py`、安装器或 release 流程时，先读 `AGENTS.md` 的 hot files 和测试矩阵。
 
@@ -214,3 +214,7 @@ CardKit 创建和所有更新必须经过同一短 ID 映射：字符串不同�
 ## 排队完成与临时通知（V4.5.2）
 
 排队完成必须传递与 `first_response` 同源的最终执行结果；新布局使用 `_delivery_result`，旧布局回退 `result`。不能从响应文本猜测成功。心跳撤回 hook 只能出现在唯一已知异步通知函数的成功新发送路径；编辑成功不重新安排，未知或歧义来源不注入。补丁须验证逐字恢复并执行 send/edit/failure 回归，不以 marker 存在替代语义验证。
+
+## 统一稳定性修复
+
+临时提示撤回需携带 profile/chat 路由，在 sidecar 按当前 bot binding 解析；多 profile 不猜默认机器人。结构化 reasoning 使用单一、逐轮绑定的 callback，不从答案正文推断，不同时注册第二条 observer。卡片重启检查点与原执行分离，终局重试的总预算包含锁等待和请求；记录与重试日志必须脱敏。

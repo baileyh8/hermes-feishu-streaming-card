@@ -143,9 +143,9 @@ def test_the_total_budget_caps_the_wait(monkeypatch):
     monkeypatch.setattr(hook_runtime, "TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS", 0.05)
     error = urlerror.URLError("connection refused")
     calls = _failing_post(monkeypatch, [error] * 50)
-    with pytest.raises(urlerror.URLError):
+    with pytest.raises(asyncio.TimeoutError):
         asyncio.run(hook_runtime._post_terminal_with_retry(_config(), PAYLOAD, "message.completed"))
-    assert len(calls) == 2
+    assert len(calls) == 1
 
 
 def test_the_window_covers_a_sidecar_restart():
@@ -234,10 +234,11 @@ def test_a_retry_is_visible_in_the_log(monkeypatch, fast_backoff, caplog):
         )
     text = _log_text(caplog)
     schedule = len(hook_runtime.TERMINAL_DELIVERY_RETRY_DELAYS)
-    assert "message.completed om_probe: not delivered" in text
-    assert f"retry 1/{schedule}" in text
-    assert f"retry 2/{schedule}" in text
-    assert "delivered after 2 retries" in text
+    assert "om_probe" not in text
+    assert "connection refused" not in text
+    assert "retry 1 (URLError)" in text
+    assert "retry 2 (URLError)" in text
+    assert "recovered after 2 retries" in text
     assert "stays unfinished" not in text
 
 
@@ -252,8 +253,8 @@ def test_giving_up_names_the_stranded_event(monkeypatch, caplog):
                 hook_runtime._post_terminal_with_retry(_config(), PAYLOAD, "message.failed")
             )
     text = _log_text(caplog)
-    assert "message.failed om_probe: gave up after 2 retries" in text
-    assert "the card stays unfinished" in text
+    assert "om_probe" not in text
+    assert "retries exhausted" in text
 
 
 def test_a_refusal_is_not_announced_as_a_retry(monkeypatch, caplog):
