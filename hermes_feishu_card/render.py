@@ -1610,10 +1610,14 @@ def _tool_activity_row(
     # with the elapsed time ("… #4 · 正在执行终端：pytest -q · 12s"), which put the one thing that
     # changes between renders furthest from the status it belongs to. The user asked for time and
     # count ahead of the phrase: "进行中 · terminal · 12s · #4 · 读取文件：pytest -q".
-    if running and tool.started_at:
-        parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
+    # Maintainer note (contract change 2): the ordinal now precedes the duration, so the row reads
+    # "执行中 · terminal · #4 · 12s". The user asked for the time to sit after the number, matching
+    # the header ("工具 #N · 1m12s") — the count identifies the tool, the duration qualifies it, and
+    # keeping both in the same order across surfaces avoids re-reading the same pair twice.
     if tool.ordinal:
         parts.append(f"#{tool.ordinal}")
+    if running and tool.started_at:
+        parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
     # Maintainer note (contract change): this was ONE line — status, tool name, duration, ordinal and
     # the action all joined by " · ". The user's report was that cramming them together is confusing
     # ("不然都挤在一行 很混乱"), and asked for three rows: status information, then the action, then

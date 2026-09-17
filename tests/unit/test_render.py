@@ -283,7 +283,12 @@ def test_tool_row_is_three_rows_status_then_action_then_parameters():
     rows = _tool_activity_row(tool, index=0, now=1_000_012.0)["content"].splitlines()
 
     assert len(rows) == 3
-    assert rows[0].endswith("#4") and "terminal" in rows[0] and "12s" in rows[0]
+    # The ordinal precedes the duration, matching the header ("工具 #N · 1m12s"): the count names the
+    # tool, the time qualifies it. Asserted as an ORDER, not just presence — presence alone would
+    # pass with the two swapped, which is exactly what the user reported ("时间调整到编号后面").
+    assert "terminal" in rows[0] and "#4" in rows[0] and "12s" in rows[0]
+    assert rows[0].index("#4") < rows[0].index("12s")
+    assert rows[0].endswith("12s")
     assert "执行命令" not in rows[0]  # the action must not share the status row
     assert rows[1] == "执行命令：pytest -q"
     # The command named the work already, so only its siblings count as parameters.
