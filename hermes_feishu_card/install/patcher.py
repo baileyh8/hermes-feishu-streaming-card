@@ -32,6 +32,10 @@ QUEUED_FOLLOWUP_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FOLLOWUP_PATCH_END"
 # of silently reusing it.
 BUSY_RECALL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_BUSY_RECALL_PATCH_BEGIN_V1"
 BUSY_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_BUSY_RECALL_PATCH_END_V1"
+# The long-running heartbeat send already keeps its result in `_notify_res`, so this fragment only
+# READS it — no upstream statement is captured (unlike the busy-recall block above).
+LONG_RUNNING_RECALL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_LONG_RUNNING_RECALL_PATCH_BEGIN"
+LONG_RUNNING_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_LONG_RUNNING_RECALL_PATCH_END"
 QUEUED_FINAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_BEGIN"
 QUEUED_FINAL_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_END"
 REDIRECT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_REDIRECT_PATCH_BEGIN"
@@ -692,6 +696,78 @@ def _apply_busy_recall_patch(content: str) -> str:
     )
 
 
+def _render_long_running_notice_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    return [
+        f"{indent}{LONG_RUNNING_RECALL_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import recall_transient_thread_notice_async as _hfc_recall_notice{newline}"
+        ),
+        f"{inner_indent}await _hfc_recall_notice(source, _heartbeat_text, _notify_res){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{LONG_RUNNING_RECALL_PATCH_END}{newline}",
+    ]
+
+
+def _apply_long_running_recall_patch(content: str) -> str:
+    """Withdraw the long-running heartbeat text shortly after it is sent.
+
+    ``⏳ Working — 12 min — iteration 42/150, …`` is edited in place every
+    ``HERMES_AGENT_NOTIFY_INTERVAL`` (180s) and — with ``display.cleanup_progress`` off — never
+    removed, so a finished turn leaves its last heartbeat in the thread. The user asked for the
+    same treatment the busy-path redirect acknowledgement gets (「可以像 redirect 那个一样被撤回
+    吗」): withdraw it a few seconds after it is sent. The heartbeat loop then sends a fresh one on
+    its next tick because editing a withdrawn message fails, so long turns still report progress.
+
+    Purely additive: upstream already keeps the send result in ``_notify_res``, so this fragment
+    only READS it and captures no upstream statement. The anchor is the assignment that records the
+    heartbeat's message id; the hook goes right after its INNERMOST enclosing ``if``, i.e. once per
+    fresh heartbeat send (never for the edit path, which arms nothing new).
+    """
+    content = _remove_simple_owned_patch(
+        content, LONG_RUNNING_RECALL_PATCH_BEGIN, LONG_RUNNING_RECALL_PATCH_END,
+        _render_long_running_notice_hook_block, "long running recall patch markers")
+    tree = _parse_content(content)
+    assign = next(
+        (
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Assign) and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "_heartbeat_msg_id"
+            and isinstance(node.value, ast.Call) and _same_expression(node.value.func, "str")
+            and node.value.args and _same_expression(node.value.args[0], "_notify_res.message_id")
+        ),
+        None,
+    )
+    if assign is None or assign.lineno is None or assign.end_lineno is None:
+        return content
+    owners = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.If) and node.lineno <= assign.lineno
+        and (node.end_lineno or 0) >= (assign.end_lineno or 0)
+    ]
+    if not owners:
+        return content
+    # The INNERMOST owner: the branch that only runs after a fresh send. The outermost one would
+    # also fire on the in-place edit path, re-arming the withdrawal for a message nobody re-sent.
+    owner = max(owners, key=lambda node: node.lineno)
+    lines = content.splitlines(keepends=True)
+    last = owner.end_lineno
+    if last is None or last - 1 >= len(lines) or not _line_ending(lines[last - 1]):
+        return content
+    indent = _line_indent(lines, owner.lineno - 1)
+    newline = _line_ending(lines[owner.lineno - 1]) or _detect_newline(content)
+    lines[last:last] = _render_long_running_notice_hook_block(indent, newline)
+    return "".join(lines)
+
+
+def _remove_long_running_recall_patch(content: str) -> str:
+    return _remove_simple_owned_patch(
+        content, LONG_RUNNING_RECALL_PATCH_BEGIN, LONG_RUNNING_RECALL_PATCH_END,
+        _render_long_running_notice_hook_block, "long running recall patch markers")
+
+
 def _apply_slash_confirm_patch(content: str) -> str:
     owned_block = _find_simple_marker_block(
         content,
@@ -906,6 +982,7 @@ def _apply_hfc_command_patch(content: str) -> str:
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
     content = _remove_busy_recall_patch(content)
+    content = _remove_long_running_recall_patch(content)
     from .provider_route import remove_provider_route_patch
     content = remove_provider_route_patch(content)
     content = _remove_simple_owned_patch(
@@ -1070,6 +1147,7 @@ def remove_cron_patch_lenient(content: str) -> str:
 def remove_patch_lenient(content: str) -> str:
     """Remove owned patch markers, accepting older generated block bodies."""
     content = _remove_busy_recall_patch(content)
+    content = _remove_long_running_recall_patch(content)
     owned_complete_block = _find_simple_marker_block(
         content,
         COMPLETE_PATCH_BEGIN,
@@ -3425,6 +3503,11 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"source\": _hfc_source,{newline}",
         f"{deeper_indent}    \"message_id\": _hfc_message_id,{newline}",
         f"{deeper_indent}    \"answer\": first_response,{newline}",
+        # Without the turn result this completed event carries no turn_outcome, so the sidecar
+        # takes its success branch: the answer that already streamed to the user gets archived
+        # into the reasoning panel and the raw provider error is left as the card body. Passing
+        # the result through lets the sidecar render the interrupted turn correctly instead.
+        f"{deeper_indent}    \"agent_result\": result if isinstance(result, dict) else {{}},{newline}",
         f"{deeper_indent}    \"duration\": result.get(\"duration\", 0.0) if isinstance(result, dict) else 0.0,{newline}",
         f"{deeper_indent}    \"model\": result.get(\"model\", \"\") if isinstance(result, dict) else \"\",{newline}",
         f"{deeper_indent}    \"tokens\": {{{newline}",
@@ -3501,8 +3584,15 @@ def _render_queued_final_hook_block(indent: str, newline: str):
         f"{inner}from hermes_feishu_card.hook_runtime import emit_from_hermes_locals_async as _hfc_emit_async{newline}",
         f"{inner}if pending_event is not None and isinstance(followup_result, dict) and not followup_result.get(\"_hfc_queued_final_delivered\") and not followup_result.get(\"_hfc_queued_final_attempted\"):{newline}",
         f"{deeper}followup_result = {{**followup_result, \"_hfc_queued_final_attempted\": True}}{newline}",
-        f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": followup_result.get(\"final_response\", \"\"), \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result}}{newline}",
-        f"{deeper}_hfc_final_event_name = \"message.failed\" if followup_result.get(\"failed\") or followup_result.get(\"interrupted\") else \"message.completed\"{newline}",
+        f"{deeper}_hfc_final_answer = followup_result.get(\"final_response\") or followup_result.get(\"error\") or \"任务已中断\"{newline}",
+        f"{deeper}_hfc_final_metrics = {{\"duration\": followup_result.get(\"_hfc_turn_seconds\"), \"model\": followup_result.get(\"model\", \"\"), \"tokens\": {{\"input_tokens\": followup_result.get(\"input_tokens\", 0), \"output_tokens\": followup_result.get(\"output_tokens\", 0)}}, \"context\": {{\"used_tokens\": followup_result.get(\"last_prompt_tokens\", 0), \"max_tokens\": followup_result.get(\"context_length\", 0)}}}}{newline}",
+        f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": _hfc_final_answer, \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result, **_hfc_final_metrics}}{newline}",
+        f"{deeper}# A queued follow-up ends with the completed envelope even when it failed. Only that{newline}",
+        f"{deeper}# branch reads duration/model/tokens/context, and the failure still reaches the card{newline}",
+        f"{deeper}# because the turn result travels as agent_result (the sidecar derives turn_outcome{newline}",
+        f"{deeper}# from it). Emitting message.failed here produced a context-free card - no tool count,{newline}",
+        f"{deeper}# no duration, no model - so it said nothing about where the run stopped.{newline}",
+        f"{deeper}_hfc_final_event_name = \"message.completed\"{newline}",
         f"{deeper}if await _hfc_emit_async(_hfc_final_locals, event_name=_hfc_final_event_name):{newline}",
         f"{deeper}    followup_result = {{**followup_result, \"_hfc_queued_final_delivered\": True}}{newline}",
         *_render_hook_exception_handler(indent, newline),
@@ -4419,6 +4509,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
     content = _apply_queued_followup_patch(content)
     content = _apply_redirect_patch(content)
     content = _apply_busy_recall_patch(content)
+    content = _apply_long_running_recall_patch(content)
     for apply in (_apply_command_card_adapter_patch, _apply_hfc_command_patch,
                   _apply_slash_confirm_patch, _apply_command_card_startup_patch,
                   _apply_native_redelivery_patch, _apply_platform_notice_patch):

@@ -76,9 +76,36 @@ DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 # acknowledgements state something the user still needs and are deliberately left alone.
 BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
 BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
+# The long-running heartbeat ("⏳ Working — 12 min — iteration 42/150, receiving stream response")
+# is sent once and then EDITED IN PLACE every HERMES_AGENT_NOTIFY_INTERVAL (180s). On Feishu the
+# card already carries the live progress (header makespan + the current action on its second row),
+# so the plain-text heartbeat is a second surface that outlives its usefulness: with
+# display.cleanup_progress off it is never removed, and a turn's "12 min" line sits in the thread
+# long after the turn ended. User report: 「可以像 redirect 那个一样被撤回吗」.
+# Same treatment as the redirect ack — withdraw it once it has been read. The heartbeat loop then
+# falls back to a fresh send on its next tick (editing a withdrawn message fails), so a genuinely
+# long turn still gets status pings; each one just lives for the recall window instead of forever.
+LONG_RUNNING_NOTICE_PREFIX = "⏳ Working — "
+LONG_RUNNING_NOTICE_RECALL_SECONDS = 15.0
+# (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
+# user has had a chance to read it. Content the user still needs (steer / queued / interrupt acks,
+# provider-failure replies) is deliberately absent: only self-erasing status pings belong here.
+TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
+    (BUSY_REDIRECT_ACK_PREFIX, BUSY_REDIRECT_ACK_RECALL_SECONDS),
+    (LONG_RUNNING_NOTICE_PREFIX, LONG_RUNNING_NOTICE_RECALL_SECONDS),
+)
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
 TERMINAL_TIMEOUT_SECONDS = 10.0
+# A terminal event is the last thing that will ever update a card, and the sidecar's session table
+# is memory-only, so a terminal event that never lands leaves that card wrong forever. Measured
+# live (issue 320): a gateway restart auto-resumed the session it interrupted, and that turn's
+# `message.completed` was POSTed while the sidecar was 28s into a stop/start window — the send
+# failed, the exception was swallowed, and the card stayed on "执行中" with no way to repair it.
+# Retry only while the failure means "the sidecar never ruled on this request", and keep a total
+# budget because this await sits inline in the gateway's turn path.
+TERMINAL_DELIVERY_RETRY_DELAYS = (1.0, 2.0, 5.0, 10.0, 15.0)
+TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS = 45.0
 NATIVE_HANDOFF_PROTOCOL = "hfc-native-handoff-v2"
 NATIVE_HANDOFF_MAX_LIFETIME_SECONDS = 3600.0
 NATIVE_HANDOFF_PLAN_PROTOCOL = "hfc-feishu-delivery-plan-v1"
@@ -1972,11 +1999,15 @@ async def emit_from_hermes_locals_async(
             payload = build_event(event_name, event_locals)
             if payload is None:
                 return False
-            result = await _post_json_ordered_response(
-                config.event_url,
-                payload,
-                _timeout_for_event(config, event_name),
-            )
+            if event_name in {"message.completed", "message.failed"}:
+                # Terminal events get a bounded retry: losing one strands the card.
+                result = await _post_terminal_with_retry(config, payload, event_name)
+            else:
+                result = await _post_json_ordered_response(
+                    config.event_url,
+                    payload,
+                    _timeout_for_event(config, event_name),
+                )
             if event_name == "message.completed":
                 _register_native_handoff_descriptor(payload, result)
             applied = _event_was_applied(
@@ -9286,6 +9317,50 @@ async def _post_json_ordered_response(
         return await _post_json_response(url, payload, timeout)
 
 
+def _terminal_delivery_retryable(exc: BaseException) -> bool:
+    """Whether a failed terminal POST is worth repeating.
+
+    Only failures that mean "the sidecar never ruled on this request" qualify: transport errors
+    (connection refused, timeout, DNS) and 5xx. A 4xx is a deliberate refusal, so repeating it
+    would fight the admission logic and delay the turn for nothing.
+
+    Repeating is safe because applying a terminal event twice is idempotent: the sidecar reports
+    applied=True for a session that is already terminal, so a request that did land before its
+    response was lost cannot double-apply.
+    """
+    if isinstance(exc, urlerror.HTTPError):
+        code = exc.code
+        return isinstance(code, int) and 500 <= code < 600
+    return isinstance(exc, (urlerror.URLError, TimeoutError, OSError))
+
+
+async def _post_terminal_with_retry(
+    config: RuntimeConfig, payload: dict[str, Any], event_name: str
+) -> Any:
+    """POST a terminal event, repeating only while the request looks lost.
+
+    The lock is taken per attempt rather than held across the backoff, so a sleeping retry does
+    not block other events for the same turn; reordering is harmless here because a terminal event
+    belongs last anyway and the sidecar ignores repeats of an applied terminal event.
+    """
+    timeout = _timeout_for_event(config, event_name)
+    deadline = time.monotonic() + TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS
+    attempt = 0
+    while True:
+        try:
+            return await _post_json_ordered_response(config.event_url, payload, timeout)
+        except Exception as exc:  # noqa: BLE001
+            if attempt >= len(TERMINAL_DELIVERY_RETRY_DELAYS):
+                raise
+            if not _terminal_delivery_retryable(exc):
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            await asyncio.sleep(min(TERMINAL_DELIVERY_RETRY_DELAYS[attempt], remaining))
+            attempt += 1
+
+
 def _send_lock(url: str, payload: dict[str, Any]) -> asyncio.Lock | None:
     canonical_id = payload.get("turn_id") or payload.get("message_id")
     if not isinstance(canonical_id, str) or not canonical_id:
@@ -9335,30 +9410,59 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
     return _open_json_request(req, timeout)
 
 
+def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
+    """Seconds to wait before withdrawing this notice, or None when it must stay."""
+    text = str(content or "")
+    for prefix, delay in TRANSIENT_THREAD_NOTICES:
+        if text.startswith(prefix):
+            return delay
+    return None
+
+
+def _notice_source(candidate: Any) -> Any:
+    """Accept either an event (``event.source``) or a SessionSource passed directly."""
+    source = getattr(candidate, "source", None)
+    return source if source is not None else candidate
+
+
+async def recall_transient_thread_notice_async(candidate: Any, content: Any, result: Any) -> bool:
+    """Withdraw a transient thread notice once the user has had a chance to read it.
+
+    See ``TRANSIENT_THREAD_NOTICES`` for which notices qualify and why. ``candidate`` is either an
+    event carrying ``source`` or a ``SessionSource`` itself (the long-running heartbeat call site has
+    only the source). Best-effort throughout: a failed request must never disturb the send that
+    already succeeded, so every failure path returns False instead of raising.
+    """
+    try:
+        delay = _transient_notice_recall_seconds(content)
+        if delay is None:
+            return False
+        if getattr(result, "success", False) is not True:
+            return False
+        platform = getattr(_notice_source(candidate), "platform", "")
+        if "feishu" not in str(getattr(platform, "value", platform) or "").lower():
+            return False
+        message_id = str(getattr(result, "message_id", "") or "")
+        if not message_id:
+            return False
+        return await schedule_message_recall_async(message_id, delay_seconds=delay)
+    except Exception:
+        return False
+
+
 async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) -> bool:
     """Withdraw the busy-path redirect acknowledgement once the user has read it.
 
     ``↪ Redirected current run. I'll adjust using your correction.`` confirms the correction was
     taken; after that it is a stale instruction sitting in the thread, so it is recalled a few
     seconds later. Other busy replies (steer, queued, interrupt) state something the user still
-    needs, so only the redirect acknowledgement is withdrawn. Best-effort throughout: a failed
-    request must never disturb the send that already succeeded.
+    needs, so only the redirect acknowledgement is withdrawn. This name is the entry point the
+    installed busy-path patch block imports, so it stays; the prefix check keeps that call site
+    scoped to the acknowledgement even though the shared helper now also serves the heartbeat.
     """
-    try:
-        if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
-            return False
-        if getattr(result, "success", False) is not True:
-            return False
-        source = getattr(event, "source", None)
-        platform = getattr(source, "platform", "")
-        if "feishu" not in str(getattr(platform, "value", platform) or "").lower():
-            return False
-        return await schedule_message_recall_async(
-            str(getattr(result, "message_id", "") or ""),
-            delay_seconds=BUSY_REDIRECT_ACK_RECALL_SECONDS,
-        )
-    except Exception:
+    if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
         return False
+    return await recall_transient_thread_notice_async(event, content, result)
 
 
 async def schedule_message_recall_async(
