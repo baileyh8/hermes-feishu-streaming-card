@@ -82,11 +82,18 @@ BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
 # redirect ack it had no withdrawal, so it sat in the thread for the rest of the session.
 #
 # It is the same kind of statement as the redirect ack: it confirms the message landed, and the
-# turn it announces arrives as its own visible message moments later. Once read it is stale. The
-# steer ack is deliberately NOT here — "your message arrives after the next tool call" is
-# forward-looking information with no other surface.
+# turn it announces arrives as its own visible message moments later. Once read it is stale.
 BUSY_INTERRUPT_ACK_PREFIX = "⚡ Interrupting current task"
 BUSY_INTERRUPT_ACK_RECALL_SECONDS = 15.0
+# The steer acknowledgement ("⏩ Steered into current run[ and its active subagent(s)]. Your message
+# arrives after the next tool call."). One prefix covers both heads: `run_busy.py` builds the line as
+# f"{head}{status_detail}{tail}", so the subagent variant is the same head plus a suffix.
+#
+# Maintainer note (contract change): this was in the deliberately-kept set. The user overrode that —
+# it is a one-off receipt for a message that has ALREADY landed inside the run, and once the next
+# tool call has happened it says nothing the card does not show. Kept only long enough to be read.
+BUSY_STEER_ACK_PREFIX = "⏩ Steered into current run"
+BUSY_STEER_ACK_RECALL_SECONDS = 15.0
 # The ⏳ status family ("⏳ Working — 12 min — iteration 42/150 …", "⏳ Compressing context",
 # "⏳ Waiting for approval", "⏳ loading <model> — 42%", "⏳ tool execution timed out; retrying" …) is
 # sent once and then EDITED IN PLACE on every tick. On Feishu the turn's own card already carries
@@ -109,6 +116,7 @@ STATUS_NOTICE_RECALL_SECONDS = 15.0
 TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
     (BUSY_REDIRECT_ACK_PREFIX, BUSY_REDIRECT_ACK_RECALL_SECONDS),
     (BUSY_INTERRUPT_ACK_PREFIX, BUSY_INTERRUPT_ACK_RECALL_SECONDS),
+    (BUSY_STEER_ACK_PREFIX, BUSY_STEER_ACK_RECALL_SECONDS),
     (STATUS_NOTICE_PREFIX, STATUS_NOTICE_RECALL_SECONDS),
 )
 DEFAULT_TIMEOUT_SECONDS = 0.8
