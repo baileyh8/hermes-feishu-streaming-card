@@ -1279,6 +1279,37 @@ def test_stable_tool_patch_ignores_a_conditional_reassignment_when_choosing_its_
     assert patcher.remove_patch(patched) == content
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("muted", [False, True])
+async def test_patched_callback_wiring_executes_only_for_a_visible_turn(monkeypatch, muted):
+    import asyncio
+    from types import SimpleNamespace
+    from hermes_feishu_card import hook_runtime
+
+    events = []
+    monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_threadsafe",
+                        lambda data, *, event_name: events.append((event_name, data)) or True)
+    source = _conditionally_muted_lifecycle_fixture()
+    namespace = {"asyncio": asyncio, "voice_enabled": False,
+                 "native_cards_enabled": False, "mute_notification_reply": muted}
+    exec(patcher.apply_patch(source, strategy="gateway_run_013_plus"), namespace)
+    agent = SimpleNamespace(reasoning_callback=None)
+    await namespace["_run_agent"](
+        SimpleNamespace(agent=agent),
+        SimpleNamespace(platform="feishu", chat_id="chat_fixture"),
+        "turn_fixture",
+    )
+    if muted:
+        assert agent.tool_start_callback is None
+        assert agent.tool_complete_callback is None
+        assert events == []
+    else:
+        agent.tool_start_callback("tool_fixture", "terminal", {"command": "true"})
+        agent.tool_complete_callback("tool_fixture", "terminal", {}, {"exit_code": 0})
+        assert [event for event, _ in events] == ["tool.updated", "tool.updated"]
+        assert [data["status"] for _, data in events] == ["running", "completed"]
+
+
 def test_stable_tool_patch_still_anchors_on_a_top_level_reassignment() -> None:
     """The unconditional case keeps its historical placement (guards the fix from over-reaching)."""
     content = _conditionally_muted_lifecycle_fixture().replace(

@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.0`. Covers #319/#320/#323 and PR #310: structured reasoning, profile-aware recall, bounded terminal retries, private card checkpoints and startup policy readiness. Full regression, exact-commit CI and public installation remain required gates.
+Current release candidate: `4.6.1`. Integrates #325 and fixes #326 with bounded recall, profile isolation and unconditional callback wiring. Full regression, exact-commit CI and public installation remain release gates.
 
-This candidate fixes CardKit IDs, topic routing and approval lifecycle. Real unsent entities passed; full tests, exact merge CI and public installation must pass before release. Mobile field acceptance remains open.
+The actual upstream callback method reproduced the normal/muted branch inversion; both branches now behave correctly. Production rollout and mobile-client checks are reported separately.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.

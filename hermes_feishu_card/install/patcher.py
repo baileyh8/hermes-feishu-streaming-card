@@ -1728,7 +1728,6 @@ def _last_stable_tool_lifecycle_assignment_location(function_node, lines):
     callback_names = {"tool_start_callback", "tool_complete_callback"}
     allowed = _unconditionally_executed_statements(function_node)
     candidates = []
-    nested_candidates = []
     for node in ast.walk(function_node):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
@@ -1739,12 +1738,10 @@ def _last_stable_tool_lifecycle_assignment_location(function_node, lines):
             for callback_name in callback_names
         ):
             continue
-        # Both lists stay ordered by ast.walk so the fallback keeps the old preference exactly.
-        (candidates if id(node) in allowed else nested_candidates).append(node)
-    if not candidates:
-        # Older/renamed layouts kept the assignment inside a block this filter rejects; fall back
-        # to the historical "last assignment anywhere" rather than refusing to patch.
-        candidates = nested_candidates
+        if id(node) in allowed:
+            candidates.append(node)
+    # Unknown conditional-only layouts cannot prove that the hook will run.
+    # Leave the capability unavailable rather than installing an inert hook.
     if not candidates:
         return None
     latest = max(
