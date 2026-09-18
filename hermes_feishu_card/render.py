@@ -119,6 +119,7 @@ def render_card(
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
     completion_mention: bool = False,
+    hide_completed_tool_activity: bool = False,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -137,6 +138,7 @@ def render_card(
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
+        hide_completed_tool_activity=hide_completed_tool_activity,
     ).card
 
 
@@ -157,6 +159,7 @@ def render_card_result(
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
     completion_mention: bool = False,
+    hide_completed_tool_activity: bool = False,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(session)
     table_overflow = transform_table_overflow(
@@ -180,6 +183,7 @@ def render_card_result(
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
+        hide_completed_tool_activity=hide_completed_tool_activity,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -223,6 +227,7 @@ def _render_card_unchecked(
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
     completion_mention: bool = False,
+    hide_completed_tool_activity: bool = False,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -303,9 +308,12 @@ def _render_card_unchecked(
                 used_roles=used_text_size_roles,
             ),
         )
+    # Keep live progress and pending interaction layouts unchanged. Only the
+    # content tool area is optional; timeline evidence and counts stay intact.
+    hide_terminal_tools = hide_completed_tool_activity and session.status in {"completed", "failed"}
     tool_activity_elements = (
         []
-        if pending_approval
+        if pending_approval or hide_terminal_tools
         else _render_tool_activity_elements(
             session,
             text_sizes=text_sizes,
@@ -348,6 +356,7 @@ def _render_card_unchecked(
     elements.append({"tag": "hr", "element_id": "main_divider"})
     if (
         not timeline_elements
+        and not hide_terminal_tools
         and not tool_activity_elements
         and not pending_approval
         and session.tool_count

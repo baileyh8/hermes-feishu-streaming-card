@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.1`. Integrates #325 and fixes #326 with bounded recall, profile isolation and unconditional callback wiring. Full regression, exact-commit CI and public installation remain release gates.
+Current release candidate: `4.6.2`. Fix native-plugin/Gateway maintenance proof sharing and add opt-in terminal tool-row hiding (#328). Full tests, exact-merge CI, assets and public installation remain release gates.
 
 The actual upstream callback method reproduced the normal/muted branch inversion; both branches now behave correctly. Production rollout and mobile-client checks are reported separately.
 

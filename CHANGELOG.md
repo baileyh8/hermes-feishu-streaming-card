@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [4.6.2] - 2026-09-18
+
+- Fix native-plugin/Gateway maintenance proof sharing. Native observers retain their own activity counts but rely on a present Gateway owner for admission/home evidence; missing or unknown owners still refuse automated stop.
+- Add opt-in `card.hide_completed_tool_activity` (default `false`) for completed/failed content tool rows, preserving live progress, timeline, answer and footer. Adapted from mouyong's #331 for jackwude's #328; other #331 changes remain separate.
+- Credit jackwude's #329 evidence for the 4.6.1 independent-notice footer fix.
+
 ## V4.6.1 — 2026-09-18
 
 ### Fixed
