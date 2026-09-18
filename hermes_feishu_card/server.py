@@ -6869,6 +6869,9 @@ def _render_session_card_result_for_app(
         interaction_mode=interaction_mode,
         interaction_profile_id=interaction_profile_id,
         show_reasoning=_safe_bool(card_config.get("show_reasoning"), True),
+        hide_completed_tool_activity=_safe_bool(
+            card_config.get("hide_completed_tool_activity"), False
+        ),
         reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
         max_timeline_items=_safe_positive_int(

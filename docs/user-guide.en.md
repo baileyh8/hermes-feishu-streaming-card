@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.1`.
+The Compose example defaults `HFC_VERSION` to `v4.6.2`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.1
+export HFC_VERSION=v4.6.2
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -948,3 +948,7 @@ Windows non-loopback startup is rejected when state-directory ACL privacy cannot
 ## Installer version resolution
 
 `latest` resolves once to the exact `vX.Y.Z` tag of the latest stable GitHub Release and installs that pinned ref. Lookup, JSON parsing, or tag validation failure stops before credential prompting, pip, doctor, setup, and Docker state writes. Explicit release tags bypass the Release API; only explicit `--version main` selects the moving development branch.
+
+## Terminal tool rows
+
+Set `card.hide_completed_tool_activity: true` to hide content-area tool rows after completed/failed turns. The default is `false`, preserving existing cards. Live progress, approval layout, timeline and footer counts are unchanged. Restart the sidecar after editing configuration.

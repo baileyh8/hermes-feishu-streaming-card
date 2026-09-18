@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V4.6.1 sidecar configuration
+# Hermes Feishu Streaming Card V4.6.2 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -47,6 +47,8 @@ card:
   reasoning_format: panel
   # Applies to both formats; false hides reasoning and the tool timeline.
   show_reasoning: true
+  # Hide content-area tool rows after completed/failed; timeline and counts stay visible.
+  hide_completed_tool_activity: false
   timeline_expanded: false
   max_reasoning_chars: 1200
   max_wait_ms: 800

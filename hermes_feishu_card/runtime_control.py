@@ -928,6 +928,7 @@ _CONTROL_PROVIDERS: dict[
         Callable[[], tuple[int, bool]] | None,
         Callable[[], bool] | None,
         Callable[[], bool] | None,
+        bool,
     ],
 ] = {}
 _CONTROL_PROVIDER_EPOCH = 0
@@ -962,11 +963,24 @@ def acquire_runtime_control(
     active_work_snapshot_provider: Callable[[], tuple[int, bool]] | None = None,
     admission_draining_provider: Callable[[], bool] | None = None,
     drain_home_verified_provider: Callable[[], bool] | None = None,
+    gateway_admission_dependent: bool = False,
 ) -> RuntimeControlLease | None:
-    """Acquire the one shared worker only when its exact config matches."""
+    """Acquire the shared worker; explicit native observers depend on Gateway admission.
+
+    Dependent owners still supply complete activity counts. They cannot establish
+    Gateway authority themselves or make an absent/unknown owner safe to stop.
+    """
     global _CONTROL_EMITTER, _CONTROL_STOP, _CONTROL_THREAD, _CONTROL_CONFIG
     global _CONTROL_PROVIDER_EPOCH, _CONTROL_STOPPING
     try:
+        if type(gateway_admission_dependent) is not bool:
+            return None
+        if gateway_admission_dependent and (
+            not callable(active_work_snapshot_provider)
+            or admission_draining_provider is not None
+            or drain_home_verified_provider is not None
+        ):
+            return None
         if interval_seconds <= 0:
             return None
         config = (
@@ -992,6 +1006,7 @@ def acquire_runtime_control(
                         active_work_snapshot_provider,
                         admission_draining_provider,
                         drain_home_verified_provider,
+                        gateway_admission_dependent,
                     )
                     _CONTROL_PROVIDER_EPOCH += 1
                     return RuntimeControlLease(owner)
@@ -1020,6 +1035,7 @@ def acquire_runtime_control(
                 active_work_snapshot_provider,
                 admission_draining_provider,
                 drain_home_verified_provider,
+                gateway_admission_dependent,
             )
             _CONTROL_PROVIDER_EPOCH += 1
             _CONTROL_STOPPING = False
@@ -1077,6 +1093,7 @@ def _evaluate_runtime_snapshot(
             Callable[[], tuple[int, bool]] | None,
             Callable[[], bool] | None,
             Callable[[], bool] | None,
+            bool,
         ],
         ...,
     ],
@@ -1086,9 +1103,10 @@ def _evaluate_runtime_snapshot(
     gateway_aggregate_present = False
     admission_draining = not providers
     drain_home_verified = bool(providers)
-    for active_provider, admission_provider, home_provider in providers:
+    for active_provider, admission_provider, home_provider, dependent in providers:
         if (
-            active_provider is not None
+            not dependent
+            and active_provider is not None
             and admission_provider is not None
             and home_provider is not None
         ):
@@ -1108,6 +1126,10 @@ def _evaluate_runtime_snapshot(
                 complete = complete and owner_complete
             except Exception:
                 complete = False
+        # Only the native observer explicitly opts into the same-process Gateway
+        # admission boundary. Unknown leases retain the conservative defaults.
+        if dependent:
+            continue
         if admission_provider is None:
             admission_draining = True
         else:
@@ -1128,8 +1150,8 @@ def _evaluate_runtime_snapshot(
     return (
         total,
         complete and gateway_aggregate_present,
-        admission_draining,
-        drain_home_verified,
+        admission_draining or not gateway_aggregate_present,
+        drain_home_verified and gateway_aggregate_present,
     )
 
 
