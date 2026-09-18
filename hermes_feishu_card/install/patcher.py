@@ -1699,19 +1699,49 @@ def _find_turn_runner_stable_tool_lifecycle_location(tree, lines):
     return _last_stable_tool_lifecycle_assignment_location(run_sync, lines)
 
 
+def _unconditionally_executed_statements(function_node):
+    """The statements that run on EVERY call: the function body, plus any ``try`` protected body.
+
+    Used to keep this module's anchors on the assignment that always executes. Hermes reassigns
+    the tool callbacks in more than one place; 0.21.3 added a NEW reassignment deep inside
+    ``if ctx.mute_notification_reply:`` (a branch that is normally False) which sits later in the
+    function than the unconditional one. "The last assignment wins" therefore parked the tool
+    lifecycle block INSIDE that branch, where it never ran: the callbacks were never wrapped, no
+    tool events reached the sidecar, and the card lost its tool row and tool count while the tool
+    lines leaked back to plain text. Anchor on what always runs, not on what is merely last.
+    """
+    allowed = set()
+
+    def visit(body):
+        for stmt in body:
+            allowed.add(id(stmt))
+            # A `try` protected body runs whether or not it later raises; handlers/orelse/finally
+            # are conditional (`finally` is unconditional in fact, but nothing anchors there).
+            if isinstance(stmt, ast.Try):
+                visit(stmt.body)
+
+    visit(function_node.body)
+    return allowed
+
+
 def _last_stable_tool_lifecycle_assignment_location(function_node, lines):
     callback_names = {"tool_start_callback", "tool_complete_callback"}
+    allowed = _unconditionally_executed_statements(function_node)
     candidates = []
     for node in ast.walk(function_node):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if any(
+        if not any(
             _is_agent_callback_target(target, callback_name)
             for target in targets
             for callback_name in callback_names
         ):
+            continue
+        if id(node) in allowed:
             candidates.append(node)
+    # Unknown conditional-only layouts cannot prove that the hook will run.
+    # Leave the capability unavailable rather than installing an inert hook.
     if not candidates:
         return None
     latest = max(

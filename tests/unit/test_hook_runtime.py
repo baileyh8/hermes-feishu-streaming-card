@@ -3941,37 +3941,119 @@ def test_background_process_notice_classification_and_stable_id():
     assert len(independent_ids) == 1
 
 
-def test_long_running_heartbeat_notice_is_non_terminal():
-    notice = hook_runtime._hfc_classify_system_notice(
-        "⏳ Working — 6 min — iteration 10/90, "
-        "waiting for provider response (streaming)"
-    )
+def test_every_busy_acknowledgement_is_withdrawn_after_it_is_read():
+    """All three busy acks self-erase; ordinary replies are never withdrawn.
 
-    assert notice == {
-        "title": "运行中",
-        "level": "info",
+    Maintainer note (contract): this started as "withdraw the interrupt ack, keep the steer ack",
+    then the user overrode the second half too (「⏩ Steered into current run 也需要撤回」). All three
+    busy heads are one-off receipts for a message that has ALREADY landed — the run they announce
+    is visible on the card — so every one of them is stale the moment it is read. The window is the
+    same 15s as the rest of the transient notices.
+    """
+    acks = (
+        (
+            "⚡ Interrupting current task (20 min elapsed, iteration 39/150, running: terminal). "
+            "I'll respond to your message shortly.",
+            hook_runtime.BUSY_INTERRUPT_ACK_RECALL_SECONDS,
+        ),
+        (
+            "⏩ Steered into current run. Your message arrives after the next tool call.",
+            hook_runtime.BUSY_STEER_ACK_RECALL_SECONDS,
+        ),
+        # The subagent variant is the same head plus a status suffix (run_busy.py builds the line as
+        # f"{head}{status_detail}{tail}"), so one prefix covers both.
+        (
+            "⏩ Steered into current run and its active subagent(s). Your message arrives after "
+            "their next tool call.",
+            hook_runtime.BUSY_STEER_ACK_RECALL_SECONDS,
+        ),
+        (
+            "↪ Redirected current run. I'll adjust using your correction.",
+            hook_runtime.BUSY_REDIRECT_ACK_RECALL_SECONDS,
+        ),
+    )
+    for text, expected in acks:
+        assert hook_runtime._transient_notice_recall_seconds(text) == expected, text
+
+    # Ordinary replies and the plain-text status family are decided by their own prefixes.
+    assert hook_runtime._transient_notice_recall_seconds("这是回复正文，不是状态提示。") is None
+    assert hook_runtime._transient_notice_recall_seconds(
+        "⏳ Compressing context"
+    ) == hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+
+
+def test_status_notice_family_is_plain_text_but_other_notices_still_are_cards():
+    """Every ⏳ status line goes out as plain text; other notice kinds keep their cards.
+
+    Maintainer note (contract change): this used to pin only the long-running heartbeat to plain
+    text and assert that other ⏳ notices KEPT their cards. The user widened it to the whole family
+    (「都改为纯文本。体验效果感觉会好一点」): the turn's own card already carries the live progress
+    (makespan + current action), so a second card for "compressing" / "waiting for approval" /
+    "loading the model" restated the same fact. Unclassified means these fall through to the
+    adapter's plain-text path, where `_hfc_recall_plain_text_status_notice` still schedules the
+    withdrawal — so they stay self-erasing, exactly like the redirect acknowledgement.
+    """
+    for text in (
+        "⏳ Working — 6 min — iteration 10/90, waiting for provider response (streaming)",
+        "⏳ Working — 12 min",
+        "⏳ Retrying in 3.0s (attempt 2/3)",
+        "⏳ Compressing context",
+        "⏳ Waiting for approval",
+        "⏳ loading Qwen3 into memory — 42%",
+        "⏳ tool execution timed out; retrying",
+    ):
+        assert hook_runtime._hfc_classify_system_notice(text) is None, text
+
+    # The withdrawal contract covers the whole family, not just the heartbeat, so no line in it can
+    # outlive the turn by accident.
+    assert hook_runtime._transient_notice_recall_seconds("⏳ Working — 12 min") == (
+        hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+    )
+    assert hook_runtime._transient_notice_recall_seconds("⏳ Compressing context") == (
+        hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+    )
+    assert hook_runtime.STATUS_NOTICE_PREFIX == "⏳"
+
+    # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family.
+    restart = hook_runtime._hfc_classify_system_notice(
+        "⏳ Gateway is restarting and is not accepting new work right now."
+    )
+    assert restart is not None and restart["notice_kind"] == "gateway-restart"
+    reset = hook_runtime._hfc_classify_system_notice("Session automatically reset")
+    assert reset is not None and reset["notice_kind"] == "session-reset"
+
+
+def test_long_running_heartbeat_is_plain_text_so_it_never_takes_the_card_path():
+    """The heartbeat is not classified, so no notice-card id is minted for it.
+
+    Maintainer note (contract change): this used to assert that two heartbeat lines sharing an
+    anchor produced the same INDEPENDENT NOTICE id — i.e. that the heartbeat was a notice card.
+    The heartbeat is plain text now (see
+    test_long_running_heartbeat_is_not_a_card_but_other_tick_notices_still_are), so it never
+    reaches that path; core instead keeps ONE line by remembering the message id it got back and
+    editing it. The helper's own heartbeat branch stays covered here, because it is still the
+    shape other notices rely on.
+    """
+    first = "⏳ Working — 6 min — iteration 10/90, terminal"
+    second = "⏳ Working — 9 min — iteration 14/90, terminal"
+
+    assert hook_runtime._hfc_classify_system_notice(first) is None
+    assert hook_runtime._hfc_classify_system_notice(second) is None
+
+    heartbeat_notice = {
         "notice_kind": "heartbeat",
         "notice_id": "heartbeat",
         "notice_terminal": False,
     }
-
-
-def test_long_running_heartbeat_reuses_independent_message_id_per_anchor():
-    first = "⏳ Working — 6 min — iteration 10/90, terminal"
-    second = "⏳ Working — 9 min — iteration 14/90, terminal"
-    first_notice = hook_runtime._hfc_classify_system_notice(first)
-    second_notice = hook_runtime._hfc_classify_system_notice(second)
-
-    assert first_notice is not None
-    assert second_notice is not None
     first_message_id = hook_runtime._hfc_independent_notice_message_id(
-        "oc_abc", first, first_notice, anchor="om_task_1"
+        "oc_abc", first, heartbeat_notice, anchor="om_task_1"
     )
+    assert first_message_id.startswith("notice_")
     assert first_message_id == hook_runtime._hfc_independent_notice_message_id(
-        "oc_abc", second, second_notice, anchor="om_task_1"
+        "oc_abc", second, heartbeat_notice, anchor="om_task_1"
     )
     assert first_message_id != hook_runtime._hfc_independent_notice_message_id(
-        "oc_abc", second, second_notice, anchor="om_task_2"
+        "oc_abc", second, heartbeat_notice, anchor="om_task_2"
     )
 
 
@@ -4520,7 +4602,8 @@ def test_native_feishu_system_notice_retries_as_independent_card_when_session_mi
     assert result.message_id == posted[1]["message_id"]
 
 
-def test_native_feishu_system_notice_edit_updates_same_card(monkeypatch):
+def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
+    """The heartbeat is one plain-text line that gets edited in place, not a card."""
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -4578,14 +4661,27 @@ def test_native_feishu_system_notice_edit_updates_same_card(monkeypatch):
 
     sent, edited = asyncio.run(run())
 
-    assert sent.message_id == "om_user_task"
-    assert edited.message_id == "om_user_task"
-    assert adapter.text_sent == []
-    assert adapter.edited == []
-    assert len(posted) == 2
-    assert posted[0]["message_id"] == posted[1]["message_id"] == "om_user_task"
-    assert posted[0]["data"]["notice_id"] == posted[1]["data"]["notice_id"]
-    assert "iteration 2/90" in posted[1]["data"]["content"]
+    # Maintainer note (contract change): the heartbeat used to become a notice card (an earlier
+    # change had moved it OFF the turn's card so it could be recalled). It is now plain text:
+    # the turn's own card already shows the live progress, so the extra card was a second surface
+    # for the same fact. What this test pins is the property that still matters — the heartbeat
+    # line and its edit address ONE message (core remembers the id and edits it), never a card and
+    # never a second message.
+    assert sent.message_id == "om_native_text"
+    assert edited.message_id == sent.message_id
+    assert sent.message_id != "om_user_task"
+    assert adapter.text_sent == ["⏳ Working — 2 min — iteration 1/90, terminal"]
+    assert len(adapter.edited) == 1
+    assert adapter.edited[0][1] == sent.message_id
+    # The ONLY thing that reaches the sidecar is the withdrawal request for that plain-text line —
+    # no card is minted, so the sidecar can neither swallow nor duplicate the heartbeat. The
+    # plain-text egress door schedules it (`_hfc_recall_plain_text_status_notice`), which is what
+    # stops a ⏳ line from sitting in the thread after the turn ends: a card used to inherit the
+    # sidecar's own recall deadline, and plain text has none.
+    assert len(posted) == 1
+    recall = posted[0]
+    assert recall["message_id"] == sent.message_id
+    assert recall["delay_seconds"] == hook_runtime.STATUS_NOTICE_RECALL_SECONDS
 
 
 def test_native_feishu_stream_edit_drops_metadata_when_original_does_not_accept_it():
@@ -4731,7 +4827,16 @@ def test_native_feishu_stream_edit_preserves_var_kwargs():
     ]
 
 
-def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
+def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypatch):
+    """The heartbeat stays a plain-text line when the card path is unavailable.
+
+    Maintainer note (contract change): this used to drive the ⏳ Working heartbeat through a
+    sequence of failing sidecar responses and assert it reused ONE independent notice card. The
+    heartbeat is plain text now, so there is no card to reuse — the property that matters is that
+    the send never depends on the sidecar: it still lands as text, and the edit still updates THAT
+    line in place instead of stacking a new one. The sidecar is asked only to withdraw that line,
+    and the refusing responses above prove a refused recall cannot undo a send that succeeded.
+    """
     posted = []
     responses = [
         {"ok": True, "applied": False},
@@ -4739,12 +4844,6 @@ def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
             "ok": False,
             "error": "feishu send failed",
             "delivery": {"outcome": "unknown"},
-        },
-        {"ok": True, "applied": False},
-        {
-            "ok": True,
-            "applied": True,
-            "delivery": {"outcome": "delivered"},
         },
     ]
 
@@ -4800,15 +4899,15 @@ def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
     sent, edited = asyncio.run(run())
 
     assert sent.message_id == "om_native_warning"
-    assert edited.message_id.startswith("notice_")
-    assert len(posted) == 4
-    independent = [
-        payload
-        for payload in posted
-        if payload["data"]["notice_scope"] == "independent"
-    ]
-    assert len(independent) == 2
-    assert independent[0]["message_id"] == independent[1]["message_id"]
+    assert edited.message_id == sent.message_id
+    assert len(adapter.text_sent) == 1
+    assert len(adapter.edited) == 1
+    assert adapter.edited[0][1] == sent.message_id
+    # The send never depends on the sidecar: it landed as plain text and the edit updated THAT line.
+    # The only request the sidecar sees is the withdrawal for that line, and the refusing responses
+    # above prove a refused recall cannot undo the send.
+    assert len(posted) == 1
+    assert posted[0]["message_id"] == sent.message_id
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():
@@ -13321,3 +13420,52 @@ def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, tit
         notice=notice, notice_scope='independent', message_id='notice_restart')
     assert payload['data']['content'] == notice['content']
     assert '预计' not in payload['data']['content']
+
+
+def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
+    """The restart-completion notice goes out as the shared online line, not a card.
+
+    Maintainer note (contract change): it rendered as a "Gateway 重启完成" card — the same news the
+    home channel gets, in different words, with a status pill and a metrics row it never had. The
+    user asked for the plain line instead ("可以改成不发卡片。发♻️ Gateway online — Hermes is back
+    and ready."), so the notice declares `plain_text` and no card payload may be posted.
+    """
+    sent = []
+
+    class FakeAdapter:
+        async def _hfc_original_send(self, chat_id, content, reply_to=None, metadata=None):
+            sent.append((chat_id, content))
+            return SimpleNamespace(success=True, message_id="om_plain")
+
+    def no_card(*args, **kwargs):
+        pytest.fail("the restart-completion notice must not post a card payload")
+
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", no_card)
+
+    result = asyncio.run(
+        hook_runtime._hfc_send_system_notice_card(
+            FakeAdapter(),
+            chat_id="oc_fixture",
+            content="♻ Gateway restarted successfully. Your session continues.",
+        )
+    )
+
+    assert result.success is True
+    assert sent == [("oc_fixture", hook_runtime._HFC_GATEWAY_ONLINE_TEXT)]
+    assert "Gateway 重启完成" not in sent[0][1]
+
+
+def test_only_the_restart_completion_notice_skips_the_card():
+    """Every other notice keeps the card path — only the completion line is a plain text notice."""
+    ready = hook_runtime._hfc_classify_system_notice(
+        "♻ Gateway restarted successfully. Your session continues."
+    )
+    waiting = hook_runtime._hfc_classify_system_notice(
+        "⏳ Gateway is restarting and is not accepting new work right now."
+    )
+    compression = hook_runtime._hfc_classify_system_notice("ℹ️ 上下文压缩已推迟")
+
+    assert hook_runtime._hfc_notice_plain_text(ready) == hook_runtime._HFC_GATEWAY_ONLINE_TEXT
+    assert hook_runtime._hfc_notice_plain_text(waiting) is None
+    assert hook_runtime._hfc_notice_plain_text(compression) is None
+    assert hook_runtime._hfc_notice_plain_text(None) is None

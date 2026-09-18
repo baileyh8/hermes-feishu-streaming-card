@@ -1220,6 +1220,114 @@ def test_stable_tool_patch_relocates_owned_block_stranded_before_late_assignment
     assert patcher.remove_patch(repaired) == content
 
 
+def _conditionally_muted_lifecycle_fixture() -> str:
+    """The shape Hermes 0.21.3 introduced: an UNCONDITIONAL assignment, then a later
+    reassignment nested inside `if mute_notification_reply:` (normally False).
+    """
+    return (
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "    return await self._run_agent(source, event_message_id=event.message_id)\n"
+        "\n"
+        "async def _run_agent(self, source, event_message_id=None):\n"
+        "    _loop_for_step = asyncio.get_running_loop()\n"
+        "    agent = self.agent\n"
+        "    def _run_still_current():\n"
+        "        return True\n"
+        "    def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):\n"
+        "        return None\n"
+        "    agent.tool_progress_callback = progress_callback\n"
+        "    agent.tool_start_callback = voice_ack_callback if voice_enabled else None\n"
+        "    native_complete_callback = None\n"
+        "    agent.tool_complete_callback = (\n"
+        "        native_complete_callback\n"
+        "        if native_cards_enabled\n"
+        "        else None\n"
+        "    )\n"
+        "    if mute_notification_reply:\n"
+        "        agent.tool_progress_callback = None\n"
+        "        agent.tool_start_callback = None\n"
+        "        agent.tool_complete_callback = None\n"
+        "    return agent\n"
+    )
+
+
+def test_stable_tool_patch_ignores_a_conditional_reassignment_when_choosing_its_anchor():
+    """A later but CONDITIONAL reassignment must not capture the anchor.
+
+    Regression for the 0.21.3 breakage: Hermes added
+    `if ctx.mute_notification_reply:` (default False) reassigning the tool callbacks to None
+    AFTER the unconditional assignment. "Anchor after the last assignment" parked this block
+    inside that branch, where it never executed — the callbacks were never wrapped, no tool
+    events reached the sidecar, the card lost its tool count/preview, and the tool lines leaked
+    back to plain text. The anchor must follow what always runs.
+    """
+    content = _conditionally_muted_lifecycle_fixture()
+
+    patched = patcher.apply_patch(content, strategy="gateway_run_013_plus")
+
+    branch = "    if mute_notification_reply:\n"
+    block_at = patched.index(patcher.STABLE_TOOL_PATCH_BEGIN)
+    assert block_at < patched.index(branch), "block was parked inside the conditional branch"
+    # The owned block legitimately contains nested code (its own `try:`), so assert on the line
+    # that rebinds the callbacks: at function-body indent it runs every turn; one level deeper it
+    # would only run inside the muted branch.
+    assert "\n    try:\n        from hermes_feishu_card.hook_runtime import" in patched or (
+        "        agent.tool_progress_callback = _hfc_tool_progress_callback"
+        in patched[block_at : patched.index(patcher.STABLE_TOOL_PATCH_END, block_at)]
+    ), "owned block did not render at the function-body indent"
+    assert patcher.apply_patch(patched, strategy="gateway_run_013_plus") == patched
+    assert patcher.remove_patch(patched) == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("muted", [False, True])
+async def test_patched_callback_wiring_executes_only_for_a_visible_turn(monkeypatch, muted):
+    import asyncio
+    from types import SimpleNamespace
+    from hermes_feishu_card import hook_runtime
+
+    events = []
+    monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_threadsafe",
+                        lambda data, *, event_name: events.append((event_name, data)) or True)
+    source = _conditionally_muted_lifecycle_fixture()
+    namespace = {"asyncio": asyncio, "voice_enabled": False,
+                 "native_cards_enabled": False, "mute_notification_reply": muted}
+    exec(patcher.apply_patch(source, strategy="gateway_run_013_plus"), namespace)
+    agent = SimpleNamespace(reasoning_callback=None)
+    await namespace["_run_agent"](
+        SimpleNamespace(agent=agent),
+        SimpleNamespace(platform="feishu", chat_id="chat_fixture"),
+        "turn_fixture",
+    )
+    if muted:
+        assert agent.tool_start_callback is None
+        assert agent.tool_complete_callback is None
+        assert events == []
+    else:
+        agent.tool_start_callback("tool_fixture", "terminal", {"command": "true"})
+        agent.tool_complete_callback("tool_fixture", "terminal", {}, {"exit_code": 0})
+        assert [event for event, _ in events] == ["tool.updated", "tool.updated"]
+        assert [data["status"] for _, data in events] == ["running", "completed"]
+
+
+def test_stable_tool_patch_still_anchors_on_a_top_level_reassignment() -> None:
+    """The unconditional case keeps its historical placement (guards the fix from over-reaching)."""
+    content = _conditionally_muted_lifecycle_fixture().replace(
+        "    if mute_notification_reply:\n"
+        "        agent.tool_progress_callback = None\n"
+        "        agent.tool_start_callback = None\n"
+        "        agent.tool_complete_callback = None\n",
+        "",
+    )
+
+    patched = patcher.apply_patch(content, strategy="gateway_run_013_plus")
+
+    assert patched.index(patcher.STABLE_TOOL_PATCH_BEGIN) > patched.index(
+        "    agent.tool_complete_callback = (\n"
+    )
+    assert patcher.remove_patch(patched) == content
+
+
 def _status_callback_fixture() -> str:
     return (
         "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"

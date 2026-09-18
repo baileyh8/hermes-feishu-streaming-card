@@ -72,27 +72,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 # The busy path's redirect acknowledgement ("↪ Redirected current run. I'll adjust using your
 # correction.") tells the user their correction landed. Once read it is only a stale instruction in
-# the thread, so the sidecar withdraws it this many seconds later. Steer / queued / interrupt
+# the thread, so the sidecar withdraws it this many seconds later. Queue
 # acknowledgements state something the user still needs and are deliberately left alone.
 BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
 BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
-# The long-running heartbeat ("⏳ Working — 12 min — iteration 42/150, receiving stream response")
-# is sent once and then EDITED IN PLACE every HERMES_AGENT_NOTIFY_INTERVAL (180s). On Feishu the
-# card already carries the live progress (header makespan + the current action on its second row),
-# so the plain-text heartbeat is a second surface that outlives its usefulness: with
-# display.cleanup_progress off it is never removed, and a turn's "12 min" line sits in the thread
-# long after the turn ended. User report: 「可以像 redirect 那个一样被撤回吗」.
-# Same treatment as the redirect ack — withdraw it once it has been read. The heartbeat loop then
-# falls back to a fresh send on its next tick (editing a withdrawn message fails), so a genuinely
-# long turn still gets status pings; each one just lives for the recall window instead of forever.
-LONG_RUNNING_NOTICE_PREFIX = "⏳ Working — "
-LONG_RUNNING_NOTICE_RECALL_SECONDS = 15.0
+# Interrupt and steer confirmations become stale once the current task accepts the input.
+# Queue acknowledgements and onboarding guidance remain visible.
+BUSY_INTERRUPT_ACK_PREFIX = "⚡ Interrupting current task"
+BUSY_INTERRUPT_ACK_RECALL_SECONDS = 15.0
+BUSY_STEER_ACK_PREFIX = "⏩ Steered into current run"
+BUSY_STEER_ACK_RECALL_SECONDS = 15.0
+# Known status templates stay plain text; an hourglass alone never authorizes recall.
+
+STATUS_NOTICE_PREFIX = "⏳"
+STATUS_NOTICE_RECALL_SECONDS = 15.0
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
-# user has had a chance to read it. Content the user still needs (steer / queued / interrupt acks,
-# provider-failure replies) is deliberately absent: only self-erasing status pings belong here.
+# user has had a chance to read it. Content the user still needs (queued acks, provider-
+# failure replies) is deliberately absent: only self-erasing status pings belong here.
 TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
     (BUSY_REDIRECT_ACK_PREFIX, BUSY_REDIRECT_ACK_RECALL_SECONDS),
-    (LONG_RUNNING_NOTICE_PREFIX, LONG_RUNNING_NOTICE_RECALL_SECONDS),
+    (BUSY_INTERRUPT_ACK_PREFIX, BUSY_INTERRUPT_ACK_RECALL_SECONDS),
+    (BUSY_STEER_ACK_PREFIX, BUSY_STEER_ACK_RECALL_SECONDS),
+    (STATUS_NOTICE_PREFIX, STATUS_NOTICE_RECALL_SECONDS),
 )
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
@@ -4904,11 +4905,21 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         }
     if text in {"♻ Gateway restarted successfully. Your session continues.",
                 "♻️ Gateway restarted successfully. Your session continues."}:
+        # Maintainer note (contract change): this notice is delivered as PLAIN TEXT, not a card.
+        #
+        # It used to render as a card titled "Gateway 重启完成" — a duplicate of the home-channel
+        # line in different words, arriving with a status pill and a metrics row it never had
+        # ("已完成 · 0s · Unknown · ↑0 · ↓0 · ctx 0/0 0%"). The user asked for the two surfaces to
+        # read the same and for the card to go: "可以改成不发卡片。发♻️ Gateway online — Hermes is
+        # back and ready." `_hfc_send_system_notice_card` honours `plain_text` by sending exactly
+        # this line through the adapter's own text send; `title`/`level`/`content` stay for the
+        # classification contract and any caller that still renders one.
         return {
             "title": "Gateway 重启完成", "level": "success",
             "notice_kind": "gateway-restart", "notice_id": "gateway-restart-ready",
             "notice_terminal": True,
             "content": "Gateway 已重启完成，会话已保留。现在可以发送新任务。",
+            "plain_text": _HFC_GATEWAY_ONLINE_TEXT,
         }
     if text.startswith("📬 No home channel is set for Feishu."):
         return {
@@ -4922,13 +4933,21 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_id": _hfc_content_notice_id("compression", text),
         }
     if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
-        return {
-            "title": "运行中",
-            "level": "info",
-            "notice_kind": "heartbeat",
-            "notice_id": "heartbeat",
-            "notice_terminal": False,
-        }
+        # Maintainer note (contract change): the ⏳ status line is NEVER a card.
+        #
+        # These lines used to become notice cards titled「运行中」. They are transient process state
+        # ("compressing", "waiting for approval", "loading the model", the long-running heartbeat,
+        # "tool timed out, retrying", …): the turn's OWN card already carries the live progress, so
+        # the extra card restated it and then appeared/vanished every ~180s. The user asked for the
+        # whole class to be plain text (「⏳ Working — … 之类的，我觉得不应该发卡片」/「都改为纯文本。
+        # 体验效果感觉会好一点」).
+        #
+        # Returning None preserves the adapter's plain-text path. The egress helper
+        # recalls only known transient templates, never arbitrary hourglass text.
+        # Queue/error acknowledgements and answer content remain visible. The edit
+        # path also still works: `_hfc_edit_message_with_system_notice_card` falls back to the
+        # original edit once classification returns None, so a refreshing status updates ONE line.
+        return None
     if "caps context" in lowered and "auto-compaction" in lowered:
         return {
             "title": "上下文窗口提示",
@@ -5038,6 +5057,51 @@ def _hfc_content_notice_id(kind: str, content: str) -> str:
     return f"{kind}:{digest}"
 
 
+_HFC_GATEWAY_ONLINE_TEXT = "♻️ Gateway online — Hermes is back and ready."
+
+
+def _hfc_notice_plain_text(notice: Any) -> str | None:
+    """Wording for a notice the gateway should deliver as PLAIN TEXT instead of a card.
+
+    Only the restart-completion notice declares this (see `_hfc_classify_system_notice`): its card
+    duplicated the home-channel line in different words and carried a metrics row it never had. A
+    notice without the key keeps the card path, which is every other notice.
+    """
+    if not isinstance(notice, dict):
+        return None
+    value = notice.get("plain_text")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+async def _hfc_send_plain_notice(
+    adapter: Any,
+    *,
+    chat_id: str,
+    text: str,
+    reply_to: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Send a notice as an ordinary text message — no card, no render, no card bookkeeping.
+
+    Goes through the adapter's pre-hook ``send`` (``_hfc_original_send``), so this is the same
+    plain Feishu text path the core itself uses. Reporting success back to the caller is what stops
+    the core from ALSO sending its own copy of the notice.
+    """
+    original = getattr(type(adapter), "_hfc_original_send", None)
+    if not callable(original):
+        return _send_result(False, error="delivery_disposition=native")
+    try:
+        result = await original(adapter, chat_id, text, reply_to=reply_to, metadata=metadata)
+        if getattr(result, "success", False):
+            return result
+        return _send_result(False, error="delivery_disposition=native")
+    except Exception as exc:
+        # `delivery_disposition=native` is the callers' signal to fall back to the core's own text
+        # send, so a failed plain send degrades to the original wording rather than a lost notice.
+        _hfc_warn(f"plain notice send failed: {_hfc_exception_summary(exc)}")
+        return _send_result(False, error="delivery_disposition=native")
+
+
 async def _hfc_send_system_notice_card(
     adapter: Any,
     *,
@@ -5050,6 +5114,18 @@ async def _hfc_send_system_notice_card(
     notice = _hfc_classify_system_notice(content)
     if notice is None:
         return _send_result(False, error="not a system notice")
+    plain_text = _hfc_notice_plain_text(notice)
+    if plain_text is not None:
+        # Deliberately BEFORE the card policy gate: the delivery format of this notice is its own
+        # contract, not a per-chat card/native decision — `bindings.native_chats` is chat-scoped and
+        # would strip the streaming cards from the chat as well.
+        return await _hfc_send_plain_notice(
+            adapter,
+            chat_id=chat_id,
+            text=plain_text,
+            reply_to=reply_to,
+            metadata=metadata,
+        )
     if not await _hfc_direct_card_allowed_async(chat_id):
         return _send_result(False, error="delivery_disposition=native")
     try:
@@ -5061,11 +5137,35 @@ async def _hfc_send_system_notice_card(
             context = {}
         message_id = str(existing_message_id or context.get("message_id") or "").strip()
         if message_id and not message_id.startswith("notice_"):
-            anchored_scope = (
-                "independent"
-                if notice.get("notice_kind") == "background-task"
-                else "session"
-            )
+            notice_kind = str(notice.get("notice_kind") or "")
+            # Maintainer note (contract change): a HEARTBEAT now takes the independent scope too.
+            #
+            # It used to be anchored to the turn (scope="session"), which folded the ⏳ Working line
+            # into the turn's own card — and from there NOTHING could ever withdraw it. Both recall
+            # paths are closed to a session-scoped notice: the card path requires
+            # delivery_kind=="notice" (a session notice is "chat"), and /recall/schedule refuses an
+            # owned session card outright (409) because deleting it would delete the answer, not the
+            # ping. So every finished turn kept its last ⏳ Working line for good.
+            #
+            # The user asked for the behaviour the plain-text heartbeat used to have ("文案之前发出去
+            # 15 秒会撤回"); the independent notice is the surface that can honor it, and it is the one
+            # this codebase already prepared for a heartbeat: _hfc_independent_notice_message_id has a
+            # heartbeat branch keyed on (chat_id, anchor), and the sidecar has a heartbeat recall path
+            # keyed on delivery_kind=="notice". background-task keeps the scope it always had.
+            if notice_kind == "heartbeat":
+                anchored_scope = "independent"
+                # The event must NOT carry the anchor as its own id. The sidecar's session key IS the
+                # event's message id (server._session_key), so an anchor id would key this heartbeat
+                # onto the TURN's session — the very card this change is separating from. The
+                # independent id is stable per anchor, which is what lets a later heartbeat update its
+                # own notice instead of stacking a new one every tick.
+                message_id = _hfc_independent_notice_message_id(
+                    chat_id, str(content or ""), notice, anchor=message_id
+                )
+            elif notice_kind == "background-task":
+                anchored_scope = "independent"
+            else:
+                anchored_scope = "session"
             payload = _hfc_build_system_notice_payload(
                 chat_id=chat_id,
                 content=str(content or ""),
@@ -6314,8 +6414,42 @@ async def _hfc_send_with_native_command_result_card(
             )
         return _send_result(False, error="original Feishu send unavailable")
     if callable(original):
-        return await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        result = await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        await _hfc_recall_plain_text_status_notice(chat_id, content, metadata, result)
+        return result
     return _send_result(False, error="original Feishu send unavailable")
+
+
+async def _hfc_recall_plain_text_status_notice(
+    chat_id: str,
+    content: Any,
+    metadata: Any,
+    result: Any,
+) -> bool:
+    """Best-effort recall of known status templates on the task's own route.
+
+    Preserve native send success even if recall fails. A foreign or invalid
+    context cannot select the bot that will delete the message.
+    """
+    try:
+        context = _HFC_FEISHU_DELIVERY_CONTEXT.get()
+        if not isinstance(context, dict):
+            context = _HFC_FEISHU_NOTICE_CONTEXT.get()
+        if isinstance(context, dict):
+            if context.get("chat_id") != chat_id or context.get("profile_invalid"):
+                return False
+        else:
+            context = {}
+        metadata = metadata if isinstance(metadata, dict) else {}
+        source = SimpleNamespace(
+            platform="feishu",
+            chat_id=str(chat_id or ""),
+            profile_id=str(context.get("profile_id") or ""),
+            thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
+        )
+        return await recall_transient_thread_notice_async(source, content, result)
+    except Exception:
+        return False
 
 
 async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -9490,6 +9624,31 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
 def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
     """Seconds to wait before withdrawing this notice, or None when it must stay."""
     text = str(content or "")
+    if text.startswith(BUSY_INTERRUPT_ACK_PREFIX):
+        return (BUSY_INTERRUPT_ACK_RECALL_SECONDS if re.fullmatch(
+            r"⚡ Interrupting current task(?: \([^\r\n]*\))?\. I'll respond to your message shortly\.", text
+        ) else None)
+    if text.startswith(BUSY_STEER_ACK_PREFIX):
+        steer_patterns = (
+            r"⏩ Steered into current run(?: \([^\r\n]*\))?\. Your message arrives after the next tool call\.",
+            r"⏩ Steered into current run and its active subagent\(s\)(?: \([^\r\n]*\))?\. Your message arrives after their next tool call\.",
+        )
+        return (BUSY_STEER_ACK_RECALL_SECONDS
+                if any(re.fullmatch(pattern, text) for pattern in steer_patterns)
+                else None)
+    # The adapter also sends answers and important queue/error acknowledgements.
+    # An hourglass alone is not evidence that a message is disposable status.
+    if text.startswith(STATUS_NOTICE_PREFIX):
+        status_patterns = (
+            r"⏳ Working — \d+ min(?: — [^\r\n]+)?",
+            r"⏳ (?:Compressing context|Waiting for approval|tool execution timed out; retrying)(?:\.\.\.)?",
+            r"⏳ Retrying in \d+(?:\.\d+)?s \(attempt \d+/\d+\)(?:\.\.\.)?",
+            r"⏳ loading [^\r\n]+ into memory — \d+(?:\.\d+)?%[^\r\n]*",
+            r"⏳ waiting on [^\r\n]+ — (?:no stream output for \d+s[^\r\n]*|retrying in \d+s \(attempt \d+/\d+\))",
+        )
+        return (STATUS_NOTICE_RECALL_SECONDS
+                if any(re.fullmatch(pattern, text) for pattern in status_patterns)
+                else None)
     for prefix, delay in TRANSIENT_THREAD_NOTICES:
         if text.startswith(prefix):
             return delay
@@ -9535,16 +9694,13 @@ async def recall_transient_thread_notice_async(candidate: Any, content: Any, res
 
 
 async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) -> bool:
-    """Withdraw the busy-path redirect acknowledgement once the user has read it.
+    """Recall redirect/interrupt/steer acknowledgements using the actual event route.
 
-    ``↪ Redirected current run. I'll adjust using your correction.`` confirms the correction was
-    taken; after that it is a stale instruction sitting in the thread, so it is recalled a few
-    seconds later. Other busy replies (steer, queued, interrupt) state something the user still
-    needs, so only the redirect acknowledgement is withdrawn. This name is the entry point the
-    installed busy-path patch block imports, so it stays; the prefix check keeps that call site
-    scoped to the acknowledgement even though the shared helper now also serves the heartbeat.
+    Keep the historical entry-point name for installed hook compatibility.
+    Queue acknowledgements and interrupt/steer onboarding guidance are retained.
     """
-    if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
+    if not str(content or "").startswith((BUSY_REDIRECT_ACK_PREFIX, BUSY_INTERRUPT_ACK_PREFIX,
+                                        BUSY_STEER_ACK_PREFIX)):
         return False
     return await recall_transient_thread_notice_async(event, content, result)
 

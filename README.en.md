@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.1
 bash install-docker.sh
 ```
 
@@ -180,6 +180,7 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.6.1](docs/release-notes-v4.6.1.en.md) | Hermes 0.21.3 hooks, safe status recall and approval display |
 | [v4.6.0](docs/release-notes-v4.6.0.en.md) | Profile-aware recall, structured reasoning, bounded retries and card restart recovery |
 | [v4.5.2](docs/release-notes-v4.5.2.en.md) | Queued failure preservation and bounded transient notice recall |
 | [v4.5.1](docs/release-notes-v4.5.1.en.md) | CardKit ID limits, topic delivery, approval lifecycle and restart feedback |
@@ -280,6 +281,7 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 
 ## Contributors
 
+- V4.6.1: Thanks to [mouyong](https://github.com/mouyong) for [PR #325](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/325) and [#326](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/326); original commits retained.
 - V4.6.0: [mouyong](https://github.com/mouyong) supplied the additional [PR #310](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/310) fixes and [#320](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/320) evidence; [zhangzq](https://github.com/zhangzq) supplied structured-reasoning diagnostics in [#319](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/319); [qqqq560204-maker](https://github.com/qqqq560204-maker) isolated custom-profile recall routing in [#323](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/323). Original PR authorship is retained.
 - V4.5.1–V4.5.2: [mouyong](https://github.com/mouyong) contributed [PR #310](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/310), field reports and retesting for #282, #304, #305, #307, #311–#314 and #318/#321, including the queued-outcome fix and transient notice recall; [lanx214](https://github.com/lanx214) reported [#316](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/316) and implemented extracted-clarify compatibility in [PR #317](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/317); [qqqq560204-maker](https://github.com/qqqq560204-maker) and [7360403-coder](https://github.com/7360403-coder) supplied the CardKit 300301 evidence in [#306](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/306). Original PR authorship is preserved, with maintainer safety corrections and regression coverage. The reporter withdrew #282; this does not establish a mobile fix.
 

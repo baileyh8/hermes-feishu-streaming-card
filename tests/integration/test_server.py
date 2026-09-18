@@ -10771,6 +10771,27 @@ async def test_independent_system_notice_without_started_sends_notice_card(clien
     assert feishu_client.updated == []
 
 
+def _retained_heartbeat_notice(text: str) -> dict:
+    """The heartbeat notice shape the SIDECAR still understands.
+
+    Maintainer note (contract change): ``hook_runtime._hfc_classify_system_notice`` no longer
+    returns a notice for any ⏳ status line — the whole family goes out as plain text now (see
+    tests/unit/test_hook_runtime.py::test_status_notice_family_is_plain_text_but_other_notices_still_are_cards),
+    so real traffic never sends this event any more. These sidecar tests keep exercising the
+    heartbeat branch of the notice-card machinery on purpose: that code still ships (it is upstream
+    code, and upstream's own classifier still emits this kind), and any caller that posts this shape
+    still gets a recallable heartbeat notice out of it.
+    """
+    assert text.startswith("⏳ Working — "), text
+    return {
+        "title": "运行中",
+        "level": "info",
+        "notice_kind": "heartbeat",
+        "notice_id": "heartbeat",
+        "notice_terminal": False,
+    }
+
+
 async def test_orphaned_heartbeats_update_one_running_notice_card(client):
     test_client, feishu_client = client
     texts = (
@@ -10781,8 +10802,7 @@ async def test_orphaned_heartbeats_update_one_running_notice_card(client):
     message_ids = []
 
     for sequence, text in enumerate(texts, start=1):
-        notice = hook_runtime._hfc_classify_system_notice(text)
-        assert notice is not None
+        notice = _retained_heartbeat_notice(text)
         message_id = hook_runtime._hfc_independent_notice_message_id(
             "oc_1", text, notice, anchor="om_user_task"
         )
@@ -13546,8 +13566,7 @@ async def test_heartbeat_card_is_recalled_once_its_refreshes_stop(client, monkey
     test_client, feishu_client = client
 
     text = "⏳ Working — 3 min — iteration 5/90, terminal"
-    notice = hook_runtime._hfc_classify_system_notice(text)
-    assert notice is not None
+    notice = _retained_heartbeat_notice(text)
     assert notice["notice_kind"] == "heartbeat"
     message_id = hook_runtime._hfc_independent_notice_message_id(
         "oc_1", text, notice, anchor="om_user_task"
@@ -13589,7 +13608,7 @@ async def test_a_refreshed_heartbeat_pushes_its_recall_deadline_out(client, monk
     )
     message_id = ""
     for sequence, text in enumerate(texts, start=1):
-        notice = hook_runtime._hfc_classify_system_notice(text)
+        notice = _retained_heartbeat_notice(text)
         message_id = hook_runtime._hfc_independent_notice_message_id(
             "oc_1", text, notice, anchor="om_user_task"
         )
@@ -13625,7 +13644,7 @@ async def test_refused_recall_keeps_the_heartbeat_card_usable(client, monkeypatc
     feishu_client.fail_delete = True
 
     text = "⏳ Working — 3 min — iteration 5/90, terminal"
-    notice = hook_runtime._hfc_classify_system_notice(text)
+    notice = _retained_heartbeat_notice(text)
     message_id = hook_runtime._hfc_independent_notice_message_id(
         "oc_1", text, notice, anchor="om_user_task"
     )
@@ -13661,6 +13680,72 @@ async def test_session_heartbeat_never_recalls_final_answer(client, monkeypatch)
     await _REAL_ASYNCIO_SLEEP(0.15)
     assert feishu_client.deleted == []
     assert test_client.app[SESSIONS_KEY]
+
+
+async def test_an_independent_heartbeat_gets_its_own_card_and_spares_the_turn(client, monkeypatch):
+    """A heartbeat must not ride on the turn's card — only its own card can ever be withdrawn.
+
+    Production shape, and the reason this needs its own test: the heartbeat's status metadata
+    carries the user's message as `reply_to_message_id`, and the turn's session is live under that
+    very id. The reply_to alias would therefore hand the heartbeat the TURN's session key and fold
+    ⏳ Working into the turn's card. From there it can never be withdrawn — /recall/schedule refuses
+    an owned session card (409), and the card recall path wants delivery_kind=="notice" — so the
+    line stays in the thread for good, which is what the user reported ("变成卡片的时候好像不会
+    自动撤销了").
+
+    Asserted here: the heartbeat lands on its OWN card, its recall deletes only that card, and the
+    turn keeps rendering (its session, its card and its final answer all survive).
+    """
+    monkeypatch.setattr(sidecar_server, "HEARTBEAT_RECALL_SECONDS", 0.05)
+    test_client, feishu_client = client
+
+    # The turn owns the user's message id, and its card is the first thing sent.
+    await test_client.post(
+        "/events", json=event_payload("message.started", 1, {}, message_id="om_user_task")
+    )
+    assert len(feishu_client.sent) == 1
+
+    text = "⏳ Working — 18 min — iteration 39/150, terminal"
+    notice = _retained_heartbeat_notice(text)
+    heartbeat_id = hook_runtime._hfc_independent_notice_message_id(
+        "oc_abc", text, notice, anchor="om_user_task"
+    )
+
+    response = await test_client.post(
+        "/events",
+        json=event_payload(
+            "system.notice",
+            2,
+            {
+                **notice,
+                "content": text,
+                "notice_scope": "independent",
+                "delivery_kind": "notice",
+                "reply_to_message_id": "om_user_task",
+            },
+            message_id=heartbeat_id,
+        ),
+    )
+
+    assert response.status == 200
+    # A second, SEPARATE card: the heartbeat did not resolve onto the turn's session.
+    assert len(feishu_client.sent) == 2
+    assert heartbeat_id in test_client.app[SESSIONS_KEY]
+    assert "om_user_task" in test_client.app[SESSIONS_KEY]
+
+    # Its own recall fires; the turn's card is untouched.
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["feishu-message-2"]
+    assert heartbeat_id not in test_client.app[SESSIONS_KEY]
+    assert "om_user_task" in test_client.app[SESSIONS_KEY]
+
+    # ...and the turn still completes onto its own card.
+    await test_client.post(
+        "/events",
+        json=event_payload("message.completed", 3, {"answer": "完整答案"}, message_id="om_user_task"),
+    )
+    turn = test_client.app[SESSIONS_KEY]["om_user_task"]
+    assert turn.answer_text == "完整答案"
 
 
 async def test_recall_schedule_withdraws_a_message_once_its_delay_elapses(client):
@@ -13713,6 +13798,36 @@ async def test_recall_schedule_clamps_the_delay_and_requires_a_message_id(client
         "/recall/schedule", json={"message_id": "om_x", "delay_seconds": "soon"}
     )
     assert response.status == 400
+
+
+async def test_a_refused_recall_reports_why_it_was_refused(client, monkeypatch, caplog):
+    """A refusal must name the API's reason, not only the exception class.
+
+    Maintainer note (contract): ``_delete_card_for_app`` used to log the exception class alone, so a
+    live run with 12 of 44 recalls failing could not tell an API refusal from a message that had
+    already gone — and the metric could not either. ``FeishuAPIError`` carries
+    ``status_code``/``api_code`` and both must reach the log. The message id stays hashed: a recall
+    line must never put a real Feishu id in a log file.
+    """
+    test_client, feishu_client = client
+
+    async def _refuse(message_id):
+        raise FeishuAPIError("om_secret_id credential=private_token https://private.invalid/request", status_code=400, api_code=230011)
+
+    monkeypatch.setattr(feishu_client, "delete_message", _refuse)
+
+    response = await test_client.post(
+        "/recall/schedule", json={"message_id": "om_secret_id", "delay_seconds": 0.05}
+    )
+
+    assert response.status == 200
+    await _wait_until(lambda: test_client.app[METRICS_KEY].ephemeral_recall_failures)
+    assert "FeishuAPIError" in caplog.text
+    assert "230011" in caplog.text
+    assert "400" in caplog.text
+    assert "om_secret_id" not in caplog.text
+    assert "private_token" not in caplog.text
+    assert "private.invalid" not in caplog.text
 
 
 async def test_a_refused_recall_is_counted_and_leaves_the_message_alone(client):
