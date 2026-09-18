@@ -4,6 +4,7 @@
 - #325：状态提示保留纯文本；只撤回已识别的临时状态模板，普通答案、排队确认、维护拒收和错误说明不会因为带有“⏳”而被删除。撤回保留 profile/chat/thread，拒绝跨聊天或无效上下文。
 - 重启完成提示使用原生文本，发送失败保留原生 fallback。独立通知不会抢占已有会话的 alias 或正文卡。
 - 已发送独立审批卡时，会话卡不重复展示按钮；专用审批卡及决定后的结果保持可见。
+- 工具区按执行顺序保留最近两步，所有仍在执行的工具都可见。撤回诊断记录时间、已验证的 API 错误码和哈希标识，不记录原始异常正文或 HTTP 请求路径。中断确认从真实 event profile 安排撤回，附带首次使用指引的消息保留。
 - 正文思考按时间正序，工具面板继续最新优先；没有统计数据时不显示虚构的 Unknown/零值行，页脚不重复完成通知。
 
 ## 验证与边界
@@ -14,4 +15,4 @@
 
 ## 贡献
 
-感谢 [mouyong](https://github.com/mouyong) 的 [#326](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/326) 现场定位及 [PR #325](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/325)（截至 `4e3b884`，保留原始提交与作者）。维护者补充 profile 隔离、撤回内容边界、失败 fallback 和未知控制流回归。
+感谢 [mouyong](https://github.com/mouyong) 的 [#326](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/326) 现场定位及 [PR #325](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/325)（截至 `1894361`，保留原始提交与作者）。维护者补充 profile 隔离、撤回内容边界、失败 fallback 和未知控制流回归。

@@ -4,6 +4,7 @@
 - Integrate #325: keep status notices as text and recall only known transient templates. An hourglass alone never authorizes deleting answers, queue acknowledgements, maintenance refusals or failure explanations. Preserve profile/chat/thread identity and reject foreign or invalid contexts.
 - Send restart completion as native text with native fallback on failure. Independent notices cannot take over an existing answer-card alias.
 - Avoid duplicate pending controls in the session card after an auxiliary approval card was sent; retain the dedicated controls and decided outcome.
+- Show the latest two tool steps in start order while preserving every running tool. Timestamp package diagnostics; retain validated recall API codes and hashed IDs, never raw exception bodies or HTTP access paths. Recall the exact interrupt acknowledgement via its event profile while retaining onboarding guidance.
 - Keep body reasoning chronological and the tool panel newest-first. Omit the empty metrics row and duplicate footer completion note.
 
 ## Validation and boundaries
@@ -14,4 +15,4 @@ Source upgrade/repeat/exact restore, full regression, cross-platform CI, the exa
 
 ## Credits
 
-Thanks to [mouyong](https://github.com/mouyong) for [#326](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/326) and [PR #325](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/325) through `4e3b884`; original commits and authorship are retained. Maintainer additions cover recall boundaries, profile isolation, fallback and unsupported control flow.
+Thanks to [mouyong](https://github.com/mouyong) for [#326](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/326) and [PR #325](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/325) through `1894361`; original commits and authorship are retained. Maintainer additions cover recall boundaries, profile isolation, fallback and unsupported control flow.

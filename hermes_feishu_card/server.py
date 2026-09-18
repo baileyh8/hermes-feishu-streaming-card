@@ -7271,7 +7271,13 @@ async def _delete_card_for_app(
         await _client_for_bot(app, bot_id).delete_message(message_id)
     except Exception as exc:
         app[DIAGNOSTICS_KEY]["last_delete_error"] = exc.__class__.__name__[:200]
-        logger.warning("Feishu card recall failed: %s", exc.__class__.__name__)
+        # Keep useful, validated API codes without exposing exception bodies,
+        # URLs, credentials or raw message/bot identifiers.
+        logger.warning(
+            "Feishu card recall failed: %s message_hash=%s",
+            _safe_update_error_message(bot_id, exc),
+            _diagnostic_id_hash(message_id),
+        )
         return False
     return True
 
@@ -7470,7 +7476,14 @@ async def _run_ephemeral_recall(
     try:
         await asyncio.sleep(delay_seconds)
         if message_id in app[FEISHU_MESSAGE_IDS_KEY].values():
+            # Counted as a failure, but leave a trace: this branch used to be completely silent, so a
+            # recall that "failed" because the message had meanwhile become an owned session card was
+            # indistinguishable from one the API refused. Debug, not warning — skipping is correct here.
             metrics.ephemeral_recall_failures += 1
+            logger.debug(
+                "Ephemeral recall skipped: %s became an owned session card",
+                _diagnostic_id_hash(message_id),
+            )
             return
         if await _delete_card_for_app(app, message_id, bot_id):
             metrics.ephemeral_recalls_completed += 1

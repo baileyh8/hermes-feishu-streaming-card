@@ -65,6 +65,24 @@ def test_hourglass_prefix_alone_never_authorizes_recall(text):
 
 
 @pytest.mark.asyncio
+async def test_busy_interrupt_uses_the_event_profile_without_adapter_context(monkeypatch):
+    monkeypatch.delenv("HERMES_FEISHU_CARD_PROFILE_ID", raising=False)
+    calls = []
+    async def schedule(message_id, **kwargs):
+        calls.append(kwargs["route"])
+        return True
+    monkeypatch.setattr(runtime, "schedule_message_recall_async", schedule)
+    text = "⚡ Interrupting current task. I'll respond to your message shortly."
+    event = SimpleNamespace(source=SimpleNamespace(
+        platform="feishu", profile_id="secondary", chat_id="chat_fixture"))
+    assert await runtime.recall_busy_redirect_ack_async(
+        event, text, SimpleNamespace(success=True, message_id="notice_fixture"))
+    assert calls[0]["profile_id"] == "secondary"
+    assert runtime._transient_notice_recall_seconds(text + "\n\nImportant setup guidance") is None
+    assert runtime._transient_notice_recall_seconds("⚡ Interrupting current task is an example") is None
+
+
+@pytest.mark.asyncio
 async def test_restart_send_failure_keeps_native_fallback():
     class Adapter:
         async def _hfc_original_send(self, *args, **kwargs):

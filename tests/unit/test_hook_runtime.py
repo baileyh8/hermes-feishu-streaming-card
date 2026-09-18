@@ -3941,6 +3941,42 @@ def test_background_process_notice_classification_and_stable_id():
     assert len(independent_ids) == 1
 
 
+def test_interrupt_acknowledgement_is_withdrawn_like_the_redirect_one():
+    """The interrupt ack is transient; the steer ack deliberately is not.
+
+    Maintainer note (contract): with active-turn redirect disabled (`display.busy_input_redirect`)
+    the interrupt path is the one that runs, so「⚡ Interrupting current task」 is what a user sees
+    whenever they message mid-turn. It had no withdrawal — the recall table's comment listed
+    "interrupt acks" as deliberately kept — written while redirect always won and this head was
+    unreachable in practice. Left as-is it sat in the thread for the rest of the session. It is the
+    same kind of statement as the redirect ack (confirms the message landed; the turn it announces
+    arrives as its own visible message), so it gets the same treatment. The steer ack stays: "your
+    message arrives after the next tool call" is forward-looking information with no other surface.
+    """
+    interrupt = (
+        "⚡ Interrupting current task (20 min elapsed, iteration 39/150, running: terminal). "
+        "I'll respond to your message shortly."
+    )
+    assert hook_runtime._transient_notice_recall_seconds(interrupt) == (
+        hook_runtime.BUSY_INTERRUPT_ACK_RECALL_SECONDS
+    )
+
+    # The redirect ack keeps its own recall (both heads are live, depending on the config).
+    redirect = "↪ Redirected current run. I'll adjust using your correction."
+    assert hook_runtime._transient_notice_recall_seconds(redirect) == (
+        hook_runtime.BUSY_REDIRECT_ACK_RECALL_SECONDS
+    )
+
+    # Steer acks and ordinary replies are not transient.
+    for kept in (
+        "⏩ Steered into current run. Your message arrives after the next tool call.",
+        "⏩ Steered into current run and its active subagent(s). Your message arrives after their "
+        "next tool call.",
+        "这是回复正文，不是状态提示。",
+    ):
+        assert hook_runtime._transient_notice_recall_seconds(kept) is None, kept
+
+
 def test_status_notice_family_is_plain_text_but_other_notices_still_are_cards():
     """Every ⏳ status line goes out as plain text; other notice kinds keep their cards.
 

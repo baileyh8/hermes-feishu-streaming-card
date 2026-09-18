@@ -208,7 +208,26 @@ def _card_config_for_server(config: dict[str, Any]) -> dict[str, Any]:
     elif mode not in {"callback", "text", "markdown", "reply"}:
         card_config["interaction_mode"] = "callback"
     return card_config
+
+
+def _configure_logging() -> None:
+    """Timestamp package diagnostics without enabling raw HTTP access logs.
+
+    Preserve an explicit host logging configuration. Third-party INFO logs may
+    contain request paths, so only this package gets INFO in the default setup.
+    """
+    if logging.getLogger().handlers:
+        return
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("hermes_feishu_card").setLevel(logging.INFO)
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_logging()
     parser = argparse.ArgumentParser(prog="hermes-feishu-card-sidecar")
     parser.add_argument("--config", default="config.yaml.example")
     parser.add_argument("--env-file")

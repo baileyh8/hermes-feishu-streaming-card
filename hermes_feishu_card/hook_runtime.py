@@ -72,20 +72,24 @@ logger = logging.getLogger(__name__)
 DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 # The busy path's redirect acknowledgement ("↪ Redirected current run. I'll adjust using your
 # correction.") tells the user their correction landed. Once read it is only a stale instruction in
-# the thread, so the sidecar withdraws it this many seconds later. Steer / queued / interrupt
+# the thread, so the sidecar withdraws it this many seconds later. Steer / queued
 # acknowledgements state something the user still needs and are deliberately left alone.
 BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
 BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
-# Known transient status templates stay plain text and expire after being read.
-# The adapter also carries answers, queue acknowledgements and failures; the
-# hourglass prefix alone never authorizes recall. See the bounded matcher below.
+# Interrupt acknowledgements also become stale after the next turn is accepted.
+# Steer/queued confirmations and onboarding guidance remain visible.
+BUSY_INTERRUPT_ACK_PREFIX = "⚡ Interrupting current task"
+BUSY_INTERRUPT_ACK_RECALL_SECONDS = 15.0
+# Known status templates stay plain text; an hourglass alone never authorizes recall.
+
 STATUS_NOTICE_PREFIX = "⏳"
 STATUS_NOTICE_RECALL_SECONDS = 15.0
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
-# user has had a chance to read it. Content the user still needs (steer / queued / interrupt acks,
-# provider-failure replies) is deliberately absent: only self-erasing status pings belong here.
+# user has had a chance to read it. Content the user still needs (steer / queued acks, provider-
+# failure replies) is deliberately absent: only self-erasing status pings belong here.
 TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
     (BUSY_REDIRECT_ACK_PREFIX, BUSY_REDIRECT_ACK_RECALL_SECONDS),
+    (BUSY_INTERRUPT_ACK_PREFIX, BUSY_INTERRUPT_ACK_RECALL_SECONDS),
     (STATUS_NOTICE_PREFIX, STATUS_NOTICE_RECALL_SECONDS),
 )
 DEFAULT_TIMEOUT_SECONDS = 0.8
@@ -9617,6 +9621,10 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
 def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
     """Seconds to wait before withdrawing this notice, or None when it must stay."""
     text = str(content or "")
+    if text.startswith(BUSY_INTERRUPT_ACK_PREFIX):
+        return (BUSY_INTERRUPT_ACK_RECALL_SECONDS if re.fullmatch(
+            r"⚡ Interrupting current task(?: \([^\r\n]*\))?\. I'll respond to your message shortly\.", text
+        ) else None)
     # The adapter also sends answers and important queue/error acknowledgements.
     # An hourglass alone is not evidence that a message is disposable status.
     if text.startswith(STATUS_NOTICE_PREFIX):
@@ -9675,16 +9683,12 @@ async def recall_transient_thread_notice_async(candidate: Any, content: Any, res
 
 
 async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) -> bool:
-    """Withdraw the busy-path redirect acknowledgement once the user has read it.
+    """Recall redirect/interrupt acknowledgements using the actual event route.
 
-    ``↪ Redirected current run. I'll adjust using your correction.`` confirms the correction was
-    taken; after that it is a stale instruction sitting in the thread, so it is recalled a few
-    seconds later. Other busy replies (steer, queued, interrupt) state something the user still
-    needs, so only the redirect acknowledgement is withdrawn. This name is the entry point the
-    installed busy-path patch block imports, so it stays; the prefix check keeps that call site
-    scoped to the acknowledgement even though the shared helper now also serves the heartbeat.
+    Keep the historical entry-point name for installed hook compatibility.
+    Steer/queue acknowledgements and interrupt onboarding guidance are retained.
     """
-    if not str(content or "").startswith(BUSY_REDIRECT_ACK_PREFIX):
+    if not str(content or "").startswith((BUSY_REDIRECT_ACK_PREFIX, BUSY_INTERRUPT_ACK_PREFIX)):
         return False
     return await recall_transient_thread_notice_async(event, content, result)
 
