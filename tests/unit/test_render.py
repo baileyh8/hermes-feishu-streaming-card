@@ -104,6 +104,72 @@ def test_render_completed_card_omits_zero_tool_timeline():
     })
 
 
+def test_tool_activity_window_shows_the_current_step_and_the_one_before_it():
+    """Two rows, oldest first: the current step and the one it replaced.
+
+    Maintainer note (contract): the content area used to render a single row, so the moment a tool
+    was replaced the reader lost the previous step entirely — the user's report was that on a
+    changeover they could not tell what the previous command had been
+    (「如果更换的时候 不知道上一条执行的是什么」). Running tools are never dropped to make room; the
+    window is backfilled from the most recent finished ones instead.
+    """
+    from hermes_feishu_card.events import SidecarEvent
+    from hermes_feishu_card.render import (
+        _TOOL_ACTIVITY_WINDOW,
+        _render_tool_activity_elements,
+    )
+
+    def build(spec):
+        session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+        for sequence, (tool_id, status, created_at) in enumerate(spec, start=1):
+            session.apply(
+                SidecarEvent(
+                    schema_version="1",
+                    event="tool.updated",
+                    conversation_id="chat-1",
+                    message_id="msg-1",
+                    chat_id="oc_abc",
+                    platform="feishu",
+                    sequence=sequence,
+                    created_at=created_at,
+                    data={
+                        "tool_id": tool_id,
+                        "name": "terminal",
+                        "status": status,
+                        "detail": "pytest -q",
+                    },
+                )
+            )
+        return session
+
+    assert _TOOL_ACTIVITY_WINDOW == 2
+
+    rows = _render_tool_activity_elements(
+        build(
+            (
+                ("terminal-1", "completed", 1.0),
+                ("terminal-2", "completed", 2.0),
+                ("terminal-3", "running", 3.0),
+            )
+        ),
+        display_status="running",
+    )
+
+    assert [row["element_id"] for row in rows] == ["tool_activity_0", "tool_activity_1"]
+    # Oldest first, newest last — and the newest is the running one.
+    assert "#2" in rows[0]["content"]
+    assert "执行中" not in rows[0]["content"]
+    assert "#3" in rows[1]["content"]
+    assert "执行中" in rows[1]["content"]
+
+    # The window is a ceiling, not a quota: one tool still renders one row.
+    assert len(
+        _render_tool_activity_elements(
+            build((("terminal-1", "completed", 1.0),)), display_status="completed"
+        )
+    ) == 1
+
+
 def test_running_tool_without_model_text_removes_loading_placeholder_from_body():
     from hermes_feishu_card.events import SidecarEvent
 

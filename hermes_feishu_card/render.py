@@ -1526,6 +1526,12 @@ _HEADER_ACTION_TEXT_MAX_CHARS = 100
 # render_card passes the card's configured max_tool_result_chars through; this default keeps direct
 # callers (and the config default in config.py) in step.
 _TOOL_ACTIVITY_TEXT_MAX_CHARS = 600
+# How many tool rows the content area shows. A single row answered "what is running now", but the
+# moment a tool was replaced the reader lost the previous step — the user's report was that on a
+# changeover they could not tell what the PREVIOUS command had been
+# (「如果更换的时候 不知道上一条执行的是什么」). Two rows, oldest first, keep the current step and the
+# one before it.
+_TOOL_ACTIVITY_WINDOW = 2
 # A tool's stored detail is MULTI-LINE: the tool preview, then "参数: …", then "耗时: …" (see
 # session._tool_detail_from_event_data). The action line must read the part that names the work.
 # Maintainer note (contract change): the argument line used to be treated as "no target" and the
@@ -1574,9 +1580,10 @@ def _render_tool_activity_elements(
 
     This used to be squeezed into the header as a truncated one-liner, where the session name
     was the thing that got dropped. A row per tool with a coloured status pill instead: one
-    glance at the content area answers "still working?". Once nothing is running, the most
-    recent tool stays as a single row so a finished card still shows what it did (the full
-    history lives in 思考过程, the count in the footer).
+    glance at the content area answers "still working?". The window is the last
+    ``_TOOL_ACTIVITY_WINDOW`` tools in start order, so a finished card still shows what it did and a
+    running card also shows the step it replaced (the full history lives in 思考过程, the count in the
+    footer).
     """
     if not session.tools:
         return []
@@ -1589,12 +1596,22 @@ def _render_tool_activity_elements(
     running = [
         tool for tool in session.tools.values() if turn_is_live and _tool_is_running(tool)
     ]
+    # Start order, oldest first, so the rows read top-to-bottom like the run did. The sort is stable,
+    # so tools that never reported a start time keep their insertion order.
+    ordered = sorted(session.tools.values(), key=lambda tool: tool.started_at or 0.0)
     if running:
         running.sort(key=lambda tool: tool.started_at or 0.0)
-        selected = running
+        # Every running tool stays visible; the window is then backfilled from the most recent
+        # finished tools, because the row that matters most on a changeover is the one BEFORE the
+        # current step.
+        shown = {id(tool) for tool in running}
+        for tool in reversed(ordered):
+            if len(shown) >= _TOOL_ACTIVITY_WINDOW:
+                break
+            shown.add(id(tool))
+        selected = [tool for tool in ordered if id(tool) in shown]
     else:
-        # tools is insertion-ordered: the last entry is the most recently started tool.
-        selected = list(session.tools.values())[-1:]
+        selected = ordered[-_TOOL_ACTIVITY_WINDOW:]
     now = _time.time()
     text_size = _role_text_size(
         text_sizes,

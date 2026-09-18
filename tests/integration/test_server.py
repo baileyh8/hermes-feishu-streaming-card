@@ -13800,6 +13800,34 @@ async def test_recall_schedule_clamps_the_delay_and_requires_a_message_id(client
     assert response.status == 400
 
 
+async def test_a_refused_recall_reports_why_it_was_refused(client, monkeypatch, caplog):
+    """A refusal must name the API's reason, not only the exception class.
+
+    Maintainer note (contract): ``_delete_card_for_app`` used to log the exception class alone, so a
+    live run with 12 of 44 recalls failing could not tell an API refusal from a message that had
+    already gone — and the metric could not either. ``FeishuAPIError`` carries
+    ``status_code``/``api_code`` and both must reach the log. The message id stays hashed: a recall
+    line must never put a real Feishu id in a log file.
+    """
+    test_client, feishu_client = client
+
+    async def _refuse(message_id):
+        raise FeishuAPIError("recall refused by api", status_code=400, api_code=230011)
+
+    monkeypatch.setattr(feishu_client, "delete_message", _refuse)
+
+    response = await test_client.post(
+        "/recall/schedule", json={"message_id": "om_secret_id", "delay_seconds": 0.05}
+    )
+
+    assert response.status == 200
+    await _wait_until(lambda: test_client.app[METRICS_KEY].ephemeral_recall_failures)
+    assert "FeishuAPIError" in caplog.text
+    assert "230011" in caplog.text
+    assert "400" in caplog.text
+    assert "om_secret_id" not in caplog.text
+
+
 async def test_a_refused_recall_is_counted_and_leaves_the_message_alone(client):
     """Feishu may refuse (missing scope, message too old): that is a counted best-effort miss."""
     test_client, feishu_client = client

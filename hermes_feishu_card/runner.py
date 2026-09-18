@@ -208,7 +208,30 @@ def _card_config_for_server(config: dict[str, Any]) -> dict[str, Any]:
     elif mode not in {"callback", "text", "markdown", "reply"}:
         card_config["interaction_mode"] = "callback"
     return card_config
+
+
+def _configure_logging() -> None:
+    """Give the sidecar a real log format, so its log is actually diagnosable.
+
+    Without this the process has no root handler and falls back to ``logging.lastResort``: only
+    WARNING and above reach the file, the format is the bare message, and there is **no timestamp**.
+    Measured live: ``ephemeral_recall_failures`` stood at 12 of 44 scheduled recalls while
+    ``sidecar.log`` held 50 bare ``Feishu card recall failed: FeishuAPIError`` lines that could not be
+    placed in time or tied to a run, because the class name was the only thing emitted.
+
+    ``process.py`` redirects stdout/stderr into ``sidecar.log``, so a stream handler is all that is
+    needed. Only the format and level are set here: ``basicConfig`` is a no-op when the root logger
+    already has handlers, so a future explicit configuration still wins.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_logging()
     parser = argparse.ArgumentParser(prog="hermes-feishu-card-sidecar")
     parser.add_argument("--config", default="config.yaml.example")
     parser.add_argument("--env-file")
