@@ -65,14 +65,20 @@ def test_hourglass_prefix_alone_never_authorizes_recall(text):
 
 
 @pytest.mark.asyncio
-async def test_busy_interrupt_uses_the_event_profile_without_adapter_context(monkeypatch):
+@pytest.mark.parametrize("text", [
+    "⚡ Interrupting current task. I'll respond to your message shortly.",
+    "⏩ Steered into current run. Your message arrives after the next tool call.",
+    "⏩ Steered into current run (2 min elapsed, running: terminal). Your message arrives after the next tool call.",
+    "⏩ Steered into current run and its active subagent(s). Your message arrives after their next tool call.",
+    "⏩ Steered into current run and its active subagent(s) (2 min elapsed). Your message arrives after their next tool call.",
+])
+async def test_busy_ack_uses_the_event_profile_without_adapter_context(monkeypatch, text):
     monkeypatch.delenv("HERMES_FEISHU_CARD_PROFILE_ID", raising=False)
     calls = []
     async def schedule(message_id, **kwargs):
         calls.append(kwargs["route"])
         return True
     monkeypatch.setattr(runtime, "schedule_message_recall_async", schedule)
-    text = "⚡ Interrupting current task. I'll respond to your message shortly."
     event = SimpleNamespace(source=SimpleNamespace(
         platform="feishu", profile_id="secondary", chat_id="chat_fixture"))
     assert await runtime.recall_busy_redirect_ack_async(
@@ -105,3 +111,12 @@ def test_unknown_conditional_only_tool_anchor_is_rejected(body):
     assert patcher._last_stable_tool_lifecycle_assignment_location(
         node, source.splitlines(keepends=True)
     ) is None
+
+
+@pytest.mark.parametrize("text", [
+    "⏩ Steered into current run is an example, not an acknowledgement.",
+    "⏩ Steered into current run. Your message arrives after the next tool call.\nKeep this guidance.",
+    "⏩ Steered into current run and its active subagent(s). Your message arrives after the next tool call.",
+])
+def test_busy_steer_prefix_does_not_authorize_recalling_other_content(text):
+    assert runtime._transient_notice_recall_seconds(text) is None

@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 - Bind lifecycle hooks outside the later muted-notification branch; reject unproven conditional anchors (#326, PR #325).
 - Recall only known transient status templates on their original profile/chat route; preserve answers and queue/error acknowledgements.
 - Keep restart text fallback, auxiliary approval controls, chronological body reasoning and meaningful footer metrics.
-- Keep two recent tool steps, safe timestamped diagnostics and profile-aware interrupt recall; retain onboarding guidance.
-- Retain @mouyong's original commits through `1894361`; add maintainer isolation, failure, redaction and control-flow regression checks.
+- Keep two recent tool steps, safe timestamped diagnostics and profile-aware interrupt/steer recall; retain onboarding guidance.
+- Retain @mouyong's original commits through `bf7409a`; add maintainer isolation, failure, redaction and control-flow regression checks.
 
 ## V4.6.0 — 2026-09-17
 
