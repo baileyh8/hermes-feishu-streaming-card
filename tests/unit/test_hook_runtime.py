@@ -3820,6 +3820,25 @@ def test_system_notice_delivered_suppresses_native_fallback(monkeypatch):
     assert calls == []
 
 
+def _notice_posts(posted):
+    """The sidecar calls that carried a NOTICE — the recall housekeeping is not one.
+
+    The plain-text egress door now also retires the restart notices standing in front of the message
+    it just sent (``POST /recall/supersede``), and a transient notice still arms its own withdrawal
+    (``POST /recall/schedule``). Neither carries a notice payload, so a test about WHICH notice
+    reaches the sidecar filters them out by url. Entries recorded as a bare payload cannot be a
+    recall call — only the notice path records without a url, and every recall call has one.
+    """
+    kept = []
+    for entry in posted:
+        if isinstance(entry, tuple) and entry:
+            url = str(entry[0])
+            if url.endswith("/recall/supersede") or url.endswith("/recall/schedule"):
+                continue
+        kept.append(entry)
+    return kept
+
+
 def _install_background_notice_probe(
     monkeypatch,
     *,
@@ -4281,7 +4300,9 @@ def test_malformed_background_notice_fails_open(monkeypatch, content):
 
     assert result.success is True
     assert result.message_id == "om_native_text"
-    assert posted == []
+    # No NOTICE reached the sidecar (the restart-group housekeeping is not a notice, see
+    # `_notice_posts`).
+    assert _notice_posts(posted) == []
     assert adapter.text_sent == [("oc_abc", content, None, None)]
 
 
@@ -4478,7 +4499,7 @@ def test_gateway_platform_notice_falls_back_for_non_system_notice(monkeypatch):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
-        posted.append(payload)
+        posted.append((url, payload))
         return {"ok": True, "applied": True}
 
     monkeypatch.setattr(
@@ -4523,7 +4544,7 @@ def test_gateway_platform_notice_falls_back_for_non_system_notice(monkeypatch):
 
     assert result.success is True
     assert result.message_id == "om_native_notice"
-    assert posted == []
+    assert _notice_posts(posted) == []
     assert runner.native_notices == [(source, "ordinary native notice")]
     assert adapter.text_sent == [
         ("oc_topic", "ordinary native notice", None, None),
@@ -4607,7 +4628,7 @@ def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
-        posted.append(payload)
+        posted.append((url, payload))
         return {
             "ok": True,
             "applied": True,
@@ -4673,15 +4694,20 @@ def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
     assert adapter.text_sent == ["⏳ Working — 2 min — iteration 1/90, terminal"]
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
-    # The ONLY thing that reaches the sidecar is the withdrawal request for that plain-text line —
+    # The dispatch that reaches the sidecar for that plain-text line is its withdrawal request —
     # no card is minted, so the sidecar can neither swallow nor duplicate the heartbeat. The
     # plain-text egress door schedules it (`_hfc_recall_plain_text_status_notice`), which is what
     # stops a ⏳ line from sitting in the thread after the turn ends: a card used to inherit the
     # sidecar's own recall deadline, and plain text has none.
-    assert len(posted) == 1
-    recall = posted[0]
+    recalls = [payload for url, payload in posted if str(url).endswith("/recall/schedule")]
+    assert len(recalls) == 1
+    recall = recalls[0]
     assert recall["message_id"] == sent.message_id
     assert recall["delay_seconds"] == hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+    # And the same door retires the restart group standing in front of the line it just sent, so a
+    # restart notice does not outlive the first message that follows it.
+    assert any(str(url).endswith("/recall/supersede") for url, _ in posted)
+    assert _notice_posts(posted) == []
 
 
 def test_native_feishu_stream_edit_drops_metadata_when_original_does_not_accept_it():
@@ -4848,7 +4874,7 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     ]
 
     async def fake_post_json_ordered_response(url, payload, timeout):
-        posted.append(payload)
+        posted.append((url, payload))
         return responses.pop(0)
 
     monkeypatch.setattr(
@@ -4904,10 +4930,12 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
     # The send never depends on the sidecar: it landed as plain text and the edit updated THAT line.
-    # The only request the sidecar sees is the withdrawal for that line, and the refusing responses
-    # above prove a refused recall cannot undo the send.
-    assert len(posted) == 1
-    assert posted[0]["message_id"] == sent.message_id
+    # The refusing responses above prove a refused recall cannot undo the send — which is exactly
+    # what the two refusals here are for (a recall the sidecar declined, then one it could not route).
+    recalls = [payload for url, payload in posted if str(url).endswith("/recall/schedule")]
+    assert len(recalls) == 1
+    assert recalls[0]["message_id"] == sent.message_id
+    assert _notice_posts(posted) == []
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():
@@ -13438,7 +13466,13 @@ def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
             return SimpleNamespace(success=True, message_id="om_plain")
 
     def no_card(*args, **kwargs):
-        pytest.fail("the restart-completion notice must not post a card payload")
+        # ``_post_json_ordered_response`` carries BOTH a card/render payload and the RECALL request.
+        # Only the former is forbidden here: the online line now arms its own withdrawal, because the
+        # restart pair retires itself (the next restart's "⚠️" notice withdraws this one). A recall
+        # posts a message id to be deleted — no card, no content.
+        url = args[0] if args else kwargs.get("url", "")
+        assert "/recall/" in str(url), "the restart-completion notice must not post a card payload"
+        return {"ok": True}
 
     monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", no_card)
 

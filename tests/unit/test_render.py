@@ -104,24 +104,31 @@ def test_render_completed_card_omits_zero_tool_timeline():
     })
 
 
-def test_tool_activity_window_shows_the_current_step_and_the_one_before_it():
-    """Two rows, oldest first: the current step and the one it replaced.
+def test_completed_turn_can_hide_the_tool_rows_without_touching_the_panel():
+    """Issue #328: `hide_completed_tool_activity` (default true) drops the rows on a COMPLETED turn.
 
-    Maintainer note (contract): the content area used to render a single row, so the moment a tool
-    was replaced the reader lost the previous step entirely — the user's report was that on a
-    changeover they could not tell what the previous command had been
-    (「如果更换的时候 不知道上一条执行的是什么」). Running tools are never dropped to make room; the
-    window is backfilled from the most recent finished ones instead.
+    The content-area rows are gated on `pending_approval` alone — `show_reasoning` reaches only the
+    思考过程 panel — so a deployment that wants "answer + footer" on a finished card had no switch.
+    Contract: true (the default) hides them once completed; false keeps them. Either way a running
+    turn is untouched, and neither the panel nor the footer's 工具 #N count is affected. A failed
+    turn keeps its rows in BOTH settings, because there they carry the 已中断 pill naming where the
+    run stopped.
+
+    Named `hide_` rather than `show_` because the default is to hide — the user's rule is
+    「如果整个卡已经完成，那么正文里面最近的工具行也的确可以关闭展示了」, so a `show_…: true` default
+    would have shipped the feature off.
     """
     from hermes_feishu_card.events import SidecarEvent
-    from hermes_feishu_card.render import (
-        _TOOL_ACTIVITY_WINDOW,
-        _render_tool_activity_elements,
-    )
+    from hermes_feishu_card.render import StatusConfig, render_card, resolve_display_status
 
-    def build(spec):
+    def build(status):
         session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
-        for sequence, (tool_id, status, created_at) in enumerate(spec, start=1):
+        tools = (
+            ("terminal-1", "completed", 1.0),
+            ("terminal-2", "completed", 2.0),
+            ("terminal-3", "running" if status == "running" else "completed", 3.0),
+        )
+        for sequence, (tool_id, tool_status, created_at) in enumerate(tools, start=1):
             session.apply(
                 SidecarEvent(
                     schema_version="1",
@@ -135,39 +142,109 @@ def test_tool_activity_window_shows_the_current_step_and_the_one_before_it():
                     data={
                         "tool_id": tool_id,
                         "name": "terminal",
-                        "status": status,
+                        "status": tool_status,
+                        "detail": "pytest -q",
+                    },
+                )
+            )
+        session.status = status
+        return session
+
+    def rows(card):
+        return [
+            item
+            for item in card["body"]["elements"]
+            if str(item.get("element_id", "")).startswith("tool_activity_")
+        ]
+
+    def render(status, flag):
+        session = build(status)
+        resolved = resolve_display_status(session, StatusConfig.defaults()).value
+        # A finished turn resolves to its own status; a live one resolves to a live phase
+        # (thinking / waiting), never to completed/failed.
+        if status in {"completed", "failed"}:
+            assert resolved == status
+        else:
+            assert resolved not in {"completed", "failed"}
+        return render_card(session, hide_completed_tool_activity=flag)
+
+    # Default (true) = a finished card is answer + footer only; false brings the rows back.
+    assert rows(render("completed", True)) == []
+    assert rows(render("completed", False))
+
+    # A running turn is unaffected — this is the live progress line, and the panel is not up yet.
+    assert len(rows(render("running", True))) == len(rows(render("running", False)))
+
+    # A failed turn keeps its rows: the 已中断 pill names where the run stopped.
+    assert len(rows(render("failed", True))) == len(rows(render("failed", False)))
+
+
+def test_tool_activity_keeps_every_running_tool_with_its_own_predecessor():
+    """The live window is 「每个执行中的 + 它自己的前一条」, not a count.
+
+    Maintainer note (contract change): this replaces a "last two tools" window. The user's rule
+    (verbatim): 「不是执行中最靠前的那一条 而是执行中的前一条。例如，13 在执行中，那么 13 的前一条是 12，
+    要保留。例如，16 在执行中，那么 16 的前一条是 15，16 和 15 一起保留。13、22 都在执行中，那么 12、13
+    保留，19、20 保留」, extended by 「如果 13、16、20 都在跑的时候，那么它们都是应该保留的」.
+
+    Two earlier shapes were wrong and this test pins the difference:
+    - a COUNT-based window (`last N`) dropped members of a parallel batch, so four concurrent
+      commands rendered as one;
+    - a single window anchored on the EARLIEST running tool swallowed the gap between two separate
+      live steps (13 and 20 both running produced everything from 12 through 20).
+    Ordering is by `ordinal` for a measured reason: `session.py` records `started_at` only while a
+    tool is running, so sorting by it pulled terminal tools to the front and #13's "predecessor"
+    resolved to #20.
+    """
+    from hermes_feishu_card.events import SidecarEvent
+    from hermes_feishu_card.render import _render_tool_activity_elements
+
+    def build(total, running_set):
+        session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+        for position in range(1, total + 1):
+            session.apply(
+                SidecarEvent(
+                    schema_version="1",
+                    event="tool.updated",
+                    conversation_id="chat-1",
+                    message_id="msg-1",
+                    chat_id="oc_abc",
+                    platform="feishu",
+                    sequence=position,
+                    created_at=float(position),
+                    data={
+                        "tool_id": "terminal-%d" % position,
+                        "name": "terminal",
+                        "status": "running" if position in running_set else "completed",
                         "detail": "pytest -q",
                     },
                 )
             )
         return session
 
-    assert _TOOL_ACTIVITY_WINDOW == 2
-
-    rows = _render_tool_activity_elements(
-        build(
-            (
-                ("terminal-1", "completed", 1.0),
-                ("terminal-2", "completed", 2.0),
-                ("terminal-3", "running", 3.0),
-            )
-        ),
-        display_status="running",
-    )
-
-    assert [row["element_id"] for row in rows] == ["tool_activity_0", "tool_activity_1"]
-    # Oldest first, newest last — and the newest is the running one.
-    assert "#2" in rows[0]["content"]
-    assert "执行中" not in rows[0]["content"]
-    assert "#3" in rows[1]["content"]
-    assert "执行中" in rows[1]["content"]
-
-    # The window is a ceiling, not a quota: one tool still renders one row.
-    assert len(
-        _render_tool_activity_elements(
-            build((("terminal-1", "completed", 1.0),)), display_status="completed"
+    def shown(total, running_set, display_status="running"):
+        rows = _render_tool_activity_elements(
+            build(total, running_set), display_status=display_status
         )
-    ) == 1
+        ordered = []
+        for row in rows:
+            first_line = row["content"].splitlines()[0]
+            ordered.append("#" + first_line.split("#")[1].split(" ")[0].rstrip("·").strip())
+        return ordered
+
+    assert shown(20, {13}) == ["#12", "#13"]
+    assert shown(20, {16}) == ["#15", "#16"]
+    assert shown(22, {13, 20}) == ["#12", "#13", "#19", "#20"]
+    assert shown(20, {13, 16}) == ["#12", "#13", "#15", "#16"]
+    assert shown(20, {13, 16, 20}) == ["#12", "#13", "#15", "#16", "#19", "#20"]
+    # A whole parallel batch: every member stays, and one predecessor in front of the batch.
+    assert shown(20, {13, 14, 15, 16}) == ["#12", "#13", "#14", "#15", "#16"]
+    # The first tool of a session has no predecessor to pair with.
+    assert shown(3, {1}) == ["#1"]
+
+    # Nothing running (turn over): the last two steps stay, so a changeover is still readable.
+    assert shown(20, set(), display_status="completed") == ["#19", "#20"]
+
 
 
 def test_running_tool_without_model_text_removes_loading_placeholder_from_body():
@@ -1568,14 +1645,14 @@ def test_subscription_usage_alone_keeps_the_footer_line():
     assert "5h 26% · weekly 89%" in footer["content"]
 
 
-def test_body_reasoning_reads_chronologically_while_the_panel_reads_newest_first():
-    """正文的思考按发生顺序读；折叠面板仍最新在前。
+def test_body_reasoning_and_the_panel_both_read_chronologically():
+    """正文的思考与折叠面板都按发生顺序读。
 
-    Maintainer note (contract change): the newest-first flip was applied to EVERY timeline entry,
-    so the reasoning blocks rendered into the CARD BODY came out bottom-up ("思考 3" above "思考 1")
-    while the panel below them read top-down. The user asked for the body to be chronological
-    ("正文的思考应该正序") and for the panel to stay newest-first ("Timeline 最好倒序一下"). One pass
-    now yields both orders: reasoning keeps its recorded order, panel-only entries are reversed.
+    Maintainer note (contract change): the newest-first flip once applied to every timeline entry, so
+    the reasoning blocks in the CARD BODY came out bottom-up ("思考 3" above "思考 1") while the panel
+    read top-down. The body was then restored to chronological ("正文的思考应该正序") and the panel
+    asked for the same later (「Timeline 的工具正序一下」). Both surfaces are chronological now, and
+    the body's thinking still stays out of the collapsed panel so it is not read twice.
     """
     from hermes_feishu_card.card_timeline import TimelineEntry
 
@@ -1607,7 +1684,7 @@ def test_body_reasoning_reads_chronologically_while_the_panel_reads_newest_first
     panel = next(item for item in elements if item.get("tag") == "collapsible_panel")
     panel_text = " ".join(item.get("content", "") for item in panel["elements"])
     assert "第1段" not in panel_text  # body thinking stays out of the collapsed panel
-    assert panel_text.index("web_search") < panel_text.index("terminal")
+    assert panel_text.index("terminal") < panel_text.index("web_search")
 
 
 def test_render_completed_card_footer_uses_compact_metrics_format():
@@ -2127,9 +2204,9 @@ def test_render_tool_timeline_uses_compact_semantic_event_rows():
         for item in timeline["elements"]
         if str(item.get("element_id", "")).startswith("auxiliary_timeline_toolentry_")
     ]
-    # Newest first (see test_render_timeline_reads_newest_first): the row for the LAST event leads, so
-    # the unpack order is the reverse of the order the events were applied in.
-    failed, running, completed = (row["content"] for row in rows)
+    # Chronological (see test_render_timeline_reads_chronologically): rows come out in the order the
+    # events were applied, so the unpack order follows them directly.
+    completed, running, failed = (row["content"] for row in rows)
 
     assert completed.startswith('<font color="green">✓ **terminal** · #1 · 250ms</font>')
     assert '<font color="grey">　参数: ' in completed
@@ -2584,14 +2661,16 @@ def test_render_omits_redundant_tool_summary_when_timeline_is_visible():
     assert "思考过程" in str(card)
 
 
-def test_render_timeline_reads_newest_first():
-    """The 思考过程 panel is ordered newest → oldest, so the latest work is read first.
+def test_render_timeline_reads_chronologically():
+    """The 思考过程 panel is ordered oldest → newest, matching how the turn happened.
 
-    Maintainer note (contract change): the panel used to be chronological (oldest first). Because the
-    panel sits at the BOTTOM of a card that is read downward, the entry the reader most wants ("what
-    is happening now?") was the furthest from their eye — the user asked for reverse order
-    ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). Selection is unchanged: the same entries are
-    shown, only the order they are written in flips.
+    Maintainer note (contract change): this was briefly reversed ("Timeline 最好倒序一下 阅读上能够看
+    最近的比较方便") so the latest work sat nearest the reader's eye. The user then asked for it back
+    (「Timeline 的工具正序一下」): a panel that reads top-to-bottom in the order things actually ran is
+    easier to follow than one you scan upward, and it now matches the body's reasoning entries, which
+    are chronological for the same reason (「正文的思考应该正序」).
+
+    Selection is unchanged — the same entries are shown, only the order they are written in.
     """
     from hermes_feishu_card.events import SidecarEvent
 
@@ -2621,10 +2700,10 @@ def test_render_timeline_reads_newest_first():
     )
     content = "".join(item["content"] for item in timeline["elements"])
 
-    newest = content.index("step_2")
-    middle = content.index("step_1")
     oldest = content.index("step_0")
-    assert newest < middle < oldest
+    middle = content.index("step_1")
+    newest = content.index("step_2")
+    assert oldest < middle < newest
 
 
 def test_render_timeline_folds_old_entries_before_answer():

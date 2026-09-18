@@ -39,7 +39,13 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "interaction_mode": "auto",
         "streaming_mode": False,
         "show_reasoning": True,
-        "hide_completed_tool_activity": False,
+        # Issue #328: a FINISHED turn may keep the content-area tool rows or drop them. `show_reasoning`
+        # does not reach them (the 思考过程 panel is a separate block), so this is its own switch.
+        # Default true = a COMPLETED turn shows answer + footer only; set false to keep the rows.
+        # Never applies to a running turn (the rows ARE its progress) or a FAILED one: there they
+        # carry the 已中断 pill that names where the run stopped. The panel and the footer's 工具 #N
+        # count are untouched either way.
+        "hide_completed_tool_activity": True,
         "reasoning_format": "panel",
         "timeline_expanded": False,
         "max_timeline_items": 12,

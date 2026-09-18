@@ -8327,6 +8327,57 @@ async def test_completion_notify_sends_plain_without_sender_when_mention_disable
         await test_client.close()
 
 
+async def test_the_completion_notify_clears_the_restart_group_in_front_of_it(tmp_path):
+    """「✅ 本轮回复结束」 is a message we posted, so it retires the restart notices before it.
+
+    This is the one sidecar-originated plain text, so it never passes the gateway's plain-text door
+    where the other sends are caught. Left out, a restart's 「♻️ … online」 sat below the completion
+    notice and the reader had no way to tell which one was current.
+
+    Called directly on purpose: a ``message.completed`` event also writes the card, and that path
+    clears the group by itself — which would make this pass with or without the fix, proving nothing.
+    """
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={"completion_notify": {"placement": "message", "enabled": True, "mention": False}},
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started", 0, {"reply_to_message_id": ""}, thread_id="omt_thread"
+            ),
+        )
+        session_key = "hermes-message-1"
+        session = app[SESSIONS_KEY][session_key]
+        session.status = "completed"
+        session.completion_notify_state = "idle"
+        # Registered after the started event, so nothing else has had a chance to clear it.
+        app[sidecar_server.SUPERSEDED_NOTICE_IDS_KEY]["restart-notice:default:oc_abc:omt_thread"] = {
+            "message_id": "om_restart_online",
+            "bot_id": "",
+            "chat_id": "oc_abc",
+            "conversation_id": "omt_thread",
+        }
+        assert feishu_client.deleted == []
+
+        event = sidecar_server.SidecarEvent.from_dict(
+            event_payload("message.completed", 1, {"answer": "done"}, thread_id="omt_thread")
+        )
+        await sidecar_server._maybe_send_completion_notify(app, session_key, session, event)
+
+        assert feishu_client.texts == [("oc_abc", "✅ 本轮回复结束", "omt_thread", None)]
+        await _wait_until(lambda: feishu_client.deleted)
+        assert "om_restart_online" in feishu_client.deleted
+    finally:
+        await test_client.close()
+
+
 async def test_completion_notify_rejects_invalid_sender_when_mention_enabled(
     tmp_path,
 ):
@@ -13773,6 +13824,121 @@ async def test_recall_schedule_withdraws_a_message_once_its_delay_elapses(client
     assert test_client.app[METRICS_KEY].ephemeral_recalls_scheduled == 1
     assert test_client.app[METRICS_KEY].ephemeral_recalls_completed == 1
     assert test_client.app[METRICS_KEY].ephemeral_recall_failures == 0
+
+
+async def test_superseding_notices_retire_the_previous_one_of_their_family(client):
+    """A self-retiring notice family: the new member withdraws the old one and keeps no deadline.
+
+    The restart pair needs this because its two halves are sent by DIFFERENT gateway processes — the
+    "⚠️ … restarting" line by the process shutting down and the "♻️ online" line by the one that boots
+    in its place — so "the previous one" is only nameable in the sidecar, which outlives both.
+    ``record_only`` keeps the newest member alive: it is retired by the NEXT notice, not by a clock.
+    """
+    test_client, feishu_client = client
+
+    first = await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_restart_warning", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_x:"},
+    )
+    assert first.status == 200
+    first_body = await first.json()
+    assert first_body["ok"] is True
+    assert first_body["superseded"] is None
+    # A record_only member gets no deadline of its own — it must still be readable.
+    assert feishu_client.deleted == []
+    assert test_client.app[METRICS_KEY].ephemeral_recalls_scheduled == 0
+
+    second = await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_gateway_online", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_x:"},
+    )
+    assert second.status == 200
+    assert (await second.json())["superseded"] == "om_restart_warning"
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_restart_warning"]
+
+    # The key is per chat: a different chat's notice must not retire this one, or a home-channel
+    # broadcast would delete a thread's warning.
+    third = await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_other_chat", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_other:"},
+    )
+    assert third.status == 200
+    assert (await third.json())["superseded"] is None
+    assert feishu_client.deleted == ["om_restart_warning"]
+
+
+async def test_any_new_message_clears_the_restart_group_in_front_of_it(client):
+    """Any message the bot posts retires the restart notices standing in that chat.
+
+    A restart group has no lifetime of its own — what ends it is the NEXT message, whichever message
+    that is (「任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息
+    撤回」). The sidecar applies this on its own sends; plain-text sends that never reach it (the home
+    channel) go through ``/recall/supersede`` instead.
+    """
+    test_client, feishu_client = client
+    route = {"chat_id": "oc_topic", "conversation_id": "omt_topic"}
+
+    registered = await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_restart_warning", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_topic:omt_topic", "route": route},
+    )
+    assert registered.status == 200
+    assert feishu_client.deleted == []
+
+    # A message in ANOTHER chat must not clear this one's group.
+    elsewhere = await test_client.post(
+        "/recall/supersede",
+        json={"route": {"chat_id": "oc_elsewhere", "conversation_id": "omt_elsewhere"}},
+    )
+    assert elsewhere.status == 200
+    assert (await elsewhere.json())["withdrawn"] == 0
+    assert feishu_client.deleted == []
+
+    # A plain-text send in the same chat clears it.
+    sent = await test_client.post("/recall/supersede", json={"route": route})
+    assert sent.status == 200
+    assert (await sent.json())["withdrawn"] == 1
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_restart_warning"]
+
+    # The key is dropped with the notice: a second message has nothing left to clear.
+    again = await test_client.post("/recall/supersede", json={"route": route})
+    assert (await again.json())["withdrawn"] == 0
+
+
+async def test_a_new_card_clears_the_restart_group_posted_before_it(client):
+    """The bot's own card — the way a turn's reply arrives — clears the group too.
+
+    This is the path that matters in practice: a restart drops "⚠️ … restarting" and "♻️ … online"
+    into the thread, and the next turn's card is the first thing the user actually wants to read.
+    """
+    test_client, feishu_client = client
+    route = {"chat_id": "oc_card", "conversation_id": "omt_card"}
+
+    await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_restart_warning", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_card:omt_card", "route": route},
+    )
+    assert feishu_client.deleted == []
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started", 1, {"answer": "开始", "delivery_kind": "notice"},
+            conversation_id="omt_card", message_id="om_turn_card",
+            chat_id="oc_card", thread_id="omt_card",
+        ),
+    )
+    assert started.status == 200
+
+    await _wait_until(lambda: feishu_client.deleted)
+    assert "om_restart_warning" in feishu_client.deleted
 
 
 async def test_recall_schedule_clamps_the_delay_and_requires_a_message_id(client):
