@@ -204,7 +204,66 @@ def test_tool_ordinal_counts_each_call_and_survives_status_updates():
     assert "#2" in rows[1]["content"] and "执行中" in rows[1]["content"]
 
 
+def test_a_late_running_event_does_not_renumber_a_finished_tool():
+    """A finished tool that gets another `running` tick keeps its number — so `#N` has no holes.
+
+    Regression, measured in the field: re-numbering a tool that had already gone terminal consumed a
+    number while its ONE row moved to the new one, so the old number stayed vacant forever. Every
+    hole found on disk had a running tool immediately after it — a checkpoint held ordinals [1…9, 11,
+    12] with 10 vacant and the running read_file on #11, which is exactly what the reader asked about
+    (「为什么工具 11 在执行，但是显示了前面的却是工具 9？那工具 10 怎么不见了」). All 11 ids in that
+    checkpoint were unique, so the second event was a replay/late tick for the SAME call: a call that
+    has already finished cannot also be the fresh start of a call.
+
+    The title's 工具 #N tally is the same counter, so a hole there also made the count disagree with
+    the rows the card shows.
+    """
+    session = _session()
+    session.apply(_tool_event(tool_id="t1", name="terminal", sequence=1, created_at=1.0))
+    session.apply(
+        _tool_event(tool_id="t1", name="terminal", status="completed", sequence=2, created_at=2.0)
+    )
+    # A late tick brings the finished tool back to running — the very shape that used to renumber it.
+    session.apply(
+        _tool_event(tool_id="t1", name="terminal", status="running", sequence=3, created_at=3.0)
+    )
+    session.apply(_tool_event(tool_id="t2", name="read_file", sequence=4, created_at=4.0))
+
+    ordinals = sorted(tool.ordinal for tool in session.tools.values())
+    assert ordinals == [1, 2]
+    # The tally and the rows agree, which is what the reader checks against the card.
+    assert session.tool_count == len(session.tools)
+
+
+def test_a_reused_tool_id_is_still_counted_as_a_new_call():
+    """The upstream contract this fix must NOT break: a repeated `completed` for one id counts again.
+
+    Pinned by `test_timeline_preserves_repeated_completed_tool_calls_with_same_id` in test_session.py;
+    repeated here as the counterweight, so a future "make ordinals stable" change cannot quietly drop
+    a genuinely new execution from the tally. Only a terminal→running tick is treated as a replay.
+    """
+    session = _session()
+    for index in range(3):
+        session.apply(
+            _tool_event(
+                tool_id="execute_code",
+                name="execute_code",
+                status="completed",
+                sequence=index + 1,
+                created_at=float(index + 1),
+            )
+        )
+
+    assert session.tool_count == 3
+
+
 def test_finished_card_keeps_one_tool_row_as_evidence_of_what_ran():
+    """With the rows switched ON, a finished card keeps one row as evidence of what ran.
+
+    ``hide_completed_tool_activity`` (default true) now drops the rows on a completed turn, so this
+    keeps the row-format contract pinned for a deployment that sets it false — otherwise the switch
+    would have silently removed the only test of what a finished card's row looks like.
+    """
     session = _session()
     session.apply(
         _tool_event(tool_id="t1", name="terminal", status="completed", detail="pytest -q")
@@ -212,10 +271,13 @@ def test_finished_card_keeps_one_tool_row_as_evidence_of_what_ran():
     session.status = "completed"
     session.answer_text = "完成"
 
-    rows = _elements(render_card(session), "tool_activity_")
+    rows = _elements(render_card(session, hide_completed_tool_activity=False), "tool_activity_")
 
     assert len(rows) == 1
     assert "<text_tag color='green'>已完成</text_tag>" in rows[0]["content"]
+
+    # The default hides them instead — the same switch, the other way round.
+    assert _elements(render_card(session), "tool_activity_") == []
 
 
 def test_verb_only_tool_line_is_dropped_from_the_row():
@@ -232,7 +294,9 @@ def test_verb_only_tool_line_is_dropped_from_the_row():
     session.status = "completed"
     session.answer_text = "完成"
 
-    row = _elements(render_card(session), "tool_activity_0")[0]["content"]
+    row = _elements(
+        render_card(session, hide_completed_tool_activity=False), "tool_activity_0"
+    )[0]["content"]
 
     assert row == (
         "<text_tag color='green'>已完成</text_tag> · "
@@ -247,7 +311,9 @@ def test_verb_only_tool_line_is_dropped_from_the_row():
     targeted.status = "completed"
     targeted.answer_text = "完成"
     # The same phrase WITH a target still earns its line.
-    assert "执行命令：pytest -q" in _elements(render_card(targeted), "tool_activity_0")[0][
+    assert "执行命令：pytest -q" in _elements(
+        render_card(targeted, hide_completed_tool_activity=False), "tool_activity_0"
+    )[0][
         "content"
     ]
 

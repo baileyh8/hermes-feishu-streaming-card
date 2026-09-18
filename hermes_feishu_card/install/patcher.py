@@ -3624,6 +3624,10 @@ def _render_queued_followup_hook_block(indent: str, newline: str):
         f"{indent}try:{newline}",
         (
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import interrupted_turn_locals as _hfc_interrupted_locals{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import emit_from_hermes_locals_async as _hfc_emit_async{newline}"
         ),
         f"{inner_indent}if pending_event is not None:{newline}",
@@ -3633,9 +3637,9 @@ def _render_queued_followup_hook_block(indent: str, newline: str):
         f"{deeper_indent}_hfc_was_interrupted = bool(locals().get(\"was_interrupted\") or (result.get(\"interrupted\") if isinstance(result, dict) else False)){newline}",
         f"{deeper_indent}if _hfc_was_interrupted and _hfc_original_message_id:{newline}",
         (
-            f"{deepest_indent}await _hfc_emit_async({{"
-            f"\"source\": source, \"chat_id\": getattr(source, \"chat_id\", None), "
-            f"\"message_id\": _hfc_original_message_id, \"error\": \"用户已打断当前任务\"}}, event_name=\"message.failed\"){newline}"
+            f"{deepest_indent}await _hfc_emit_async("
+            f"_hfc_interrupted_locals(source, _hfc_original_message_id, result), "
+            f"event_name=\"message.failed\"){newline}"
         ),
         f"{deeper_indent}if _hfc_followup_message_id:{newline}",
         f"{deepest_indent}from copy import copy as _hfc_copy{newline}",

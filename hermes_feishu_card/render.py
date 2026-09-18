@@ -119,6 +119,7 @@ def render_card(
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
     completion_mention: bool = False,
+    hide_completed_tool_activity: bool = True,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -137,6 +138,7 @@ def render_card(
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
+        hide_completed_tool_activity=hide_completed_tool_activity,
     ).card
 
 
@@ -157,6 +159,7 @@ def render_card_result(
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
     completion_mention: bool = False,
+    hide_completed_tool_activity: bool = True,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(session)
     table_overflow = transform_table_overflow(
@@ -180,6 +183,7 @@ def render_card_result(
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
+        hide_completed_tool_activity=hide_completed_tool_activity,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -223,6 +227,7 @@ def _render_card_unchecked(
     mentions_enabled: bool = True,
     reasoning_format: str = "panel",
     completion_mention: bool = False,
+    hide_completed_tool_activity: bool = True,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -303,9 +308,26 @@ def _render_card_unchecked(
                 used_roles=used_text_size_roles,
             ),
         )
+    # `card.hide_completed_tool_activity` (default true) decides whether a FINISHED turn keeps the
+    # content-area tool rows. While a turn runs they are the live progress line and the 思考过程 panel
+    # below does not exist yet; once it is done they restate entries that panel already holds — the
+    # reader wants the answer, and can open the panel for the process. The user's rule:
+    # 「如果整个卡已经完成，那么正文里面最近的工具行也的确可以关闭展示了」.
+    #
+    # The switch is spelled `hide_` rather than `show_` because the DEFAULT is to hide: a finished
+    # card reads as answer + footer, and a deployment that wants the rows back sets it false. A
+    # `show_…: true` default would have meant the feature is off unless every deployment opts in.
+    #
+    # Deliberately NOT applied to a FAILED turn: there the rows carry the 已中断 pill, i.e. WHERE the
+    # run stopped — the one thing a reader opens a failed card for (see _interrupted_tool_pill's
+    # rationale). Hiding a stopped run's last step would delete the diagnostic, not the noise.
+    hide_completed_rows = (
+        hide_completed_tool_activity
+        and (display_status == "completed" or session.status == "completed")
+    )
     tool_activity_elements = (
         []
-        if pending_approval
+        if pending_approval or hide_completed_rows
         else _render_tool_activity_elements(
             session,
             text_sizes=text_sizes,
@@ -1596,21 +1618,41 @@ def _render_tool_activity_elements(
     running = [
         tool for tool in session.tools.values() if turn_is_live and _tool_is_running(tool)
     ]
-    # Start order, oldest first, so the rows read top-to-bottom like the run did. The sort is stable,
-    # so tools that never reported a start time keep their insertion order.
-    ordered = sorted(session.tools.values(), key=lambda tool: tool.started_at or 0.0)
+    # Start order, oldest first, so the rows read top-to-bottom like the run did.
+    #
+    # Ordered by `ordinal`, NOT by `started_at`: session.py only records a start time for a tool that
+    # is still running (`started_at = None if is_terminal`), so a tool whose first event was already
+    # terminal sorts to the FRONT — "the row before this one" then resolved to an unrelated late tool
+    # (measured: with #13 running, its predecessor came back as #20). `ordinal` is the session-wide
+    # call counter and is exactly the #N the card prints, so it is both the correct and the stable key.
+    ordered = sorted(session.tools.values(), key=lambda tool: tool.ordinal or 0)
     if running:
         running.sort(key=lambda tool: tool.started_at or 0.0)
-        # Every running tool stays visible; the window is then backfilled from the most recent
-        # finished tools, because the row that matters most on a changeover is the one BEFORE the
-        # current step.
-        shown = {id(tool) for tool in running}
-        for tool in reversed(ordered):
-            if len(shown) >= _TOOL_ACTIVITY_WINDOW:
-                break
-            shown.add(id(tool))
-        selected = [tool for tool in ordered if id(tool) in shown]
+        # Maintainer note (contract change): EVERY running tool keeps its OWN predecessor, rather
+        # than one window measured from the earliest running tool.
+        #
+        # The user's rule, verbatim: 「不是执行中最靠前的那一条 而是执行中的前一条。例如，13 在执行中，
+        # 那么 13 的前一条是 12，要保留。例如，16 在执行中，那么 16 的前一条是 15，16 和 15 一起保留。
+        # 13、22 都在执行中，那么 12、13 保留，19、20 保留」.
+        #
+        # Why the earlier shapes were wrong: a count-based window (`last N tools`) dropped members of a
+        # parallel batch, and a single window anchored on the EARLIEST running tool still swallowed the
+        # gap between two separate live steps — with 13 and 20 both running it produced everything from
+        # 12 through 20, burying 14…19 rows the reader never asked for. Pairing each running tool with
+        # the row from before it shows exactly the two facts a reader needs: what is running now, and
+        # what just finished before it.
+        keep_ids = set()
+        for tool in running:
+            keep_ids.add(id(tool))
+            position = next(
+                index for index, candidate in enumerate(ordered) if candidate is tool
+            )
+            if position > 0:
+                keep_ids.add(id(ordered[position - 1]))
+        selected = [tool for tool in ordered if id(tool) in keep_ids]
     else:
+        # Nothing is running: a finished card keeps the last two steps so a changeover is still
+        # readable after the turn ends (same rule the user gave for the live case).
         selected = ordered[-_TOOL_ACTIVITY_WINDOW:]
     now = _time.time()
     text_size = _role_text_size(
@@ -1785,8 +1827,22 @@ def _tool_activity_row(
     # keeping both in the same order across surfaces avoids re-reading the same pair twice.
     if tool.ordinal:
         parts.append(f"#{tool.ordinal}")
+    # Maintainer note (contract change): the duration is printed for EVERY state, not only while the
+    # tool runs. It used to be derived live from `started_at` and only for a running tool, so the
+    # number disappeared exactly when the call finished — the row a reader checks to see what a step
+    # COST was the one row without it. The user asked that directly
+    # (「正文中已完成的工具行是看不到执行时长吗」). A running tool still counts up from `started_at`;
+    # a finished one reports the measurement the terminal event carried (`tool.duration_ms`).
+    elapsed: float | None = None
     if running and tool.started_at:
-        parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
+        elapsed = max(0.0, now - float(tool.started_at))
+    elif tool.duration_ms is not None:
+        try:
+            elapsed = max(0.0, float(tool.duration_ms) / 1000.0)
+        except (TypeError, ValueError):
+            elapsed = None
+    if elapsed is not None:
+        parts.append(_format_duration(elapsed))
     # Maintainer note (contract change): this was ONE line — status, tool name, duration, ordinal and
     # the action all joined by " · ". The user's report was that cramming them together is confusing
     # ("不然都挤在一行 很混乱"), and asked for three rows: status information, then the action, then
@@ -1834,28 +1890,31 @@ def _render_timeline_elements(
     all_entries = session.timeline.snapshot()
     if not all_entries:
         return []
-    entries = _select_timeline_entries(all_entries, max_items=max_items)
+    # 「每一次思考都保留他最后 2 次的工具执行」 — the same window the content-area rows use, applied
+    # per reasoning block instead of once for the whole log. Done BEFORE the size window so a block
+    # that ran twenty tools cannot consume the whole budget and push the earlier blocks (and their
+    # thinking) out of the panel.
+    entries = _keep_recent_tools_after_each_reasoning(
+        all_entries, per_reasoning=_TOOL_ACTIVITY_WINDOW
+    )
+    entries = _select_timeline_entries(entries, max_items=max_items)
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
-    # NEWEST FIRST — for the PANEL. The user asked for the panel to read in reverse order so the most
-    # recent work is the first thing they see ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). A live
-    # log's useful end is its LAST entry, and this panel is appended to the bottom of a card that is
-    # read downward — so the newest work used to be the furthest thing from the reader's eye.
-    # Only the DISPLAY order flips: _select_timeline_entries still decides which entries fit (it
-    # keeps the newest window and guarantees the latest reasoning is included).
+    # CHRONOLOGICAL — for the PANEL. The order was briefly reversed (newest first) so the latest work
+    # was nearest the reader's eye; the user then asked for it back the other way
+    # (「Timeline 的工具正序一下」). A panel that reads top-to-bottom as the turn actually happened is
+    # easier to follow than one you scan upward, and it matches the body's reasoning entries, which
+    # were already restored to chronological order for the same reason
+    # (「正文的思考应该正序」).
     #
-    # Maintainer note (contract change): the reasoning entries that render into the CARD BODY are the
-    # exception, and they keep chronological order. Body thinking is prose the reader follows
-    # FORWARD ("思考 1", then "思考 2"), not a log they scan for the latest state — newest-first made
-    # the body read bottom-up, which is what the user reported ("正文的思考应该正序"). `index` still
-    # carries each entry's original position, so element ids are unchanged and identical entries are
-    # still selected; only the order they are written in differs per surface.
-    panel_order = [(i, e) for i, e in reversed(list(enumerate(entries)))]
+    # Only the DISPLAY order changed: `_select_timeline_entries` still decides which entries fit (it
+    # keeps the newest window and guarantees the latest reasoning is included), and each entry keeps
+    # its own `index`, so element ids are unchanged whichever order they are written in.
+    panel_order = list(enumerate(entries))
     if reasoning_format == "code":
         # "code" puts reasoning in the body (see the target_elements split below) and tools in the
-        # panel, so the two orders can differ. Any other format folds reasoning into the panel,
-        # where newest-first applies to everything.
+        # panel. Both surfaces are chronological now, so the two groups keep their original order.
         ordered = [(i, e) for i, e in enumerate(entries) if e.kind == "reasoning"] + [
             (i, e) for i, e in panel_order if e.kind != "reasoning"
         ]
@@ -2186,6 +2245,41 @@ def _set_text_size(element: dict[str, Any], text_size: str | None) -> None:
 
 def _quote_markdown(content: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in content.splitlines())
+
+
+def _keep_recent_tools_after_each_reasoning(entries: list[Any], *, per_reasoning: int) -> list[Any]:
+    """Keep only the last ``per_reasoning`` tool rows after EACH reasoning block.
+
+    The user's rule, verbatim: 「正文内容中，每一次思考都保留他最后 2 次的工具执行。和正文中内容里面
+    那个工具行的处理方式一样。显示也好 隐藏也好」 — the thinking that led somewhere is read together
+    with the work it led to, so each block keeps its own evidence instead of competing for one global
+    window (a single shared window left the older blocks with no tool rows at all, which is exactly
+    the pairing the reader wants to see).
+
+    Deliberately a no-op when there is no reasoning at all: the window then stays whatever the caller
+    already selected, so a turn that produced no thinking keeps today's behaviour.
+    """
+    if per_reasoning <= 0 or not any(e.kind == "reasoning" for e in entries):
+        return entries
+    keep: set[int] = set()
+    pending: list[int] = []
+
+    def flush() -> None:
+        if pending:
+            keep.update(pending[-per_reasoning:])
+            del pending[:]
+
+    for index, entry in enumerate(entries):
+        if entry.kind == "reasoning":
+            flush()
+            keep.add(index)
+        elif entry.kind == "tool":
+            pending.append(index)
+        else:
+            # Subagents and notices are their own record, not a tool step of the block above them.
+            keep.add(index)
+    flush()
+    return [entry for index, entry in enumerate(entries) if index in keep]
 
 
 def _select_timeline_entries(entries: list[Any], *, max_items: int) -> list[Any]:
