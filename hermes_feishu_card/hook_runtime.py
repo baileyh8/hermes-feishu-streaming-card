@@ -76,6 +76,17 @@ DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 # acknowledgements state something the user still needs and are deliberately left alone.
 BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
 BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
+# The busy path's interrupt acknowledgement ("⚡ Interrupting current task (12 min elapsed …). I'll
+# respond to your message shortly."). With active-turn redirect disabled the interrupt path is the
+# one that runs, so this line is what a user sees whenever they message mid-turn — and unlike the
+# redirect ack it had no withdrawal, so it sat in the thread for the rest of the session.
+#
+# It is the same kind of statement as the redirect ack: it confirms the message landed, and the
+# turn it announces arrives as its own visible message moments later. Once read it is stale. The
+# steer ack is deliberately NOT here — "your message arrives after the next tool call" is
+# forward-looking information with no other surface.
+BUSY_INTERRUPT_ACK_PREFIX = "⚡ Interrupting current task"
+BUSY_INTERRUPT_ACK_RECALL_SECONDS = 15.0
 # The ⏳ status family ("⏳ Working — 12 min — iteration 42/150 …", "⏳ Compressing context",
 # "⏳ Waiting for approval", "⏳ loading <model> — 42%", "⏳ tool execution timed out; retrying" …) is
 # sent once and then EDITED IN PLACE on every tick. On Feishu the turn's own card already carries
@@ -93,10 +104,11 @@ BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
 STATUS_NOTICE_PREFIX = "⏳"
 STATUS_NOTICE_RECALL_SECONDS = 15.0
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
-# user has had a chance to read it. Content the user still needs (steer / queued / interrupt acks,
-# provider-failure replies) is deliberately absent: only self-erasing status pings belong here.
+# user has had a chance to read it. Content the user still needs (steer / queued acks, provider-
+# failure replies) is deliberately absent: only self-erasing status pings belong here.
 TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
     (BUSY_REDIRECT_ACK_PREFIX, BUSY_REDIRECT_ACK_RECALL_SECONDS),
+    (BUSY_INTERRUPT_ACK_PREFIX, BUSY_INTERRUPT_ACK_RECALL_SECONDS),
     (STATUS_NOTICE_PREFIX, STATUS_NOTICE_RECALL_SECONDS),
 )
 DEFAULT_TIMEOUT_SECONDS = 0.8
