@@ -76,23 +76,28 @@ DEFAULT_EVENT_URL = "http://127.0.0.1:8765/events"
 # acknowledgements state something the user still needs and are deliberately left alone.
 BUSY_REDIRECT_ACK_PREFIX = "↪ Redirected current run"
 BUSY_REDIRECT_ACK_RECALL_SECONDS = 15.0
-# The long-running heartbeat ("⏳ Working — 12 min — iteration 42/150, receiving stream response")
-# is sent once and then EDITED IN PLACE every HERMES_AGENT_NOTIFY_INTERVAL (180s). On Feishu the
-# card already carries the live progress (header makespan + the current action on its second row),
-# so the plain-text heartbeat is a second surface that outlives its usefulness: with
-# display.cleanup_progress off it is never removed, and a turn's "12 min" line sits in the thread
-# long after the turn ended. User report: 「可以像 redirect 那个一样被撤回吗」.
-# Same treatment as the redirect ack — withdraw it once it has been read. The heartbeat loop then
-# falls back to a fresh send on its next tick (editing a withdrawn message fails), so a genuinely
-# long turn still gets status pings; each one just lives for the recall window instead of forever.
-LONG_RUNNING_NOTICE_PREFIX = "⏳ Working — "
-LONG_RUNNING_NOTICE_RECALL_SECONDS = 15.0
+# The ⏳ status family ("⏳ Working — 12 min — iteration 42/150 …", "⏳ Compressing context",
+# "⏳ Waiting for approval", "⏳ loading <model> — 42%", "⏳ tool execution timed out; retrying" …) is
+# sent once and then EDITED IN PLACE on every tick. On Feishu the turn's own card already carries
+# the live progress (header makespan + the current action on its second row), so these lines are a
+# second surface that outlives their usefulness: with display.cleanup_progress off nothing removes
+# them, and a turn's "12 min" line sits in the thread long after the turn ended. User reports:
+# 「可以像 redirect 那个一样被撤回吗」, then 「都改为纯文本。体验效果感觉会好一点」.
+#
+# They are now all plain text (see `_hfc_classify_system_notice`), which is exactly why this prefix
+# must cover the whole family and not just the heartbeat: a card used to get the sidecar's own
+# recall deadline, while a plain-text send has no deadline at all — so anything left out here would
+# sit in the thread permanently. Same treatment as the redirect ack — withdraw once read. A
+# refreshing status then simply re-sends on its next tick (editing a withdrawn message fails), so
+# each line lives for the recall window instead of forever.
+STATUS_NOTICE_PREFIX = "⏳"
+STATUS_NOTICE_RECALL_SECONDS = 15.0
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
 # user has had a chance to read it. Content the user still needs (steer / queued / interrupt acks,
 # provider-failure replies) is deliberately absent: only self-erasing status pings belong here.
 TRANSIENT_THREAD_NOTICES: tuple[tuple[str, float], ...] = (
     (BUSY_REDIRECT_ACK_PREFIX, BUSY_REDIRECT_ACK_RECALL_SECONDS),
-    (LONG_RUNNING_NOTICE_PREFIX, LONG_RUNNING_NOTICE_RECALL_SECONDS),
+    (STATUS_NOTICE_PREFIX, STATUS_NOTICE_RECALL_SECONDS),
 )
 DEFAULT_TIMEOUT_SECONDS = 0.8
 INTERACTION_ADMISSION_TIMEOUT_SECONDS = 5.0
@@ -4932,32 +4937,23 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_id": _hfc_content_notice_id("compression", text),
         }
     if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
-        # Maintainer note (contract change): the LONG-RUNNING HEARTBEAT is no longer a card.
+        # Maintainer note (contract change): the ⏳ status line is NEVER a card.
         #
-        # It used to become a notice card titled「运行中」. That surface is redundant: the turn's own
-        # card already carries the live progress (header makespan + the current action on its second
-        # row, see the LONG_RUNNING_NOTICE_PREFIX comment), so the card duplicated the same fact and
-        # then appeared/vanished every ~180s. The user asked for it to stop being a card
-        # (「⏳ Working — … 之类的，我觉得不应该发卡片」).
+        # These lines used to become notice cards titled「运行中」. They are transient process state
+        # ("compressing", "waiting for approval", "loading the model", the long-running heartbeat,
+        # "tool timed out, retrying", …): the turn's OWN card already carries the live progress, so
+        # the extra card restated it and then appeared/vanished every ~180s. The user asked for the
+        # whole class to be plain text (「⏳ Working — … 之类的，我觉得不应该发卡片」/「都改为纯文本。
+        # 体验效果感觉会好一点」).
         #
-        # Returning None leaves it unclassified, so the send falls through to the adapter's own
-        # plain-text path — and the heartbeat call site still schedules the withdrawal
-        # (`recall_transient_thread_notice_async` on the send result, see run_turn.py), so the line
-        # stays self-erasing exactly like the redirect acknowledgement. Its edit path keeps working
-        # too (`_hfc_edit_message_with_system_notice_card` falls back to the original edit once this
-        # returns None), so a long turn still updates ONE line instead of stacking new ones.
-        #
-        # Scope is deliberately the heartbeat wording only: other ⏳ notices (lifecycle retries etc.)
-        # keep their cards.
-        if text.startswith(LONG_RUNNING_NOTICE_PREFIX):
-            return None
-        return {
-            "title": "运行中",
-            "level": "info",
-            "notice_kind": "heartbeat",
-            "notice_id": "heartbeat",
-            "notice_terminal": False,
-        }
+        # Returning None leaves these unclassified, so the send falls through to the adapter's own
+        # plain-text path. Withdrawal is preserved by the plain-text egress hook in
+        # `_hfc_send_with_native_command_result_card`, which schedules the recall for every
+        # transient notice prefix (TRANSIENT_THREAD_NOTICES) — including the bare 「⏳」 added for
+        # this class — so these lines self-erase instead of accumulating in the thread. The edit
+        # path also still works: `_hfc_edit_message_with_system_notice_card` falls back to the
+        # original edit once classification returns None, so a refreshing status updates ONE line.
+        return None
     if "caps context" in lowered and "auto-compaction" in lowered:
         return {
             "title": "上下文窗口提示",
@@ -6421,8 +6417,45 @@ async def _hfc_send_with_native_command_result_card(
             )
         return _send_result(False, error="original Feishu send unavailable")
     if callable(original):
-        return await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        result = await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        await _hfc_recall_plain_text_status_notice(chat_id, content, metadata, result)
+        return result
     return _send_result(False, error="original Feishu send unavailable")
+
+
+async def _hfc_recall_plain_text_status_notice(
+    chat_id: str,
+    content: Any,
+    metadata: Any,
+    result: Any,
+) -> bool:
+    """Withdraw a plain-text transient status line once the user has had a chance to read it.
+
+    See ``TRANSIENT_THREAD_NOTICES`` for which lines qualify and why. This is the plain-text egress
+    door: everything that is not a card (or not routable as one) leaves Feishu through the
+    ``original`` send right above, and a plain-text send carries no recall deadline of its own.
+
+    Two call sites already do this for their own lines — the turn heartbeat
+    (``gateway/run_turn.py``) and the busy redirect ack (``gateway/run_busy.py``). The status
+    callback path (``gateway/run.py::_send_or_update_status_coro`` → ``adapter.send``) has no such
+    call site, and the Feishu adapter has no ``send_or_update_status``, so its status lines reach
+    Feishu through this wrapper ONLY. They used to be cards and inherited the sidecar's deadline;
+    as plain text they would sit in the thread permanently without this hook.
+
+    Re-arming is harmless: the sidecar keys the recall by ``message_id`` and re-arms the same
+    deadline, so the overlap with the two call sites above only reschedules the same withdrawal.
+
+    Best-effort throughout — a failed recall must never disturb a send that already succeeded.
+    """
+    try:
+        source = SimpleNamespace(
+            platform="feishu",
+            chat_id=str(chat_id or ""),
+            thread_id=str((metadata or {}).get("thread_id") or ""),
+        )
+        return await recall_transient_thread_notice_async(source, content, result)
+    except Exception:
+        return False
 
 
 async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwargs: Any) -> Any:

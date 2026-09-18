@@ -3941,31 +3941,45 @@ def test_background_process_notice_classification_and_stable_id():
     assert len(independent_ids) == 1
 
 
-def test_long_running_heartbeat_is_not_a_card_but_other_tick_notices_still_are():
-    """The long-running heartbeat goes out as plain text; other ⏳ notices keep their cards.
+def test_status_notice_family_is_plain_text_but_other_notices_still_are_cards():
+    """Every ⏳ status line goes out as plain text; other notice kinds keep their cards.
 
-    Maintainer note (contract change): this used to pin the heartbeat to a notice card titled
-    「运行中」. The turn's own card already carries the live progress (makespan + current action),
-    so the card restated the same fact and appeared/vanished every ~180s; the user asked for it to
-    stop being a card (「⏳ Working — … 之类的，我觉得不应该发卡片」). Unclassified means the send
-    falls through to the adapter's plain-text path, where the heartbeat call site still schedules
-    the withdrawal — so the line stays self-erasing, exactly like the redirect acknowledgement.
+    Maintainer note (contract change): this used to pin only the long-running heartbeat to plain
+    text and assert that other ⏳ notices KEPT their cards. The user widened it to the whole family
+    (「都改为纯文本。体验效果感觉会好一点」): the turn's own card already carries the live progress
+    (makespan + current action), so a second card for "compressing" / "waiting for approval" /
+    "loading the model" restated the same fact. Unclassified means these fall through to the
+    adapter's plain-text path, where `_hfc_recall_plain_text_status_notice` still schedules the
+    withdrawal — so they stay self-erasing, exactly like the redirect acknowledgement.
     """
-    assert hook_runtime._hfc_classify_system_notice(
-        "⏳ Working — 6 min — iteration 10/90, waiting for provider response (streaming)"
-    ) is None
-    assert hook_runtime._hfc_classify_system_notice("⏳ Working — 12 min") is None
+    for text in (
+        "⏳ Working — 6 min — iteration 10/90, waiting for provider response (streaming)",
+        "⏳ Working — 12 min",
+        "⏳ Retrying in 3.0s (attempt 2/3)",
+        "⏳ Compressing context",
+        "⏳ Waiting for approval",
+        "⏳ loading Qwen3 into memory — 42%",
+        "⏳ tool execution timed out; retrying",
+    ):
+        assert hook_runtime._hfc_classify_system_notice(text) is None, text
 
-    # The withdrawal contract is unchanged: the plain-text heartbeat is still transient.
+    # The withdrawal contract covers the whole family, not just the heartbeat, so no line in it can
+    # outlive the turn by accident.
     assert hook_runtime._transient_notice_recall_seconds("⏳ Working — 12 min") == (
-        hook_runtime.LONG_RUNNING_NOTICE_RECALL_SECONDS
+        hook_runtime.STATUS_NOTICE_RECALL_SECONDS
     )
-    # And it is NOT swallowed as an unconditional card — it stays a plain thread notice.
-    assert hook_runtime.LONG_RUNNING_NOTICE_PREFIX == "⏳ Working — "
+    assert hook_runtime._transient_notice_recall_seconds("⏳ Compressing context") == (
+        hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+    )
+    assert hook_runtime.STATUS_NOTICE_PREFIX == "⏳"
 
-    # A different ⏳ notice must keep its card, so the opt-out stays scoped to the heartbeat.
-    other = hook_runtime._hfc_classify_system_notice("⏳ Retrying in 3.0s (attempt 2/3)")
-    assert other is not None and other["notice_kind"] == "heartbeat"
+    # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family.
+    restart = hook_runtime._hfc_classify_system_notice(
+        "⏳ Gateway is restarting and is not accepting new work right now."
+    )
+    assert restart is not None and restart["notice_kind"] == "gateway-restart"
+    reset = hook_runtime._hfc_classify_system_notice("Session automatically reset")
+    assert reset is not None and reset["notice_kind"] == "session-reset"
 
 
 def test_long_running_heartbeat_is_plain_text_so_it_never_takes_the_card_path():
@@ -4618,7 +4632,15 @@ def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
     assert adapter.text_sent == ["⏳ Working — 2 min — iteration 1/90, terminal"]
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
-    assert posted == []
+    # The ONLY thing that reaches the sidecar is the withdrawal request for that plain-text line —
+    # no card is minted, so the sidecar can neither swallow nor duplicate the heartbeat. The
+    # plain-text egress door schedules it (`_hfc_recall_plain_text_status_notice`), which is what
+    # stops a ⏳ line from sitting in the thread after the turn ends: a card used to inherit the
+    # sidecar's own recall deadline, and plain text has none.
+    assert len(posted) == 1
+    recall = posted[0]
+    assert recall["message_id"] == sent.message_id
+    assert recall["delay_seconds"] == hook_runtime.STATUS_NOTICE_RECALL_SECONDS
 
 
 def test_native_feishu_stream_edit_drops_metadata_when_original_does_not_accept_it():
@@ -4770,9 +4792,9 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     Maintainer note (contract change): this used to drive the ⏳ Working heartbeat through a
     sequence of failing sidecar responses and assert it reused ONE independent notice card. The
     heartbeat is plain text now, so there is no card to reuse — the property that matters is that
-    it never reaches the sidecar at all, and that a sidecar that would have refused the request
-    cannot turn it into a lost notice: the send still lands as text and the edit still updates
-    THAT line in place instead of stacking a new one.
+    the send never depends on the sidecar: it still lands as text, and the edit still updates THAT
+    line in place instead of stacking a new one. The sidecar is asked only to withdraw that line,
+    and the refusing responses above prove a refused recall cannot undo a send that succeeded.
     """
     posted = []
     responses = [
@@ -4840,9 +4862,11 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     assert len(adapter.text_sent) == 1
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
-    # No card bookkeeping: nothing was posted to the sidecar, so an unreachable sidecar cannot
-    # swallow or duplicate the heartbeat.
-    assert posted == []
+    # The send never depends on the sidecar: it landed as plain text and the edit updated THAT line.
+    # The only request the sidecar sees is the withdrawal for that line, and the refusing responses
+    # above prove a refused recall cannot undo the send.
+    assert len(posted) == 1
+    assert posted[0]["message_id"] == sent.message_id
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():

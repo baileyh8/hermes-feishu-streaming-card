@@ -10775,13 +10775,14 @@ def _retained_heartbeat_notice(text: str) -> dict:
     """The heartbeat notice shape the SIDECAR still understands.
 
     Maintainer note (contract change): ``hook_runtime._hfc_classify_system_notice`` no longer
-    returns a notice for the long-running heartbeat — it goes out as plain text now (see
-    tests/unit/test_hook_runtime.py::test_long_running_heartbeat_is_not_a_card_but_other_tick_notices_still_are),
+    returns a notice for any ⏳ status line — the whole family goes out as plain text now (see
+    tests/unit/test_hook_runtime.py::test_status_notice_family_is_plain_text_but_other_notices_still_are_cards),
     so real traffic never sends this event any more. These sidecar tests keep exercising the
-    heartbeat branch of the notice-card machinery on purpose: that code still ships, and any
-    caller that posts this shape still gets a recallable heartbeat notice out of it.
+    heartbeat branch of the notice-card machinery on purpose: that code still ships (it is upstream
+    code, and upstream's own classifier still emits this kind), and any caller that posts this shape
+    still gets a recallable heartbeat notice out of it.
     """
-    assert text.startswith(hook_runtime.LONG_RUNNING_NOTICE_PREFIX), text
+    assert text.startswith("⏳ Working — "), text
     return {
         "title": "运行中",
         "level": "info",
