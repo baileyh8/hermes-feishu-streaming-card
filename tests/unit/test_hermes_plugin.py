@@ -210,6 +210,54 @@ def test_missing_secret_or_disabled_registers_exact_inert_callbacks_without_leas
     assert len(context.register_calls) == len(EXPECTED_HOOKS)
 
 
+def test_native_bootstrap_shares_gateway_drain_proof_without_masking_busy_work(monkeypatch):
+    from hermes_feishu_card import runtime_control
+
+    captured = {}
+
+    class Emitter:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def run(self, stop_event, interval_seconds):
+            stop_event.wait()
+
+    runtime_control.reset_runtime_control_for_tests()
+    monkeypatch.setattr(runtime_control, 'RuntimeControlEmitter', Emitter)
+    monkeypatch.setenv('HERMES_FEISHU_CARD_EVENT_URL', 'http://127.0.0.1:18765/events')
+    monkeypatch.setattr(plugin_runtime, 'read_transport_root_secret', lambda: b'r' * 32)
+    try:
+        hermes_plugin.register(CountingPluginContext())
+        native = plugin_runtime.active_plugin_runtime()
+        assert native is not None
+        snapshot = captured['runtime_snapshot_provider']
+        assert snapshot() == (0, False, True, False)
+        draining = [False]
+        home = [True]
+        gateway = runtime_control.acquire_runtime_control(
+            event_url='http://127.0.0.1:18765/events',
+            package_version=plugin_runtime.__version__,
+            active_work_snapshot_provider=lambda: (0, True),
+            admission_draining_provider=lambda: draining[0],
+            drain_home_verified_provider=lambda: home[0],
+        )
+        assert gateway is not None
+        assert snapshot() == (0, True, False, True)
+        monkeypatch.setattr(native, 'runtime_activity_snapshot', lambda: (2, True))
+        draining[0] = True
+        assert snapshot() == (2, True, True, True)
+        monkeypatch.setattr(native, 'runtime_activity_snapshot', lambda: (0, False))
+        assert snapshot() == (0, False, True, True)
+        monkeypatch.setattr(native, 'runtime_activity_snapshot', lambda: (0, True))
+        home[0] = False
+        assert snapshot() == (0, True, True, False)
+        gateway.close()
+        assert snapshot() == (0, False, True, False)
+    finally:
+        plugin_runtime.reset_production_plugin_runtime_for_tests()
+        runtime_control.reset_runtime_control_for_tests()
+
+
 def test_partial_bootstrap_restores_inert_callbacks_and_releases_only_its_lease(
     monkeypatch,
 ):

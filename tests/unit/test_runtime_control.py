@@ -1199,6 +1199,21 @@ def test_shared_worker_unknown_owner_never_reports_complete_zero(monkeypatch):
     known.close()
 
 
+@pytest.mark.parametrize('options', [
+    {'gateway_admission_dependent': 'true'},
+    {'gateway_admission_dependent': True},
+    {'gateway_admission_dependent': True, 'active_work_snapshot_provider': lambda: (0, True),
+     'admission_draining_provider': lambda: False},
+    {'gateway_admission_dependent': True, 'active_work_snapshot_provider': lambda: (0, True),
+     'drain_home_verified_provider': lambda: True},
+])
+def test_dependent_owner_cannot_claim_gateway_authority(options):
+    assert acquire_runtime_control(
+        event_url='http://127.0.0.1:18765/events', package_version='4.6.2', **options
+    ) is None
+    assert runtime_control._CONTROL_OWNERS == set()
+
+
 def test_plugin_local_owner_is_incomplete_until_gateway_aggregate_owner_exists(
     monkeypatch,
 ):

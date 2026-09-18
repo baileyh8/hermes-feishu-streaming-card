@@ -2855,6 +2855,7 @@ def bootstrap_plugin_runtime(ctx: Any) -> None:
                 event_url=config.event_url,
                 package_version=__version__,
                 active_work_snapshot_provider=_runtime_activity_provider(runtime),
+                gateway_admission_dependent=True,
             )
             candidate_lease = lease
             if lease is None:
