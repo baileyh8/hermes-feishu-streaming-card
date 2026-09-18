@@ -10771,6 +10771,26 @@ async def test_independent_system_notice_without_started_sends_notice_card(clien
     assert feishu_client.updated == []
 
 
+def _retained_heartbeat_notice(text: str) -> dict:
+    """The heartbeat notice shape the SIDECAR still understands.
+
+    Maintainer note (contract change): ``hook_runtime._hfc_classify_system_notice`` no longer
+    returns a notice for the long-running heartbeat — it goes out as plain text now (see
+    tests/unit/test_hook_runtime.py::test_long_running_heartbeat_is_not_a_card_but_other_tick_notices_still_are),
+    so real traffic never sends this event any more. These sidecar tests keep exercising the
+    heartbeat branch of the notice-card machinery on purpose: that code still ships, and any
+    caller that posts this shape still gets a recallable heartbeat notice out of it.
+    """
+    assert text.startswith(hook_runtime.LONG_RUNNING_NOTICE_PREFIX), text
+    return {
+        "title": "运行中",
+        "level": "info",
+        "notice_kind": "heartbeat",
+        "notice_id": "heartbeat",
+        "notice_terminal": False,
+    }
+
+
 async def test_orphaned_heartbeats_update_one_running_notice_card(client):
     test_client, feishu_client = client
     texts = (
@@ -10781,8 +10801,7 @@ async def test_orphaned_heartbeats_update_one_running_notice_card(client):
     message_ids = []
 
     for sequence, text in enumerate(texts, start=1):
-        notice = hook_runtime._hfc_classify_system_notice(text)
-        assert notice is not None
+        notice = _retained_heartbeat_notice(text)
         message_id = hook_runtime._hfc_independent_notice_message_id(
             "oc_1", text, notice, anchor="om_user_task"
         )
@@ -13546,8 +13565,7 @@ async def test_heartbeat_card_is_recalled_once_its_refreshes_stop(client, monkey
     test_client, feishu_client = client
 
     text = "⏳ Working — 3 min — iteration 5/90, terminal"
-    notice = hook_runtime._hfc_classify_system_notice(text)
-    assert notice is not None
+    notice = _retained_heartbeat_notice(text)
     assert notice["notice_kind"] == "heartbeat"
     message_id = hook_runtime._hfc_independent_notice_message_id(
         "oc_1", text, notice, anchor="om_user_task"
@@ -13589,7 +13607,7 @@ async def test_a_refreshed_heartbeat_pushes_its_recall_deadline_out(client, monk
     )
     message_id = ""
     for sequence, text in enumerate(texts, start=1):
-        notice = hook_runtime._hfc_classify_system_notice(text)
+        notice = _retained_heartbeat_notice(text)
         message_id = hook_runtime._hfc_independent_notice_message_id(
             "oc_1", text, notice, anchor="om_user_task"
         )
@@ -13625,7 +13643,7 @@ async def test_refused_recall_keeps_the_heartbeat_card_usable(client, monkeypatc
     feishu_client.fail_delete = True
 
     text = "⏳ Working — 3 min — iteration 5/90, terminal"
-    notice = hook_runtime._hfc_classify_system_notice(text)
+    notice = _retained_heartbeat_notice(text)
     message_id = hook_runtime._hfc_independent_notice_message_id(
         "oc_1", text, notice, anchor="om_user_task"
     )
@@ -13687,8 +13705,7 @@ async def test_an_independent_heartbeat_gets_its_own_card_and_spares_the_turn(cl
     assert len(feishu_client.sent) == 1
 
     text = "⏳ Working — 18 min — iteration 39/150, terminal"
-    notice = hook_runtime._hfc_classify_system_notice(text)
-    assert notice is not None
+    notice = _retained_heartbeat_notice(text)
     heartbeat_id = hook_runtime._hfc_independent_notice_message_id(
         "oc_abc", text, notice, anchor="om_user_task"
     )

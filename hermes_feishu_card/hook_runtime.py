@@ -4932,6 +4932,25 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_id": _hfc_content_notice_id("compression", text),
         }
     if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
+        # Maintainer note (contract change): the LONG-RUNNING HEARTBEAT is no longer a card.
+        #
+        # It used to become a notice card titled「运行中」. That surface is redundant: the turn's own
+        # card already carries the live progress (header makespan + the current action on its second
+        # row, see the LONG_RUNNING_NOTICE_PREFIX comment), so the card duplicated the same fact and
+        # then appeared/vanished every ~180s. The user asked for it to stop being a card
+        # (「⏳ Working — … 之类的，我觉得不应该发卡片」).
+        #
+        # Returning None leaves it unclassified, so the send falls through to the adapter's own
+        # plain-text path — and the heartbeat call site still schedules the withdrawal
+        # (`recall_transient_thread_notice_async` on the send result, see run_turn.py), so the line
+        # stays self-erasing exactly like the redirect acknowledgement. Its edit path keeps working
+        # too (`_hfc_edit_message_with_system_notice_card` falls back to the original edit once this
+        # returns None), so a long turn still updates ONE line instead of stacking new ones.
+        #
+        # Scope is deliberately the heartbeat wording only: other ⏳ notices (lifecycle retries etc.)
+        # keep their cards.
+        if text.startswith(LONG_RUNNING_NOTICE_PREFIX):
+            return None
         return {
             "title": "运行中",
             "level": "info",

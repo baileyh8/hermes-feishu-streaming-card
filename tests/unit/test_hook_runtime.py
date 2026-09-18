@@ -3941,37 +3941,64 @@ def test_background_process_notice_classification_and_stable_id():
     assert len(independent_ids) == 1
 
 
-def test_long_running_heartbeat_notice_is_non_terminal():
-    notice = hook_runtime._hfc_classify_system_notice(
-        "⏳ Working — 6 min — iteration 10/90, "
-        "waiting for provider response (streaming)"
-    )
+def test_long_running_heartbeat_is_not_a_card_but_other_tick_notices_still_are():
+    """The long-running heartbeat goes out as plain text; other ⏳ notices keep their cards.
 
-    assert notice == {
-        "title": "运行中",
-        "level": "info",
+    Maintainer note (contract change): this used to pin the heartbeat to a notice card titled
+    「运行中」. The turn's own card already carries the live progress (makespan + current action),
+    so the card restated the same fact and appeared/vanished every ~180s; the user asked for it to
+    stop being a card (「⏳ Working — … 之类的，我觉得不应该发卡片」). Unclassified means the send
+    falls through to the adapter's plain-text path, where the heartbeat call site still schedules
+    the withdrawal — so the line stays self-erasing, exactly like the redirect acknowledgement.
+    """
+    assert hook_runtime._hfc_classify_system_notice(
+        "⏳ Working — 6 min — iteration 10/90, waiting for provider response (streaming)"
+    ) is None
+    assert hook_runtime._hfc_classify_system_notice("⏳ Working — 12 min") is None
+
+    # The withdrawal contract is unchanged: the plain-text heartbeat is still transient.
+    assert hook_runtime._transient_notice_recall_seconds("⏳ Working — 12 min") == (
+        hook_runtime.LONG_RUNNING_NOTICE_RECALL_SECONDS
+    )
+    # And it is NOT swallowed as an unconditional card — it stays a plain thread notice.
+    assert hook_runtime.LONG_RUNNING_NOTICE_PREFIX == "⏳ Working — "
+
+    # A different ⏳ notice must keep its card, so the opt-out stays scoped to the heartbeat.
+    other = hook_runtime._hfc_classify_system_notice("⏳ Retrying in 3.0s (attempt 2/3)")
+    assert other is not None and other["notice_kind"] == "heartbeat"
+
+
+def test_long_running_heartbeat_is_plain_text_so_it_never_takes_the_card_path():
+    """The heartbeat is not classified, so no notice-card id is minted for it.
+
+    Maintainer note (contract change): this used to assert that two heartbeat lines sharing an
+    anchor produced the same INDEPENDENT NOTICE id — i.e. that the heartbeat was a notice card.
+    The heartbeat is plain text now (see
+    test_long_running_heartbeat_is_not_a_card_but_other_tick_notices_still_are), so it never
+    reaches that path; core instead keeps ONE line by remembering the message id it got back and
+    editing it. The helper's own heartbeat branch stays covered here, because it is still the
+    shape other notices rely on.
+    """
+    first = "⏳ Working — 6 min — iteration 10/90, terminal"
+    second = "⏳ Working — 9 min — iteration 14/90, terminal"
+
+    assert hook_runtime._hfc_classify_system_notice(first) is None
+    assert hook_runtime._hfc_classify_system_notice(second) is None
+
+    heartbeat_notice = {
         "notice_kind": "heartbeat",
         "notice_id": "heartbeat",
         "notice_terminal": False,
     }
-
-
-def test_long_running_heartbeat_reuses_independent_message_id_per_anchor():
-    first = "⏳ Working — 6 min — iteration 10/90, terminal"
-    second = "⏳ Working — 9 min — iteration 14/90, terminal"
-    first_notice = hook_runtime._hfc_classify_system_notice(first)
-    second_notice = hook_runtime._hfc_classify_system_notice(second)
-
-    assert first_notice is not None
-    assert second_notice is not None
     first_message_id = hook_runtime._hfc_independent_notice_message_id(
-        "oc_abc", first, first_notice, anchor="om_task_1"
+        "oc_abc", first, heartbeat_notice, anchor="om_task_1"
     )
+    assert first_message_id.startswith("notice_")
     assert first_message_id == hook_runtime._hfc_independent_notice_message_id(
-        "oc_abc", second, second_notice, anchor="om_task_1"
+        "oc_abc", second, heartbeat_notice, anchor="om_task_1"
     )
     assert first_message_id != hook_runtime._hfc_independent_notice_message_id(
-        "oc_abc", second, second_notice, anchor="om_task_2"
+        "oc_abc", second, heartbeat_notice, anchor="om_task_2"
     )
 
 
@@ -4520,7 +4547,8 @@ def test_native_feishu_system_notice_retries_as_independent_card_when_session_mi
     assert result.message_id == posted[1]["message_id"]
 
 
-def test_native_feishu_system_notice_edit_updates_same_card(monkeypatch):
+def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
+    """The heartbeat is one plain-text line that gets edited in place, not a card."""
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -4578,22 +4606,19 @@ def test_native_feishu_system_notice_edit_updates_same_card(monkeypatch):
 
     sent, edited = asyncio.run(run())
 
-    # Maintainer note (contract change): the heartbeat used to be anchored to the TURN's message
-    # (notice_scope="session", event id = the user's message id), which is what folded ⏳ Working into
-    # the turn's card and — because /recall/schedule refuses an owned session card — put it beyond
-    # recall. It now has its own notice card. What this test pins is unchanged: the heartbeat and its
-    # edit address ONE card, and the card carries the turn as its reply anchor.
-    assert sent.message_id == edited.message_id
-    assert sent.message_id.startswith("notice_")
+    # Maintainer note (contract change): the heartbeat used to become a notice card (an earlier
+    # change had moved it OFF the turn's card so it could be recalled). It is now plain text:
+    # the turn's own card already shows the live progress, so the extra card was a second surface
+    # for the same fact. What this test pins is the property that still matters — the heartbeat
+    # line and its edit address ONE message (core remembers the id and edits it), never a card and
+    # never a second message.
+    assert sent.message_id == "om_native_text"
+    assert edited.message_id == sent.message_id
     assert sent.message_id != "om_user_task"
-    assert adapter.text_sent == []
-    assert adapter.edited == []
-    assert len(posted) == 2
-    assert posted[0]["message_id"] == posted[1]["message_id"] == sent.message_id
-    assert posted[0]["data"]["notice_scope"] == posted[1]["data"]["notice_scope"] == "independent"
-    assert posted[0]["data"]["reply_to_message_id"] == "om_user_task"
-    assert posted[0]["data"]["notice_id"] == posted[1]["data"]["notice_id"]
-    assert "iteration 2/90" in posted[1]["data"]["content"]
+    assert adapter.text_sent == ["⏳ Working — 2 min — iteration 1/90, terminal"]
+    assert len(adapter.edited) == 1
+    assert adapter.edited[0][1] == sent.message_id
+    assert posted == []
 
 
 def test_native_feishu_stream_edit_drops_metadata_when_original_does_not_accept_it():
@@ -4739,7 +4764,16 @@ def test_native_feishu_stream_edit_preserves_var_kwargs():
     ]
 
 
-def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
+def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypatch):
+    """The heartbeat stays a plain-text line when the card path is unavailable.
+
+    Maintainer note (contract change): this used to drive the ⏳ Working heartbeat through a
+    sequence of failing sidecar responses and assert it reused ONE independent notice card. The
+    heartbeat is plain text now, so there is no card to reuse — the property that matters is that
+    it never reaches the sidecar at all, and that a sidecar that would have refused the request
+    cannot turn it into a lost notice: the send still lands as text and the edit still updates
+    THAT line in place instead of stacking a new one.
+    """
     posted = []
     responses = [
         {"ok": True, "applied": False},
@@ -4747,12 +4781,6 @@ def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
             "ok": False,
             "error": "feishu send failed",
             "delivery": {"outcome": "unknown"},
-        },
-        {"ok": True, "applied": False},
-        {
-            "ok": True,
-            "applied": True,
-            "delivery": {"outcome": "delivered"},
         },
     ]
 
@@ -4808,14 +4836,13 @@ def test_heartbeat_after_unknown_delivery_reuses_independent_card(monkeypatch):
     sent, edited = asyncio.run(run())
 
     assert sent.message_id == "om_native_warning"
-    assert edited.message_id.startswith("notice_")
-    assert len(posted) == 4
-    # Contract change: the heartbeat no longer tries the turn's session first, so EVERY attempt is an
-    # independent notice. The property this test is named for still holds — the attempts of one call
-    # all address the SAME notice card instead of stacking a new one per attempt.
-    assert all(payload["data"]["notice_scope"] == "independent" for payload in posted)
-    assert posted[0]["message_id"] == posted[1]["message_id"]
-    assert posted[2]["message_id"] == posted[3]["message_id"]
+    assert edited.message_id == sent.message_id
+    assert len(adapter.text_sent) == 1
+    assert len(adapter.edited) == 1
+    assert adapter.edited[0][1] == sent.message_id
+    # No card bookkeeping: nothing was posted to the sidecar, so an unreachable sidecar cannot
+    # swallow or duplicate the heartbeat.
+    assert posted == []
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():
