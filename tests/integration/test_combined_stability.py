@@ -103,7 +103,10 @@ async def test_recall_runtime_preserves_profile_and_chat(monkeypatch):
     monkeypatch.delenv('HERMES_FEISHU_CARD_PROFILE_ID',raising=False)
     monkeypatch.setattr(runtime,'schedule_message_recall_async',schedule)
     source=SimpleNamespace(platform='feishu',profile_id='work',chat_id='chat_fixture',thread_id='topic_fixture')
-    assert await runtime.recall_transient_thread_notice_async(source,'⏳ Working — testing',SimpleNamespace(success=True,message_id='om_ack'))
+    # The adapter also carries answers. Use the real Hermes heartbeat template;
+    # an arbitrary string after the status prefix must not authorize deletion.
+    assert runtime._transient_notice_recall_seconds('⏳ Working — testing') is None
+    assert await runtime.recall_transient_thread_notice_async(source,'⏳ Working — 2 min',SimpleNamespace(success=True,message_id='om_ack'))
     assert calls[0][1]['route']==dict(profile_id='work',chat_id='chat_fixture',conversation_id='topic_fixture')
 
 @pytest.mark.asyncio
