@@ -370,6 +370,7 @@ def _render_card_unchecked(
     elements.append({"tag": "hr", "element_id": "main_divider"})
     if (
         not timeline_elements
+        and not hide_completed_rows
         and not tool_activity_elements
         and not pending_approval
         and session.tool_count
