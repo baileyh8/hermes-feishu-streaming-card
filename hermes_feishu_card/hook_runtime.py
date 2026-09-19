@@ -9879,7 +9879,11 @@ async def supersede_restart_group_async(source: Any, chat_id: str) -> int:
         }
         url = f"{_summary_base_url(config.event_url)}/recall/supersede"
         result = await _post_json_ordered_response(
-            url, {"route": route}, config.timeout_seconds
+            url,
+            # ``home_chat_id`` is what reaches the OTHER surface: a send in a topic also retires the
+            # restart line standing in home («同时触发 home channel 前面的重启消息撤回»).
+            {"route": route, "home_chat_id": _hfc_home_chat_id()},
+            config.timeout_seconds,
         )
         if isinstance(result, dict) and result.get("ok") is True:
             return int(result.get("withdrawn") or 0)
@@ -9933,6 +9937,7 @@ async def schedule_message_recall_async(
     route: dict[str, str] | None = None,
     supersede_key: str = "",
     record_only: bool = False,
+    home_chat_id: str = "",
 ) -> bool:
     """Ask the sidecar to withdraw ``message_id`` ``delay_seconds`` after it was posted.
 
@@ -9966,11 +9971,30 @@ async def schedule_message_recall_async(
             payload["supersede_key"] = str(supersede_key)
         if record_only:
             payload["record_only"] = True
+        if home_chat_id:
+            payload["home_chat_id"] = str(home_chat_id)
         url = f"{_summary_base_url(config.event_url)}/recall/schedule"
         result = await _post_json_ordered_response(url, payload, config.timeout_seconds)
         return isinstance(result, dict) and result.get("ok") is True
     except Exception:
         return False
+
+
+def _hfc_home_chat_id() -> str:
+    """The Feishu HOME channel chat id, or ``""`` when this deployment has none.
+
+    Read through the core's own scope-aware reader so a secondary profile gets ITS home (`os.environ`
+    holds the LAUNCH profile's value under multiplex, and a leaked read would clear the wrong chat's
+    notices). Falls back to a plain env read when the core helper is unavailable — the value is not a
+    secret, and the fallback is the pre-multiplex behaviour rather than a new failure mode.
+    """
+    try:
+        from gateway.platforms._shared import get_scoped_secret
+
+        value = get_scoped_secret("FEISHU_HOME_CHANNEL", "")
+    except Exception:
+        value = os.environ.get("FEISHU_HOME_CHANNEL", "")
+    return str(value or "").strip()
 
 
 def _hfc_is_restart_notice(content: Any) -> bool:
@@ -10033,6 +10057,9 @@ async def supersede_restart_notice_async(
             # («我觉得都应该挂 15 秒清就好了 不用说那么复杂的去区分组和非组») is why there is no group
             # boundary left to reason about — every restart line behaves identically.
             record_only=False,
+            # …and this is what lets a later send in a TOPIC reach the same restart's line standing in
+            # home («同时触发 home channel 前面的重启消息撤回»).
+            home_chat_id=_hfc_home_chat_id(),
         )
     except Exception:
         return False

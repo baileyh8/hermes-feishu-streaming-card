@@ -196,6 +196,11 @@ SUPERSEDE_REGISTRY_MAX_ENTRIES = 500
 # Bound on ONE group. A place restarted repeatedly with nothing posted in between would otherwise grow
 # its group without limit; the OLDEST member goes first, which is the stale end of the group.
 SUPERSEDE_GROUP_MAX_MEMBERS = 8
+# ``(profile, bot)`` -> the chat that is that profile's HOME channel, learned from the restart notices
+# the hook registers. Kept here because the sidecar's own sends (card send/update) never pass the hook,
+# and yet they are exactly the sends that have to clear a stale restart line standing in home
+# («任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回»).
+HOME_CHAT_IDS_KEY = web.AppKey("home_chat_ids", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -603,6 +608,7 @@ def create_app(
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[EPHEMERAL_RECALL_TASKS_KEY] = {}
     app[SUPERSEDED_NOTICE_IDS_KEY] = {}
+    app[HOME_CHAT_IDS_KEY] = {}
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -7753,6 +7759,17 @@ async def _recall_schedule(request: web.Request) -> web.Response:
             profile_id=route_profile,
             family=supersede_family,
         )
+    # Remember which chat is home for this (profile, bot) so the sidecar's OWN sends can clear a stale
+    # restart line standing there («同时触发 home channel 前面的重启消息撤回»): card sends and updates
+    # never pass the hook, so this is the only place that can learn it.
+    _remember_home_chat(
+        request.app,
+        profile_id=_safe_command_string(
+            (route_data or {}).get("profile_id") if isinstance(route_data, dict) else ""
+        ) or "default",
+        bot_id=bot_id or "",
+        home_chat_id=_safe_command_string(payload.get("home_chat_id")),
+    )
     if payload.get("record_only") is True:
         return web.json_response(
             {"ok": True, "message_id": message_id, "record_only": True, "superseded": superseded}
@@ -7790,6 +7807,60 @@ def _supersede_identity(*, profile_id: str, bot_id: str, chat_id: str, thread_id
         _safe_command_string(family) or "default",
     )
     return "\x1f".join(parts)
+
+
+def _remember_home_chat(
+    app: web.Application, *, profile_id: str, bot_id: str, home_chat_id: str
+) -> None:
+    """Record which chat is the HOME channel for one (profile, bot).
+
+    Needed because the home broadcast and the topic send are different routes: by the time the reader
+    posts in a topic, the only way to name home again is to have written it down. The hook passes it on
+    every restart-notice registration (it reads ``FEISHU_HOME_CHANNEL``, the same source the gateway
+    seeds its own home channel from), and the sidecar reuses it for the sends it makes itself — card
+    sends and updates never pass the hook, so they would otherwise have no way to reach home.
+    """
+    chat = _safe_command_string(home_chat_id)
+    if not chat:
+        return
+    table = app.get(HOME_CHAT_IDS_KEY)
+    if not isinstance(table, dict):
+        return
+    key = _home_chat_key(profile_id=profile_id, bot_id=bot_id)
+    if len(table) >= SUPERSEDE_REGISTRY_MAX_ENTRIES and key not in table:
+        oldest = next(iter(table), None)
+        if oldest is not None:
+            table.pop(oldest, None)
+    table[key] = chat
+
+
+def _known_home_chat(app: web.Application, *, profile_id: str, bot_id: str) -> str:
+    """The home chat recorded for ``(profile, bot)``, or ``""`` when none was ever seen.
+
+    Falls back to the profile's sole entry when the caller has no bot — several internal send paths
+    (a card update carries only a message id) know the profile but not which bot owns the message, and
+    refusing to answer there would silently drop the home clear on exactly those sends.
+    """
+    table = app.get(HOME_CHAT_IDS_KEY)
+    if not isinstance(table, dict):
+        return ""
+    profile = _safe_command_string(profile_id) or "default"
+    exact = _safe_command_string(table.get(_home_chat_key(profile_id=profile, bot_id=bot_id)))
+    if exact:
+        return exact
+    prefix = f"{profile}\x1f"
+    matches = {
+        _safe_command_string(value)
+        for key, value in table.items()
+        if str(key).startswith(prefix) and _safe_command_string(value)
+    }
+    return matches.pop() if len(matches) == 1 else ""
+
+
+def _home_chat_key(*, profile_id: str, bot_id: str) -> str:
+    return "\x1f".join(
+        (_safe_command_string(profile_id) or "default", _safe_command_string(bot_id))
+    )
 
 
 def _supersede_group_members(entry: dict) -> list[str]:
@@ -7868,6 +7939,7 @@ def _supersede_restart_group_for_route(
     bot_id: str | None = None,
     profile_id: str | None = None,
     family: str = "restart-notice",
+    home_chat_id: str = "",
 ) -> list[str]:
     """Withdraw the restart notices standing in front of a chat, now that something new was posted.
 
@@ -7901,44 +7973,56 @@ def _supersede_restart_group_for_route(
     target_bot = _safe_command_string(bot_id)
     target_profile = _safe_command_string(profile_id) or "default"
     target_family = _safe_command_string(family) or "default"
-    withdrawn: list[str] = []
-    for key in list(registry.keys()):
-        entry = registry.get(key)
-        if not isinstance(entry, dict):
-            registry.pop(key, None)
-            continue
-        if _safe_command_string(entry.get("chat_id")) != target_chat:
-            continue
-        # Exact on both sides: "" == "" is the main conversation, and "" != "omt_x" is the whole point.
-        if _safe_command_string(entry.get("conversation_id")) != target_thread:
-            continue
-        if target_bot and _safe_command_string(entry.get("bot_id")) != target_bot:
-            continue
-        if _safe_command_string(entry.get("profile_id") or "default") != target_profile:
-            continue
-        if _safe_command_string(entry.get("family") or "default") != target_family:
-            continue
-        bot_id = entry.get("bot_id") or None
-        remaining: list[str] = []
-        # The WHOLE group goes together («在它们之后如果有消息的话 才撤回它们»): the ⚠️ warning and the
-        # ♻️ online line are one restart's pair, so clearing one without the other is what left the
-        # reader with a lone ♻️.
-        for member in _supersede_group_members(entry):
-            # ``replace=True``: the member is already pending on its own 15s deadline, and this early
-            # clear has to WIN over it rather than be swallowed by the dedupe.
-            if _schedule_ephemeral_recall(
-                app, message_id=member, delay_seconds=0.0, bot_id=bot_id, replace=True
-            ):
-                withdrawn.append(member)
+
+    def clear_group_at(place_chat: str, place_thread: str) -> list[str]:
+        """Withdraw every restart notice registered for ONE place, whole groups included."""
+        cleared: list[str] = []
+        for key in list(registry.keys()):
+            entry = registry.get(key)
+            if not isinstance(entry, dict):
+                registry.pop(key, None)
+                continue
+            if _safe_command_string(entry.get("chat_id")) != place_chat:
+                continue
+            # Exact on both sides: "" == "" is the main conversation, and "" != "omt_x" is the whole point.
+            if _safe_command_string(entry.get("conversation_id")) != place_thread:
+                continue
+            if target_bot and _safe_command_string(entry.get("bot_id")) != target_bot:
+                continue
+            if _safe_command_string(entry.get("profile_id") or "default") != target_profile:
+                continue
+            if _safe_command_string(entry.get("family") or "default") != target_family:
+                continue
+            owner_bot = entry.get("bot_id") or None
+            remaining: list[str] = []
+            for member in _supersede_group_members(entry):
+                # ``replace=True``: the member is already pending on its own 15s deadline, and this
+                # early clear has to WIN over it rather than be swallowed by the dedupe.
+                if _schedule_ephemeral_recall(
+                    app, message_id=member, delay_seconds=0.0, bot_id=owner_bot, replace=True
+                ):
+                    cleared.append(member)
+                else:
+                    remaining.append(member)
+            if remaining:
+                # Not scheduled -> KEEP them so the next send retries. Dropping them here would leave
+                # the notice permanently un-retirable, which is the failure this feature exists to prevent.
+                entry["message_ids"] = remaining
+                registry[key] = entry
             else:
-                remaining.append(member)
-        if remaining:
-            # Not scheduled -> KEEP it so the next send retries it. Dropping it here would leave the
-            # notice permanently un-retirable, which is the failure this feature exists to prevent.
-            entry["message_ids"] = remaining
-            registry[key] = entry
-        else:
-            registry.pop(key, None)
+                registry.pop(key, None)
+        return cleared
+
+    withdrawn = clear_group_at(target_chat, target_thread)
+    # …and the HOME channel too («同时触发 home channel 前面的重启消息撤回»). This is the one part the
+    # exact-route match could never reach: the reader working in a topic has no reason to look at home,
+    # so a stale restart line there outlives its news. Skipped when this very send IS the home
+    # conversation, which the first pass already covered.
+    home_chat = _safe_command_string(home_chat_id) or _known_home_chat(
+        app, profile_id=target_profile, bot_id=target_bot
+    )
+    if home_chat and (home_chat != target_chat or target_thread):
+        withdrawn.extend(clear_group_at(home_chat, ""))
     return withdrawn
 
 
@@ -8004,6 +8088,7 @@ async def _recall_supersede(request: web.Request) -> web.Response:
         conversation_id=_safe_command_string(route_data.get("conversation_id")),
         bot_id=route.bot_id or None,
         profile_id=profile_id,
+        home_chat_id=_safe_command_string(payload.get("home_chat_id")),
     )
     return web.json_response({"ok": True, "withdrawn": len(withdrawn)})
 

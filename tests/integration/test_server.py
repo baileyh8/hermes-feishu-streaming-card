@@ -14230,3 +14230,93 @@ async def test_a_non_approval_interaction_keeps_its_own_card(client):
     assert len(feishu_client.sent) == cards_before
     assert test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1'] == old_card_id
     assert session.active_interaction.continuation_card_message_id == ''
+
+async def test_a_send_in_a_topic_also_clears_the_restart_line_standing_in_home(client):
+    """One message clears the restart group in ITS place AND in home.
+
+    Field report: 「而且你现在撤回 似乎是漏掉了 home 这个渠道的」. The rule as written («任何一条自己发的
+    消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回») was only half built:
+    matching was exact on chat/thread, so a reader working in a topic never retired the line home was
+    still showing.
+
+    Home is a different ROUTE, not a different family, so it arrives as ``home_chat_id`` — the hook
+    reads it from FEISHU_HOME_CHANNEL, the same source the gateway seeds its own home channel from.
+    """
+    test_client, feishu_client = client
+    topic = {"chat_id": "oc_topic", "conversation_id": "omt_topic", "profile_id": "default"}
+    home = {"chat_id": "oc_home", "conversation_id": "", "profile_id": "default"}
+
+    def registration(message_id, route):
+        return {"message_id": message_id, "delay_seconds": 15.0,
+                "supersede_key": "restart-notice:x", "route": route,
+                "home_chat_id": "oc_home"}
+
+    # The restart announced itself in both places.
+    assert (await test_client.post(
+        "/recall/schedule", json=registration("om_home_online", home))).status == 200
+    assert (await test_client.post(
+        "/recall/schedule", json=registration("om_topic_warning", topic))).status == 200
+    assert feishu_client.deleted == []
+
+    # A send in the TOPIC retires both — its own line and home's.
+    cleared = await test_client.post(
+        "/recall/supersede", json={"route": topic, "home_chat_id": "oc_home"})
+    assert cleared.status == 200
+    assert (await cleared.json())["withdrawn"] == 2
+    await _wait_until(lambda: len(feishu_client.deleted) == 2)
+    assert sorted(feishu_client.deleted) == ["om_home_online", "om_topic_warning"]
+
+    # Nothing is left behind in either place.
+    again = await test_client.post(
+        "/recall/supersede", json={"route": topic, "home_chat_id": "oc_home"})
+    assert (await again.json())["withdrawn"] == 0
+
+
+async def test_the_home_clear_does_not_reach_a_different_profile_or_bot(client):
+    """Counter-check: clearing home must stay inside the (profile, bot) that owns it.
+
+    Home is recorded per (profile, bot) precisely so one tenant's send cannot delete another's line —
+    a shared sidecar serving several bots would otherwise let any of them clear all of them.
+    """
+    test_client, feishu_client = client
+    mine = {"chat_id": "oc_topic", "conversation_id": "omt_topic", "profile_id": "default"}
+    theirs = {"chat_id": "oc_other_topic", "conversation_id": "omt_other", "profile_id": "other"}
+
+    assert (await test_client.post("/recall/schedule", json={
+        "message_id": "om_other_home_online", "delay_seconds": 15.0,
+        "supersede_key": "restart-notice:y", "route": theirs,
+        "home_chat_id": "oc_other_home"})).status == 200
+    assert (await test_client.post("/recall/schedule", json={
+        "message_id": "om_my_home_online", "delay_seconds": 15.0,
+        "supersede_key": "restart-notice:z", "route": mine,
+        "home_chat_id": "oc_my_home"})).status == 200
+
+    cleared = await test_client.post(
+        "/recall/supersede", json={"route": mine, "home_chat_id": "oc_my_home"})
+    assert (await cleared.json())["withdrawn"] == 1
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_my_home_online"]
+
+
+async def test_a_card_send_clears_home_using_the_remembered_chat(client):
+    """The sidecar's OWN sends reach home too, from the remembered chat.
+
+    Card sends and updates never pass the hook, so without remembering home they would be the one
+    send path that leaves a stale restart line in home.
+    """
+    test_client, feishu_client = client
+    home = {"chat_id": "oc_home_mem", "conversation_id": "", "profile_id": "default"}
+    # Learn home the way the hook teaches it: on a restart-notice registration.
+    assert (await test_client.post("/recall/schedule", json={
+        "message_id": "om_home_mem_online", "delay_seconds": 15.0,
+        "supersede_key": "restart-notice:m", "route": home,
+        "home_chat_id": "oc_home_mem"})).status == 200
+    assert feishu_client.deleted == []
+
+    # A send in an unrelated route, with no home_chat_id supplied at all.
+    cleared = await test_client.post(
+        "/recall/supersede",
+        json={"route": {"chat_id": "oc_somewhere", "conversation_id": "", "profile_id": "default"}})
+    assert (await cleared.json())["withdrawn"] == 1
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_home_mem_online"]
