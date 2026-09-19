@@ -6145,6 +6145,73 @@ def _native_handoff_post_requires_text_fallback(adapter: Any, value: Any) -> boo
     return "post" in lowered and ("invalid" in lowered or "format" in lowered)
 
 
+def _feishu_send_payload_text(payload: Any) -> str:
+    """The plain text a Feishu send carried, or ``""`` when it was not a text message.
+
+    This layer holds the already-encoded wire body — ``json.dumps({"text": ...})`` — never clean
+    text, so the acknowledgement markers have to be matched against the decoded field.
+    """
+    raw = payload if isinstance(payload, str) else ""
+    if not raw:
+        return ""
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, TypeError):
+        return ""
+    if isinstance(decoded, dict):
+        text = decoded.get("text")
+        return str(text) if isinstance(text, str) else ""
+    return ""
+
+
+async def recall_delivered_notice_from_send_async(
+    self: Any,
+    chat_id: str,
+    payload: Any,
+    metadata: Any,
+    response: Any,
+) -> bool:
+    """Withdraw a transient acknowledgement from the one door every Feishu send passes through.
+
+    ``_feishu_send_with_retry`` is the single choke point for a Feishu send: the ``send`` wrapper
+    above it has seven-plus return paths (handoff, system-notice card, command-result card, direct
+    card, several fallbacks) and one of them posts the text WITHOUT arming a withdrawal, so an
+    acknowledgement sent down that path used to sit in the thread forever. Sitting below all of them
+    means the acknowledgement is retired whichever way it was delivered.
+
+    Best-effort throughout: a failure here must never disturb a send that already succeeded, so
+    every path returns False instead of raising.
+    """
+    try:
+        text = _feishu_send_payload_text(payload)
+        if not text or _transient_notice_recall_seconds(text) is None:
+            return False
+        if not _native_handoff_response_succeeded(self, response):
+            return False
+        message_id = _hfc_response_message_id(response)
+        if not message_id:
+            return False
+        context = _HFC_FEISHU_DELIVERY_CONTEXT.get()
+        if not isinstance(context, dict):
+            context = _HFC_FEISHU_NOTICE_CONTEXT.get()
+        if not isinstance(context, dict):
+            context = {}
+        if context.get("profile_invalid"):
+            return False
+        metadata = metadata if isinstance(metadata, dict) else {}
+        source = SimpleNamespace(
+            platform="feishu",
+            chat_id=str(chat_id or ""),
+            profile_id=str(context.get("profile_id") or ""),
+            thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
+        )
+        return await recall_transient_thread_notice_async(
+            source, text, SimpleNamespace(success=True, message_id=message_id),
+        )
+    except Exception:
+        return False
+
+
 async def _hfc_feishu_send_with_native_handoff_tracking(
     self: Any,
     *,
@@ -6159,7 +6226,7 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
         raise RuntimeError("original Feishu retry helper unavailable")
     tracker = _HFC_NATIVE_HANDOFF_SEND_TRACKER.get()
     if not isinstance(tracker, dict):
-        return await original(
+        response = await original(
             self,
             chat_id=chat_id,
             msg_type=msg_type,
@@ -6167,6 +6234,12 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
             reply_to=reply_to,
             metadata=metadata,
         )
+        # Below every branch of the ``send`` wrapper, so an acknowledgement is retired whichever
+        # way it was delivered — including the paths that never arm a withdrawal themselves.
+        await recall_delivered_notice_from_send_async(
+            self, chat_id, payload, metadata, response,
+        )
+        return response
     fallback_ordinal = tracker.get("fallback_ordinal")
     if msg_type == "text" and isinstance(fallback_ordinal, int):
         ordinal = fallback_ordinal
@@ -6201,6 +6274,9 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
             and _native_handoff_post_requires_text_fallback(self, response)
         ):
             tracker["fallback_ordinal"] = ordinal
+        await recall_delivered_notice_from_send_async(
+            self, chat_id, payload, metadata, response,
+        )
         return response
     except Exception as exc:
         required[ordinal] = False
