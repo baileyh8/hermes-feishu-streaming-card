@@ -123,6 +123,11 @@ class InteractionState:
     # The approval card's own Feishu message id, recorded when the card is delivered. A timed-out
     # approval refreshes THAT card in place instead of sending a second paused card (#314).
     feishu_message_id: str = ""
+    # The session card opened AFTER this approval was granted («审批通过之后，应该发一张新的卡来承载
+    # 信息流，而不是在原来的卡上继续操作。因为在原来的卡上继续操作的话，会导致信息流错乱»).
+    # Non-empty means the continuation card has already been opened for this decision, so the
+    # handover runs exactly once no matter how often the completion event is replayed.
+    continuation_card_message_id: str = ""
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission

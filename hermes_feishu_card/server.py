@@ -91,8 +91,10 @@ from .render import (
     render_terminal_limit_handoff_card,
 )
 from .process import state_dir
+from .card_timeline import CardTimeline
 from .session import CardSession
 from .status import StatusConfig
+from .text import StreamingTextNormalizer
 from .subscription_usage import fetch_codex_subscription_usage
 from .install.detect import HermesDetection, detect_hermes
 from .install.integrity import IntegrityRepairRefused, plan_integrity_repair
@@ -5796,6 +5798,20 @@ async def _apply_event_locked_inner(
                 )
             if is_terminal and request.app[SESSIONS_KEY].get(session_key) is latest_session:
                 _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
+            if not is_terminal and _approval_continuation_needs_its_own_card(latest_session, event):
+                # This event has just finished writing the decision onto the card the approval was
+                # granted from; everything AFTER it belongs on a card of its own («审批通过之后，应该发
+                # 一张新的卡来承载信息流»). Running here keeps the two writes ordered: the update above
+                # targets the old card, this one moves the anchor for the next event.
+                await _open_approval_continuation_card(
+                    request.app,
+                    session_key,
+                    latest_session,
+                    bot_id=bot_id,
+                    thread_id=_thread_id_for_event(event),
+                    reply_to_message_id=_reply_to_message_id_for_event(event),
+                    reply_in_thread=_reply_in_thread_for_event(event),
+                )
             return updated
 
         if is_terminal:
@@ -6450,10 +6466,149 @@ def _approval_runtime_is_waiting(interaction: Any, *, now: float | None = None) 
     )
 
 
+def _approval_continuation_needs_its_own_card(session: CardSession, event: Any) -> bool:
+    """Whether this event is the decision that must hand the thread to a fresh card.
+
+    Only a DECIDED approval takes the handover — a still-pending card has not been answered, and an
+    expired/failed decision has its own paths. Grant and denial are both decisions: after either one
+    the agent keeps running, so the continuation needs its own card either way. Only `kind` is
+    narrowed to approvals, because that is the card the user asked about.
+    ``continuation_card_message_id`` makes it once-only, so a replayed ``interaction.completed``
+    cannot open a second card.
+    """
+    if str(getattr(event, "event", "") or "") != "interaction.completed":
+        return False
+    interaction = session.active_interaction
+    if interaction is None or interaction.kind != "approval":
+        return False
+    if interaction.status != "completed":
+        return False
+    return not interaction.continuation_card_message_id
+
+
+def _stripped_for_continuation(session: CardSession) -> CardSession:
+    """A copy of ``session`` showing a clean 「执行中」 card, with nothing from before the approval.
+
+    The user chose 「干净的执行中状态」: the pre-approval flow stays on the old card (an already-sent
+    Feishu message keeps its content regardless of what this process does), and the post-approval flow
+    accumulates here from scratch.
+
+    Deliberately KEPT: the tool counter (numbering must not restart — an unexplained jump backwards is
+    exactly the 「工具 10 不见了」 class of report), and the turn's own duration/token/model usage
+    (they measure the whole turn, and the audit trail expects them to). The interaction itself is kept
+    too: it carries the question and the chosen answer.
+    """
+    preview = copy.deepcopy(session)
+    preview.status = "thinking"
+    preview.display_status = ""
+    preview.thinking_text = ""
+    preview.answer_text = ""
+    preview.latest_tool_preview = ""
+    preview.runtime_phase_text = ""
+    preview.tools = {}
+    preview.timeline = CardTimeline()
+    preview.attachments = []
+    preview._answer_archive_index = None
+    preview.thinking_normalizer = StreamingTextNormalizer()
+    preview.answer_normalizer = StreamingTextNormalizer()
+    return preview
+
+
+async def _open_approval_continuation_card(
+    app: web.Application,
+    session_key: str,
+    session: CardSession,
+    *,
+    bot_id: str | None,
+    thread_id: str | None,
+    reply_to_message_id: str | None,
+    reply_in_thread: bool,
+) -> str:
+    """Open the card that carries the flow WHILE an approval runs, and move the session onto it.
+
+    Ordering matters both ways. The card is posted BEFORE the live session is reset: if the send
+    fails the session keeps its content and the thread keeps updating the original card, instead of
+    the old card's content being silently replaced by an empty one. Only once the new card is
+    delivered does the session get the stripped snapshot — the post-approval flow then renders into
+    the new message because the session key's card anchor is pointed at it.
+
+    Returns the new message id, or ``""`` when nothing was handed over.
+    """
+    interaction = session.active_interaction
+    if interaction is None:
+        return ""
+    preview = _stripped_for_continuation(session)
+    render_result = _render_session_card_result_for_app(app, preview, session_key=session_key)
+    if render_result.disposition != "card":
+        # Cannot promise a clean card we cannot render (e.g. an admission/native disposition).
+        return ""
+    delivery = await _send_card_for_app(
+        app,
+        session.chat_id,
+        render_result.card,
+        bot_id,
+        thread_id=thread_id,
+        reply_to_message_id=reply_to_message_id,
+        reply_in_thread=reply_in_thread,
+        # Distinct per decision: the delivery dedupe table keys on this, and a replayed event must
+        # not be mistaken for a card that was already sent.
+        delivery_key=(
+            f"{session_key}:approval-continuation:"
+            f"{interaction.interaction_id}:{interaction.pause_generation}"
+        ),
+        delivery_kind="chat",
+    )
+    new_message_id = str(getattr(delivery, "message_id", "") or "")
+    if not new_message_id:
+        logger.warning(
+            "approval continuation card was not delivered (session_hash=%s)",
+            _diagnostic_id_hash(session_key, domain="continuation-session"),
+        )
+        return ""
+    stripped = _stripped_for_continuation(session)
+    session.status = stripped.status
+    session.display_status = stripped.display_status
+    session.thinking_text = stripped.thinking_text
+    session.answer_text = stripped.answer_text
+    session.latest_tool_preview = stripped.latest_tool_preview
+    session.runtime_phase_text = stripped.runtime_phase_text
+    session.tools = stripped.tools
+    session.timeline = stripped.timeline
+    session.attachments = stripped.attachments
+    session._answer_archive_index = stripped._answer_archive_index
+    session.thinking_normalizer = stripped.thinking_normalizer
+    session.answer_normalizer = stripped.answer_normalizer
+    session.message_id = new_message_id
+    interaction.continuation_card_message_id = new_message_id
+    app[FEISHU_MESSAGE_IDS_KEY][session_key] = new_message_id
+    logger.info(
+        "approval continuation card opened (session_hash=%s)",
+        _diagnostic_id_hash(session_key, domain="continuation-session"),
+    )
+    return new_message_id
+
+
 async def _resume_paused_approval(request, session_key, session, interaction, token, chat_id):
-    """Refresh consent only while the original pausable waiter is still alive."""
+    """Re-open an approval that can no longer take a decision, on a card of its OWN.
+
+    The gate below is deliberate and stays: renewal needs a LIVE pausable waiter, because a decision
+    taken on a card nobody is waiting for reaches no one — offering fresh consent there would be a
+    promise this plugin cannot keep. What changed is HOW a live renewal is delivered.
+
+    It used to refresh the dead card in place. The user reports the opposite of what that guarded
+    against — 「审批通过之后，应该发一张新的卡来承载信息流，而不是在原来的卡上继续操作。因为在原来的卡上
+    继续操作的话，会导致信息流错乱」: reusing the message tangles the new approval's flow with the old
+    one's, and the reader's scrollback still points at the expired prompt. So the dead card is
+    withdrawn and the replacement posted as its own message.
+
+    The hazard the in-place choice guarded against — one approval showing twice — is handled by
+    ORDERING instead: recall first, and only post the replacement when the recall succeeded. If the
+    recall is refused (missing scope, message too old) the card is refreshed in place after all, so
+    exactly one live card is on screen either way.
+    """
     app = request.app
     lock = app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
+    dead_card_id = ""
     async with lock:
         if (app[SESSIONS_KEY].get(session_key) is not session
                 or session.active_interaction is not interaction
@@ -6480,11 +6635,41 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
         interaction.callback_token = secrets.token_urlsafe(16)
         interaction.requested_at = time.time()
         interaction.error = ""
+        interaction.pause_generation += 1
         session.updated_at = interaction.requested_at
         _store_interaction_result(app, session)
         card = _render_interaction_callback_card_for_app(app, session, session_key=session_key)
+        dead_card_id = str(getattr(interaction, "feishu_message_id", "") or "")
+    bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
+    if dead_card_id and await _delete_card_for_app(app, dead_card_id, bot_id):
+        result = await _send_card_for_app(
+            app,
+            session.chat_id,
+            card,
+            bot_id,
+            thread_id=interaction.thread_id or None,
+            reply_to_message_id=(
+                interaction.reply_to_message_id or session.reply_to_message_id or None
+            ),
+            reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
+            # A distinct key per reissue: reusing the dead card's key would let the delivery dedupe
+            # table treat the replacement as already sent.
+            delivery_key=(
+                f"{session_key}:approval-reissued:"
+                f"{interaction.interaction_id}:{interaction.pause_generation}"
+            ),
+            delivery_kind="interaction",
+        )
+        # The replacement IS the live card now; when it could not be posted the id stays empty so the
+        # next renewal starts a card rather than editing a message that is already gone.
+        interaction.feishu_message_id = result.message_id or ""
+    else:
+        # No card to withdraw, or the recall was refused: the response card carries the new token, so
+        # the card the user is looking at stays usable and only one approval is on screen.
+        interaction.feishu_message_id = dead_card_id
     return web.json_response({"ok": True,
-        "toast": {"type": "info", "content": "审批已过期，请查看完整操作后重新审批"}, "card": card})
+        "toast": {"type": "info", "content": "审批已过期，已重新发起，请查看完整操作后重新审批"},
+        "card": card})
 
 
 async def _expire_pending_interaction(

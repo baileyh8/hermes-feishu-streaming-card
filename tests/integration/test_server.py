@@ -7969,7 +7969,10 @@ async def test_v4_interaction_restores_cached_preview_on_stable_v2_card(client):
     assert resumed["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #1"
     assert resumed["header"]["subtitle"]["content"] == "读取文件：weather_client.py"
     assert "读取文件：weather_client.py" in str(resumed)
-    assert len(feishu_client.sent) == 2
+    # Maintainer note (contract change): answering the approval now also opens the card that carries
+    # the rest of the turn («审批通过之后，应该发一张新的卡来承载信息流»), so the thread holds three
+    # messages: the session card, the approval card, and the continuation card.
+    assert len(feishu_client.sent) == 3
     assert feishu_client.updated[-1][0] == "feishu-message-1"
 
 
@@ -13406,6 +13409,14 @@ async def test_any_option_on_an_expired_approval_reissues_it_instead_of_a_dead_b
 
     Field report: clicking an option answered with a toast nobody understood ("暂未确认选择结果"),
     the card never changed, and the approval could not be taken any more.
+
+    Maintainer note (contract change): the renewal is delivered on a card of its OWN now — the dead
+    card is recalled and the replacement posted as a new message. It used to be refreshed in place,
+    which kept exactly one card on screen by construction; the user reports the opposite problem
+    (「如果审批通过之后，应该发一张新的卡来承载信息流，而不是在原来的卡上继续操作。因为在原来的卡上继续
+    操作的话，会导致信息流错乱」) — reusing the message tangles the new approval's flow with the expired
+    prompt the reader is still scrolling past. One card still ends up on screen, by ordering instead
+    of by reuse: recall first, and only post the replacement when the recall succeeded.
     """
     test_client, feishu_client = client
     await test_client.post('/events', json=event_payload('message.started', 0))
@@ -13434,9 +13445,12 @@ async def test_any_option_on_an_expired_approval_reissues_it_instead_of_a_dead_b
     assert interaction.status == 'pending' and interaction.choice == ''
     # Renewal is not consent: the withdrawn card's option decides nothing on replay.
     assert (await click(expired_option)).status == 404
-    assert len(feishu_client.sent) == cards_before
-    assert feishu_client.deleted == []
-    assert interaction.feishu_message_id == dead_card_id
+    # The dead card is gone and the renewal arrived as its own message…
+    assert feishu_client.deleted == [dead_card_id]
+    assert len(feishu_client.sent) == cards_before + 1
+    # …so the session now tracks the replacement, not the recalled card.
+    assert interaction.feishu_message_id
+    assert interaction.feishu_message_id != dead_card_id
 
 
 async def test_expired_approval_without_pause_requires_a_new_request(client):
@@ -14051,3 +14065,128 @@ async def test_recall_never_removes_owned_answer_even_after_schedule(client):
     http.app[FEISHU_MESSAGE_IDS_KEY]['fixture'] = 'om_later'
     await _REAL_ASYNCIO_SLEEP(0.1)
     assert fake.deleted == []
+
+
+async def _prepare_approval_with_prior_flow(client, *, kind='approval'):
+    """Drive a session to a live approval that already has pre-approval content on its card."""
+    test_client, feishu_client = client
+    await test_client.post('/events', json=event_payload('message.started', 0))
+    await test_client.post('/events', json=event_payload('thinking.delta', 1, {
+        'text': 'pre-approval reasoning', 'mode': 'replace'}))
+    await test_client.post('/events', json=event_payload('answer.delta', 2, {
+        'text': 'pre-approval answer'}))
+    await test_client.post('/events', json=event_payload('tool.updated', 3, {
+        'tool_id': 'tool-before', 'name': 'terminal', 'status': 'running',
+        'detail': 'long-running command'}))
+    await test_client.post('/events', json=event_payload('interaction.requested', 4, {
+        'interaction_id': 'decide-then-continue', 'kind': kind, 'prompt': 'Review',
+        'description': 'exact operation scope', 'timeout_seconds': 300,
+        'options': [{'label': 'Allow once', 'value': 'once'}, {'label': 'Deny', 'value': 'deny'}],
+    }, thread_id='omt_topic'))
+    session = test_client.app[SESSIONS_KEY]['hermes-message-1']
+    assert session.answer_text, 'the pre-approval flow must be on the card for this test to mean anything'
+    assert session.active_interaction is not None
+    return test_client, feishu_client, session
+
+
+async def test_an_answered_approval_hands_the_flow_to_a_clean_session_card(client):
+    """After an approval is answered, the rest of the turn lands on a card of its OWN.
+
+    Field report: 「审批通过之后，应该发一张新的卡来承载信息流，而不是在原来的卡上继续操作。因为在原来的
+    卡上继续操作的话，会导致信息流错乱」. The pre-approval flow stays on the card that was on screen; the
+    continuation opens as a new message and shows a clean 「执行中」, which is the shape the user chose
+    (「干净的执行中状态」).
+    """
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    old_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    cards_before = len(feishu_client.sent)
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)  # the continuation card
+
+    # The continuation arrived as its own message…
+    new_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    assert new_card_id and new_card_id != old_card_id
+    assert session.message_id == new_card_id
+    assert session.active_interaction.continuation_card_message_id == new_card_id
+    # …carrying a clean card: nothing from before the approval follows it over.
+    assert session.answer_text == ''
+    assert session.thinking_text == ''
+    assert session.tools == {}
+    assert session.latest_tool_preview == ''
+    assert session.timeline.entry_count == 0
+    # The tool counter keeps counting: restarting it would read as a missing call.
+    assert session.tool_count == 1
+    # The old card is not recalled — its content is what the reader scrolls back to.
+    assert old_card_id not in feishu_client.deleted
+
+
+async def test_the_continuation_card_is_opened_exactly_once(client):
+    """A replayed completion event must not open a second continuation card."""
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await _wait_until(lambda: bool(session.active_interaction.continuation_card_message_id))
+    cards_after_first = len(feishu_client.sent)
+    first_card_id = session.active_interaction.continuation_card_message_id
+    assert first_card_id
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 6, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await asyncio.sleep(0.4)
+
+    assert len(feishu_client.sent) == cards_after_first
+    assert session.active_interaction.continuation_card_message_id == first_card_id
+
+
+async def test_a_denied_approval_also_hands_the_flow_over(client):
+    """A denial is a decision too: the agent keeps running, so the flow still needs its own card."""
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    cards_before = len(feishu_client.sent)
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'deny', 'choice_label': 'Deny'}))
+    # A denial is a decision too — it needs its own continuation card.
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)
+    assert session.active_interaction.continuation_card_message_id
+    assert session.answer_text == ''
+
+
+async def test_a_failed_continuation_send_leaves_the_session_untouched(client):
+    """Adversarial counter-check: a refused send must not blank the card the user is reading.
+
+    The stripped session is applied only AFTER the new card is delivered. If it were applied first
+    and the send failed, the original card would keep being updated with an empty session — wiping the
+    pre-approval flow the user can still see in the thread.
+    """
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    old_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    cards_before = len(feishu_client.sent)
+    feishu_client.fail_send = True
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    # Proving a send did NOT happen needs a window wide enough for it to have happened.
+    await asyncio.sleep(0.4)
+
+    assert len(feishu_client.sent) == cards_before
+    assert test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1'] == old_card_id
+    assert session.answer_text == 'pre-approval answer'
+    assert session.thinking_text == 'pre-approval reasoning'
+    assert session.active_interaction.continuation_card_message_id == ''
+
+
+async def test_a_non_approval_interaction_keeps_its_own_card(client):
+    """Counter-check: only approvals take the handover — a clarify answer stays where it was asked."""
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client, kind='clarify')
+    old_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    cards_before = len(feishu_client.sent)
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await asyncio.sleep(0.4)
+
+    assert len(feishu_client.sent) == cards_before
+    assert test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1'] == old_card_id
+    assert session.active_interaction.continuation_card_message_id == ''
