@@ -198,9 +198,8 @@ async def test_plain_text_egress_clears_the_restart_group_behind_a_normal_messag
     assert payload["route"]["chat_id"] == "oc_home"
     assert payload["route"]["conversation_id"] == "omt_x"
 
-    # A restart notice registers itself instead of clearing — it IS the group, and it carries no
-    # clock of its own: the pair is retired by whatever the bot posts next
-    # («在它们之后如果有消息的话 才撤回它们»).
+    # A restart notice registers itself instead of clearing what stands in front of it, and carries the
+    # same 15s deadline as every other restart line («我觉得都应该挂 15 秒清就好了»).
     posted.clear()
     assert await hook_runtime._hfc_recall_plain_text_status_notice(
         "oc_home",
@@ -209,7 +208,8 @@ async def test_plain_text_egress_clears_the_restart_group_behind_a_normal_messag
         SimpleNamespace(success=True, message_id="om_online"),
     )
     assert [p[0].rsplit("/", 1)[-1] for p in posted] == ["schedule"]
-    assert posted[0][1]["record_only"] is True
+    assert posted[0][1].get("record_only") is not True
+    assert posted[0][1]["delay_seconds"] == hook_runtime.RESTART_NOTICE_RECALL_SECONDS
 
     # Best-effort: an unreachable sidecar yields 0 and never raises.
     async def boom(*args, **kwargs):
@@ -321,8 +321,9 @@ async def test_plain_text_egress_retires_restart_notices_and_expires_status_noti
     assert len(scheduled) == 1
     message_id, kwargs = scheduled[0]
     assert message_id == 'om_notice'
-    # Self-retiring: registered under a per-chat key, with no deadline of its own.
-    assert kwargs['record_only'] is True
+    # Registered under a per-chat key AND armed with the standard 15s deadline — one rule for the class.
+    assert kwargs['record_only'] is not True
+    assert kwargs['delay_seconds'] == hook_runtime.RESTART_NOTICE_RECALL_SECONDS
     assert kwargs['supersede_key'].startswith('restart-notice:')
     assert kwargs['supersede_key'].endswith('oc_chat:omt_thread')
 

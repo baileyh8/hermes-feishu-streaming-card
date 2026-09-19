@@ -100,22 +100,27 @@ STATUS_NOTICE_RECALL_SECONDS = 15.0
 # other platform's ⌛ wording never reaches a Feishu send.
 APPROVAL_EXPIRED_NOTICE_PREFIX = "⌛"
 APPROVAL_EXPIRED_NOTICE_RECALL_SECONDS = 15.0
-# The restart notices: four strings, two halves. "⚠️ Hermes is restarting / shutting down …" warns that
-# the current task is about to be interrupted, and "♻️ Gateway online / ♻️ Gateway restarted …" says
-# it is back. They are NOT in TRANSIENT_THREAD_NOTICES because they have no lifetime of their own: a
-# restart warning is good until the gateway returns, and the online line is good until the user has
-# something newer to read. Neither carries a clock — the two STAND TOGETHER as one group
-# («网关关机和网关重启是同时存在的…在它们之后如果有消息的话 才撤回它们»), and what retires them is the
-# next message the bot posts, withdrawn as a group.
+# The restart notices: one class, one rule. "⚠️ Hermes is restarting / shutting down …" warns that the
+# current task is about to be interrupted; "♻️ Gateway online / ♻️ Gateway restarted …" says it is back;
+# "⏳ Gateway is restarting and is not accepting another turn …" is the draining doorway saying the same
+# thing to a message that arrived too late; and "⏳ Gateway restarting — queued …" reports that the user's
+# OWN message was queued for after the restart.
 #
-# That next notice comes from a DIFFERENT process (the warning is sent by the process going down, the
-# online line by its replacement), so hfc cannot hold "the previous one" in memory; the withdrawal is
-# keyed in the SIDECAR, which outlives both. The user's rule, verbatim:
-# 「重启提示和上线提示，在有新消息的时候把前面的撤回了」.
+# EVERY one of them gets the same 15s deadline («我觉得都应该挂 15 秒清就好了 不用说那么复杂的去区分组和
+# 非组»). There is deliberately no group boundary and no "keep the newest group" logic: one mechanism for
+# the whole class. They also register with the sidecar's restart family, which is what lets ANY message
+# the bot posts later retire one early («任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home
+# channel 前面的重启消息撤回») — that is a bonus, not the primary lifetime.
 #
-# Both phrasings are listed: Hermes 0.21.0 said "⚠️ Gateway restarting — Your current task …" and
-# 0.21.3 says "⚠️ Hermes is restarting — your current task …", and a gateway updated mid-flight can
-# still have the older line sitting in the thread to be superseded.
+# They stay OUT of TRANSIENT_THREAD_NOTICES because that table is matched by bare prefix; these need the
+# full-shape gate below, since a restart line quoted back at the bot is a message in its own right.
+#
+# The notices come from DIFFERENT processes (the warning from the process going down, the online line
+# from its replacement), so hfc cannot hold them in memory: the registration lives in the SIDECAR.
+#
+# Every phrasing is listed: Hermes 0.21.0 said "⚠️ Gateway restarting — Your current task …" and 0.21.3
+# says "⚠️ Hermes is restarting — your current task …", and a gateway updated mid-flight can still have
+# the older line sitting in the thread.
 RESTART_NOTICE_PREFIXES = (
     "⚠️ Hermes is restarting",
     "⚠️ Hermes is shutting down",
@@ -124,6 +129,13 @@ RESTART_NOTICE_PREFIXES = (
     "♻️ Gateway online",
     "♻️ Gateway restarted",
     "♻ Gateway restarted",
+    # The inbound/draining doorways. Left out, these fell through to the generic "any other message
+    # clears the group" rule and DELETED the very warning they were announcing, while themselves
+    # carrying no clock and so never being retired. `_status_action_gerund()` supplies both gerunds.
+    "⏳ Gateway is restarting",
+    "⏳ Gateway is shutting down",
+    "⏳ Gateway restarting",
+    "⏳ Gateway shutting down",
 )
 # The prefix tuple above is only a cheap gate; the notice itself must then match its FULL known shape.
 # Same reason as the ⏳ arm: a warning emoji is not evidence that a message is disposable, and the user
@@ -136,8 +148,17 @@ RESTART_NOTICE_PATTERNS = (
     r"♻ Gateway restarted successfully\. Your session continues\.",
     # The online notice may carry a second line (the free-tier note) appended by the boot path.
     r"♻️ Gateway online — Hermes is back and ready\.(?:\n[^\r\n]*)?",
+    # The draining doorway. Both tails are real: ``run_busy``/``run_inbound`` send "another turn" to a
+    # user message, and ``run_inbound`` sends "new work" to a command. Both gerunds, too — "restarting"
+    # and "shutting down" are the same template with ``_status_action_gerund()``.
+    r"⏳ Gateway is (?:restarting|shutting down) and is not accepting (?:another turn|new work) right now\.",
+    # …and the sibling that tells the user their OWN message was queued for after the restart.
+    r"⏳ Gateway (?:restarting|shutting down) — queued for the next turn after it comes back\.",
 )
 RESTART_NOTICE_SUPERSEDE_PREFIX = "restart-notice"
+# One lifetime for the whole class («我觉得都应该挂 15 秒清就好了»): the same 15s the ⏳ / ⌛ / ↪ families
+# get. The notice is a read-once ping either way — the gateway's real state is the card, not this line.
+RESTART_NOTICE_RECALL_SECONDS = 15.0
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
 # user has had a chance to read it. Content the user still needs (queued acks, provider-
 # failure replies) is deliberately absent: only self-erasing status pings belong here.
@@ -4947,14 +4968,12 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         return background_notice
     text = raw_text.strip()
     lowered = text.lower()
-    if text == "⏳ Gateway is restarting and is not accepting new work right now.":
-        return {
-            "title": "Gateway 正在重启", "level": "warning",
-            "notice_kind": "gateway-restart", "notice_id": "gateway-restart-wait",
-            "notice_terminal": True,
-            "content": "Gateway 正在重启，暂不接受新任务。当前这条请求尚未开始执行。\n\n"
-                       "重启耗时取决于正在收尾的任务和启动过程；收到重启完成通知后，请重新发送请求。",
-        }
+    # The draining-gateway line used to be classified here as a CARD («Gateway 正在重启»). It has moved
+    # to the restart family: it announces the same event as the ⚠️ warning, so it has to be plain text
+    # and a member of that group rather than a card of its own — a card here also bypassed the recall
+    # arming on the plain-text door. Falling through instead lets `_hfc_recall_plain_text_status_notice`
+    # recognise it, which is what puts it in the group (and is why it no longer DELETES the ⚠️ warning
+    # standing in front of it).
     if text in {"♻ Gateway restarted successfully. Your session continues.",
                 "♻️ Gateway restarted successfully. Your session continues."}:
         # Maintainer note (contract change): this notice is delivered as PLAIN TEXT, not a card.
@@ -6546,11 +6565,10 @@ async def _hfc_recall_plain_text_status_notice(
             thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
         )
         if _hfc_is_restart_notice(content):
-            # The two halves are a PAIR that stands together — the ⚠️ warning says the gateway is going
-            # down, the ♻️ line says it is back («网关关机和网关重启是同时存在的»). Neither carries a
-            # clock of its own: what retires them is a LATER message, and they are withdrawn together
-            # («在它们之后如果有消息的话 才撤回它们»). So this registers the new one and retires the
-            # one it replaces; the group itself is cleared by whatever the bot posts next.
+            # Every restart line — ⚠️ warning, ♻️ online, ⏳ draining doorway, ⏳ queued — registers
+            # itself instead of clearing what stands in front of it, and arms its own 15s deadline
+            # («我觉得都应该挂 15 秒清就好了 不用说那么复杂的去区分组和非组»). Falling through to the
+            # generic arm below is what used to DELETE the ⚠️ warning a ⏳ draining line was announcing.
             return await supersede_restart_notice_async(source, chat_id, content, result)
         # Any OTHER message the bot posts retires the restart group in front of it («任何一条自己发的
         # 消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回»). The sidecar
@@ -9966,16 +9984,17 @@ def _hfc_is_restart_notice(content: Any) -> bool:
 async def supersede_restart_notice_async(
     source: Any, chat_id: str, content: Any, result: Any
 ) -> bool:
-    """Add the newest restart notice to the group standing in this place.
+    """Register a restart notice and give it its own 15s deadline.
 
-    It does NOT retire the earlier member. The two halves of a restart are one pair and are read
-    together («网关关机和网关重启是同时存在的»), so both stay until something newer is posted, and
-    then they are withdrawn together («在它们之后 如果有消息的话 才撤回它们»).
+    It does NOT retire what stands in front of it — the ⚠️/♻️/⏳ lines of one restart are all worth
+    reading («网关关机和网关重启是同时存在的»), and a line that deleted its predecessors is why the
+    reader kept being left with a lone ♻️. The registration is what lets a later message retire the
+    line sooner («在它们之后 如果有消息的话 才撤回它们»).
 
     Keyed per chat AND thread so a home broadcast and a thread notice do not cancel each other, and
-    registered in the SIDECAR because the two halves of a restart are sent by different gateway
-    processes — the warning by the one shutting down, the online line by its replacement. In-memory
-    state in the gateway would be empty exactly when it is needed.
+    registered in the SIDECAR because these lines are sent by different gateway processes — the warning
+    by the one shutting down, the online line by its replacement. In-memory state in the gateway would
+    be empty exactly when it is needed.
 
     Best-effort throughout: a failed registration must never disturb a send that already succeeded,
     so every failure path returns False instead of raising.
@@ -10006,10 +10025,14 @@ async def supersede_restart_notice_async(
         }
         return await schedule_message_recall_async(
             message_id,
-            delay_seconds=0.0,
+            delay_seconds=RESTART_NOTICE_RECALL_SECONDS,
             route=route,
             supersede_key=key,
-            record_only=True,
+            # NOT record_only: the notice carries its own 15s deadline, and the family registration is
+            # kept only so ANY later message can retire it sooner. The user's simplification
+            # («我觉得都应该挂 15 秒清就好了 不用说那么复杂的去区分组和非组») is why there is no group
+            # boundary left to reason about — every restart line behaves identically.
+            record_only=False,
         )
     except Exception:
         return False

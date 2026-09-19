@@ -7688,22 +7688,22 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
-    # A notice family that STANDS TOGETHER. ``supersede_key`` names the family (per chat/thread); its
-    # members accumulate into one group and are retired together by the next message posted in that
-    # place. Built for the restart pair: the "⚠️ restarting" half is sent by the process going down and
-    # the "♻️ online" half by the one that boots in its place — two processes, so the group can only be
-    # held here. The user's rule: 「网关关机和网关重启是同时存在的…在它们之后如果有消息的话 才撤回它们」.
+    # A notice family the bot registers its restart lines with. ``supersede_key`` names the family (per
+    # chat/thread); members accumulate under one entry so a LATER message can retire whichever are still
+    # standing («任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息
+    # 撤回»). Built for the restart lines, whose senders are DIFFERENT gateway processes — the ⚠️ warning
+    # by the process going down, the ♻️ online line by its replacement — so the record can only be held
+    # here.
     #
-    # A member therefore never retires its predecessor. It used to (a family held only its newest id),
-    # which left the reader seeing the ♻️ line alone while the ⚠️ line it belonged to was already gone.
+    # There is deliberately no "new member retires the old one" rule and no group boundary: every restart
+    # line carries its own 15s deadline and behaves identically («我觉得都应该挂 15 秒清就好了 不用说那么
+    # 复杂的去区分组和非组»), which is why the hook no longer sets ``record_only`` for them.
     #
-    # ``record_only`` is for the member that must live until the group is cleared: the caller wants the
-    # group updated WITHOUT a deadline of its own. Without it a caller would have to invent a lifetime
-    # for a line whose whole point is that the next message retires it.
+    # ``record_only`` is still supported for a caller that wants an entry with NO deadline of its own.
     #
-    # ``supersede_key`` still names the FAMILY for the stored identity's trailing part, but it is not
-    # the registry key: the stored identity is built server-side from the verified route (review point
-    # 3), so two bots under one chat cannot collide or retire each other's notices.
+    # ``supersede_key`` is not the registry key: the stored identity is built server-side from the
+    # verified route (review point 3), so two bots under one chat cannot collide or retire each other's
+    # notices.
     #
     # Only the family's LEADING SEGMENT is kept for the stored identity. Callers build ``supersede_key``
     # with the whole route in it ("restart-notice:default:oc_x:omt_y") for their own bookkeeping, and
@@ -7924,8 +7924,10 @@ def _supersede_restart_group_for_route(
         # ♻️ online line are one restart's pair, so clearing one without the other is what left the
         # reader with a lone ♻️.
         for member in _supersede_group_members(entry):
+            # ``replace=True``: the member is already pending on its own 15s deadline, and this early
+            # clear has to WIN over it rather than be swallowed by the dedupe.
             if _schedule_ephemeral_recall(
-                app, message_id=member, delay_seconds=0.0, bot_id=bot_id
+                app, message_id=member, delay_seconds=0.0, bot_id=bot_id, replace=True
             ):
                 withdrawn.append(member)
             else:
@@ -8006,11 +8008,18 @@ async def _recall_supersede(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "withdrawn": len(withdrawn)})
 
 
-def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id) -> bool:
+def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id, replace=False) -> bool:
     tasks = app[EPHEMERAL_RECALL_TASKS_KEY]
     key = (bot_id or "", message_id)
-    if key in tasks:
-        return True
+    existing = tasks.get(key)
+    if existing is not None and not existing.done():
+        if not replace:
+            return True
+        # A SHORTER deadline has to win. A restart line is registered with a 15s lifetime of its own and
+        # can then be retired EARLY by something the bot posts («有任何一条自己发的消息…才撤回它们»).
+        # Without this the dedupe returned True while keeping the original 15s task, so the early clear
+        # silently did nothing and the line sat there until its own deadline.
+        existing.cancel()
     if len(tasks) >= EPHEMERAL_RECALL_MAX_PENDING:
         return False
     task = asyncio.create_task(_run_ephemeral_recall(

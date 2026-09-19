@@ -4033,11 +4033,13 @@ def test_status_notice_family_is_plain_text_but_other_notices_still_are_cards():
     )
     assert hook_runtime.STATUS_NOTICE_PREFIX == "⏳"
 
-    # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family.
-    restart = hook_runtime._hfc_classify_system_notice(
-        "⏳ Gateway is restarting and is not accepting new work right now."
-    )
-    assert restart is not None and restart["notice_kind"] == "gateway-restart"
+    # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family, with
+    # the ONE exception inside it: the draining-gateway line. It is not a status ping about this turn;
+    # it announces the same event as the ⚠️ restart warning, so it is plain text and a member of that
+    # family instead of a card of its own (see test_the_draining_gateway_line_is_no_longer_a_card).
+    draining = "⏳ Gateway is restarting and is not accepting new work right now."
+    assert hook_runtime._hfc_classify_system_notice(draining) is None
+    assert hook_runtime._hfc_is_restart_notice(draining) is True
     reset = hook_runtime._hfc_classify_system_notice("Session automatically reset")
     assert reset is not None and reset["notice_kind"] == "session-reset"
 
@@ -13434,7 +13436,6 @@ def test_paused_approval_outage_does_not_turn_into_denial(monkeypatch):
     assert result['choice'] == 'once'
 
 @pytest.mark.parametrize('text,title,level', [
-    ('⏳ Gateway is restarting and is not accepting new work right now.', 'Gateway 正在重启', 'warning'),
     ('♻ Gateway restarted successfully. Your session continues.', 'Gateway 重启完成', 'success'),
 ])
 def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, title, level):
@@ -13448,6 +13449,32 @@ def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, tit
         notice=notice, notice_scope='independent', message_id='notice_restart')
     assert payload['data']['content'] == notice['content']
     assert '预计' not in payload['data']['content']
+
+
+def test_the_draining_gateway_line_is_no_longer_a_card():
+    """The ⏳ draining line is plain text now, like every other restart line.
+
+    Maintainer note (contract change): it used to be classified as a card titled「Gateway 正在重启」. That
+    put it OUTSIDE the restart family — so it fell through to the "any other message clears the group"
+    rule and DELETED the ⚠️ warning it was announcing, while itself carrying no deadline and therefore
+    never being retired. Both halves of the fix are asserted here: no card, and recognised as one of the
+    lines that registers itself (with its own 15s deadline) instead of clearing the group.
+    """
+    assert hook_runtime._hfc_classify_system_notice(
+        '⏳ Gateway is restarting and is not accepting another turn right now.'
+    ) is None
+    assert hook_runtime._hfc_is_restart_notice(
+        '⏳ Gateway is restarting and is not accepting another turn right now.'
+    ) is True
+    # Both gerunds and both tails are real (``_status_action_gerund()`` × the two doorways).
+    for variant in (
+        '⏳ Gateway is shutting down and is not accepting another turn right now.',
+        '⏳ Gateway is restarting and is not accepting new work right now.',
+        '⏳ Gateway is shutting down and is not accepting new work right now.',
+        '⏳ Gateway restarting — queued for the next turn after it comes back.',
+        '⏳ Gateway shutting down — queued for the next turn after it comes back.',
+    ):
+        assert hook_runtime._hfc_is_restart_notice(variant) is True, variant
 
 
 def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
@@ -13548,21 +13575,22 @@ def test_the_core_restart_line_is_delivered_as_the_coloured_online_line(monkeypa
     assert result.success is True
     assert sent == [("oc_fixture", hook_runtime._HFC_GATEWAY_ONLINE_TEXT)]
     assert "\u267b\ufe0f" in sent[0][1], "the delivered line must carry the variation selector (colour)"
-    # It registers with the restart family (so a LATER message retires it) and carries NO deadline:
-    # the pair is retired by what the bot posts next, never by a clock («在它们之后如果有消息的话 才撤
-    # 回它们»).
+    # It registers with the restart family AND arms its own 15s deadline («我觉得都应该挂 15 秒清就好了»).
     recall_payloads = [payload for url, payload in recalls if "/recall/schedule" in url]
-    assert any(payload.get("record_only") is True for payload in recall_payloads)
-    assert all(payload.get("record_only") is True for payload in recall_payloads), \
-        "a restart notice must never arm a deadline of its own"
+    assert any(payload.get("supersede_key") for payload in recall_payloads), \
+        "the notice must register so a later message can retire it sooner"
+    assert all(
+        float(payload.get("delay_seconds", 0)) == hook_runtime.RESTART_NOTICE_RECALL_SECONDS
+        for payload in recall_payloads
+    ), "every restart line carries the same 15s deadline"
 
 
-def test_the_restart_pair_carries_no_clock_at_all(monkeypatch):
-    """Neither half of the restart pair self-erases — the NEXT message retires the group.
+def test_every_restart_line_carries_the_same_fifteen_second_deadline(monkeypatch):
+    """One class, one rule: no group boundaries, no group-vs-non-group distinction.
 
-    The two lines stand together (「网关关机和网关重启是同时存在的」) and go together, but only once
-    something else has been posted (「是说在它们之后 如果有消息的话 才撤回它们」). Arming a deadline on
-    the ♻️ line would retire it while the reader still has nothing newer to read.
+    Field report: 「我觉得都应该挂 15 秒清就好了 不用说那么复杂的去区分组和非组」. So every line of the
+    family — the ⚠️ warning, the ♻️ online notice, the ⏳ draining doorway and the ⏳ queued line — behaves
+    identically: registered (so a later message can retire it sooner) and armed with the same 15s.
     """
     recalls = []
 
@@ -13575,6 +13603,8 @@ def test_the_restart_pair_carries_no_clock_at_all(monkeypatch):
     for content in (
         "⚠️ Gateway shutting down — Your current task will be interrupted.",
         hook_runtime._HFC_GATEWAY_ONLINE_TEXT,
+        "⏳ Gateway is restarting and is not accepting another turn right now.",
+        "⏳ Gateway restarting — queued for the next turn after it comes back.",
     ):
         recalls.clear()
         asyncio.run(
@@ -13584,9 +13614,13 @@ def test_the_restart_pair_carries_no_clock_at_all(monkeypatch):
             )
         )
         recall_payloads = [payload for url, payload in recalls if "/recall/schedule" in url]
-        assert recall_payloads, f"each restart notice registers itself: {content!r}"
-        assert all(payload.get("record_only") is True for payload in recall_payloads), \
-            f"no deadline may be armed for {content!r}"
+        assert len(recall_payloads) == 1, content
+        assert recall_payloads[0]["supersede_key"], content
+        assert float(recall_payloads[0]["delay_seconds"]) == hook_runtime.RESTART_NOTICE_RECALL_SECONDS, content
+        # Never record_only: that flag means "no deadline of its own", which is the opposite of the rule.
+        assert recall_payloads[0].get("record_only") is not True, content
+        # …and never the "clear the group" door: a restart line announces the group, it does not end it.
+        assert not any(url.endswith("/recall/supersede") for url, _ in recalls), content
 
 
 def test_only_the_core_restart_wording_is_rewritten():

@@ -13851,43 +13851,44 @@ async def test_recall_schedule_withdraws_a_message_once_its_delay_elapses(client
 
 
 async def test_a_restart_family_stands_together_until_something_is_posted(client):
-    """The restart pair coexists, and goes together once a later message arrives.
+    """Restart lines coexist, each with its own 15s deadline, and a later message clears them all.
 
-    Field report: 「网关关机和网关重启是同时存在的,是说在它们之后 如果有消息的话 才撤回它们」 — the
-    ⚠️ "shutting down" warning and the ♻️ "online" line are ONE restart's pair, and both are worth
-    reading. A new member therefore never retires its predecessor. It used to (a family held only its
-    newest id), which is why the reader kept being left with a lone ♻️. What ends the pair is the next
-    message posted in that place — and then the WHOLE group goes at once.
+    Field reports, in order: 「网关关机和网关重启是同时存在的…在它们之后如果有消息的话 才撤回它们」 (a new
+    line must not retire the one in front of it) and then 「我觉得都应该挂 15 秒清就好了 不用说那么复杂的
+    去区分组和非组」 (one mechanism for the whole class — no group boundaries to reason about).
 
-    The two halves arrive from DIFFERENT gateway processes — the warning from the one shutting down,
-    the online line from its replacement — so the group can only be held in the sidecar, which outlives
-    both. ``record_only`` is what keeps each member alive: no deadline of its own, ever.
+    So this asserts the shape the hook actually sends: no ``record_only``, the standard 15s delay, and
+    the family registration on the side. The registration is what lets a LATER message clear a line
+    early; the deadline is what retires it if nothing else ever comes.
+
+    The lines arrive from DIFFERENT gateway processes — the ⚠️ warning from the one shutting down, the
+    ♻️ online line from its replacement — so the record can only be held in the sidecar, which outlives
+    both.
     """
     test_client, feishu_client = client
     route = {"chat_id": "oc_x", "conversation_id": "", "profile_id": "default"}
 
     def registration(message_id):
-        return {"message_id": message_id, "record_only": True,
+        # Exactly what ``supersede_restart_notice_async`` posts now.
+        return {"message_id": message_id, "delay_seconds": 15.0,
                 "supersede_key": "restart-notice:default:oc_x:", "route": route}
 
     first = await test_client.post("/recall/schedule", json=registration("om_restart_warning"))
     assert first.status == 200
     assert (await first.json())["superseded"] is None
-    # A record_only member gets no deadline of its own — it must still be readable.
+    # Armed with its own deadline, so nothing is deleted yet — it must stay readable.
     assert feishu_client.deleted == []
-    assert test_client.app[METRICS_KEY].ephemeral_recalls_scheduled == 0
 
-    # The online half lands: the warning STAYS. This is the whole point of the contract.
+    # The online half lands: the warning STAYS. Neither retires the other.
     second = await test_client.post("/recall/schedule", json=registration("om_gateway_online"))
     assert second.status == 200
     assert (await second.json())["superseded"] is None
     assert feishu_client.deleted == [], "the ⚠️ warning must survive the ♻️ line arriving"
-    assert test_client.app[METRICS_KEY].ephemeral_recalls_scheduled == 0
 
-    # The family is per chat/thread: another place's notice must not join or clear this pair.
+    # The family is per chat/thread: another place's line must not join or clear this one.
     third = await test_client.post(
         "/recall/schedule",
-        json={"message_id": "om_other_chat", "record_only": True,
+        json={**registration("om_other_chat"),
               "supersede_key": "restart-notice:default:oc_other:",
               "route": {"chat_id": "oc_other", "conversation_id": "", "profile_id": "default"}},
     )
@@ -13895,7 +13896,7 @@ async def test_a_restart_family_stands_together_until_something_is_posted(client
     assert (await third.json())["superseded"] is None
     assert feishu_client.deleted == []
 
-    # Now something IS posted in that place: the pair goes together.
+    # Now something IS posted in that place: both lines go together.
     cleared = await test_client.post("/recall/supersede", json={"route": route})
     assert cleared.status == 200
     assert (await cleared.json())["withdrawn"] == 2
@@ -13908,10 +13909,10 @@ async def test_a_restart_family_stands_together_until_something_is_posted(client
 
 
 async def test_a_repeated_restart_cannot_grow_one_group_without_limit(client):
-    """Adversarial check on the bounded claim: one group keeps only its newest members.
+    """Adversarial check on the bounded claim: one family keeps only its newest entries.
 
-    A place restarted over and over with nothing posted in between would otherwise accumulate
-    forever. The OLDEST member goes first — that is the stale end.
+    A place restarted over and over with nothing posted in between would otherwise accumulate forever.
+    The OLDEST entry goes first — that is the stale end.
     """
     test_client, feishu_client = client
     route = {"chat_id": "oc_cap", "conversation_id": "omt_cap", "profile_id": "default"}
@@ -13920,11 +13921,11 @@ async def test_a_repeated_restart_cannot_grow_one_group_without_limit(client):
     for message_id in ordered:
         response = await test_client.post(
             "/recall/schedule",
-            json={"message_id": message_id, "record_only": True,
+            json={"message_id": message_id, "delay_seconds": 15.0,
                   "supersede_key": "restart-notice:default:oc_cap:omt_cap", "route": route},
         )
         assert response.status == 200
-        # Nothing is ever withdrawn by a later member, even once the cap starts pruning.
+        # Nothing is ever withdrawn by a later line, even once the cap starts pruning.
         assert feishu_client.deleted == []
 
     entry = next(
