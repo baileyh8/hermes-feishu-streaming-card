@@ -9705,6 +9705,35 @@ async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) 
     return await recall_transient_thread_notice_async(event, content, result)
 
 
+def interrupted_turn_locals(source: Any, message_id: str, result: Any) -> dict[str, Any]:
+    """Carry measured old-turn metrics into the queued-followup failure event.
+
+    The installed block stays minimal; the session ignores missing placeholders.
+    """
+    locals_: dict[str, Any] = {
+        "source": source,
+        "chat_id": getattr(source, "chat_id", None),
+        "message_id": message_id,
+        "error": "用户已打断当前任务",
+    }
+    if not isinstance(result, dict):
+        return locals_
+    metrics: dict[str, Any] = {
+        "duration": result.get("_hfc_turn_seconds"),
+        "model": result.get("model", ""),
+        "tokens": {
+            "input_tokens": result.get("input_tokens", 0),
+            "output_tokens": result.get("output_tokens", 0),
+        },
+        "context": {
+            "used_tokens": result.get("last_prompt_tokens", 0),
+            "max_tokens": result.get("context_length", 0),
+        },
+    }
+    locals_.update(metrics)
+    return locals_
+
+
 async def schedule_message_recall_async(
     message_id: str,
     *,
@@ -10581,6 +10610,14 @@ def _event_data(
     if event_name == "message.failed":
         error = _first_string(local_vars, ("error", "exception")) or "消息处理失败"
         data["error"] = error
+        # Reuse the completion field readers for failed/interrupted turns. The session
+        # ignores absent/placeholder values and preserves existing measured fields.
+        data.update({
+            "duration": _completion_duration(local_vars),
+            "model": _completion_model(local_vars),
+            "tokens": _completion_tokens(local_vars, ""),
+            "context": _completion_context(local_vars),
+        })
         return data
     if event_name == "message.started":
         sender_open_id = _message_sender_open_id(

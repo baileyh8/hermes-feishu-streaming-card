@@ -232,3 +232,9 @@ CardKit 创建和所有更新必须经过同一短 ID 映射：字符串不同�
 native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependent`：它观察 Gateway 接纳的轮次，上报自己的活动计数，不独立声明 Gateway 准入与 HOME 身份。只有同一 worker 中有效的 Gateway 聚合 owner 存在时，才借用该 owner 的 drain/home 证明。native 活动、计数不完整、未知 owner、Gateway 释放、HOME 不符及 epoch 变化仍保守拒绝停服。不得用常量 true 或忽略所有缺失 provider 解除门禁。
 
 终态工具区使用 `card.hide_completed_tool_activity`，默认 false 保持旧行为；true 仅在 completed/failed 隐藏正文工具行及旧摘要回退，不改变折叠记录、计数、正文或审批布局。
+
+## V4.6.3 正文思考与测量边界
+
+`stream_thinking_to_body` 默认 true。false 仅关闭运行态正文对原始 thinking 的回退，render-only 预览遵循 show_reasoning/max_reasoning_chars 且始终进入面板，不改持久timeline、终态内容保留与审批。容量检查与实际渲染必须使用同一配置；大面板与大答案仍走共享serializer门禁。
+
+工具按ordinal排序，运行工具及各自前驱可见，终态duration_ms保存在ToolState并兼容旧检查点。failure只接收有效测量，不能用Unknown、零占位、非有限数覆盖已知值；生成的排队接续hook实际执行须保留旧turn及新turn身份。通知撤回不在本版，#331调用方仍需完整传递bot/profile。

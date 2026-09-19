@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.2`. Fix native-plugin/Gateway maintenance proof sharing and add opt-in terminal tool-row hiding (#328). Full tests, exact-merge CI, assets and public installation remain release gates.
+Current release candidate: `4.6.3`. Add #333 live thinking visibility and adapt #331 tool order/duration/interruption metrics. Notice retirement remains separate. Full tests, exact-merge CI, assets and public installation remain release gates.
 
-The actual upstream callback method reproduced the normal/muted branch inversion; both branches now behave correctly. Production rollout and mobile-client checks are reported separately.
+New regressions include actual loopback HTTP and generated-hook execution. Production rollout and mobile-client checks are reported separately.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
