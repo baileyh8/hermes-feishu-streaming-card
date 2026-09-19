@@ -103,8 +103,10 @@ APPROVAL_EXPIRED_NOTICE_RECALL_SECONDS = 15.0
 # The restart notices: four strings, two halves. "⚠️ Hermes is restarting / shutting down …" warns that
 # the current task is about to be interrupted, and "♻️ Gateway online / ♻️ Gateway restarted …" says
 # it is back. They are NOT in TRANSIENT_THREAD_NOTICES because they have no lifetime of their own: a
-# restart warning is good until the gateway returns, and the online line is good until the next
-# restart — what retires them is the NEXT notice, not a clock.
+# restart warning is good until the gateway returns, and the online line is good until the user has
+# something newer to read. Neither carries a clock — the two STAND TOGETHER as one group
+# («网关关机和网关重启是同时存在的…在它们之后如果有消息的话 才撤回它们»), and what retires them is the
+# next message the bot posts, withdrawn as a group.
 #
 # That next notice comes from a DIFFERENT process (the warning is sent by the process going down, the
 # online line by its replacement), so hfc cannot hold "the previous one" in memory; the withdrawal is
@@ -9920,10 +9922,12 @@ async def schedule_message_recall_async(
     core's "↪ Redirected current run …" notice. The gateway's own adapter cannot delete (its Feishu
     implementation inherits the ``return False`` default), so the sidecar owns this path.
 
-    ``supersede_key`` switches the call to the self-retiring mode (see ``RESTART_NOTICE_PREFIXES``):
-    the sidecar withdraws whatever was previously registered under that key and remembers this id
-    instead. ``record_only`` adds "…and give this message no deadline of its own", which is what the
-    restart notices need — they live until the next notice retires them.
+    ``supersede_key`` switches the call to the group mode (see ``RESTART_NOTICE_PREFIXES``): the
+    sidecar ADDS this message to the group registered for that place — it never retires the members
+    already standing there, because a restart's two halves are read together
+    (「网关关机和网关重启是同时存在的」). ``record_only`` adds "…and give this message no deadline of
+    its own", which is what the restart notices need — the group lives until the next message the bot
+    posts retires it (「在它们之后 如果有消息的话 才撤回它们」).
     """
     try:
         recall_id = str(message_id or "").strip()
@@ -9952,7 +9956,7 @@ async def schedule_message_recall_async(
 
 
 def _hfc_is_restart_notice(content: Any) -> bool:
-    """True for the restart/online notices that retire each other (see ``RESTART_NOTICE_PREFIXES``)."""
+    """True for the restart/online notices that stand together as one group (see ``RESTART_NOTICE_PREFIXES``)."""
     text = str(content or "")
     if not text or not text.startswith(RESTART_NOTICE_PREFIXES):
         return False
@@ -9962,7 +9966,11 @@ def _hfc_is_restart_notice(content: Any) -> bool:
 async def supersede_restart_notice_async(
     source: Any, chat_id: str, content: Any, result: Any
 ) -> bool:
-    """Retire the previous restart notice now that a newer one has landed.
+    """Add the newest restart notice to the group standing in this place.
+
+    It does NOT retire the earlier member. The two halves of a restart are one pair and are read
+    together («网关关机和网关重启是同时存在的»), so both stay until something newer is posted, and
+    then they are withdrawn together («在它们之后 如果有消息的话 才撤回它们»).
 
     Keyed per chat AND thread so a home broadcast and a thread notice do not cancel each other, and
     registered in the SIDECAR because the two halves of a restart are sent by different gateway

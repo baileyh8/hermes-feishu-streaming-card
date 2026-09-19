@@ -175,19 +175,27 @@ EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
 EPHEMERAL_RECALL_MAX_SECONDS = 600.0
 EPHEMERAL_RECALL_MAX_PENDING = 1024
 EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
-# ``supersede_key`` -> message_id of the most recent notice in that family, per chat (see
-# ``_recall_schedule``). This lives in the SIDECAR rather than in the gateway because the notices it
-# supersedes are sent by DIFFERENT gateway processes: "⚠️ … restarting" comes from the process that is
-# shutting down, and "♻️ … online" from the one that boots in its place. The sidecar outlives both, so
-# it is the only place where "the previous one" can still be named.
+# ``supersede_key`` -> the GROUP of notices standing in one place (see ``_recall_schedule``). This
+# lives in the SIDECAR rather than in the gateway because the notices it holds are sent by DIFFERENT
+# gateway processes: "⚠️ … restarting" comes from the process shutting down, and "♻️ … online" from
+# the one that boots in its place. The sidecar outlives both, so it is the only place where the group
+# can still be named across a restart.
+#
+# The entry holds a GROUP, not one id: the two halves of a restart STAND TOGETHER
+# (「网关关机和网关重启是同时存在的」), so a new member is ADDED rather than replacing the earlier one,
+# and the whole group is withdrawn together by the next message the bot posts
+# (「在它们之后 如果有消息的话 才撤回它们」).
 SUPERSEDED_NOTICE_IDS_KEY = web.AppKey("superseded_notice_ids", dict)
 # Upper bound on a caller-supplied ``supersede_key``: it is a map key, never echoed into a message.
 SUPERSEDE_KEY_MAX_LENGTH = 200
 # Bound on the supersede registry itself. Each entry is one identity (profile/bot/chat/thread/family)
-# holding one message id, so a chat that never receives another message must not be able to grow this
+# holding one group, so a chat that never receives another message must not be able to grow this
 # without limit. Oldest first when it fills — a notice no longer reachable by any send is worth less
 # than the memory it costs.
 SUPERSEDE_REGISTRY_MAX_ENTRIES = 500
+# Bound on ONE group. A place restarted repeatedly with nothing posted in between would otherwise grow
+# its group without limit; the OLDEST member goes first, which is the stale end of the group.
+SUPERSEDE_GROUP_MAX_MEMBERS = 8
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -7680,19 +7688,22 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
-    # A notice family that supersedes itself. ``supersede_key`` names the family (per chat/thread) and
-    # the PREVIOUS member is withdrawn the moment a new one lands. Built for the restart pair, where
-    # the "⚠️ restarting" half is sent by the process going down and the "♻️ online" half by the one
-    # that boots in its place — two processes, so the "previous one" can only be remembered here. The
-    # user's rule: 「重启提示和上线提示，在有新消息的时候把前面的撤回了」.
+    # A notice family that STANDS TOGETHER. ``supersede_key`` names the family (per chat/thread); its
+    # members accumulate into one group and are retired together by the next message posted in that
+    # place. Built for the restart pair: the "⚠️ restarting" half is sent by the process going down and
+    # the "♻️ online" half by the one that boots in its place — two processes, so the group can only be
+    # held here. The user's rule: 「网关关机和网关重启是同时存在的…在它们之后如果有消息的话 才撤回它们」.
     #
-    # ``record_only`` is for the member that must live until superseded: the caller wants the key
-    # updated WITHOUT a deadline of its own. Without it a superseding caller would have to invent a
-    # lifetime for a line whose whole point is that the next notice retires it.
+    # A member therefore never retires its predecessor. It used to (a family held only its newest id),
+    # which left the reader seeing the ♻️ line alone while the ⚠️ line it belonged to was already gone.
     #
-    # ``supersede_key`` still names the FAMILY for the immediate "previous member" withdrawal below,
-    # but it is no longer the registry key: the stored identity is built server-side from the verified
-    # route (review point 3), so two bots under one chat cannot collide or retire each other's notices.
+    # ``record_only`` is for the member that must live until the group is cleared: the caller wants the
+    # group updated WITHOUT a deadline of its own. Without it a caller would have to invent a lifetime
+    # for a line whose whole point is that the next message retires it.
+    #
+    # ``supersede_key`` still names the FAMILY for the stored identity's trailing part, but it is not
+    # the registry key: the stored identity is built server-side from the verified route (review point
+    # 3), so two bots under one chat cannot collide or retire each other's notices.
     #
     # Only the family's LEADING SEGMENT is kept for the stored identity. Callers build ``supersede_key``
     # with the whole route in it ("restart-notice:default:oc_x:omt_y") for their own bookkeeping, and
@@ -7704,38 +7715,14 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         if supersede_key
         else "restart-notice"
     )
+    # Kept in the response for wire-shape stability. It is always None now: within a family, members
+    # accumulate instead of retiring each other.
     superseded: Optional[str] = None
     if supersede_key:
         supersede_key = supersede_key[:SUPERSEDE_KEY_MAX_LENGTH]
         registry = request.app[SUPERSEDED_NOTICE_IDS_KEY]
-        # Looked up under the SAME server-built identity that registration writes, so the previous
-        # member is found by who owns it, not by a string the caller chose.
-        identity = _supersede_identity(
-            profile_id=_safe_command_string(
-                (route_data or {}).get("profile_id") if isinstance(route_data, dict) else ""
-            )
-            or "default",
-            bot_id=bot_id or "",
-            chat_id=_safe_command_string(
-                (route_data or {}).get("chat_id") if isinstance(route_data, dict) else ""
-            ),
-            thread_id=_safe_command_string(
-                (route_data or {}).get("conversation_id") if isinstance(route_data, dict) else ""
-            ),
-            family=supersede_family,
-        )
-        previous = registry.get(identity)
-        if isinstance(previous, dict):
-            previous = previous.get("message_id")
-        if previous and previous != message_id:
-            # Immediate, best-effort: a refusal (capacity, too old, already an owned card) leaves the
-            # old notice in place, which is the pre-existing behaviour rather than a new failure mode.
-            if _schedule_ephemeral_recall(
-                request.app, message_id=previous, delay_seconds=0.0, bot_id=bot_id
-            ):
-                superseded = previous
         # Stored with its route so a LATER send to the same place can find it: any message the bot
-        # posts clears the restart group standing in front of it (see
+        # posts clears the group standing in front of it (see
         # ``_supersede_restart_group_for_route``).
         route_chat = _safe_command_string(
             (route_data or {}).get("chat_id") if isinstance(route_data, dict) else ""
@@ -7805,6 +7792,24 @@ def _supersede_identity(*, profile_id: str, bot_id: str, chat_id: str, thread_id
     return "\x1f".join(parts)
 
 
+def _supersede_group_members(entry: dict) -> list[str]:
+    """Message ids held by one registry entry, in registration order.
+
+    Reads the single-id shape too: an entry written before the group existed (or by a fixture) must
+    still be retirable rather than silently skipped.
+    """
+    raw = entry.get("message_ids")
+    members: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            candidate = _safe_command_string(item)
+            if candidate and candidate not in members:
+                members.append(candidate)
+        return members
+    single = _safe_command_string(entry.get("message_id"))
+    return [single] if single else []
+
+
 def _register_superseded_notice(
     registry: dict,
     *,
@@ -7815,30 +7820,44 @@ def _register_superseded_notice(
     conversation_id: str,
     profile_id: str,
     family: str,
-) -> None:
-    """Register one notice under a server-built identity, keeping the registry bounded.
+) -> list[str]:
+    """ADD one notice to the group registered under a server-built identity, keeping it bounded.
 
-    Bounded because the registry lives in the sidecar and outlives the notices it holds: a chat that
-    never receives another message would otherwise keep its entry forever (review point 3). When it
-    fills, the OLDEST identity goes first — dicts preserve insertion order, so that is the first key.
-    Dropping the oldest is safe: what it loses is the ability to retire one more stale notice, which
-    is a cosmetic miss, not a correctness one.
+    The group is a list because its members stand together: both halves of a restart are worth reading
+    (「网关关机和网关重启是同时存在的」), so a later member is added rather than replacing the earlier
+    one, and the whole group is retired together by the next message the bot posts
+    (「在它们之后 如果有消息的话 才撤回它们」).
+
+    Bounded twice, because this registry lives in the sidecar and outlives the notices it holds: when
+    the registry fills, the OLDEST IDENTITY goes first (review point 3), and within one group the
+    OLDEST MEMBER goes first — that end is the stale one. Dropping either is safe: what it costs is
+    the ability to retire one more stale notice, which is a cosmetic miss, not a correctness one.
+
+    Returns the group's ids in registration order.
     """
     if not message_id:
-        return
+        return []
     while len(registry) >= SUPERSEDE_REGISTRY_MAX_ENTRIES:
         oldest = next(iter(registry), None)
         if oldest is None:
             break
         registry.pop(oldest, None)
-    registry[identity] = {
-        "message_id": message_id,
-        "bot_id": bot_id,
-        "chat_id": chat_id,
-        "conversation_id": conversation_id,
-        "profile_id": profile_id,
-        "family": family,
-    }
+    entry = registry.get(identity)
+    if not isinstance(entry, dict):
+        entry = {}
+    members = _supersede_group_members(entry)
+    if message_id not in members:
+        members.append(message_id)
+    entry["message_ids"] = members[-SUPERSEDE_GROUP_MAX_MEMBERS:]
+    # Route + ownership are rewritten from THIS request: the entry has to stay findable by the later
+    # send that clears it, and that send matches on the parts stored here.
+    entry["bot_id"] = bot_id
+    entry["chat_id"] = chat_id
+    entry["conversation_id"] = conversation_id
+    entry["profile_id"] = profile_id
+    entry["family"] = family
+    registry[identity] = entry
+    return list(entry["message_ids"])
 
 
 def _supersede_restart_group_for_route(
@@ -7899,17 +7918,25 @@ def _supersede_restart_group_for_route(
             continue
         if _safe_command_string(entry.get("family") or "default") != target_family:
             continue
-        message_id = _safe_command_string(entry.get("message_id"))
-        if not message_id:
+        bot_id = entry.get("bot_id") or None
+        remaining: list[str] = []
+        # The WHOLE group goes together («在它们之后如果有消息的话 才撤回它们»): the ⚠️ warning and the
+        # ♻️ online line are one restart's pair, so clearing one without the other is what left the
+        # reader with a lone ♻️.
+        for member in _supersede_group_members(entry):
+            if _schedule_ephemeral_recall(
+                app, message_id=member, delay_seconds=0.0, bot_id=bot_id
+            ):
+                withdrawn.append(member)
+            else:
+                remaining.append(member)
+        if remaining:
+            # Not scheduled -> KEEP it so the next send retries it. Dropping it here would leave the
+            # notice permanently un-retirable, which is the failure this feature exists to prevent.
+            entry["message_ids"] = remaining
+            registry[key] = entry
+        else:
             registry.pop(key, None)
-            continue
-        if _schedule_ephemeral_recall(
-            app, message_id=message_id, delay_seconds=0.0, bot_id=entry.get("bot_id") or None
-        ):
-            registry.pop(key, None)
-            withdrawn.append(message_id)
-        # Not scheduled -> KEEP the entry so the next send retries it. Dropping it here would leave
-        # the notice permanently un-retirable, which is the failure this feature exists to prevent.
     return withdrawn
 
 
