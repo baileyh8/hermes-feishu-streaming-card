@@ -5108,6 +5108,28 @@ def _hfc_content_notice_id(kind: str, content: str) -> str:
 
 
 _HFC_GATEWAY_ONLINE_TEXT = "♻️ Gateway online — Hermes is back and ready."
+# The core's own restart-completion wording, as written by `gateway/run_notifications.py`. It is sent
+# straight through `adapter.send` to the chat/thread that REQUESTED the restart, and it uses a bare
+# U+267B: Feishu renders that monochrome, while the home-channel line uses U+267B+FE0F and renders in
+# colour («希望话题里面的线程收到的也是彩色的»). Routing these through `_HFC_GATEWAY_ONLINE_TEXT`
+# also puts them on the restart-notice recall paths, which a raw `adapter.send` bypasses entirely.
+_CORE_RESTART_ONLINE_TEXTS = frozenset({
+    "♻ Gateway restarted successfully. Your session continues.",
+    "♻️ Gateway restarted successfully. Your session continues.",
+})
+
+
+def _hfc_restart_notice_rewrite(content: Any) -> str | None:
+    """Return ``_HFC_GATEWAY_ONLINE_TEXT`` for a core restart-completion line, else ``None``.
+
+    Scope is deliberately narrow: only the core's legacy wording is rewritten, so the home-channel
+    line (already `_HFC_GATEWAY_ONLINE_TEXT`) keeps taking its own path through
+    ``_hfc_send_plain_notice`` and its existing fallback contract.
+    """
+    text = str(content or "").strip()
+    if text in _CORE_RESTART_ONLINE_TEXTS:
+        return _HFC_GATEWAY_ONLINE_TEXT
+    return None
 
 
 def _hfc_notice_plain_text(notice: Any) -> str | None:
@@ -6353,6 +6375,18 @@ async def _hfc_send_with_native_command_result_card(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_send", None)
+    # The core's restart-completion line reaches this wrapper only on its way to the chat/thread that
+    # REQUESTED the restart, and it is the one send that must not keep the core's monochrome ♻ (see
+    # `_CORE_RESTART_ONLINE_TEXTS`). Handled in front of the handoff/card branches so a single place
+    # owns both the wording and the withdrawal — `_hfc_recall_plain_text_status_notice` retires the
+    # ⚠️ warning in front of it and arms this line's own 15s deadline.
+    restart_online = _hfc_restart_notice_rewrite(content)
+    if restart_online is not None and callable(original):
+        result = await original(
+            self, chat_id, restart_online, reply_to=reply_to, metadata=metadata,
+        )
+        await _hfc_recall_plain_text_status_notice(chat_id, restart_online, metadata, result)
+        return result
     handoff_context = _native_handoff_for_send(self, chat_id, content, metadata)
     if handoff_context is not None and callable(original):
         descriptor = handoff_context["descriptor"]
@@ -6510,6 +6544,11 @@ async def _hfc_recall_plain_text_status_notice(
             thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
         )
         if _hfc_is_restart_notice(content):
+            # The two halves are a PAIR that stands together — the ⚠️ warning says the gateway is going
+            # down, the ♻️ line says it is back («网关关机和网关重启是同时存在的»). Neither carries a
+            # clock of its own: what retires them is a LATER message, and they are withdrawn together
+            # («在它们之后如果有消息的话 才撤回它们»). So this registers the new one and retires the
+            # one it replaces; the group itself is cleared by whatever the bot posts next.
             return await supersede_restart_notice_async(source, chat_id, content, result)
         # Any OTHER message the bot posts retires the restart group in front of it («任何一条自己发的
         # 消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回»). The sidecar

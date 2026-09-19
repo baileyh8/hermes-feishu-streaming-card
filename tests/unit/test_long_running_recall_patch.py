@@ -198,7 +198,9 @@ async def test_plain_text_egress_clears_the_restart_group_behind_a_normal_messag
     assert payload["route"]["chat_id"] == "oc_home"
     assert payload["route"]["conversation_id"] == "omt_x"
 
-    # A restart notice registers itself instead of clearing — it IS the group.
+    # A restart notice registers itself instead of clearing — it IS the group, and it carries no
+    # clock of its own: the pair is retired by whatever the bot posts next
+    # («在它们之后如果有消息的话 才撤回它们»).
     posted.clear()
     assert await hook_runtime._hfc_recall_plain_text_status_notice(
         "oc_home",
