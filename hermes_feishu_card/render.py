@@ -120,6 +120,7 @@ def render_card(
     reasoning_format: str = "panel",
     completion_mention: bool = False,
     hide_completed_tool_activity: bool = False,
+    stream_thinking_to_body: bool = True,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -139,6 +140,7 @@ def render_card(
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
         hide_completed_tool_activity=hide_completed_tool_activity,
+        stream_thinking_to_body=stream_thinking_to_body,
     ).card
 
 
@@ -160,8 +162,11 @@ def render_card_result(
     reasoning_format: str = "panel",
     completion_mention: bool = False,
     hide_completed_tool_activity: bool = False,
+    stream_thinking_to_body: bool = True,
 ) -> CardRenderResult:
-    primary_text = _primary_text_for_session(session)
+    primary_text = _primary_text_for_session(
+        session, stream_thinking_to_body=stream_thinking_to_body
+    )
     table_overflow = transform_table_overflow(
         primary_text,
         mode=table_overflow_mode,
@@ -184,6 +189,7 @@ def render_card_result(
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
         hide_completed_tool_activity=hide_completed_tool_activity,
+        stream_thinking_to_body=stream_thinking_to_body,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -228,6 +234,7 @@ def _render_card_unchecked(
     reasoning_format: str = "panel",
     completion_mention: bool = False,
     hide_completed_tool_activity: bool = False,
+    stream_thinking_to_body: bool = True,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -239,7 +246,9 @@ def _render_card_unchecked(
         and session.delivery_kind == "chat"
         and bool(session.reply_to_message_id)
     )
-    primary_text = _primary_text_for_session(session)
+    primary_text = _primary_text_for_session(
+        session, stream_thinking_to_body=stream_thinking_to_body
+    )
     attachment_summary = _render_attachment_summary(session)
     footer = _render_footer(
         session,
@@ -336,6 +345,11 @@ def _render_card_unchecked(
             text_sizes=text_sizes,
             used_text_size_roles=used_text_size_roles,
             reasoning_format=reasoning_format,
+            live_thinking=(
+                session.thinking_text
+                if not stream_thinking_to_body and session.status not in {"completed", "failed"}
+                else ""
+            ),
         )
         elements.extend(timeline_elements)
     elements.extend(
@@ -692,12 +706,14 @@ def _card_quote_summary(
     return status.get("summary", status.get("subtitle", ""))
 
 
-def _primary_text_for_session(session: CardSession) -> str:
+def _primary_text_for_session(
+    session: CardSession, *, stream_thinking_to_body: bool = True
+) -> str:
     if session.status in {"completed", "failed"}:
         return normalize_stream_text(session.answer_text)
     if session.answer_text:
         return normalize_stream_text(session.answer_text)
-    if session.thinking_text:
+    if stream_thinking_to_body and session.thinking_text:
         return normalize_stream_text(session.thinking_text)
     if session.latest_tool_preview or session.tools:
         return ""
@@ -1605,21 +1621,24 @@ def _render_tool_activity_elements(
     running = [
         tool for tool in session.tools.values() if turn_is_live and _tool_is_running(tool)
     ]
-    # Start order, oldest first, so the rows read top-to-bottom like the run did. The sort is stable,
-    # so tools that never reported a start time keep their insertion order.
-    ordered = sorted(session.tools.values(), key=lambda tool: tool.started_at or 0.0)
+    # Terminal-only events have no start timestamp. Call ordinals keep their
+    # actual position and let each running tool retain its immediate predecessor.
+    ordered = sorted(session.tools.values(), key=lambda tool: tool.ordinal or 0)
     if running:
         running.sort(key=lambda tool: tool.started_at or 0.0)
-        # Every running tool stays visible; the window is then backfilled from the most recent
-        # finished tools, because the row that matters most on a changeover is the one BEFORE the
-        # current step.
-        shown = {id(tool) for tool in running}
-        for tool in reversed(ordered):
-            if len(shown) >= _TOOL_ACTIVITY_WINDOW:
-                break
-            shown.add(id(tool))
-        selected = [tool for tool in ordered if id(tool) in shown]
+        # Pair each running tool independently; do not fill gaps between parallel calls.
+        keep_ids = set()
+        for tool in running:
+            keep_ids.add(id(tool))
+            position = next(
+                index for index, candidate in enumerate(ordered) if candidate is tool
+            )
+            if position > 0:
+                keep_ids.add(id(ordered[position - 1]))
+        selected = [tool for tool in ordered if id(tool) in keep_ids]
     else:
+        # Nothing is running: a finished card keeps the last two steps so a changeover is still
+        # readable after the turn ends (same rule the user gave for the live case).
         selected = ordered[-_TOOL_ACTIVITY_WINDOW:]
     now = _time.time()
     text_size = _role_text_size(
@@ -1794,8 +1813,17 @@ def _tool_activity_row(
     # keeping both in the same order across surfaces avoids re-reading the same pair twice.
     if tool.ordinal:
         parts.append(f"#{tool.ordinal}")
+    # Running rows count up; terminal rows retain their measured duration.
+    elapsed: float | None = None
     if running and tool.started_at:
-        parts.append(_format_duration(max(0.0, now - float(tool.started_at))))
+        elapsed = max(0.0, now - float(tool.started_at))
+    elif tool.duration_ms is not None:
+        try:
+            elapsed = max(0.0, float(tool.duration_ms) / 1000.0)
+        except (TypeError, ValueError):
+            elapsed = None
+    if elapsed is not None:
+        parts.append(_format_duration(elapsed))
     # Maintainer note (contract change): this was ONE line — status, tool name, duration, ordinal and
     # the action all joined by " · ". The user's report was that cramming them together is confusing
     # ("不然都挤在一行 很混乱"), and asked for three rows: status information, then the action, then
@@ -1837,10 +1865,21 @@ def _render_timeline_elements(
     text_sizes: Mapping[str, Any] | None = None,
     used_text_size_roles: set[str] | None = None,
     reasoning_format: str = "panel",
+    live_thinking: str = "",
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
     all_entries = session.timeline.snapshot()
+    # Raw thinking stays out of persisted timeline/history. Opting out of body streaming
+    # adds a bounded render-only preview, including for old restored checkpoints.
+    live_entry = None
+    if live_thinking.strip():
+        from .card_timeline import TimelineEntry
+
+        live_entry = TimelineEntry(
+            kind="reasoning", title="实时思考", status="running", content=live_thinking
+        )
+        all_entries.append(live_entry)
     if not all_entries:
         return []
     entries = _select_timeline_entries(all_entries, max_items=max_items)
@@ -1879,13 +1918,17 @@ def _render_timeline_elements(
             )
             lines = [f"**{item.title}** · {item.status}"]
             if content:
-                if reasoning_format == "code":
+                if reasoning_format == "code" and item is not live_entry:
                     # A longer fence preserves embedded backticks literally.
                     fence = "`" * max(3, 1 + max((len(run) for run in re.findall(r"`+", content)), default=0))
                     lines.append(f"{fence}text\n{content}\n{fence}")
                 else:
                     lines.append(content)
-            target_elements = reasoning_elements if reasoning_format == "code" else panel_elements
+            target_elements = (
+                reasoning_elements
+                if reasoning_format == "code" and item is not live_entry
+                else panel_elements
+            )
             target_elements.extend(
                 _timeline_markdown_elements(
                     "\n".join(lines),

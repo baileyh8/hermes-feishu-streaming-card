@@ -39,6 +39,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "interaction_mode": "auto",
         "streaming_mode": False,
         "show_reasoning": True,
+        "stream_thinking_to_body": True,
         "hide_completed_tool_activity": False,
         "reasoning_format": "panel",
         "timeline_expanded": False,

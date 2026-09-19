@@ -178,6 +178,8 @@ jobs:
           tests/unit/test_notice_routing_regressions.py
           tests/unit/test_lifecycle.py
           tests/unit/test_render.py
+          tests/unit/test_stream_thinking_to_body.py
+          tests/unit/test_331_adapted.py
           tests/unit/test_runner.py
           tests/unit/test_session.py
           tests/unit/test_status.py
@@ -253,7 +255,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v4.6.2
+          HFC_VERSION: v4.6.3
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
