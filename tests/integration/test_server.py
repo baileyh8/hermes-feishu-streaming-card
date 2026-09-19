@@ -7969,7 +7969,10 @@ async def test_v4_interaction_restores_cached_preview_on_stable_v2_card(client):
     assert resumed["header"]["title"]["content"] == "⏳ Hermes Agent · 工具 #1"
     assert resumed["header"]["subtitle"]["content"] == "读取文件：weather_client.py"
     assert "读取文件：weather_client.py" in str(resumed)
-    assert len(feishu_client.sent) == 2
+    # Maintainer note (contract change): answering the approval now also opens the card that carries
+    # the rest of the turn («审批通过之后，应该发一张新的卡来承载信息流»), so the thread holds three
+    # messages: the session card, the approval card, and the continuation card.
+    assert len(feishu_client.sent) == 3
     assert feishu_client.updated[-1][0] == "feishu-message-1"
 
 
@@ -8323,6 +8326,67 @@ async def test_completion_notify_sends_plain_without_sender_when_mention_disable
         ]
         session = app[SESSIONS_KEY]["hermes-message-1"]
         assert session.completion_notify_state == "sent"
+    finally:
+        await test_client.close()
+
+
+async def test_the_completion_notify_clears_the_restart_group_in_front_of_it(tmp_path):
+    """「✅ 本轮回复结束」 is a message we posted, so it retires the restart notices before it.
+
+    This is the one sidecar-originated plain text, so it never passes the gateway's plain-text door
+    where the other sends are caught. Left out, a restart's 「♻️ … online」 sat below the completion
+    notice and the reader had no way to tell which one was current.
+
+    Called directly on purpose: a ``message.completed`` event also writes the card, and that path
+    clears the group by itself — which would make this pass with or without the fix, proving nothing.
+    """
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={"completion_notify": {"placement": "message", "enabled": True, "mention": False}},
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started", 0, {"reply_to_message_id": ""}, thread_id="omt_thread"
+            ),
+        )
+        session_key = "hermes-message-1"
+        session = app[SESSIONS_KEY][session_key]
+        session.status = "completed"
+        session.completion_notify_state = "idle"
+        # Registered after the started event, so nothing else has had a chance to clear it.
+        app[sidecar_server.SUPERSEDED_NOTICE_IDS_KEY][
+            sidecar_server._supersede_identity(
+                profile_id="default",
+                bot_id="",
+                chat_id="oc_abc",
+                thread_id="omt_thread",
+                family="restart-notice",
+            )
+        ] = {
+            "message_id": "om_restart_online",
+            "bot_id": "",
+            "chat_id": "oc_abc",
+            "conversation_id": "omt_thread",
+            "profile_id": "default",
+            "family": "restart-notice",
+        }
+        assert feishu_client.deleted == []
+
+        event = sidecar_server.SidecarEvent.from_dict(
+            event_payload("message.completed", 1, {"answer": "done"}, thread_id="omt_thread")
+        )
+        await sidecar_server._maybe_send_completion_notify(app, session_key, session, event)
+
+        assert feishu_client.texts == [("oc_abc", "✅ 本轮回复结束", "omt_thread", None)]
+        await _wait_until(lambda: feishu_client.deleted)
+        assert "om_restart_online" in feishu_client.deleted
     finally:
         await test_client.close()
 
@@ -13345,6 +13409,14 @@ async def test_any_option_on_an_expired_approval_reissues_it_instead_of_a_dead_b
 
     Field report: clicking an option answered with a toast nobody understood ("暂未确认选择结果"),
     the card never changed, and the approval could not be taken any more.
+
+    Maintainer note (contract change): the renewal is delivered on a card of its OWN now — the dead
+    card is recalled and the replacement posted as a new message. It used to be refreshed in place,
+    which kept exactly one card on screen by construction; the user reports the opposite problem
+    (「如果审批通过之后，应该发一张新的卡来承载信息流，而不是在原来的卡上继续操作。因为在原来的卡上继续
+    操作的话，会导致信息流错乱」) — reusing the message tangles the new approval's flow with the expired
+    prompt the reader is still scrolling past. One card still ends up on screen, by ordering instead
+    of by reuse: recall first, and only post the replacement when the recall succeeded.
     """
     test_client, feishu_client = client
     await test_client.post('/events', json=event_payload('message.started', 0))
@@ -13373,9 +13445,12 @@ async def test_any_option_on_an_expired_approval_reissues_it_instead_of_a_dead_b
     assert interaction.status == 'pending' and interaction.choice == ''
     # Renewal is not consent: the withdrawn card's option decides nothing on replay.
     assert (await click(expired_option)).status == 404
-    assert len(feishu_client.sent) == cards_before
-    assert feishu_client.deleted == []
-    assert interaction.feishu_message_id == dead_card_id
+    # The dead card is gone and the renewal arrived as its own message…
+    assert feishu_client.deleted == [dead_card_id]
+    assert len(feishu_client.sent) == cards_before + 1
+    # …so the session now tracks the replacement, not the recalled card.
+    assert interaction.feishu_message_id
+    assert interaction.feishu_message_id != dead_card_id
 
 
 async def test_expired_approval_without_pause_requires_a_new_request(client):
@@ -13775,6 +13850,164 @@ async def test_recall_schedule_withdraws_a_message_once_its_delay_elapses(client
     assert test_client.app[METRICS_KEY].ephemeral_recall_failures == 0
 
 
+async def test_a_restart_family_stands_together_until_something_is_posted(client):
+    """Restart lines coexist, each with its own 15s deadline, and a later message clears them all.
+
+    Field reports, in order: 「网关关机和网关重启是同时存在的…在它们之后如果有消息的话 才撤回它们」 (a new
+    line must not retire the one in front of it) and then 「我觉得都应该挂 15 秒清就好了 不用说那么复杂的
+    去区分组和非组」 (one mechanism for the whole class — no group boundaries to reason about).
+
+    So this asserts the shape the hook actually sends: no ``record_only``, the standard 15s delay, and
+    the family registration on the side. The registration is what lets a LATER message clear a line
+    early; the deadline is what retires it if nothing else ever comes.
+
+    The lines arrive from DIFFERENT gateway processes — the ⚠️ warning from the one shutting down, the
+    ♻️ online line from its replacement — so the record can only be held in the sidecar, which outlives
+    both.
+    """
+    test_client, feishu_client = client
+    route = {"chat_id": "oc_x", "conversation_id": "", "profile_id": "default"}
+
+    def registration(message_id):
+        # Exactly what ``supersede_restart_notice_async`` posts now.
+        return {"message_id": message_id, "delay_seconds": 15.0,
+                "supersede_key": "restart-notice:default:oc_x:", "route": route}
+
+    first = await test_client.post("/recall/schedule", json=registration("om_restart_warning"))
+    assert first.status == 200
+    assert (await first.json())["superseded"] is None
+    # Armed with its own deadline, so nothing is deleted yet — it must stay readable.
+    assert feishu_client.deleted == []
+
+    # The online half lands: the warning STAYS. Neither retires the other.
+    second = await test_client.post("/recall/schedule", json=registration("om_gateway_online"))
+    assert second.status == 200
+    assert (await second.json())["superseded"] is None
+    assert feishu_client.deleted == [], "the ⚠️ warning must survive the ♻️ line arriving"
+
+    # The family is per chat/thread: another place's line must not join or clear this one.
+    third = await test_client.post(
+        "/recall/schedule",
+        json={**registration("om_other_chat"),
+              "supersede_key": "restart-notice:default:oc_other:",
+              "route": {"chat_id": "oc_other", "conversation_id": "", "profile_id": "default"}},
+    )
+    assert third.status == 200
+    assert (await third.json())["superseded"] is None
+    assert feishu_client.deleted == []
+
+    # Now something IS posted in that place: both lines go together.
+    cleared = await test_client.post("/recall/supersede", json={"route": route})
+    assert cleared.status == 200
+    assert (await cleared.json())["withdrawn"] == 2
+    await _wait_until(lambda: len(feishu_client.deleted) == 2)
+    assert sorted(feishu_client.deleted) == ["om_gateway_online", "om_restart_warning"]
+
+    # Both members went with the group: a second message has nothing left to clear.
+    again = await test_client.post("/recall/supersede", json={"route": route})
+    assert (await again.json())["withdrawn"] == 0
+
+
+async def test_a_repeated_restart_cannot_grow_one_group_without_limit(client):
+    """Adversarial check on the bounded claim: one family keeps only its newest entries.
+
+    A place restarted over and over with nothing posted in between would otherwise accumulate forever.
+    The OLDEST entry goes first — that is the stale end.
+    """
+    test_client, feishu_client = client
+    route = {"chat_id": "oc_cap", "conversation_id": "omt_cap", "profile_id": "default"}
+    ordered = [f"om_restart_{index}" for index in range(sidecar_server.SUPERSEDE_GROUP_MAX_MEMBERS + 2)]
+
+    for message_id in ordered:
+        response = await test_client.post(
+            "/recall/schedule",
+            json={"message_id": message_id, "delay_seconds": 15.0,
+                  "supersede_key": "restart-notice:default:oc_cap:omt_cap", "route": route},
+        )
+        assert response.status == 200
+        # Nothing is ever withdrawn by a later line, even once the cap starts pruning.
+        assert feishu_client.deleted == []
+
+    entry = next(
+        value for value in test_client.app[sidecar_server.SUPERSEDED_NOTICE_IDS_KEY].values()
+        if value.get("chat_id") == "oc_cap"
+    )
+    assert entry["message_ids"] == ordered[-sidecar_server.SUPERSEDE_GROUP_MAX_MEMBERS:]
+
+    cleared = await test_client.post("/recall/supersede", json={"route": route})
+    assert (await cleared.json())["withdrawn"] == sidecar_server.SUPERSEDE_GROUP_MAX_MEMBERS
+
+
+async def test_any_new_message_clears_the_restart_group_in_front_of_it(client):
+    """Any message the bot posts retires the restart notices standing in that chat.
+
+    A restart group has no lifetime of its own — what ends it is the NEXT message, whichever message
+    that is (「任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息
+    撤回」). The sidecar applies this on its own sends; plain-text sends that never reach it (the home
+    channel) go through ``/recall/supersede`` instead.
+    """
+    test_client, feishu_client = client
+    route = {"chat_id": "oc_topic", "conversation_id": "omt_topic", "profile_id": "default"}
+
+    registered = await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_restart_warning", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_topic:omt_topic", "route": route},
+    )
+    assert registered.status == 200
+    assert feishu_client.deleted == []
+
+    # A message in ANOTHER chat must not clear this one's group.
+    elsewhere = await test_client.post(
+        "/recall/supersede",
+        json={"route": {"chat_id": "oc_elsewhere", "conversation_id": "omt_elsewhere"}},
+    )
+    assert elsewhere.status == 200
+    assert (await elsewhere.json())["withdrawn"] == 0
+    assert feishu_client.deleted == []
+
+    # A plain-text send in the same chat clears it.
+    sent = await test_client.post("/recall/supersede", json={"route": route})
+    assert sent.status == 200
+    assert (await sent.json())["withdrawn"] == 1
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_restart_warning"]
+
+    # The key is dropped with the notice: a second message has nothing left to clear.
+    again = await test_client.post("/recall/supersede", json={"route": route})
+    assert (await again.json())["withdrawn"] == 0
+
+
+async def test_a_new_card_clears_the_restart_group_posted_before_it(client):
+    """The bot's own card — the way a turn's reply arrives — clears the group too.
+
+    This is the path that matters in practice: a restart drops "⚠️ … restarting" and "♻️ … online"
+    into the thread, and the next turn's card is the first thing the user actually wants to read.
+    """
+    test_client, feishu_client = client
+    route = {"chat_id": "oc_card", "conversation_id": "omt_card", "profile_id": "default"}
+
+    await test_client.post(
+        "/recall/schedule",
+        json={"message_id": "om_restart_warning", "record_only": True,
+              "supersede_key": "restart-notice:default:oc_card:omt_card", "route": route},
+    )
+    assert feishu_client.deleted == []
+
+    started = await test_client.post(
+        "/events",
+        json=event_payload(
+            "message.started", 1, {"answer": "开始", "delivery_kind": "notice"},
+            conversation_id="omt_card", message_id="om_turn_card",
+            chat_id="oc_card", thread_id="omt_card",
+        ),
+    )
+    assert started.status == 200
+
+    await _wait_until(lambda: feishu_client.deleted)
+    assert "om_restart_warning" in feishu_client.deleted
+
+
 async def test_recall_schedule_clamps_the_delay_and_requires_a_message_id(client):
     """A caller may not pin a deletion far into the future, and an empty id is a client error."""
     test_client, feishu_client = client
@@ -13873,6 +14106,220 @@ async def test_recall_never_removes_owned_answer_even_after_schedule(client):
     await _REAL_ASYNCIO_SLEEP(0.1)
     assert fake.deleted == []
 
+
+async def _prepare_approval_with_prior_flow(client, *, kind='approval'):
+    """Drive a session to a live approval that already has pre-approval content on its card."""
+    test_client, feishu_client = client
+    await test_client.post('/events', json=event_payload('message.started', 0))
+    await test_client.post('/events', json=event_payload('thinking.delta', 1, {
+        'text': 'pre-approval reasoning', 'mode': 'replace'}))
+    await test_client.post('/events', json=event_payload('answer.delta', 2, {
+        'text': 'pre-approval answer'}))
+    await test_client.post('/events', json=event_payload('tool.updated', 3, {
+        'tool_id': 'tool-before', 'name': 'terminal', 'status': 'running',
+        'detail': 'long-running command'}))
+    await test_client.post('/events', json=event_payload('interaction.requested', 4, {
+        'interaction_id': 'decide-then-continue', 'kind': kind, 'prompt': 'Review',
+        'description': 'exact operation scope', 'timeout_seconds': 300,
+        'options': [{'label': 'Allow once', 'value': 'once'}, {'label': 'Deny', 'value': 'deny'}],
+    }, thread_id='omt_topic'))
+    session = test_client.app[SESSIONS_KEY]['hermes-message-1']
+    assert session.answer_text, 'the pre-approval flow must be on the card for this test to mean anything'
+    assert session.active_interaction is not None
+    return test_client, feishu_client, session
+
+
+async def test_an_answered_approval_hands_the_flow_to_a_clean_session_card(client):
+    """After an approval is answered, the rest of the turn lands on a card of its OWN.
+
+    Field report: 「审批通过之后，应该发一张新的卡来承载信息流，而不是在原来的卡上继续操作。因为在原来的
+    卡上继续操作的话，会导致信息流错乱」. The pre-approval flow stays on the card that was on screen; the
+    continuation opens as a new message and shows a clean 「执行中」, which is the shape the user chose
+    (「干净的执行中状态」).
+    """
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    old_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    cards_before = len(feishu_client.sent)
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)  # the continuation card
+
+    # The continuation arrived as its own message…
+    new_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    assert new_card_id and new_card_id != old_card_id
+    assert session.message_id == new_card_id
+    assert session.active_interaction.continuation_card_message_id == new_card_id
+    # …carrying a clean card: nothing from before the approval follows it over.
+    assert session.answer_text == ''
+    assert session.thinking_text == ''
+    assert session.tools == {}
+    assert session.latest_tool_preview == ''
+    assert session.timeline.entry_count == 0
+    # The tool counter keeps counting: restarting it would read as a missing call.
+    assert session.tool_count == 1
+    # The old card is not recalled — its content is what the reader scrolls back to.
+    assert old_card_id not in feishu_client.deleted
+
+
+async def test_the_continuation_card_is_opened_exactly_once(client):
+    """A replayed completion event must not open a second continuation card."""
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await _wait_until(lambda: bool(session.active_interaction.continuation_card_message_id))
+    cards_after_first = len(feishu_client.sent)
+    first_card_id = session.active_interaction.continuation_card_message_id
+    assert first_card_id
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 6, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await asyncio.sleep(0.4)
+
+    assert len(feishu_client.sent) == cards_after_first
+    assert session.active_interaction.continuation_card_message_id == first_card_id
+
+
+async def test_a_denied_approval_also_hands_the_flow_over(client):
+    """A denial is a decision too: the agent keeps running, so the flow still needs its own card."""
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    cards_before = len(feishu_client.sent)
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'deny', 'choice_label': 'Deny'}))
+    # A denial is a decision too — it needs its own continuation card.
+    await _wait_until(lambda: len(feishu_client.sent) == cards_before + 1)
+    assert session.active_interaction.continuation_card_message_id
+    assert session.answer_text == ''
+
+
+async def test_a_failed_continuation_send_leaves_the_session_untouched(client):
+    """Adversarial counter-check: a refused send must not blank the card the user is reading.
+
+    The stripped session is applied only AFTER the new card is delivered. If it were applied first
+    and the send failed, the original card would keep being updated with an empty session — wiping the
+    pre-approval flow the user can still see in the thread.
+    """
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client)
+    old_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    cards_before = len(feishu_client.sent)
+    feishu_client.fail_send = True
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    # Proving a send did NOT happen needs a window wide enough for it to have happened.
+    await asyncio.sleep(0.4)
+
+    assert len(feishu_client.sent) == cards_before
+    assert test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1'] == old_card_id
+    assert session.answer_text == 'pre-approval answer'
+    assert session.thinking_text == 'pre-approval reasoning'
+    assert session.active_interaction.continuation_card_message_id == ''
+
+
+async def test_a_non_approval_interaction_keeps_its_own_card(client):
+    """Counter-check: only approvals take the handover — a clarify answer stays where it was asked."""
+    test_client, feishu_client, session = await _prepare_approval_with_prior_flow(client, kind='clarify')
+    old_card_id = test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1']
+    cards_before = len(feishu_client.sent)
+
+    await test_client.post('/events', json=event_payload('interaction.completed', 5, {
+        'interaction_id': 'decide-then-continue', 'choice': 'once', 'choice_label': 'Allow once'}))
+    await asyncio.sleep(0.4)
+
+    assert len(feishu_client.sent) == cards_before
+    assert test_client.app[FEISHU_MESSAGE_IDS_KEY]['hermes-message-1'] == old_card_id
+    assert session.active_interaction.continuation_card_message_id == ''
+
+async def test_a_send_in_a_topic_also_clears_the_restart_line_standing_in_home(client):
+    """One message clears the restart group in ITS place AND in home.
+
+    Field report: 「而且你现在撤回 似乎是漏掉了 home 这个渠道的」. The rule as written («任何一条自己发的
+    消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回») was only half built:
+    matching was exact on chat/thread, so a reader working in a topic never retired the line home was
+    still showing.
+
+    Home is a different ROUTE, not a different family, so it arrives as ``home_chat_id`` — the hook
+    reads it from FEISHU_HOME_CHANNEL, the same source the gateway seeds its own home channel from.
+    """
+    test_client, feishu_client = client
+    topic = {"chat_id": "oc_topic", "conversation_id": "omt_topic", "profile_id": "default"}
+    home = {"chat_id": "oc_home", "conversation_id": "", "profile_id": "default"}
+
+    def registration(message_id, route):
+        return {"message_id": message_id, "delay_seconds": 15.0,
+                "supersede_key": "restart-notice:x", "route": route,
+                "home_chat_id": "oc_home"}
+
+    # The restart announced itself in both places.
+    assert (await test_client.post(
+        "/recall/schedule", json=registration("om_home_online", home))).status == 200
+    assert (await test_client.post(
+        "/recall/schedule", json=registration("om_topic_warning", topic))).status == 200
+    assert feishu_client.deleted == []
+
+    # A send in the TOPIC retires both — its own line and home's.
+    cleared = await test_client.post(
+        "/recall/supersede", json={"route": topic, "home_chat_id": "oc_home"})
+    assert cleared.status == 200
+    assert (await cleared.json())["withdrawn"] == 2
+    await _wait_until(lambda: len(feishu_client.deleted) == 2)
+    assert sorted(feishu_client.deleted) == ["om_home_online", "om_topic_warning"]
+
+    # Nothing is left behind in either place.
+    again = await test_client.post(
+        "/recall/supersede", json={"route": topic, "home_chat_id": "oc_home"})
+    assert (await again.json())["withdrawn"] == 0
+
+
+async def test_the_home_clear_does_not_reach_a_different_profile_or_bot(client):
+    """Counter-check: clearing home must stay inside the (profile, bot) that owns it.
+
+    Home is recorded per (profile, bot) precisely so one tenant's send cannot delete another's line —
+    a shared sidecar serving several bots would otherwise let any of them clear all of them.
+    """
+    test_client, feishu_client = client
+    mine = {"chat_id": "oc_topic", "conversation_id": "omt_topic", "profile_id": "default"}
+    theirs = {"chat_id": "oc_other_topic", "conversation_id": "omt_other", "profile_id": "other"}
+
+    assert (await test_client.post("/recall/schedule", json={
+        "message_id": "om_other_home_online", "delay_seconds": 15.0,
+        "supersede_key": "restart-notice:y", "route": theirs,
+        "home_chat_id": "oc_other_home"})).status == 200
+    assert (await test_client.post("/recall/schedule", json={
+        "message_id": "om_my_home_online", "delay_seconds": 15.0,
+        "supersede_key": "restart-notice:z", "route": mine,
+        "home_chat_id": "oc_my_home"})).status == 200
+
+    cleared = await test_client.post(
+        "/recall/supersede", json={"route": mine, "home_chat_id": "oc_my_home"})
+    assert (await cleared.json())["withdrawn"] == 1
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_my_home_online"]
+
+
+async def test_a_card_send_clears_home_using_the_remembered_chat(client):
+    """The sidecar's OWN sends reach home too, from the remembered chat.
+
+    Card sends and updates never pass the hook, so without remembering home they would be the one
+    send path that leaves a stale restart line in home.
+    """
+    test_client, feishu_client = client
+    home = {"chat_id": "oc_home_mem", "conversation_id": "", "profile_id": "default"}
+    # Learn home the way the hook teaches it: on a restart-notice registration.
+    assert (await test_client.post("/recall/schedule", json={
+        "message_id": "om_home_mem_online", "delay_seconds": 15.0,
+        "supersede_key": "restart-notice:m", "route": home,
+        "home_chat_id": "oc_home_mem"})).status == 200
+    assert feishu_client.deleted == []
+
+    # A send in an unrelated route, with no home_chat_id supplied at all.
+    cleared = await test_client.post(
+        "/recall/supersede",
+        json={"route": {"chat_id": "oc_somewhere", "conversation_id": "", "profile_id": "default"}})
+    assert (await cleared.json())["withdrawn"] == 1
+    await _wait_until(lambda: feishu_client.deleted)
+    assert feishu_client.deleted == ["om_home_mem_online"]
 
 @pytest.mark.parametrize('setting', [False, 'false', 0])
 @pytest.mark.parametrize('streaming', [False, True])

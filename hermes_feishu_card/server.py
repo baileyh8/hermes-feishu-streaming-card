@@ -91,8 +91,10 @@ from .render import (
     render_terminal_limit_handoff_card,
 )
 from .process import state_dir
+from .card_timeline import CardTimeline
 from .session import CardSession
 from .status import StatusConfig
+from .text import StreamingTextNormalizer
 from .subscription_usage import fetch_codex_subscription_usage
 from .install.detect import HermesDetection, detect_hermes
 from .install.integrity import IntegrityRepairRefused, plan_integrity_repair
@@ -173,6 +175,32 @@ EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
 EPHEMERAL_RECALL_MAX_SECONDS = 600.0
 EPHEMERAL_RECALL_MAX_PENDING = 1024
 EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
+# ``supersede_key`` -> the GROUP of notices standing in one place (see ``_recall_schedule``). This
+# lives in the SIDECAR rather than in the gateway because the notices it holds are sent by DIFFERENT
+# gateway processes: "⚠️ … restarting" comes from the process shutting down, and "♻️ … online" from
+# the one that boots in its place. The sidecar outlives both, so it is the only place where the group
+# can still be named across a restart.
+#
+# The entry holds a GROUP, not one id: the two halves of a restart STAND TOGETHER
+# (「网关关机和网关重启是同时存在的」), so a new member is ADDED rather than replacing the earlier one,
+# and the whole group is withdrawn together by the next message the bot posts
+# (「在它们之后 如果有消息的话 才撤回它们」).
+SUPERSEDED_NOTICE_IDS_KEY = web.AppKey("superseded_notice_ids", dict)
+# Upper bound on a caller-supplied ``supersede_key``: it is a map key, never echoed into a message.
+SUPERSEDE_KEY_MAX_LENGTH = 200
+# Bound on the supersede registry itself. Each entry is one identity (profile/bot/chat/thread/family)
+# holding one group, so a chat that never receives another message must not be able to grow this
+# without limit. Oldest first when it fills — a notice no longer reachable by any send is worth less
+# than the memory it costs.
+SUPERSEDE_REGISTRY_MAX_ENTRIES = 500
+# Bound on ONE group. A place restarted repeatedly with nothing posted in between would otherwise grow
+# its group without limit; the OLDEST member goes first, which is the stale end of the group.
+SUPERSEDE_GROUP_MAX_MEMBERS = 8
+# ``(profile, bot)`` -> the chat that is that profile's HOME channel, learned from the restart notices
+# the hook registers. Kept here because the sidecar's own sends (card send/update) never pass the hook,
+# and yet they are exactly the sends that have to clear a stale restart line standing in home
+# («任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回»).
+HOME_CHAT_IDS_KEY = web.AppKey("home_chat_ids", dict)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -579,6 +607,8 @@ def create_app(
     app[CARD_ANIMATION_TASKS_KEY] = {}
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[EPHEMERAL_RECALL_TASKS_KEY] = {}
+    app[SUPERSEDED_NOTICE_IDS_KEY] = {}
+    app[HOME_CHAT_IDS_KEY] = {}
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -649,6 +679,7 @@ def create_app(
     app.router.add_post("/runtime/events", _runtime_events)
     app.router.add_post("/delivery/policy", _delivery_policy)
     app.router.add_post("/recall/schedule", _recall_schedule)
+    app.router.add_post("/recall/supersede", _recall_supersede)
     app.router.add_post("/native-handoff/ack", _native_handoff_ack)
     app.router.add_post("/native-handoff/recover", _native_handoff_recover)
     app.router.add_post("/events", _events)
@@ -5781,6 +5812,20 @@ async def _apply_event_locked_inner(
                 )
             if is_terminal and request.app[SESSIONS_KEY].get(session_key) is latest_session:
                 _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
+            if not is_terminal and _approval_continuation_needs_its_own_card(latest_session, event):
+                # This event has just finished writing the decision onto the card the approval was
+                # granted from; everything AFTER it belongs on a card of its own («审批通过之后，应该发
+                # 一张新的卡来承载信息流»). Running here keeps the two writes ordered: the update above
+                # targets the old card, this one moves the anchor for the next event.
+                await _open_approval_continuation_card(
+                    request.app,
+                    session_key,
+                    latest_session,
+                    bot_id=bot_id,
+                    thread_id=_thread_id_for_event(event),
+                    reply_to_message_id=_reply_to_message_id_for_event(event),
+                    reply_in_thread=_reply_in_thread_for_event(event),
+                )
             return updated
 
         if is_terminal:
@@ -5955,6 +6000,15 @@ async def _maybe_send_completion_notify(
             exc.__class__.__name__,
         )
         return
+    # This is a message we just posted, so it retires the restart notices standing in front of it —
+    # same rule as a card send (「任何一条自己发的消息都要把该话题前面的重启组清掉」). It has to run
+    # HERE rather than at the shared choke point: this notice is the one sidecar-originated plain
+    # text, so it never passes the gateway's plain-text door where the other sends are caught.
+    # Without it a 「✅ 本轮回复结束」 could sit below a stale ♻️ and leave the reader unable to tell
+    # which one is current.
+    _supersede_restart_group_for_route(
+        app, chat_id=session.chat_id, conversation_id=_thread_id_for_event(event)
+    )
     session.completion_notify_state = "sent"
     logger.info(
         "completion notify sent (sender_hash=%s session_hash=%s)",
@@ -6426,10 +6480,149 @@ def _approval_runtime_is_waiting(interaction: Any, *, now: float | None = None) 
     )
 
 
+def _approval_continuation_needs_its_own_card(session: CardSession, event: Any) -> bool:
+    """Whether this event is the decision that must hand the thread to a fresh card.
+
+    Only a DECIDED approval takes the handover — a still-pending card has not been answered, and an
+    expired/failed decision has its own paths. Grant and denial are both decisions: after either one
+    the agent keeps running, so the continuation needs its own card either way. Only `kind` is
+    narrowed to approvals, because that is the card the user asked about.
+    ``continuation_card_message_id`` makes it once-only, so a replayed ``interaction.completed``
+    cannot open a second card.
+    """
+    if str(getattr(event, "event", "") or "") != "interaction.completed":
+        return False
+    interaction = session.active_interaction
+    if interaction is None or interaction.kind != "approval":
+        return False
+    if interaction.status != "completed":
+        return False
+    return not interaction.continuation_card_message_id
+
+
+def _stripped_for_continuation(session: CardSession) -> CardSession:
+    """A copy of ``session`` showing a clean 「执行中」 card, with nothing from before the approval.
+
+    The user chose 「干净的执行中状态」: the pre-approval flow stays on the old card (an already-sent
+    Feishu message keeps its content regardless of what this process does), and the post-approval flow
+    accumulates here from scratch.
+
+    Deliberately KEPT: the tool counter (numbering must not restart — an unexplained jump backwards is
+    exactly the 「工具 10 不见了」 class of report), and the turn's own duration/token/model usage
+    (they measure the whole turn, and the audit trail expects them to). The interaction itself is kept
+    too: it carries the question and the chosen answer.
+    """
+    preview = copy.deepcopy(session)
+    preview.status = "thinking"
+    preview.display_status = ""
+    preview.thinking_text = ""
+    preview.answer_text = ""
+    preview.latest_tool_preview = ""
+    preview.runtime_phase_text = ""
+    preview.tools = {}
+    preview.timeline = CardTimeline()
+    preview.attachments = []
+    preview._answer_archive_index = None
+    preview.thinking_normalizer = StreamingTextNormalizer()
+    preview.answer_normalizer = StreamingTextNormalizer()
+    return preview
+
+
+async def _open_approval_continuation_card(
+    app: web.Application,
+    session_key: str,
+    session: CardSession,
+    *,
+    bot_id: str | None,
+    thread_id: str | None,
+    reply_to_message_id: str | None,
+    reply_in_thread: bool,
+) -> str:
+    """Open the card that carries the flow WHILE an approval runs, and move the session onto it.
+
+    Ordering matters both ways. The card is posted BEFORE the live session is reset: if the send
+    fails the session keeps its content and the thread keeps updating the original card, instead of
+    the old card's content being silently replaced by an empty one. Only once the new card is
+    delivered does the session get the stripped snapshot — the post-approval flow then renders into
+    the new message because the session key's card anchor is pointed at it.
+
+    Returns the new message id, or ``""`` when nothing was handed over.
+    """
+    interaction = session.active_interaction
+    if interaction is None:
+        return ""
+    preview = _stripped_for_continuation(session)
+    render_result = _render_session_card_result_for_app(app, preview, session_key=session_key)
+    if render_result.disposition != "card":
+        # Cannot promise a clean card we cannot render (e.g. an admission/native disposition).
+        return ""
+    delivery = await _send_card_for_app(
+        app,
+        session.chat_id,
+        render_result.card,
+        bot_id,
+        thread_id=thread_id,
+        reply_to_message_id=reply_to_message_id,
+        reply_in_thread=reply_in_thread,
+        # Distinct per decision: the delivery dedupe table keys on this, and a replayed event must
+        # not be mistaken for a card that was already sent.
+        delivery_key=(
+            f"{session_key}:approval-continuation:"
+            f"{interaction.interaction_id}:{interaction.pause_generation}"
+        ),
+        delivery_kind="chat",
+    )
+    new_message_id = str(getattr(delivery, "message_id", "") or "")
+    if not new_message_id:
+        logger.warning(
+            "approval continuation card was not delivered (session_hash=%s)",
+            _diagnostic_id_hash(session_key, domain="continuation-session"),
+        )
+        return ""
+    stripped = _stripped_for_continuation(session)
+    session.status = stripped.status
+    session.display_status = stripped.display_status
+    session.thinking_text = stripped.thinking_text
+    session.answer_text = stripped.answer_text
+    session.latest_tool_preview = stripped.latest_tool_preview
+    session.runtime_phase_text = stripped.runtime_phase_text
+    session.tools = stripped.tools
+    session.timeline = stripped.timeline
+    session.attachments = stripped.attachments
+    session._answer_archive_index = stripped._answer_archive_index
+    session.thinking_normalizer = stripped.thinking_normalizer
+    session.answer_normalizer = stripped.answer_normalizer
+    session.message_id = new_message_id
+    interaction.continuation_card_message_id = new_message_id
+    app[FEISHU_MESSAGE_IDS_KEY][session_key] = new_message_id
+    logger.info(
+        "approval continuation card opened (session_hash=%s)",
+        _diagnostic_id_hash(session_key, domain="continuation-session"),
+    )
+    return new_message_id
+
+
 async def _resume_paused_approval(request, session_key, session, interaction, token, chat_id):
-    """Refresh consent only while the original pausable waiter is still alive."""
+    """Re-open an approval that can no longer take a decision, on a card of its OWN.
+
+    The gate below is deliberate and stays: renewal needs a LIVE pausable waiter, because a decision
+    taken on a card nobody is waiting for reaches no one — offering fresh consent there would be a
+    promise this plugin cannot keep. What changed is HOW a live renewal is delivered.
+
+    It used to refresh the dead card in place. The user reports the opposite of what that guarded
+    against — 「审批通过之后，应该发一张新的卡来承载信息流，而不是在原来的卡上继续操作。因为在原来的卡上
+    继续操作的话，会导致信息流错乱」: reusing the message tangles the new approval's flow with the old
+    one's, and the reader's scrollback still points at the expired prompt. So the dead card is
+    withdrawn and the replacement posted as its own message.
+
+    The hazard the in-place choice guarded against — one approval showing twice — is handled by
+    ORDERING instead: recall first, and only post the replacement when the recall succeeded. If the
+    recall is refused (missing scope, message too old) the card is refreshed in place after all, so
+    exactly one live card is on screen either way.
+    """
     app = request.app
     lock = app[MESSAGE_LOCKS_KEY].setdefault(session_key, asyncio.Lock())
+    dead_card_id = ""
     async with lock:
         if (app[SESSIONS_KEY].get(session_key) is not session
                 or session.active_interaction is not interaction
@@ -6456,11 +6649,41 @@ async def _resume_paused_approval(request, session_key, session, interaction, to
         interaction.callback_token = secrets.token_urlsafe(16)
         interaction.requested_at = time.time()
         interaction.error = ""
+        interaction.pause_generation += 1
         session.updated_at = interaction.requested_at
         _store_interaction_result(app, session)
         card = _render_interaction_callback_card_for_app(app, session, session_key=session_key)
+        dead_card_id = str(getattr(interaction, "feishu_message_id", "") or "")
+    bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
+    if dead_card_id and await _delete_card_for_app(app, dead_card_id, bot_id):
+        result = await _send_card_for_app(
+            app,
+            session.chat_id,
+            card,
+            bot_id,
+            thread_id=interaction.thread_id or None,
+            reply_to_message_id=(
+                interaction.reply_to_message_id or session.reply_to_message_id or None
+            ),
+            reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
+            # A distinct key per reissue: reusing the dead card's key would let the delivery dedupe
+            # table treat the replacement as already sent.
+            delivery_key=(
+                f"{session_key}:approval-reissued:"
+                f"{interaction.interaction_id}:{interaction.pause_generation}"
+            ),
+            delivery_kind="interaction",
+        )
+        # The replacement IS the live card now; when it could not be posted the id stays empty so the
+        # next renewal starts a card rather than editing a message that is already gone.
+        interaction.feishu_message_id = result.message_id or ""
+    else:
+        # No card to withdraw, or the recall was refused: the response card carries the new token, so
+        # the card the user is looking at stays usable and only one approval is on screen.
+        interaction.feishu_message_id = dead_card_id
     return web.json_response({"ok": True,
-        "toast": {"type": "info", "content": "审批已过期，请查看完整操作后重新审批"}, "card": card})
+        "toast": {"type": "info", "content": "审批已过期，已重新发起，请查看完整操作后重新审批"},
+        "card": card})
 
 
 async def _expire_pending_interaction(
@@ -6583,6 +6806,29 @@ def _extract_operator_name(payload: dict[str, Any]) -> str:
         or operator.get("display_name")
         or ""
     ).strip()
+
+
+def _session_for_message(app: web.Application, message_id: str) -> Any | None:
+    """Resolve the session that owns a Feishu message id.
+
+    ``SESSIONS_KEY`` is keyed by SESSION KEY, not by message id, so ``SESSIONS_KEY[message_id]`` was
+    always a miss. ``FEISHU_MESSAGE_IDS_KEY`` is the mapping that actually relates the two
+    (``session_key -> message_id``), so the lookup goes through it.
+    """
+    sessions = app.get(SESSIONS_KEY)
+    if not isinstance(sessions, dict) or not message_id:
+        return None
+    message_ids = app.get(FEISHU_MESSAGE_IDS_KEY)
+    if isinstance(message_ids, dict):
+        for session_key, known_id in message_ids.items():
+            if known_id == message_id:
+                session = sessions.get(session_key)
+                if session is not None:
+                    return session
+        return None
+    # No mapping to consult: fall back to the direct lookup so behaviour is unchanged where the key
+    # really is the session key.
+    return sessions.get(message_id)
 
 
 def _find_session_by_interaction(
@@ -6869,11 +7115,12 @@ def _render_session_card_result_for_app(
         interaction_mode=interaction_mode,
         interaction_profile_id=interaction_profile_id,
         show_reasoning=_safe_bool(card_config.get("show_reasoning"), True),
+        hide_completed_tool_activity=_safe_bool(
+            card_config.get("hide_completed_tool_activity"), True
+        ),
+        # Upstream v4.6.3.
         stream_thinking_to_body=_safe_bool(
             card_config.get("stream_thinking_to_body"), True
-        ),
-        hide_completed_tool_activity=_safe_bool(
-            card_config.get("hide_completed_tool_activity"), False
         ),
         reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
@@ -7211,6 +7458,12 @@ async def _send_card_for_app(
         return result
     metrics.feishu_send_retries += retry_count
     metrics.feishu_send_successes += 1
+    # Any message the bot posts retires the restart group standing in front of it («任何一条自己发的
+    # 消息都要把该话题前面的重启组清掉»). Done on the SEND, not on the text: a turn's reply arrives as
+    # a card, so this is the door every visible answer goes through.
+    _supersede_restart_group_for_route(
+        app, chat_id=chat_id, conversation_id=_safe_command_string(thread_id)
+    )
     return CardDeliveryResult(
         message_id=message_id,
         outcome="delivered",
@@ -7445,6 +7698,86 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
+    # A notice family the bot registers its restart lines with. ``supersede_key`` names the family (per
+    # chat/thread); members accumulate under one entry so a LATER message can retire whichever are still
+    # standing («任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息
+    # 撤回»). Built for the restart lines, whose senders are DIFFERENT gateway processes — the ⚠️ warning
+    # by the process going down, the ♻️ online line by its replacement — so the record can only be held
+    # here.
+    #
+    # There is deliberately no "new member retires the old one" rule and no group boundary: every restart
+    # line carries its own 15s deadline and behaves identically («我觉得都应该挂 15 秒清就好了 不用说那么
+    # 复杂的去区分组和非组»), which is why the hook no longer sets ``record_only`` for them.
+    #
+    # ``record_only`` is still supported for a caller that wants an entry with NO deadline of its own.
+    #
+    # ``supersede_key`` is not the registry key: the stored identity is built server-side from the
+    # verified route (review point 3), so two bots under one chat cannot collide or retire each other's
+    # notices.
+    #
+    # Only the family's LEADING SEGMENT is kept for the stored identity. Callers build ``supersede_key``
+    # with the whole route in it ("restart-notice:default:oc_x:omt_y") for their own bookkeeping, and
+    # the chat/thread are already separate parts of the identity — carrying them in the family too made
+    # the stored family differ from the one a later send computes, so nothing ever matched.
+    supersede_key = _safe_command_string(payload.get("supersede_key"))
+    supersede_family = (
+        supersede_key[:SUPERSEDE_KEY_MAX_LENGTH].split(":", 1)[0] or "restart-notice"
+        if supersede_key
+        else "restart-notice"
+    )
+    # Kept in the response for wire-shape stability. It is always None now: within a family, members
+    # accumulate instead of retiring each other.
+    superseded: Optional[str] = None
+    if supersede_key:
+        supersede_key = supersede_key[:SUPERSEDE_KEY_MAX_LENGTH]
+        registry = request.app[SUPERSEDED_NOTICE_IDS_KEY]
+        # Stored with its route so a LATER send to the same place can find it: any message the bot
+        # posts clears the group standing in front of it (see
+        # ``_supersede_restart_group_for_route``).
+        route_chat = _safe_command_string(
+            (route_data or {}).get("chat_id") if isinstance(route_data, dict) else ""
+        )
+        route_thread = _safe_command_string(
+            (route_data or {}).get("conversation_id") if isinstance(route_data, dict) else ""
+        )
+        route_profile = _safe_command_string(
+            (route_data or {}).get("profile_id") if isinstance(route_data, dict) else ""
+        ) or "default"
+        # The identity is built HERE, from the route this request just had verified — not from the
+        # caller's ``supersede_key``, and not reused as a global map key (review point 3). Two bots
+        # under one chat therefore register two different entries, and neither can be retired by the
+        # other's credentials.
+        _register_superseded_notice(
+            registry,
+            identity=_supersede_identity(
+                profile_id=route_profile,
+                bot_id=bot_id or "",
+                chat_id=route_chat,
+                thread_id=route_thread,
+                family=supersede_family,
+            ),
+            message_id=message_id,
+            bot_id=bot_id or "",
+            chat_id=route_chat,
+            conversation_id=route_thread,
+            profile_id=route_profile,
+            family=supersede_family,
+        )
+    # Remember which chat is home for this (profile, bot) so the sidecar's OWN sends can clear a stale
+    # restart line standing there («同时触发 home channel 前面的重启消息撤回»): card sends and updates
+    # never pass the hook, so this is the only place that can learn it.
+    _remember_home_chat(
+        request.app,
+        profile_id=_safe_command_string(
+            (route_data or {}).get("profile_id") if isinstance(route_data, dict) else ""
+        ) or "default",
+        bot_id=bot_id or "",
+        home_chat_id=_safe_command_string(payload.get("home_chat_id")),
+    )
+    if payload.get("record_only") is True:
+        return web.json_response(
+            {"ok": True, "message_id": message_id, "record_only": True, "superseded": superseded}
+        )
     scheduled = _schedule_ephemeral_recall(
         request.app,
         message_id=message_id,
@@ -7453,14 +7786,329 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     )
     if not scheduled:
         return web.json_response({"ok": False, "error": "recall capacity reached"}, status=429)
-    return web.json_response({"ok": True, "message_id": message_id, "delay_seconds": delay})
+    return web.json_response(
+        {"ok": True, "message_id": message_id, "delay_seconds": delay, "superseded": superseded}
+    )
 
 
-def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id) -> bool:
+def _supersede_identity(*, profile_id: str, bot_id: str, chat_id: str, thread_id: str, family: str) -> str:
+    """Build the registry key from VERIFIED route parts — never from a caller-supplied string.
+
+    The review's point 1 and 3: the key used to be the caller's own ``supersede_key``, truncated and
+    used globally. Two bots registered under one chat then collided, and a later caller could ask for
+    the EARLIER bot's message to be deleted with its own credentials. The identity is therefore built
+    server-side, from the route this sidecar resolved and authenticated.
+
+    The thread is part of the identity and is never a wildcard (point 2): an empty thread means "the
+    chat's main conversation", which is a different place from any topic in that chat. A send to the
+    main conversation must not retire a notice standing in a topic.
+    """
+    parts = (
+        _safe_command_string(profile_id) or "default",
+        _safe_command_string(bot_id),
+        _safe_command_string(chat_id),
+        _safe_command_string(thread_id),
+        _safe_command_string(family) or "default",
+    )
+    return "\x1f".join(parts)
+
+
+def _remember_home_chat(
+    app: web.Application, *, profile_id: str, bot_id: str, home_chat_id: str
+) -> None:
+    """Record which chat is the HOME channel for one (profile, bot).
+
+    Needed because the home broadcast and the topic send are different routes: by the time the reader
+    posts in a topic, the only way to name home again is to have written it down. The hook passes it on
+    every restart-notice registration (it reads ``FEISHU_HOME_CHANNEL``, the same source the gateway
+    seeds its own home channel from), and the sidecar reuses it for the sends it makes itself — card
+    sends and updates never pass the hook, so they would otherwise have no way to reach home.
+    """
+    chat = _safe_command_string(home_chat_id)
+    if not chat:
+        return
+    table = app.get(HOME_CHAT_IDS_KEY)
+    if not isinstance(table, dict):
+        return
+    key = _home_chat_key(profile_id=profile_id, bot_id=bot_id)
+    if len(table) >= SUPERSEDE_REGISTRY_MAX_ENTRIES and key not in table:
+        oldest = next(iter(table), None)
+        if oldest is not None:
+            table.pop(oldest, None)
+    table[key] = chat
+
+
+def _known_home_chat(app: web.Application, *, profile_id: str, bot_id: str) -> str:
+    """The home chat recorded for ``(profile, bot)``, or ``""`` when none was ever seen.
+
+    Falls back to the profile's sole entry when the caller has no bot — several internal send paths
+    (a card update carries only a message id) know the profile but not which bot owns the message, and
+    refusing to answer there would silently drop the home clear on exactly those sends.
+    """
+    table = app.get(HOME_CHAT_IDS_KEY)
+    if not isinstance(table, dict):
+        return ""
+    profile = _safe_command_string(profile_id) or "default"
+    exact = _safe_command_string(table.get(_home_chat_key(profile_id=profile, bot_id=bot_id)))
+    if exact:
+        return exact
+    prefix = f"{profile}\x1f"
+    matches = {
+        _safe_command_string(value)
+        for key, value in table.items()
+        if str(key).startswith(prefix) and _safe_command_string(value)
+    }
+    return matches.pop() if len(matches) == 1 else ""
+
+
+def _home_chat_key(*, profile_id: str, bot_id: str) -> str:
+    return "\x1f".join(
+        (_safe_command_string(profile_id) or "default", _safe_command_string(bot_id))
+    )
+
+
+def _supersede_group_members(entry: dict) -> list[str]:
+    """Message ids held by one registry entry, in registration order.
+
+    Reads the single-id shape too: an entry written before the group existed (or by a fixture) must
+    still be retirable rather than silently skipped.
+    """
+    raw = entry.get("message_ids")
+    members: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            candidate = _safe_command_string(item)
+            if candidate and candidate not in members:
+                members.append(candidate)
+        return members
+    single = _safe_command_string(entry.get("message_id"))
+    return [single] if single else []
+
+
+def _register_superseded_notice(
+    registry: dict,
+    *,
+    identity: str,
+    message_id: str,
+    bot_id: str,
+    chat_id: str,
+    conversation_id: str,
+    profile_id: str,
+    family: str,
+) -> list[str]:
+    """ADD one notice to the group registered under a server-built identity, keeping it bounded.
+
+    The group is a list because its members stand together: both halves of a restart are worth reading
+    (「网关关机和网关重启是同时存在的」), so a later member is added rather than replacing the earlier
+    one, and the whole group is retired together by the next message the bot posts
+    (「在它们之后 如果有消息的话 才撤回它们」).
+
+    Bounded twice, because this registry lives in the sidecar and outlives the notices it holds: when
+    the registry fills, the OLDEST IDENTITY goes first (review point 3), and within one group the
+    OLDEST MEMBER goes first — that end is the stale one. Dropping either is safe: what it costs is
+    the ability to retire one more stale notice, which is a cosmetic miss, not a correctness one.
+
+    Returns the group's ids in registration order.
+    """
+    if not message_id:
+        return []
+    while len(registry) >= SUPERSEDE_REGISTRY_MAX_ENTRIES:
+        oldest = next(iter(registry), None)
+        if oldest is None:
+            break
+        registry.pop(oldest, None)
+    entry = registry.get(identity)
+    if not isinstance(entry, dict):
+        entry = {}
+    members = _supersede_group_members(entry)
+    if message_id not in members:
+        members.append(message_id)
+    entry["message_ids"] = members[-SUPERSEDE_GROUP_MAX_MEMBERS:]
+    # Route + ownership are rewritten from THIS request: the entry has to stay findable by the later
+    # send that clears it, and that send matches on the parts stored here.
+    entry["bot_id"] = bot_id
+    entry["chat_id"] = chat_id
+    entry["conversation_id"] = conversation_id
+    entry["profile_id"] = profile_id
+    entry["family"] = family
+    registry[identity] = entry
+    return list(entry["message_ids"])
+
+
+def _supersede_restart_group_for_route(
+    app: web.Application,
+    *,
+    chat_id: str,
+    conversation_id: str,
+    bot_id: str | None = None,
+    profile_id: str | None = None,
+    family: str = "restart-notice",
+    home_chat_id: str = "",
+) -> list[str]:
+    """Withdraw the restart notices standing in front of a chat, now that something new was posted.
+
+    The user's rule: 「任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的
+    重启消息撤回」. A restart group has no lifetime of its own — what retires it is the NEXT message in
+    that place, whichever message that is. So this is not tied to the restart notices themselves: it
+    runs on every send the sidecar makes (a card send, a card update, or a plain-text send relayed
+    through ``/recall/supersede``), and removes whatever restart notices were registered for that
+    chat/thread.
+
+    Matching is on the FULL identity ``(profile, bot, chat, thread, family)`` — the review's point 1:
+    a chat can carry more than one bot, and retiring one must not schedule a delete for the other's
+    message. The thread is exact, never a wildcard (point 2): an empty thread is the chat's MAIN
+    conversation, which is a different place from any topic in that chat, so a send to the main
+    conversation leaves notices standing in topics of the same chat.
+
+    Registration is bounded (point 3): the registry holds at most ``SUPERSEDE_REGISTRY_MAX_ENTRIES``
+    identities and drops the oldest first, so a chat that never receives another message cannot grow
+    it without limit. An entry that could not be scheduled is put BACK rather than dropped, so the
+    next send retries it instead of the notice becoming un-retirable.
+
+    Best-effort: a refusal to schedule leaves the old notice in place.
+    """
+    registry = app.get(SUPERSEDED_NOTICE_IDS_KEY)
+    if not isinstance(registry, dict) or not registry:
+        return []
+    target_chat = _safe_command_string(chat_id)
+    target_thread = _safe_command_string(conversation_id)
+    if not target_chat:
+        return []
+    target_bot = _safe_command_string(bot_id)
+    target_profile = _safe_command_string(profile_id) or "default"
+    target_family = _safe_command_string(family) or "default"
+
+    def clear_group_at(place_chat: str, place_thread: str) -> list[str]:
+        """Withdraw every restart notice registered for ONE place, whole groups included."""
+        cleared: list[str] = []
+        for key in list(registry.keys()):
+            entry = registry.get(key)
+            if not isinstance(entry, dict):
+                registry.pop(key, None)
+                continue
+            if _safe_command_string(entry.get("chat_id")) != place_chat:
+                continue
+            # Exact on both sides: "" == "" is the main conversation, and "" != "omt_x" is the whole point.
+            if _safe_command_string(entry.get("conversation_id")) != place_thread:
+                continue
+            if target_bot and _safe_command_string(entry.get("bot_id")) != target_bot:
+                continue
+            if _safe_command_string(entry.get("profile_id") or "default") != target_profile:
+                continue
+            if _safe_command_string(entry.get("family") or "default") != target_family:
+                continue
+            owner_bot = entry.get("bot_id") or None
+            remaining: list[str] = []
+            for member in _supersede_group_members(entry):
+                # ``replace=True``: the member is already pending on its own 15s deadline, and this
+                # early clear has to WIN over it rather than be swallowed by the dedupe.
+                if _schedule_ephemeral_recall(
+                    app, message_id=member, delay_seconds=0.0, bot_id=owner_bot, replace=True
+                ):
+                    cleared.append(member)
+                else:
+                    remaining.append(member)
+            if remaining:
+                # Not scheduled -> KEEP them so the next send retries. Dropping them here would leave
+                # the notice permanently un-retirable, which is the failure this feature exists to prevent.
+                entry["message_ids"] = remaining
+                registry[key] = entry
+            else:
+                registry.pop(key, None)
+        return cleared
+
+    withdrawn = clear_group_at(target_chat, target_thread)
+    # …and the HOME channel too («同时触发 home channel 前面的重启消息撤回»). This is the one part the
+    # exact-route match could never reach: the reader working in a topic has no reason to look at home,
+    # so a stale restart line there outlives its news. Skipped when this very send IS the home
+    # conversation, which the first pass already covered.
+    home_chat = _safe_command_string(home_chat_id) or _known_home_chat(
+        app, profile_id=target_profile, bot_id=target_bot
+    )
+    if home_chat and (home_chat != target_chat or target_thread):
+        withdrawn.extend(clear_group_at(home_chat, ""))
+    return withdrawn
+
+
+async def _recall_supersede(request: web.Request) -> web.Response:
+    """Clear the restart notices registered for a chat after an out-of-card send.
+
+    The sidecar clears the group itself on its own sends (card send/update), but the gateway also
+    posts plain text straight through its adapter — the home-channel notices, and any send the turn
+    machinery makes outside a card. Those never reach the sidecar's send path, so hfc calls this from
+    the plain-text egress door instead, which is the one place every such send passes through.
+    """
+    rejection = await _authenticate_sensitive_request(request)
+    if rejection is not None:
+        return rejection
+    try:
+        payload = json.loads(await request.read() or b"{}")
+    except (json.JSONDecodeError, ValueError):
+        return web.json_response({"ok": False, "error": "invalid json"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response({"ok": False, "error": "payload must be an object"}, status=400)
+    route_data = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+    # Same route validation as /recall/schedule: verify the profile, then let the router name the
+    # bot. The review's point 1 was that this door accepted a caller-supplied chat/thread and acted
+    # on it without ever resolving which bot owns that place, so a caller could retire a notice
+    # belonging to a different bot in the same chat.
+    chat_id = _safe_command_string(route_data.get("chat_id"))
+    if not chat_id:
+        return web.json_response({"ok": False, "error": "recall chat is required"}, status=400)
+    clients = request.app[FEISHU_CLIENT_KEY]
+    profile_id = _safe_command_string(route_data.get("profile_id")) or "default"
+    if isinstance(clients, dict) and profile_id not in clients:
+        if profile_id == "default" and len(clients) == 1:
+            profile_id = next(iter(clients))
+        else:
+            return web.json_response(
+                {"ok": False, "error": "recall route is ambiguous"}, status=409
+            )
+    if not PROFILE_ID_PATTERN.fullmatch(profile_id):
+        return web.json_response({"ok": False, "error": "invalid recall profile"}, status=400)
+    probe = SidecarEvent.from_dict(
+        dict(
+            schema_version="1",
+            event="system.notice",
+            conversation_id=_safe_command_string(route_data.get("conversation_id")) or chat_id,
+            message_id=_safe_command_string(payload.get("message_id")) or "supersede-probe",
+            chat_id=chat_id,
+            platform="feishu",
+            sequence=0,
+            created_at=time.time(),
+            data={"profile_id": profile_id},
+        )
+    )
+    route = _resolve_route(request, probe)
+    if route is None:
+        return web.json_response({"ok": False, "error": "recall route unavailable"}, status=409)
+    try:
+        _client_for_bot(request.app, route.bot_id or None)
+    except (RuntimeError, ValueError, KeyError):
+        return web.json_response({"ok": False, "error": "recall route unavailable"}, status=409)
+    withdrawn = _supersede_restart_group_for_route(
+        request.app,
+        chat_id=chat_id,
+        conversation_id=_safe_command_string(route_data.get("conversation_id")),
+        bot_id=route.bot_id or None,
+        profile_id=profile_id,
+        home_chat_id=_safe_command_string(payload.get("home_chat_id")),
+    )
+    return web.json_response({"ok": True, "withdrawn": len(withdrawn)})
+
+
+def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id, replace=False) -> bool:
     tasks = app[EPHEMERAL_RECALL_TASKS_KEY]
     key = (bot_id or "", message_id)
-    if key in tasks:
-        return True
+    existing = tasks.get(key)
+    if existing is not None and not existing.done():
+        if not replace:
+            return True
+        # A SHORTER deadline has to win. A restart line is registered with a 15s lifetime of its own and
+        # can then be retired EARLY by something the bot posts («有任何一条自己发的消息…才撤回它们»).
+        # Without this the dedupe returned True while keeping the original 15s task, so the early clear
+        # silently did nothing and the line sat there until its own deadline.
+        existing.cancel()
     if len(tasks) >= EPHEMERAL_RECALL_MAX_PENDING:
         return False
     task = asyncio.create_task(_run_ephemeral_recall(
@@ -7546,6 +8194,23 @@ async def _update_card_for_app(
         metrics.feishu_update_successes += 1
         if is_current is not None and not is_current():
             return False
+        # A card being updated IS the bot speaking in that chat, so it retires the restart group in
+        # front of it too («任何一条自己发的消息都要把该话题前面的重启组清掉»). The route is read back
+        # from the session this card belongs to — an update carries only a message id.
+        #
+        # Found by the session through the app's OWN mapping rather than by indexing SESSIONS_KEY with
+        # the message id: that key is a session key, not a Feishu message id, so the lookup silently
+        # returned None for every card (review point 3). Without the bot and profile the identity is
+        # incomplete, and an update would not have matched the notice it is meant to retire.
+        session = _session_for_message(app, message_id)
+        if session is not None:
+            _supersede_restart_group_for_route(
+                app,
+                chat_id=_safe_command_string(getattr(session, "chat_id", "")),
+                conversation_id=_safe_command_string(getattr(session, "conversation_id", "")),
+                bot_id=bot_id,
+                profile_id=_safe_command_string(getattr(session, "profile_id", "")) or "default",
+            )
         return True
     if notice_update:
         metrics.notice_update_failures += 1

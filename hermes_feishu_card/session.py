@@ -75,6 +75,14 @@ class ToolState:
     # Which tool call this is, 1-based, counted across the session. Rendered as #N so a card
     # showing one row out of many says WHICH call the reader is looking at.
     ordinal: int = 0
+    # How long the call took, in milliseconds — the number the CARD ROW prints next to #N.
+    #
+    # Maintainer note (contract change): the duration used to live only inside `detail` as a
+    # "耗时: 7.66s" line, so the content-area row showed it for a RUNNING tool (computed live from
+    # `started_at`) and then LOST it the moment the tool finished — the row the reader checks to see
+    # what a step cost was the one row without the number. The user asked exactly that
+    # (「正文中已完成的工具行是看不到执行时长吗」). Kept as its own field so the row can print it for
+    # every state; the detail line stays for the panel, which shows the full record.
     # Retained after completion and in private display checkpoints.
     duration_ms: float | None = None
 
@@ -116,6 +124,11 @@ class InteractionState:
     # The approval card's own Feishu message id, recorded when the card is delivered. A timed-out
     # approval refreshes THAT card in place instead of sending a second paused card (#314).
     feishu_message_id: str = ""
+    # The session card opened AFTER this approval was granted («审批通过之后，应该发一张新的卡来承载
+    # 信息流，而不是在原来的卡上继续操作。因为在原来的卡上继续操作的话，会导致信息流错乱»).
+    # Non-empty means the continuation card has already been opened for this decision, so the
+    # handover runs exactly once no matter how often the completion event is replayed.
+    continuation_card_message_id: str = ""
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission
@@ -343,13 +356,30 @@ class CardSession:
                     previous_tool.detail,
                     resolved_detail,
                 )
-            if previous_tool is None or previous_is_terminal:
+            # Ordinal assignment. `ordinal` is what the card prints as `#N` and `_tool_call_count` is
+            # the `工具 #N` tally in the title, so a number that is consumed has to come with a NEW
+            # row — otherwise it is vacant forever and the reader sees a gap.
+            #
+            # Regression this guards (measured in the field): a tool that had gone terminal and then
+            # received another `running` event was re-numbered. Every hole found on disk had a
+            # running tool right after it — a checkpoint held ordinals [1…9, 11, 12] with 10 vacant
+            # and the running read_file on #11, which is what the reporter saw
+            # (「为什么工具 11 在执行，但是显示了前面的却是工具 9？那工具 10 怎么不见了」). All 11 ids in
+            # that checkpoint were unique, so the event was a replay/late tick for the SAME call, not
+            # a new one — a call that is already finished cannot become the fresh start of a call.
+            #
+            # Deliberately still re-numbering a repeated TERMINAL event: a tool id may be reused for
+            # a genuinely new execution (the upstream contract in
+            # `test_timeline_preserves_repeated_completed_tool_calls_with_same_id`: three `completed`
+            # events for one id are three calls and must count as three).
+            if previous_tool is None or (previous_is_terminal and is_terminal):
                 self._tool_call_count += 1
                 call_ordinal = self._tool_call_count
             elif previous_tool.ordinal:
                 call_ordinal = previous_tool.ordinal
             else:
                 # Pre-existing state (or a resumed session) with no ordinal recorded.
+                self._tool_call_count += 1
                 call_ordinal = self._tool_call_count
             self.tools[tool_id] = ToolState(
                 tool_id=tool_id,
@@ -534,10 +564,25 @@ class CardSession:
         return True
 
     def _adopt_failure_metrics(self, data: dict[str, Any]) -> None:
-        """Adopt measured failure fields without erasing known values with placeholders."""
+        """Keep whatever a FAILED envelope could measure, so a stopped card says where it stopped.
+
+        Maintainer note (contract change): the failure envelope carried only its error text, so an
+        interrupted card's footer drew 「已停止」 · 工具 #1 · 0s · Unknown — the numbers were never sent,
+        not merely unread. The reader's question about a stopped run is where it got to, and this is
+        the row that answers it.
+
+        Only usable values are adopted: an envelope from a sender that knows nothing extra (an older
+        shell, a failure with no turn behind it) must not overwrite what the session already measured
+        with a zero or a placeholder. Hence the per-field guards — a non-positive or non-finite number
+        and the literal "unknown" are all "no measurement", not a measurement of nothing.
+        """
+        if not isinstance(data, dict):
+            return
         model = data.get("model")
         if isinstance(model, str) and model.strip() and model.strip().lower() != "unknown":
             self.model = model.strip()
+        # Field by field, onto what is already known: an envelope that measures only the output side
+        # must not wipe the input side's real number.
         for field_name, keys in (
             ("tokens", ("input_tokens", "output_tokens")),
             ("context", ("used_tokens", "max_tokens")),
@@ -552,13 +597,14 @@ class CardSession:
                     current[key] = value
             setattr(self, field_name, current)
         value = data.get("duration")
-        if not isinstance(value, bool):
-            try:
-                duration = float(value)
-            except (TypeError, ValueError, OverflowError):
-                return
-            if math.isfinite(duration) and duration > 0:
-                self.duration = duration
+        if isinstance(value, bool):
+            return
+        try:
+            duration = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if math.isfinite(duration) and duration > 0:
+            self.duration = duration
 
     def _adopt_in_progress_content(self) -> str:
         """Promote the content the user was reading, so a failure cannot erase it.
