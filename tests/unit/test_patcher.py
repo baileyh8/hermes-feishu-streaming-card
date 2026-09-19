@@ -3701,3 +3701,57 @@ def test_fixed_tag_real_sources_render_detect_compile_and_restore_exactly():
         expected_groups=HYBRID_REQUIRED_PATCH_GROUPS,
         expected_fragment_matrix=expected_matrix,
     ) == originals
+
+
+def test_queued_followup_interruption_reports_metrics_and_the_block_compiles():
+    """The interruption emit must carry the turn's metrics — and the generated block must compile.
+
+    Regression: the block emitted the error text ALONE, so an interrupted card drew
+    「已停止」 · 工具 #1 · 0s · Unknown — duration and model were never sent, not merely unread —
+    while the sibling queued-final path had already been fixed to send them.
+
+    The block is emitted as SOURCE text, so a broken f-string is a syntax error in the live gateway
+    rather than a failing unit; patching a real-shaped file and compiling it is the offline check
+    that catches it. Applying twice must also be a no-op.
+    """
+    content = (
+        "async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):\n"
+        "    response = await self._run_agent(event, source)\n"
+        "    return response\n"
+        "\n"
+        "async def _run_agent(self):\n"
+        "    result = {'interrupted': True, 'model': 'm', '_hfc_turn_seconds': 1.0}\n"
+        "    was_interrupted = result.get('interrupted')\n"
+        "    updated_history = result.get('messages', history)\n"
+        "    next_source = source\n"
+        "    next_message = pending\n"
+        "    next_message_id = None\n"
+        "    next_channel_prompt = None\n"
+        "    next_session_key = session_key\n"
+        "    next_message_type = None\n"
+        "    if pending_event is not None:\n"
+        "        next_source = getattr(pending_event, 'source', None) or source\n"
+        "        next_message_id = self._reply_anchor_for_event(pending_event)\n"
+        "    followup_result = await self._run_agent(\n"
+        "        message=next_message,\n"
+        "        context_prompt=context_prompt,\n"
+        "        history=updated_history,\n"
+        "        source=next_source,\n"
+        "        session_id=session_id,\n"
+        "        session_key=next_session_key,\n"
+        "        run_generation=run_generation,\n"
+        "        _interrupt_depth=_interrupt_depth + 1,\n"
+        "        event_message_id=next_message_id,\n"
+        "        channel_prompt=next_channel_prompt,\n"
+        "        message_type=next_message_type,\n"
+        "    )\n"
+        "    return _preserve_queued_followup_history_offset(result, followup_result)\n"
+    )
+
+    patched = patcher._apply_queued_followup_patch(content)
+
+    compile(patched, "<patched>", "exec")
+    assert "await _hfc_emit_async(_hfc_interrupted_locals(" in patched
+    # The helper is imported where the block uses it, so the generated code resolves at runtime.
+    assert "import interrupted_turn_locals as _hfc_interrupted_locals" in patched
+    assert patcher._apply_queued_followup_patch(patched) == patched

@@ -14320,3 +14320,32 @@ async def test_a_card_send_clears_home_using_the_remembered_chat(client):
     assert (await cleared.json())["withdrawn"] == 1
     await _wait_until(lambda: feishu_client.deleted)
     assert feishu_client.deleted == ["om_home_mem_online"]
+
+@pytest.mark.parametrize('setting', [False, 'false', 0])
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_stream_thinking_to_body_opt_out_reaches_http_renderer(setting, streaming):
+    client = FakeFeishuClient()
+    app = create_app(client, card_config={
+        'stream_thinking_to_body': setting, 'streaming_mode': streaming,
+        'flush_interval_ms': 0,
+    })
+    http = TestClient(TestServer(app))
+    await http.start_server()
+    try:
+        assert (await http.post('/events', json=event_payload('message.started', 0))).status == 200
+        thought = 'HTTP reasoning marker ' + '思考' * 15000
+        assert (await http.post('/events', json=event_payload('thinking.delta', 1, {'text': thought}))).status == 200
+        await wait_for_card_update(client, '实时思考')
+        card = client.updated[-1][1]
+        elements = card['body']['elements']
+        assert 'HTTP reasoning marker' not in '\n'.join(e.get('content', '') for e in elements)
+        panel = next(e for e in elements if e.get('element_id') == 'auxiliary_timeline')
+        assert 'HTTP reasoning marker' in str(panel)
+        assert inspect_card_limits(card).safe
+        assert len(client.sent) == 1
+        assert (await http.post('/events', json=event_payload('message.completed', 2, {'answer': 'HTTP final answer'}))).status == 200
+        await wait_for_card_update(client, 'HTTP final answer')
+        assert len(client.sent) == 1
+        assert 'HTTP reasoning marker' not in str(client.updated[-1][1])
+    finally:
+        await http.close()

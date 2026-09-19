@@ -83,6 +83,7 @@ class ToolState:
     # what a step cost was the one row without the number. The user asked exactly that
     # (「正文中已完成的工具行是看不到执行时长吗」). Kept as its own field so the row can print it for
     # every state; the detail line stays for the panel, which shows the full record.
+    # Retained after completion and in private display checkpoints.
     duration_ms: float | None = None
 
 
@@ -562,7 +563,7 @@ class CardSession:
         self.refresh_display_status_source()
         return True
 
-    def _adopt_failure_metrics(self, data: Any) -> None:
+    def _adopt_failure_metrics(self, data: dict[str, Any]) -> None:
         """Keep whatever a FAILED envelope could measure, so a stopped card says where it stopped.
 
         Maintainer note (contract change): the failure envelope carried only its error text, so an
@@ -572,24 +573,37 @@ class CardSession:
 
         Only usable values are adopted: an envelope from a sender that knows nothing extra (an older
         shell, a failure with no turn behind it) must not overwrite what the session already measured
-        with a zero or a placeholder.
+        with a zero or a placeholder. Hence the per-field guards — a non-positive or non-finite number
+        and the literal "unknown" are all "no measurement", not a measurement of nothing.
         """
         if not isinstance(data, dict):
             return
         model = data.get("model")
-        if isinstance(model, str) and model.strip():
-            self.model = model
-        tokens = data.get("tokens")
-        if isinstance(tokens, dict) and tokens:
-            self.tokens = dict(tokens)
-        context = data.get("context")
-        if isinstance(context, dict) and context:
-            self.context = dict(context)
-        try:
-            duration = float(data.get("duration"))
-        except (TypeError, ValueError):
+        if isinstance(model, str) and model.strip() and model.strip().lower() != "unknown":
+            self.model = model.strip()
+        # Field by field, onto what is already known: an envelope that measures only the output side
+        # must not wipe the input side's real number.
+        for field_name, keys in (
+            ("tokens", ("input_tokens", "output_tokens")),
+            ("context", ("used_tokens", "max_tokens")),
+        ):
+            incoming = data.get(field_name)
+            if not isinstance(incoming, dict):
+                continue
+            current = dict(getattr(self, field_name))
+            for key in keys:
+                value = incoming.get(key)
+                if type(value) is int and value > 0:
+                    current[key] = value
+            setattr(self, field_name, current)
+        value = data.get("duration")
+        if isinstance(value, bool):
             return
-        if duration > 0:
+        try:
+            duration = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if math.isfinite(duration) and duration > 0:
             self.duration = duration
 
     def _adopt_in_progress_content(self) -> str:
@@ -948,19 +962,25 @@ def _tool_duration_text(data: dict[str, Any]) -> str:
 
 def _tool_duration_milliseconds(data: dict[str, Any]) -> float | None:
     for name in ("duration_ms", "elapsed_ms", "tool_duration_ms"):
+        if isinstance(data.get(name), bool):
+            continue
         try:
             value = float(data.get(name))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if value >= 0:
+        if math.isfinite(value) and value >= 0:
             return value
     for name in ("duration", "elapsed", "tool_duration"):
+        if isinstance(data.get(name), bool):
+            continue
         try:
             value = float(data.get(name))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if value >= 0:
-            return value * 1000
+        if math.isfinite(value) and value >= 0:
+            milliseconds = value * 1000
+            if math.isfinite(milliseconds):
+                return milliseconds
     return None
 
 

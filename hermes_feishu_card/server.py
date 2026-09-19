@@ -7118,6 +7118,10 @@ def _render_session_card_result_for_app(
         hide_completed_tool_activity=_safe_bool(
             card_config.get("hide_completed_tool_activity"), True
         ),
+        # Upstream v4.6.3.
+        stream_thinking_to_body=_safe_bool(
+            card_config.get("stream_thinking_to_body"), True
+        ),
         reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
         max_timeline_items=_safe_positive_int(

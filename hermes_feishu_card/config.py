@@ -45,7 +45,12 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         # Never applies to a running turn (the rows ARE its progress) or a FAILED one: there they
         # carry the 已中断 pill that names where the run stopped. The panel and the footer's 工具 #N
         # count are untouched either way.
+        # The DEFAULT is deliberately true, against upstream's false: the user's call
+        # (「要争默认值。使用者便利第一位。不应该给使用者增加麻烦」) — a finished turn's rows are noise by
+        # default, and the FAILED case keeps them because that is where the 已中断 evidence lives.
         "hide_completed_tool_activity": True,
+        # Upstream v4.6.3: whether live thinking streams into the body while the turn runs.
+        "stream_thinking_to_body": True,
         "reasoning_format": "panel",
         "timeline_expanded": False,
         "max_timeline_items": 12,

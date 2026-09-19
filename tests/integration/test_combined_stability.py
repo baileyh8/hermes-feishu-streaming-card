@@ -21,6 +21,36 @@ class Factory:
         assert bot_id=='default'
         return self.client
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('terminal', ['message.completed', 'message.failed'])
+@pytest.mark.parametrize('hide', [False, True])
+async def test_http_terminal_tool_visibility_preserves_answer_and_single_card(terminal, hide):
+    fake = Client()
+    app = create_app(fake, card_config={'hide_completed_tool_activity': hide, 'flush_interval_ms': 1})
+    def event(kind, sequence, data):
+        return {'schema_version': '1', 'event': kind, 'platform': 'feishu',
+                'conversation_id': 'fixture', 'message_id': 'fixture', 'chat_id': 'fixture',
+                'sequence': sequence, 'created_at': time.time(), 'data': data}
+    async with TestClient(TestServer(app)) as http:
+        for item in [event('message.started', 1, {}),
+                     event('tool.updated', 2, {'tool_id': 'tool', 'name': 'terminal', 'status': 'completed'}),
+                     event('answer.delta', 3, {'text': 'KEEP_ANSWER'})]:
+            response = await http.post('/events', json=item)
+            assert response.status == 200
+        body = {'answer': 'KEEP_ANSWER'} if terminal == 'message.completed' else {'error': 'FIXTURE_FAILURE'}
+        end = event(terminal, 4, body)
+        assert (await http.post('/events', json=end)).status == 200
+        assert (await http.post('/events', json=end)).status == 200
+        await asyncio.sleep(.03)
+        assert len(fake.sent) == 1
+        card = fake.updated[-1][1]
+        assert 'KEEP_ANSWER' in str(card)
+        assert ('tool_activity_' in str(card)) is (not hide)
+        assert '工具 #1' in str(card)
+        if terminal == 'message.failed':
+            assert 'FIXTURE_FAILURE' in str(card)
+
 @pytest.mark.asyncio
 async def test_custom_profile_notice_recall_uses_same_route():
     fake=Client()
