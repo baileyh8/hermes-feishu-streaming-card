@@ -335,3 +335,56 @@ async def test_plain_text_egress_retires_restart_notices_and_expires_status_noti
     assert kwargs.get('record_only') is not True
     assert not kwargs.get('supersede_key')
     assert kwargs['delay_seconds'] == 15.0
+
+
+def test_the_background_task_receipt_is_withdrawn_after_fifteen_seconds():
+    """The concise completion receipt self-erases; the FAILURE wording deliberately does not.
+
+    Field report: 「Background task finished 不会 15s 撤回吗？」 — it did not. The receipt is built by
+    the core (`_format_concise_process_notification`) with a wording no arm recognised, so every
+    finished background task left a permanent line in the thread.
+
+    The failure variant is asserted to stay: it appends the last output lines and an offer to rerun,
+    which is the diagnostic the reader opens it for.
+    """
+    assert hook_runtime._transient_notice_recall_seconds("✅ Background task finished") == (
+        hook_runtime.BACKGROUND_TASK_NOTICE_RECALL_SECONDS
+    )
+    assert hook_runtime._transient_notice_recall_seconds(
+        "✅ Background task finished — `ssh -p 14234 root@host 'bash /tmp/x.sh'` (6s)"
+    ) == hook_runtime.BACKGROUND_TASK_NOTICE_RECALL_SECONDS
+    # Long runs print "m s" / "h m" instead of seconds.
+    assert hook_runtime._transient_notice_recall_seconds(
+        "✅ Background task finished — `pytest -q` (3m 21s)"
+    ) == hook_runtime.BACKGROUND_TASK_NOTICE_RECALL_SECONDS
+
+    # NOT the failure wording: it carries the error and the log tail.
+    assert hook_runtime._transient_notice_recall_seconds(
+        "❌ Background task failed — `pytest -q` (2s, exit 1). Last output:\n```\nboom\n```"
+    ) is None
+    # …and an hourglass/check alone is not evidence: arbitrary text is left alone.
+    assert hook_runtime._transient_notice_recall_seconds("✅ Background task finished blah") is None
+
+
+async def test_the_background_task_receipt_arms_the_recall_through_the_egress_door(monkeypatch):
+    """End-to-end through the plain-text door: a receipt really schedules a withdrawal."""
+    scheduled = []
+
+    async def schedule(message_id, **kwargs):
+        scheduled.append((message_id, kwargs))
+        return True
+
+    monkeypatch.setattr(hook_runtime, "schedule_message_recall_async", schedule)
+
+    armed = await hook_runtime._hfc_recall_plain_text_status_notice(
+        "oc_chat",
+        "✅ Background task finished — `ls -la` (1s)",
+        {"thread_id": "omt_thread"},
+        SimpleNamespace(success=True, message_id="om_receipt"),
+    )
+
+    assert armed is True
+    assert len(scheduled) == 1
+    message_id, kwargs = scheduled[0]
+    assert message_id == "om_receipt"
+    assert kwargs["delay_seconds"] == hook_runtime.BACKGROUND_TASK_NOTICE_RECALL_SECONDS

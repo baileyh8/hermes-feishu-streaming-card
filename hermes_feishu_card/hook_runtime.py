@@ -159,6 +159,20 @@ RESTART_NOTICE_SUPERSEDE_PREFIX = "restart-notice"
 # One lifetime for the whole class («我觉得都应该挂 15 秒清就好了»): the same 15s the ⏳ / ⌛ / ↪ families
 # get. The notice is a read-once ping either way — the gateway's real state is the card, not this line.
 RESTART_NOTICE_RECALL_SECONDS = 15.0
+# The background-process completion receipt («✅ Background task finished — `cmd` (6s)»), built by the
+# core's `_format_concise_process_notification`. The user asked whether it self-erases
+# (「Background task finished 不会 15s 撤回吗？」) — it did not: no arm knew this wording, so every
+# finished background task left a permanent line in the thread. Only the SUCCESS wording is listed.
+# The failure variant («❌ Background task failed … Last output: …») deliberately keeps its place: it
+# carries the output tail and the "ask me to rerun it" prompt, which is the diagnostic the reader
+# opens it for, and revoking it would delete the error and the log with it.
+BACKGROUND_TASK_NOTICE_PREFIX = "✅ Background task finished"
+BACKGROUND_TASK_NOTICE_RECALL_SECONDS = 15.0
+# Shape, not prefix alone: the receipt embeds a variable command and duration. Matched after the
+# command is shortened by `_shorten_command_for_display`, so the command part stays one line.
+BACKGROUND_TASK_NOTICE_PATTERNS = (
+    r"✅ Background task finished(?: — `[^\r\n]*`)?(?: \([^)\r\n]*\))?",
+)
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
 # user has had a chance to read it. Content the user still needs (queued acks, provider-
 # failure replies) is deliberately absent: only self-erasing status pings belong here.
@@ -9795,6 +9809,14 @@ def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
         )
         return (APPROVAL_EXPIRED_NOTICE_RECALL_SECONDS
                 if any(re.fullmatch(pattern, text) for pattern in approval_patterns)
+                else None)
+    # The background-process completion receipt. Same reason as the ⏳ arm for the shape gate: the
+    # wording embeds whichever command ran, and a user quoting the line back is a message in its own
+    # right. The FAILURE variant is a different prefix and is deliberately not covered — see the note
+    # on BACKGROUND_TASK_NOTICE_PREFIX.
+    if text.startswith(BACKGROUND_TASK_NOTICE_PREFIX):
+        return (BACKGROUND_TASK_NOTICE_RECALL_SECONDS
+                if any(re.fullmatch(pattern, text) for pattern in BACKGROUND_TASK_NOTICE_PATTERNS)
                 else None)
     for prefix, delay in TRANSIENT_THREAD_NOTICES:
         if text.startswith(prefix):
