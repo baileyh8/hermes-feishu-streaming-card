@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.3`. Add #333 live thinking visibility and adapt #331 tool order/duration/interruption metrics. Notice retirement remains separate. Full tests, exact-merge CI, assets and public installation remain release gates.
+Current release candidate: `4.6.4`. Scope: first-interaction callback wiring, lazy clarify/approval continuation with retained history, dialect-safe legacy fallback/recovery, optional reading presets, provenance-scoped notice retirement and contributor preflight. Candidate implementation does not mean the release or real-client acceptance has completed.
 
-New regressions include actual loopback HTTP and generated-hook execution. Production rollout and mobile-client checks are reported separately.
+Full tests, exact-merge CI, assets/checksums and public-tag ordinary installation remain release gates. Record desktop/mobile and production results separately in the [V4.6.4 acceptance checklist](wiki/feishu-acceptance-v4.6.4.md); unverified reports remain unverified.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
