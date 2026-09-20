@@ -3194,7 +3194,7 @@ def request_interaction_from_hermes_locals(
             # was lost (connection dropped mid-flight). Falling straight back to
             # native text then produces a duplicate: the card was already sent
             # AND a numbered-list text appears. Ask the sidecar before giving up.
-            if _hfc_interaction_card_confirmed(config, interaction_id):
+            if _wait_for_interaction_card_confirmation(config, interaction_id):
                 _hfc_warn(
                     "interaction card confirmed present after POST failure: "
                     f"{_hfc_log_reference('interaction', interaction_id)}"
@@ -9629,6 +9629,24 @@ def _hfc_interaction_card_confirmed(
         )
     except Exception:
         return False
+
+
+def _wait_for_interaction_card_confirmation(
+    config: RuntimeConfig, interaction_id: str, *, grace_seconds: float = 3.0
+) -> bool:
+    """Boundedly confirm a card after an ambiguous event POST.
+
+    The sidecar may have accepted and started the Feishu send while the POST
+    response timed out. Do not replay the event; poll the read-only interaction
+    endpoint briefly so native text fallback is used only when no card exists.
+    """
+    deadline = time.monotonic() + max(0.0, min(float(grace_seconds), 5.0))
+    while True:
+        if _hfc_interaction_card_confirmed(config, interaction_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
 
 
 def _timeout_for_event(config: RuntimeConfig, event_name: str) -> float:
