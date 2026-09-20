@@ -36,11 +36,11 @@ profiles:
             timeline_expanded: false # 同层显式值胜过 detailed 的展开默认
 ```
 
-旧字段含义保持不变：
+显式设置继续优先；V4.6.6 的终态精简保留异常工具：
 
-- `hide_completed_tool_activity: true` 在 completed 和 failed 都隐藏正文工具区，包含旧工具摘要回退；过程记录和计数不受影响。
+- `hide_completed_tool_activity: true` 在 completed 和 failed 都隐藏成功工具及旧工具摘要回退，保留失败、取消和中断工具；过程记录和计数不受影响。
 - `hide_completed_tool_activity: false` 明确保留 completed 和 failed 的正文工具区，即使继承 `focused`。
-- 只有没有显式覆盖该字段的 `focused` 默认采用“正常完成隐藏、失败保留”。
+- 只有没有显式覆盖该字段的 `focused` 默认采用“正常完成精简成功工具、失败回合保留”；成功回合里的失败/中断工具也保留。
 - `stream_thinking_to_body`、`show_reasoning`、`reasoning_format` 和 `timeline_expanded` 的显式值仍各自生效。`show_reasoning: false` 与 `stream_thinking_to_body: false` 同时使用时不显示实时思考。
 
 现有示例 YAML 可能已写出全部旧开关。如果保留它们，选择预设也会保留这些明确选择；使用以下只读检查确认实际值，而不是只看预设名。
@@ -52,7 +52,7 @@ hermes-feishu-card card-config --config ~/.hermes_feishu_card/config.yaml
 hermes-feishu-card card-config --config /path/to/config.yaml --profile-id work --bot-id support --json
 ```
 
-输出阅读字段的有效值及来源（default、global、profile 或 bot 的预设/显式字段）。`terminal_tool_activity` 是解释结果，不是新 YAML 开关：`visible` 表示终态保留，`failed_only` 表示仅失败保留，`hidden` 表示两种终态都隐藏。多个 profile 且没有 default 时要求指定 `--profile-id`，不会猜测。
+输出阅读字段的有效值及来源（default、global、profile 或 bot 的预设/显式字段）。`terminal_tool_activity` 是解释结果，不是新 YAML 开关：`visible` 表示终态保留，`failed_only` 表示仅失败保留，`unsuccessful_only` 表示两种终态均仅隐藏成功工具。多个 profile 且没有 default 时要求指定 `--profile-id`，不会猜测。
 
 此命令不启动或重启服务，不修改配置，不请求 Feishu，不输出凭据、路由标识、配置路径或自定义标题。它说明所选 YAML 的下一次加载结果，不证明运行中的进程已经加载该文件；重启后须核实目标进程配置。
 
@@ -73,3 +73,5 @@ card:
 ```
 
 顺序只影响过程面板，正文 code 思考仍按正序。每段思考的条数仅限制成功完成工具，保留最近 N 条；失败与运行步骤不被此规则移除，但所有条目仍受全局 `max_timeline_items` 和卡片容量门禁约束。历史、工具总数、审批和正文不变。字段遵循相同 global/profile/bot 显式覆盖顺序，`card-config` 展示其来源，预设不会自动启用它们。
+
+V4.6.6 的总条目窗口优先保留正在运行的工具、前一步及对应思考段，再保留失败记录；正文与过程使用相同调用编号。超过总容量仍折叠条目并显示数量，不承诺无限历史。整轮结束后没有工具终态的条目显示已中断，渲染不篡改原始历史。

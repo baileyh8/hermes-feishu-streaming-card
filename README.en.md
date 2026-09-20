@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.5
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.6
 bash install-docker.sh
 ```
 
@@ -177,11 +177,12 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MS` | `250` | Max Gateway-side delta coalescing wait |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_CHARS` | `600` | Flush pending delta when this character budget is reached |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | Pending delta session cap |
-Release scope and acceptance limits: [V4.6.5](docs/release-notes-v4.6.5.en.md), [interaction continuation](docs/wiki/interaction-continuation.md), [reading presets](docs/wiki/reading-presets.md), [contributor preflight](docs/testing.en.md). No new default is enabled automatically.
+Release scope and acceptance limits: [V4.6.6](docs/release-notes-v4.6.6.en.md), [interaction continuation](docs/wiki/interaction-continuation.md), [reading presets](docs/wiki/reading-presets.md), [contributor preflight](docs/testing.en.md). No new default is enabled automatically.
 
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.6.6](docs/release-notes-v4.6.6.en.md) | Verified approval-receipt compaction, visible active tools and native notice expiry |
 | [v4.6.5](docs/release-notes-v4.6.5.en.md) | Persistent notice ownership, explicit tool-call identity, optional timeline controls and provider-error deduplication |
 | [v4.6.4](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
 | [v4.6.3](docs/release-notes-v4.6.3.en.md) | Live thinking visibility, tool duration and interrupted-turn metrics |
@@ -287,6 +288,7 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 
 ## Contributors
 
+- V4.6.6: Thanks to [mouyong](https://github.com/mouyong) for the notice/reading and approval proposals in [PR #338](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/338) / [PR #339](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/339) and concrete evidence in [#337](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/337) / [#340](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/340). Adapted with delivery proof, bounded cleanup and preserved defaults; original code authorship remains credited. Thanks also to [tidytorch](https://github.com/tidytorch) for [PR #342](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/342): the original authored commit is retained, with a bounded lookup budget and a real lost-response HTTP regression.
 - V4.6.4: thanks to [sthnow](https://github.com/sthnow) for cold-start callback and post-interaction ordering evidence in [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335), and patch author **babypanda** for the eager-hook implementation; adapted code retains `Co-authored-by`. Thanks to [mouyong](https://github.com/mouyong) for continuation/notice design and code in [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331), and the contributor-preflight request in [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330). Individual parts are adapted; this does not merge the entire PR. Optional reading presets also respond to [jackwude](https://github.com/jackwude)'s [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn)'s [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). All historical credits below are retained.
 
 - V4.6.3: Thanks to [leavrcn](https://github.com/leavrcn) for [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333), reproduction and configuration proposal; adapted tool order/duration/interruption code from [mouyong](https://github.com/mouyong)'s [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331), retaining code authorship. Notice retirement and other changes remain separate.

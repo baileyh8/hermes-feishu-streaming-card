@@ -128,7 +128,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.5
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.6
 bash install-docker.sh
 ```
 
@@ -164,11 +164,12 @@ bash install-docker.sh
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MS` | `250` | Gateway 内 delta 最大合并等待时间 |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_CHARS` | `600` | pending delta 达到字符数后立即 flush |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | pending delta session 上限 |
-版本范围与验收边界：[V4.6.5](docs/release-notes-v4.6.5.md)、[交互续答](docs/wiki/interaction-continuation.md)、[阅读预设](docs/wiki/reading-presets.md)、[提交前检查](docs/testing.md)。升级不会自动启用新的默认阅读方式。
+版本范围与验收边界：[V4.6.6](docs/release-notes-v4.6.6.md)、[交互续答](docs/wiki/interaction-continuation.md)、[阅读预设](docs/wiki/reading-presets.md)、[提交前检查](docs/testing.md)。升级不会自动启用新的默认阅读方式。
 
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.6.6](docs/release-notes-v4.6.6.md) | 审批回执确认后精简重复、运行工具可见与原生通知自动收尾 |
 | [v4.6.5](docs/release-notes-v4.6.5.md) | 重启通知持久归属、工具调用去重、可选时间线显示与模型报错去重 |
 | [v4.6.4](docs/release-notes-v4.6.4.md) | 首次按钮接线、顺序续答、可选阅读预设与作用域通知清理 |
 | [v4.6.3](docs/release-notes-v4.6.3.md) | 实时思考正文开关、工具耗时与中断用量 |
@@ -259,16 +260,15 @@ Hermes Gateway
 ## 文档入口
 
 - 详细使用手册：[中文](docs/user-guide.md) / [English](docs/user-guide.en.md)
-- 架构说明：[中文](docs/architecture.md) / [English](docs/architecture.en.md)
-- 事件协议：[中文](docs/event-protocol.md) / [English](docs/event-protocol.en.md)
+- 架构说明：[中文](docs/architecture.md) / [English](docs/architecture.en.md)；事件协议：[中文](docs/event-protocol.md) / [English](docs/event-protocol.en.md)
 - 安装包与安全：[README-install.md](README-install.md)；[中文](docs/installer-safety.md) / [English](docs/installer-safety.en.md)
 - 迁移说明：[中文](docs/migration.md) / [English](docs/migration.en.md)；端到端验证：[中文](docs/e2e-verification.md) / [English](docs/e2e-verification.en.md)；发布准备：[中文](docs/release-readiness.md) / [English](docs/release-readiness.en.md)
-- 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)
-- [CardKit 流式更新](docs/wiki/cardkit-streaming.md)；[提及位置与审批暂停](docs/wiki/card-readability.md)。
+- 测试说明：[中文](docs/testing.md) / [English](docs/testing.en.md)；[CardKit 流式更新](docs/wiki/cardkit-streaming.md)；[提及位置与审批暂停](docs/wiki/card-readability.md)。
 - 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md) 遇到 `manual_review_required` 时，先执行 `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`；V4.4.6 的 `integrity.next_command` 会给出可复制的只读诊断命令。迁移与启动顺序见 [Hermes 完整性排障](docs/wiki/hermes-decomposed-patcher.md)，本轮修复及待验证问题见 [Issues/PR 处理记录](docs/issue-triage-2026-09-15.md)。
 
 ## 贡献者
 
+- V4.6.6: 感谢 [mouyong](https://github.com/mouyong) 在 [PR #338](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/338) / [PR #339](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/339) 的通知、阅读与审批方案，以及 [#337](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/337) / [#340](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/340)的现场证据；本版以投递确认、有界清理和保留默认的方式适配，保留真实代码署名。 同时感谢 [tidytorch](https://github.com/tidytorch) 的 [PR #342](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/342) 延迟交互确认修复；保留原作者提交，并补强总等待预算与真实 HTTP 丢响应回归。
 - V4.6.4：感谢 [sthnow](https://github.com/sthnow) 在 [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335) 提供冷启动按钮与交互后排序证据，以及补丁作者 **babypanda** 的 eager-hook 实现；适配部分保留 `Co-authored-by`。感谢 [mouyong](https://github.com/mouyong) 的 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 续答与通知生命周期方案、代码贡献及 [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330) 提交前验证需求；本轮按子项吸收，不等于整 PR 合并。可选阅读预设继续回应 [jackwude](https://github.com/jackwude) 的 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 与 [leavrcn](https://github.com/leavrcn) 的 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333)。保留以下全部历史贡献记录。
 
 - V4.6.3：感谢 [leavrcn](https://github.com/leavrcn) 的 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333) 长思考复现与配置建议；适配 [mouyong](https://github.com/mouyong) 的 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 工具排序、耗时与中断用量实现，保留代码署名；通知撤回等其余改动仍独立审查。

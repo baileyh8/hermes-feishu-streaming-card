@@ -68,8 +68,9 @@ async def test_focused_http_keeps_failed_activity_and_legacy_overrides(terminal,
         card = await wait_for(capture, "FINAL_RESULT" if terminal == "completed" else "FAILURE_REASON")
         assert "PRESERVED_PARTIAL" in str(card)
         tool_rows = [e for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_")]
-        should_hide = explicit_hide if explicit_hide is not None else terminal == "completed"
-        assert bool(tool_rows) is not should_hide
+        # The missing tool terminal becomes interrupted; compaction may hide
+        # successful work but must preserve evidence of an unfinished call.
+        assert tool_rows and '已中断' in tool_rows[0]['content']
         assert inspect_card_limits(card).safe
         assert len(capture.sent) == 1
         assert all(message_id == "preset-card" for message_id, _ in capture.updated)

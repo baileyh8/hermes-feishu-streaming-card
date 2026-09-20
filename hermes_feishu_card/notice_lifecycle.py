@@ -184,6 +184,17 @@ class RestartNoticeRegistry:
         self._prune()
         return tuple(self._scopes.get(scope, {}).items())
 
+    def expiry_schedule(self, ttl: float):
+        """Restore bounded timers from creation time, preserving failed-delete cooldowns."""
+        self._prune()
+        return tuple((scope, mid, generation, self.expiry_delay(mid, ttl))
+                     for scope, members in self._scopes.items()
+                     for mid, generation in members.items())
+
+    def expiry_delay(self, message_id: str, ttl: float) -> float:
+        return max(0, self._created_at[message_id] + ttl - self._wall_clock(),
+                   self._retry_after.get(message_id, 0) - self._clock())
+
     def contains(self, scope: NoticeScope, message_id: str, generation: int) -> bool:
         return (self._scopes.get(scope, {}).get(message_id) == generation
                 and (self._root is None or self._identity(scope) == self._identities.get(message_id)))

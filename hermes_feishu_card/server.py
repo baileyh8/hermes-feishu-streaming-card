@@ -95,6 +95,7 @@ from .render import (
 )
 from .process import state_dir
 from .session import CardSession
+from .approval_receipts import approval_receipt_fingerprint
 from .display_segments import display_view, needs_continuation
 from .legacy_owner import legacy_owner_body, static_legacy_receipt
 from .status import StatusConfig
@@ -178,6 +179,8 @@ EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
 EPHEMERAL_RECALL_MAX_SECONDS = 600.0
 EPHEMERAL_RECALL_MAX_PENDING = 1024
 EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
+EPHEMERAL_RECALL_WAKE_KEY = web.AppKey("ephemeral_recall_wake", dict)
+OWNED_NOTICE_TTL_SECONDS = 15.0
 RESTART_NOTICES_KEY = web.AppKey("restart_notices", RestartNoticeRegistry)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
@@ -585,6 +588,7 @@ def create_app(
     app[CARD_ANIMATION_TASKS_KEY] = {}
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[EPHEMERAL_RECALL_TASKS_KEY] = {}
+    app[EPHEMERAL_RECALL_WAKE_KEY] = {}
     app[RESTART_NOTICES_KEY] = RestartNoticeRegistry()
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
@@ -676,6 +680,7 @@ def create_app(
         except (OSError, ValueError):
             app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "unavailable"
     app.on_startup.append(_restore_card_checkpoints)
+    app.on_startup.append(_restore_owned_notice_timers)
     app.on_cleanup.append(_stop_card_restore)
     app.on_startup.append(_start_runtime_cleanup)
     app.on_startup.append(_start_runtime_integrity_monitor)
@@ -5819,6 +5824,11 @@ async def _apply_event_locked_inner(
                     display_state="display_receipt",
                 ) or latest_card
             if is_terminal and render_result.disposition == "card":
+                try:
+                    await _settle_approval_displays(request.app, session_key, latest_session)
+                except Exception:
+                    # Optional display cleanup must never withhold the final answer.
+                    request.app[DIAGNOSTICS_KEY]['last_approval_display_cleanup'] = 'retained'
                 await _populate_subscription_usage(request.app, latest_session)
                 populated_result = _render_session_card_result_for_app(
                     request.app, latest_session
@@ -6064,12 +6074,90 @@ async def _retire_continuation_predecessor(app, session_key, message_id, snapsho
         )
         if card is None:
             return False
+        interaction = snapshot.active_interaction
+        owner = app[SESSIONS_KEY].get(session_key)
+        if (owner is not None and interaction is not None
+                and interaction.kind == "approval" and interaction.status == "completed"
+                and interaction.feishu_message_id and interaction.feishu_message_id != message_id
+                and len(owner.approval_retirements) < 32):
+            clean = copy.deepcopy(card)
+            elements = clean.get("body", {}).get("elements", [])
+            clean["body"]["elements"] = [e for e in elements
+                if not str(e.get("element_id", "")).startswith("interaction_review_")
+                and e.get("element_id") != "interaction_result"]
+            if len(elements) != len(clean["body"]["elements"]):
+                receipt = copy.deepcopy(interaction)
+                receipt.callback_token = ""
+                receipt.runtime_admission = None
+                owner.approval_retirements.append(dict(message_id=message_id,
+                    bot_id=bot_id, card=clean, interaction=receipt,
+                    fingerprint=approval_receipt_fingerprint(owner, receipt)))
         updated = await _update_card_for_app(app, message_id, card, bot_id)
         app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "retired" if updated else "update_failed"
         return bool(updated)
     except Exception:
         app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "update_failed"
         return False
+
+
+async def _settle_approval_displays(app, session_key, session):
+    """Only compact terminal duplicates after an explicit full-receipt PATCH.
+
+    This runs on the terminal flush, never on the button callback critical path.
+    Evidence stays in memory; restoring a display checkpoint grants no authority.
+    """
+    if session.status not in {"completed", "failed"}:
+        return
+    current = lambda: app[SESSIONS_KEY].get(session_key) is session
+    if not current():
+        return
+    records = list(session.approval_retirements)
+    interactions = [r["interaction"] for r in records]
+    if session.active_interaction is not None:
+        interactions.append(session.active_interaction)
+    confirmed = set()
+    attempted = set()
+    owner_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+    for interaction in interactions:
+        fingerprint = approval_receipt_fingerprint(session, interaction)
+        if (not fingerprint or fingerprint in attempted
+                or interaction.feishu_message_id == owner_id):
+            continue
+        attempted.add(fingerprint)
+        snapshot = copy.copy(session)
+        snapshot.approval_retirements = []
+        snapshot.active_interaction = copy.deepcopy(interaction)
+        snapshot.active_interaction.receipt_fingerprint = ""
+        snapshot.display_segment = {}
+        snapshot.legacy_owner_receipt = {}
+        if _interaction_mode_for_session_key(app, session_key) == "callback":
+            card = _render_interaction_callback_card_for_app(app, snapshot, session_key=session_key)
+        else:
+            card = _render_static_display_card(app, snapshot, session_key=session_key,
+                note="交互结果已记录，后续进展以回复卡为准", display_state="display_receipt")
+        if card is None or not inspect_card_limits(card).safe:
+            continue
+        updated = await _update_card_for_app(app, interaction.feishu_message_id, card,
+            app[MESSAGE_BOT_IDS_KEY].get(session_key), is_current=current)
+        if updated and current() and fingerprint == approval_receipt_fingerprint(session, interaction):
+            confirmed.add(fingerprint)
+    interaction = session.active_interaction
+    fingerprint = approval_receipt_fingerprint(session, interaction)
+    if fingerprint and fingerprint in confirmed:
+        interaction.receipt_fingerprint = fingerprint
+    remaining = []
+    for record in records:
+        if (record["fingerprint"] not in confirmed or not current()
+                or record["message_id"] == owner_id):
+            remaining.append(record)
+            continue
+        updated = await _update_card_for_app(app, record["message_id"], record["card"],
+            record["bot_id"], is_current=current)
+        if not updated:
+            remaining.append(record)
+    session.approval_retirements = remaining
+    app[DIAGNOSTICS_KEY]["last_approval_display_cleanup"] = (
+        "retained" if remaining else "confirmed" if confirmed else "not_applicable")
 
 
 async def _recover_terminal_card(
@@ -7798,15 +7886,20 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         recall_client = _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
+    app_hash = (route_data or {}).get("app_id_hash")
+    if app_hash is not None:
+        app_id = getattr(getattr(recall_client, "config", None), "app_id", None)
+        if (not isinstance(app_hash, str) or not isinstance(app_id, str) or not app_id
+                or hashlib.sha256(app_id.encode()).hexdigest() != app_hash):
+            return web.json_response({"ok":False,"error":"notice application mismatch"}, status=409)
     if family is not None:
-        app_hash = route_data.get("app_id_hash")
-        if app_hash is not None:
-            app_id = getattr(getattr(recall_client, "config", None), "app_id", None)
-            if (not isinstance(app_hash, str) or not isinstance(app_id, str) or not app_id
-                    or hashlib.sha256(app_id.encode()).hexdigest() != app_hash):
-                return web.json_response({"ok":False,"error":"notice application mismatch"}, status=409)
         if not request.app[RESTART_NOTICES_KEY].register(scope, message_id):
             return web.json_response({"ok": False, "error": "notice capacity reached"}, status=429)
+        registry = request.app[RESTART_NOTICES_KEY]
+        generation = dict(registry.snapshot(scope))[message_id]
+        _schedule_ephemeral_recall(request.app, message_id=message_id, bot_id=bot_id,
+            delay_seconds=registry.expiry_delay(message_id, OWNED_NOTICE_TTL_SECONDS),
+            notice_owner=(scope, generation))
         return web.json_response({"ok": True, "message_id": message_id, "record_only": True})
     scheduled = _schedule_ephemeral_recall(
         request.app,
@@ -7888,18 +7981,34 @@ def _retire_restart_notices(app, scope, snapshot) -> None:
         )
 
 
+async def _restore_owned_notice_timers(app):
+    # Checkpoint owners are loaded synchronously before this startup hook.
+    for scope, mid, generation, delay in app[RESTART_NOTICES_KEY].expiry_schedule(OWNED_NOTICE_TTL_SECONDS):
+        _schedule_ephemeral_recall(app, message_id=mid, delay_seconds=delay,
+            bot_id=scope.bot_id or None, notice_owner=(scope, generation))
+
+
 def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id, notice_owner=None) -> bool:
     tasks = app[EPHEMERAL_RECALL_TASKS_KEY]
     key = (bot_id or "", message_id)
     if key in tasks:
+        wake = app[EPHEMERAL_RECALL_WAKE_KEY].get(key)
+        if notice_owner is not None and delay_seconds == 0 and wake and wake[0] == notice_owner:
+            wake[1].set()  # Shorten the wait without cancelling an in-flight DELETE.
         return True
     if len(tasks) >= EPHEMERAL_RECALL_MAX_PENDING:
         return False
+    wake = asyncio.Event()
+    app[EPHEMERAL_RECALL_WAKE_KEY][key] = (notice_owner, wake)
     task = asyncio.create_task(_run_ephemeral_recall(
         app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id,
-        notice_owner=notice_owner))
+        notice_owner=notice_owner, wake=wake))
     tasks[key] = task
-    task.add_done_callback(lambda done: tasks.pop(key, None) if tasks.get(key) is done else None)
+    def finished(done):
+        if tasks.get(key) is done:
+            tasks.pop(key, None)
+            app[EPHEMERAL_RECALL_WAKE_KEY].pop(key, None)
+    task.add_done_callback(finished)
     app[METRICS_KEY].ephemeral_recalls_scheduled += 1
     return True
 
@@ -7911,10 +8020,18 @@ async def _run_ephemeral_recall(
     delay_seconds: float,
     bot_id: str | None,
     notice_owner: tuple[NoticeScope, int] | None = None,
+    wake: asyncio.Event | None = None,
 ) -> None:
     metrics: SidecarMetrics = app[METRICS_KEY]
     try:
-        await asyncio.sleep(delay_seconds)
+        if wake is None:
+            await asyncio.sleep(delay_seconds)
+        elif delay_seconds > 0:
+            timer = asyncio.get_running_loop().call_later(delay_seconds, wake.set)
+            try:
+                await wake.wait()
+            finally:
+                timer.cancel()
         if notice_owner is not None:
             scope, generation = notice_owner
             if not app[RESTART_NOTICES_KEY].contains(scope, message_id, generation):
@@ -7958,6 +8075,7 @@ async def _stop_ephemeral_recalls(app: web.Application) -> None:
     tasks = app.get(EPHEMERAL_RECALL_TASKS_KEY, {})
     pending = [task for task in tasks.values() if not task.done()]
     tasks.clear()
+    app[EPHEMERAL_RECALL_WAKE_KEY].clear()
     for task in pending:
         task.cancel()
     if pending:

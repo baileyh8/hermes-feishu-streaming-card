@@ -1,5 +1,13 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.6.6 consolidation
+
+- [x] Approval receipt proof before duplicate cleanup (#337/#339).
+- [x] Active tool/predecessor visibility and terminal status consistency (#340).
+- [x] Known native notice expiry, persistent restart deadlines and unsuccessful-tool retention (#338).
+- [ ] Exact candidate/full CI, real Feishu acceptance, merged release, public install, production upgrade and community replies.
+
+
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
 ## 当前交付状态（2026-09-20）

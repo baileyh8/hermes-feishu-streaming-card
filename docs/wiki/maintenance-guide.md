@@ -255,3 +255,7 @@ native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependen
 工具去重必须使用明确 call_id，不能把重复工具名猜成同一次调用。默认时间线行为不变，分组裁剪只改变显示。带 call_id 的新展示检查点回退旧版可能被跳过，不得因此恢复执行。
 
 `stale_reapplied` 只允许显式接受上游升级：旧 backup 必须匹配 manifest，严格移除已知模板后逐字等于当前 Git blob，检查 resolved HEAD 与事务 fingerprint；中途漂移、未知 marker 和无 Git 证明拒绝。保留 staged index 与无关定制，不手改 installed gateway 或伪造 manifest。
+
+## V4.6.6 收尾回归
+
+审批精简必须有独立完整回执的显式平台 PATCH 确认；不得仅以 callback 返回体作为投递证明。展示指纹、旧段清理队列均不入检查点。通知计时提前唤醒不得取消 in-flight DELETE；原生来源只存在于精确 producer 或同一 Base delivery invocation。总条目窗口优先保留运行工具、前一步和失败条目，仍需遵守卡片预算。
