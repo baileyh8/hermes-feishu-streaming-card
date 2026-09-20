@@ -1,8 +1,8 @@
-# V4.6.4 candidate: First-click interaction, ordered continuation and optional reading modes
+# V4.6.4: First-click interaction, ordered continuation and optional reading modes
 
 [中文](release-notes-v4.6.4.md) | [English](release-notes-v4.6.4.en.md)
 
-This is an incremental V4.6.x candidate. Implementation and automated checks do not mean a release, production upgrade, or desktop/mobile acceptance has completed. Record results separately in the [current acceptance checklist](wiki/feishu-acceptance-v4.6.4.md).
+V4.6.4 improves first-interaction wiring, continuation order after a choice and optional reading modes while preserving existing defaults. Automation, real platform API delivery, production upgrades and desktop/mobile acceptance are recorded separately in the [current acceptance checklist](wiki/feishu-acceptance-v4.6.4.md).
 
 ## No slash-card warmup
 
@@ -32,12 +32,14 @@ Only recognized transient restart notices with an established route are register
 
 ## Contributor preflight
 
-`python tools/preflight.py --check-only` defaults to read-only checkout, interpreter/import-source and fixed-fixture checks. Explicit `--suite focused|full` runs real pytest and checks the selected diff base, using private state, Hermes home and an isolated operations target. Missing fixtures are never a pass; exit codes are preserved. Shareable JSON excludes raw logs, credentials and absolute private paths. See [testing](testing.en.md).
+`python tools/preflight.py --check-only` defaults to read-only checkout, interpreter/import-source and fixed-fixture checks. Explicit `--suite focused|full` runs real pytest and checks the selected diff base, using a private user home, state and isolated operations target, with inherited production settings removed. Fixed fixtures require matching content, a real Git root, the exact HEAD and a clean working tree. Missing fixtures are never a pass; exit codes are preserved. Shareable JSON excludes raw logs, credentials and absolute private paths. See [testing](testing.en.md).
 
 ## Credits and limits
 
 Thanks to [sthnow](https://github.com/sthnow) for reproduction and ordering evidence in [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335), and attached-patch author **babypanda**; eager-hook adaptation retains `Co-authored-by`. Thanks to [mouyong](https://github.com/mouyong) for continuation/notice design and code in [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) and the validation workflow request in [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330). Reading presets also respond to [jackwude](https://github.com/jackwude)'s [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn)'s [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). Both READMEs retain all historical credits.
 
-Parts of #331 are adapted independently; the whole PR is not merged, old defaults are not reversed, and ambiguous home routes do not authorize deletion. This cycle's real-client verification for #335 remains to be recorded. Unverified historical reports such as #282 are not considered fixed by proximity. AMD/9Router, default-model changes and Hermes core upgrades are outside this candidate.
+Parts of #331 are adapted independently; the whole PR is not merged, old defaults are not reversed, and ambiguous home routes do not authorize deletion. This cycle's real-client verification for #335 remains to be recorded. Unverified historical reports such as #282 are not considered fixed by proximity. AMD/9Router, default-model changes and Hermes core upgrades are outside this release.
 
-Release gates still include full regression, exact-merge CI, fixed-Hermes install/restore, the SDK matrix, platform assets/checksums, ordinary public-tag installation provenance, and recorded real-client results. This document is not a substitute for that evidence.
+Pre-release code regression: **4049 passed, 18 skipped**. All 14 PR check contexts passed; ordinary wheel installation and fixed-Hermes install/restore were verified. An isolated sidecar using the existing authorized application and test conversation received platform acknowledgements for 6/6 events, 3/3 creates and 6/6 updates, with zero send/update failures. This controlled flow simulated the choice; it was not a real first user click through Gateway.
+
+Desktop/mobile click and visual acceptance remain unrun. Managed-source drift against the installation manifest made the safe installer refuse to overwrite the local production instance, whose existing version and modifications were preserved. Exact-merge regression, CI, annotated tag, platform assets/checksums and ordinary public-tag installation evidence are recorded with the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.4). API delivery is not client acceptance.

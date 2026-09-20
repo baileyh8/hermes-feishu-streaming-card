@@ -47,8 +47,8 @@ def test_current_markers_and_v437_delivery_filter_release_contract():
     assert config.startswith("# Hermes Feishu Streaming Card V4.6.4")
     assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.4}"' in compose
     assert "HFC_VERSION: v4.6.4" in workflow
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     for text in (notes_v435, notes_v435_en):
         assert "PR #235" in text
         assert "metadata" in text
@@ -2388,8 +2388,8 @@ def test_v4021_release_docs_record_content_integrity_and_real_feishu_acceptance(
         ) is None
     assert "| [v4.0.21](release-notes-v4.0.21.md) | 2026-07-28 |" in guide
     assert "| [v4.0.21](release-notes-v4.0.21.en.md) | 2026-07-28 |" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.0.21 发布门禁" in readiness
     assert "## V4.0.21 Release Gates" in readiness_en
     assert "真实飞书图片验收：**已通过（2026-07-28）**" in readiness
@@ -2708,8 +2708,8 @@ def test_v412_release_docs_define_gateway_restart_race_contract():
     assert "docs/release-notes-v4.1.2.en.md" in readme_en
     assert "HFC_VERSION: v4.6.4" in workflow
     assert "### V4.1.2：Gateway 重启竞态热修（已发布）" in todo
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
 
     for text in (notes, notes_en, controls, event_flow, acceptance):
         assert "runtime_heartbeat_stale" in text or "heartbeat stale" in text
@@ -2763,8 +2763,8 @@ def test_v414_release_docs_define_manifestless_legacy_migration_candidate():
     assert "HFC_VERSION: v4.6.4" in workflow
     assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.4}"' in compose
     assert "### V4.1.4：Windows 旧版 manifest 迁移热修（已发布）" in todo
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.1.4 发布门禁" in readiness
     assert "## V4.1.4 Release Gates" in readiness_en
     assert "从 V4.1.3 升级到 V4.1.4" in migration
@@ -2820,8 +2820,8 @@ def test_v413_release_docs_define_combined_upgrade_compatibility_candidate():
     assert "HFC_VERSION=v4.6.4" in install_doc
     assert "HFC_VERSION: v4.6.4" in workflow
     assert "### V4.1.3：升级恢复与 TurnRunner 兼容性热修（已发布）" in todo
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.1.3 发布门禁" in readiness
     assert "## V4.1.3 Release Gates" in readiness_en
 
@@ -3096,8 +3096,8 @@ def test_v420_docs_define_private_update_maintenance_release():
     assert "From V4.2.0" in install_doc
     assert "## V4.2.0 飞书私聊安全升级" in guide
     assert "## V4.2.0 Safe Private-Chat Updates" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.0 发布门禁" in readiness
     assert "## V4.2.0 Release Gates" in readiness_en
     assert "### V4.2.0：飞书私聊安全升级（已发布）" in todo
@@ -3154,8 +3154,8 @@ def test_v428_docs_cover_credential_persistence_release_contracts():
 
     for text in (changelog, readme, readme_en, install_doc, guide, guide_en, todo):
         assert "V4.2.8" in text or "v4.2.8" in text
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.8 发布门禁" in readiness
     assert "## V4.2.8 Release Gates" in readiness_en
 
@@ -3203,8 +3203,8 @@ def test_v429_docs_cover_interaction_and_quote_release_contracts():
 
     for text in (changelog, readme, readme_en, install_doc, guide, guide_en, todo):
         assert "V4.2.9" in text or "v4.2.9" in text
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.9 发布门禁" in readiness
     assert "## V4.2.9 Release Gates" in readiness_en
 
@@ -3256,8 +3256,8 @@ def test_v421_docs_define_first_gateway_heartbeat_hotfix():
     assert "V4.2.1 registers the live Gateway runner" in install_doc
     assert "第一条私聊裸 `/update`" in guide
     assert "first bare private-chat `/update`" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.1 发布门禁" in readiness
     assert "## V4.2.1 Release Gates" in readiness_en
     assert "### V4.2.1：Gateway 首个 heartbeat 任务计数热修（已发布）" in todo
@@ -3300,8 +3300,8 @@ def test_v422_docs_define_async_update_transition_publish():
     assert "V4.2.2 keeps the native card-action callback fast" in install_doc
     assert "取消进入“已取消更新”终态" in guide
     assert "cancel reaches a terminal state" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.2 发布门禁" in readiness
     assert "## V4.2.2 Release Gates" in readiness_en
     assert "### V4.2.2：更新确认卡终态写回热修（已发布）" in todo
@@ -3353,8 +3353,8 @@ def test_v423_docs_define_update_evidence_forwarding_hotfix():
     assert "V4.2.3 forwards the update evidence fingerprint" in install_doc
     assert "更新证据指纹" in guide
     assert "update evidence fingerprint" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.3 发布门禁" in readiness
     assert "## V4.2.3 Release Gates" in readiness_en
     assert "### V4.2.3：更新回调证据转发热修（已发布）" in todo
@@ -3405,8 +3405,8 @@ def test_v424_docs_define_quoted_reply_card_isolation_hotfix():
     assert "V4.2.4 gives every new Feishu/Lark topic reply" in install_doc
     assert "真实入站 message ID" in guide
     assert "real incoming message ID" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.4 发布门禁" in readiness
     assert "## V4.2.4 Release Gates" in readiness_en
     assert "### V4.2.4：话题引用回复独立卡片热修（发布候选）" in todo
@@ -3457,8 +3457,8 @@ def test_v425_docs_map_every_audit_fix_and_release_gate():
     assert "V4.2.5 hardens quoted-turn identity" in install_doc
     assert "canonical `turn_id`" in guide
     assert "canonical `turn_id`" in guide_en
-    assert "当前发布候选为 `4.6.4`" in readiness
-    assert "Current release candidate: `4.6.4`" in readiness_en
+    assert "当前发布版本为 `4.6.4`" in readiness
+    assert "Current release version: `4.6.4`" in readiness_en
     assert "## V4.2.5 发布门禁" in readiness
     assert "## V4.2.5 Release Gates" in readiness_en
     assert "### V4.2.5：审查安全热修（已发布）" in todo

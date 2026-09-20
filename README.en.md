@@ -177,12 +177,12 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MS` | `250` | Max Gateway-side delta coalescing wait |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_CHARS` | `600` | Flush pending delta when this character budget is reached |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | Pending delta session cap |
-Candidate scope and remaining acceptance: [V4.6.4](docs/release-notes-v4.6.4.en.md), [interaction continuation](docs/wiki/interaction-continuation.md), [reading presets](docs/wiki/reading-presets.md), [contributor preflight](docs/testing.en.md). No new default is enabled automatically.
+Release scope and acceptance limits: [V4.6.4](docs/release-notes-v4.6.4.en.md), [interaction continuation](docs/wiki/interaction-continuation.md), [reading presets](docs/wiki/reading-presets.md), [contributor preflight](docs/testing.en.md). No new default is enabled automatically.
 
 ## Latest Releases
 | Version | Highlights |
 |---|---|
-| [v4.6.4 candidate](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
+| [v4.6.4](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
 | [v4.6.3](docs/release-notes-v4.6.3.en.md) | Live thinking visibility, tool duration and interrupted-turn metrics |
 | [v4.6.2](docs/release-notes-v4.6.2.en.md) | Shared Gateway drain proof and optional terminal tool rows |
 | [v4.6.1](docs/release-notes-v4.6.1.en.md) | Hermes 0.21.3 hooks, safe status recall and approval display |
@@ -286,7 +286,7 @@ This remains a sidecar-only design: Hermes keeps only installer-owned, detectabl
 
 ## Contributors
 
-- V4.6.4 candidate: thanks to [sthnow](https://github.com/sthnow) for cold-start callback and post-interaction ordering evidence in [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335), and patch author **babypanda** for the eager-hook implementation; adapted code retains `Co-authored-by`. Thanks to [mouyong](https://github.com/mouyong) for continuation/notice design and code in [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331), and the contributor-preflight request in [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330). Individual parts are adapted; this does not merge the entire PR. Optional reading presets also respond to [jackwude](https://github.com/jackwude)'s [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn)'s [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). All historical credits below are retained.
+- V4.6.4: thanks to [sthnow](https://github.com/sthnow) for cold-start callback and post-interaction ordering evidence in [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335), and patch author **babypanda** for the eager-hook implementation; adapted code retains `Co-authored-by`. Thanks to [mouyong](https://github.com/mouyong) for continuation/notice design and code in [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331), and the contributor-preflight request in [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330). Individual parts are adapted; this does not merge the entire PR. Optional reading presets also respond to [jackwude](https://github.com/jackwude)'s [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn)'s [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). All historical credits below are retained.
 
 - V4.6.3: Thanks to [leavrcn](https://github.com/leavrcn) for [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333), reproduction and configuration proposal; adapted tool order/duration/interruption code from [mouyong](https://github.com/mouyong)'s [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331), retaining code authorship. Notice retirement and other changes remain separate.
 - V4.6.2: Thanks to [jackwude](https://github.com/jackwude) for [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and the [#329](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/329) evidence for 4.6.1; [mouyong](https://github.com/mouyong) proposed `hide_completed_tool_activity` in [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331). Only that configuration feature is adapted here, with an opt-in default and completed/failed coverage; the rest of #331 remains under review.

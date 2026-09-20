@@ -1,8 +1,8 @@
-# V4.6.4 候选：首次交互、顺序续答与可选阅读方式
+# V4.6.4：首次交互、顺序续答与可选阅读方式
 
 [中文](release-notes-v4.6.4.md) | [English](release-notes-v4.6.4.en.md)
 
-本说明记录 V4.6.x 的增量候选范围。代码和自动化检查不代表正式发布、生产升级或手机/桌面真实验收已经完成；结果须按[本轮验收清单](wiki/feishu-acceptance-v4.6.4.md)单独登记。
+V4.6.4 改进首次交互接线、选择后的续答顺序和可选阅读方式，保持现有默认兼容。自动化、真实平台 API 投递、生产升级及手机/桌面验收分别记录在[本轮验收清单](wiki/feishu-acceptance-v4.6.4.md)。
 
 ## 首次按钮不用预热
 
@@ -32,12 +32,14 @@ clarify 与 approval 完成选择后先记录显示分段边界；有实际后�
 
 ## 提交前检查
 
-`python tools/preflight.py --check-only` 默认只读核对 checkout、解释器/包来源和固定 fixture。显式 `--suite focused|full` 才运行真实 pytest 与所选 diff base 的检查；测试用私有 state、Hermes home 和隔离的 operations target，缺 fixture 不标通过，退出码如实保留。可分享 JSON 不含原始日志、凭据或绝对私有路径。见[测试说明](testing.md)。
+`python tools/preflight.py --check-only` 默认只读核对 checkout、解释器/包来源和固定 fixture。显式 `--suite focused|full` 才运行真实 pytest 与所选 diff base 的检查；测试使用私有用户目录、state 和隔离的 operations target，并清除继承的生产配置；固定 fixture 同时校验内容、真实 Git 根目录、精确 HEAD 和干净工作区，缺 fixture 不标通过，退出码如实保留。可分享 JSON 不含原始日志、凭据或绝对私有路径。见[测试说明](testing.md)。
 
 ## 贡献与边界
 
 感谢 [sthnow](https://github.com/sthnow) 在 [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335) 提供复现与交互排序证据，及其附补丁的作者 **babypanda**；eager-hook 适配保留 `Co-authored-by`。感谢 [mouyong](https://github.com/mouyong) 在 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 提供续答和通知生命周期的方案、代码，以及 [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330) 的验证流程需求。阅读预设继续回应 [jackwude](https://github.com/jackwude) 的 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 和 [leavrcn](https://github.com/leavrcn) 的 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333)。全部历史署名继续保留在双语 README。
 
-#331 按子项吸收，不整包合并，不反转旧默认，不把不明 home 路由当成清理授权。#335 的本轮真实客户端复验待记录；#282 等未证明同根因的历史现场问题不能因相邻修复宣称解决。AMD/9Router、默认模型和 Hermes 核心升级不在本候选范围。
+#331 按子项吸收，不整包合并，不反转旧默认，不把不明 home 路由当成清理授权。#335 的本轮真实客户端复验待记录；#282 等未证明同根因的历史现场问题不能因相邻修复宣称解决。AMD/9Router、默认模型和 Hermes 核心升级不在本版范围。
 
-发布仍需完整回归、精确合并 CI、固定 Hermes 安装/恢复、SDK 矩阵、三平台资产与 checksum、公开 tag 普通安装来源及真实客户端结果；本说明不代替这些证据。
+发布前代码回归为 **4049 passed, 18 skipped**；PR 的 14 项检查通过，普通 wheel 安装和固定 Hermes 安装/恢复已验证。隔离 sidecar 使用既有授权应用与测试会话，实际平台确认 6/6 事件、3/3 新建、6/6 更新，发送/更新失败为 0；该受控流程模拟选择，不是用户到 Gateway 的首次真实点击。
+
+桌面/手机点击与视觉验收仍未运行。本机生产实例因受管源码与安装 manifest 漂移，安全安装器拒绝覆盖，本轮保留其原版本与本地改动。精确合并回归、CI、annotated tag、三平台资产/checksum 和公开 tag 普通安装证据随 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.4) 登记；平台 API 成功不代替客户端验收。

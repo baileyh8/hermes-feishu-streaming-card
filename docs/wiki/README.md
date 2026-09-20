@@ -6,9 +6,9 @@
 
 `hermes-feishu-streaming-card` 是 Hermes Agent Gateway 的 Feishu/Lark sidecar 插件：Hermes 进程只安装最小 hook，真实卡片状态、Feishu 发送/更新、交互回调、诊断和发布资产都由本仓库维护。
 
-## 当前候选
+## V4.6.4 版本资料
 
-[V4.6.4 范围](../release-notes-v4.6.4.md) · [交互续答](interaction-continuation.md) · [阅读预设](reading-presets.md) · [真实验收清单](feishu-acceptance-v4.6.4.md) · [实施状态](../superpowers/plans/2026-09-20-v4.6.x-experience.md)。候选说明不代表已发布或真实客户端已通过。
+[V4.6.4 范围](../release-notes-v4.6.4.md) · [交互续答](interaction-continuation.md) · [阅读预设](reading-presets.md) · [真实验收清单](feishu-acceptance-v4.6.4.md) · [实施状态](../superpowers/plans/2026-09-20-v4.6.x-experience.md)。真实客户端验收与公开发布证据分别记录。
 
 ## 阅读路径
 

@@ -5,14 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
-## [4.6.4] - Unreleased
+## [4.6.4] - 2026-09-20
 
 - Wire the first Feishu turn/interaction callback without slash-card warmup, including generated TurnRunner closures; preserve live SDK dispatcher identity and exact profile/adapter ownership (#335, sthnow; patch by babypanda).
 - Open a same-route continuation only after selection and real subsequent output for clarify and approval; keep question/decision receipts, canonical history and turn metrics. Retain the existing owner on failed/uncertain create and preserve a sole legacy owner's dialect through fallback and display recovery (informed by PR #331 and #335).
 - Add optional `classic` / `focused` / `detailed` reading presets and read-only `card-config` explanations. Preserve existing defaults and explicit settings (#328, jackwude; #333, leavrcn).
 - Retire registered transient restart notices only after successful same-scope delivery, with exact profile/bot/chat/thread and generation checks; preserve failed deletion records and native home notices whose provenance is unknown (adapted from mouyong's PR #331).
 - Add isolated contributor preflight checks and explicit focused/full pytest runs with real exit codes, fixture validation, private state and safe summaries (#330, mouyong).
-- This is candidate scope, not a published release or a real-client acceptance claim. See [Chinese notes](docs/release-notes-v4.6.4.md), [English notes](docs/release-notes-v4.6.4.en.md) and the [current acceptance checklist](docs/wiki/feishu-acceptance-v4.6.4.md). PR #331 is absorbed by topic, not merged as a whole.
+- Desktop/mobile first-click acceptance and the production upgrade remain unverified; this release does not claim them as passed. See [Chinese notes](docs/release-notes-v4.6.4.md), [English notes](docs/release-notes-v4.6.4.en.md) and the [current acceptance checklist](docs/wiki/feishu-acceptance-v4.6.4.md). PR #331 is absorbed by topic, not merged as a whole.
 
 ## [4.6.3] - 2026-09-19
 

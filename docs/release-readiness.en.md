@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.4`. Scope: first-interaction callback wiring, lazy clarify/approval continuation with retained history, dialect-safe legacy fallback/recovery, optional reading presets, provenance-scoped notice retirement and contributor preflight. Candidate implementation does not mean the release or real-client acceptance has completed.
+Current release version: `4.6.4`. Scope: first-interaction callback wiring, lazy clarify/approval continuation with retained history, dialect-safe legacy fallback/recovery, optional reading presets, provenance-scoped notice retirement and contributor preflight. Passing automation does not mean real-client acceptance has completed.
 
 Full tests, exact-merge CI, assets/checksums and public-tag ordinary installation remain release gates. Record desktop/mobile and production results separately in the [V4.6.4 acceptance checklist](wiki/feishu-acceptance-v4.6.4.md); unverified reports remain unverified.
 
