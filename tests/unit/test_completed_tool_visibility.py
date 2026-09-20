@@ -1,5 +1,6 @@
 import pytest
 
+from hermes_feishu_card import render
 from hermes_feishu_card.config import DEFAULT_CONFIG
 from hermes_feishu_card.events import SidecarEvent
 from hermes_feishu_card.render import render_card
@@ -30,19 +31,44 @@ def test_terminal_tool_visibility_changes_only_content_tool_rows(status, reasoni
     shown = render_card(session, show_reasoning=reasoning)
     hidden = render_card(session, show_reasoning=reasoning, hide_completed_tool_activity=True)
     assert tool_rows(shown)
-    assert not tool_rows(hidden)
+    if status == "completed":
+        assert not tool_rows(hidden)
+    else:
+        # Contract difference from upstream, on purpose: a FAILED turn keeps its rows, because they
+        # carry the 已中断 pill — WHERE the run stopped, the one thing a reader opens a failed card
+        # for. Upstream hides them here; this fork does not.
+        assert tool_rows(hidden)
     assert hidden['header'] == shown['header']
     assert hidden['body']['elements'] == [
-        e for e in shown['body']['elements'] if e not in tool_rows(shown)
+        e for e in shown['body']['elements'] if e not in tool_rows(shown) or status == "failed"
     ]
     assert "工具 #1" in hidden["header"]["title"]["content"]
     assert 'fixture-tool' in session.tools
 
 
-def test_switch_preserves_live_progress_and_default():
+def test_switch_preserves_live_progress_and_default(monkeypatch):
     session = session_with_tool()
-    assert DEFAULT_CONFIG['card']['hide_completed_tool_activity'] is False
+    # The footer shows a spinner whose FRAME is a function of the wall clock
+    # (`_SPINNER_FRAMES[int(_time.time() * 8) % 10]`), so two independent render_card calls can
+    # disagree on that one character and nothing else — which they did, intermittently, on the
+    # whole-card comparisons below. Pin the frame rather than the clock (freezing `_time` would also
+    # skew every elapsed-time reading) and rather than weakening the comparisons: the two cards must
+    # still match in every other respect, which is the point.
+    monkeypatch.setattr(render, "_spinner_frame", lambda: "⠋")
+    # Default True in the CONFIG, against upstream's False — the user's call: a finished card reads as
+    # answer + footer, and a deployment that wants the rows back sets it false. The render_card
+    # parameter still defaults to False; the server passes the config value in explicitly.
+    assert DEFAULT_CONFIG['card']['hide_completed_tool_activity'] is True
+    # A RUNNING turn keeps its rows whatever the switch says: they are the live progress line, and
+    # the 思考过程 panel below does not exist yet.
     assert render_card(session) == render_card(session, hide_completed_tool_activity=True)
     assert tool_rows(render_card(session))
+    shown = render_card(session)
+    hidden = render_card(session, hide_completed_tool_activity=True)
+    assert tool_rows(shown) == tool_rows(hidden)
+    # A finished one does not, once the switch is on.
+    session.status = "completed"
+    assert tool_rows(render_card(session))
+    assert not tool_rows(render_card(session, hide_completed_tool_activity=True))
     session.tools.clear()
     assert render_card(session) == render_card(session, hide_completed_tool_activity=True)

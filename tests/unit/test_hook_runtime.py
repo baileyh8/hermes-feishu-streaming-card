@@ -13472,3 +13472,78 @@ def test_only_the_restart_completion_notice_skips_the_card():
     assert hook_runtime._hfc_notice_plain_text(waiting) is None
     assert hook_runtime._hfc_notice_plain_text(compression) is None
     assert hook_runtime._hfc_notice_plain_text(None) is None
+
+
+def test_the_core_restart_line_is_delivered_as_the_coloured_online_line(monkeypatch):
+    """The requester's thread must get the COLOURED restart line, not the core's bare ♻.
+
+    The core sends ``♻ Gateway restarted successfully. Your session continues.`` with a BARE U+267B,
+    which Feishu renders monochrome, while Home got ``_HFC_GATEWAY_ONLINE_TEXT`` (variation selector,
+    coloured) — so the thread and Home disagreed («希望话题里面的线程收到的也是彩色的»). The wrapper rewrites it to
+    ``_HFC_GATEWAY_ONLINE_TEXT``, which also puts it on the recall paths a raw ``adapter.send``
+    bypasses.
+    """
+    sent = []
+    recalls = []
+
+    class FakeAdapter:
+        async def _hfc_original_send(self, chat_id, content, reply_to=None, metadata=None):
+            sent.append((chat_id, content))
+            return SimpleNamespace(success=True, message_id="om_restart")
+
+    async def capture(url, payload, *args, **kwargs):
+        recalls.append((str(url), dict(payload)))
+        return {"ok": True}
+
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", capture)
+
+    # The failing branch: when the card policy declines this chat, the wrapper used to hand the core's
+    # text straight to ``original`` — bare U+267B, monochrome, and on no recall path at all. Forcing
+    # the denial here is what makes this test pin the fix instead of a passing coincidence.
+    async def card_policy_denied(chat_id):
+        return False
+
+    monkeypatch.setattr(hook_runtime, "_hfc_direct_card_allowed_async", card_policy_denied)
+
+    result = asyncio.run(
+        hook_runtime._hfc_send_with_native_command_result_card(
+            FakeAdapter(),
+            "oc_fixture",
+            "♻ Gateway restarted successfully. Your session continues.",
+            metadata={"thread_id": "omt_fixture"},
+        )
+    )
+
+    assert result.success is True
+    assert sent == [("oc_fixture", hook_runtime._HFC_GATEWAY_ONLINE_TEXT)]
+    assert "\u267b\ufe0f" in sent[0][1], "the delivered line must carry the variation selector (colour)"
+    # It registers with the restart family AND arms its own 15s deadline («我觉得都应该挂 15 秒清就好了»).
+    recall_payloads = [payload for url, payload in recalls if "/recall/schedule" in url]
+    assert recall_payloads, "the notice must register so a later message can retire it sooner"
+
+
+def test_only_the_core_restart_wording_is_rewritten():
+    """Narrow scope: only the core's two legacy spellings, and only as a whole line.
+
+    A user quoting the line back at the bot (or appending to it) is writing a message of their own —
+    rewriting it would silently delete what they said. The already-coloured home-channel line is
+    excluded too, because it takes its own path through ``_hfc_send_plain_notice``.
+    """
+    core_bare = "♻ Gateway restarted successfully. Your session continues."
+    core_coloured_glyph = "♻️ Gateway restarted successfully. Your session continues."
+
+    assert hook_runtime._hfc_restart_notice_rewrite(core_bare) == hook_runtime._HFC_GATEWAY_ONLINE_TEXT
+    assert (
+        hook_runtime._hfc_restart_notice_rewrite(core_coloured_glyph)
+        == hook_runtime._HFC_GATEWAY_ONLINE_TEXT
+    )
+
+    for untouched in (
+        hook_runtime._HFC_GATEWAY_ONLINE_TEXT,
+        core_bare + " 顺便问一下进度",
+        "♻ 我自己打的一个勾",
+        "普通的回复",
+        "",
+        None,
+    ):
+        assert hook_runtime._hfc_restart_notice_rewrite(untouched) is None, untouched
