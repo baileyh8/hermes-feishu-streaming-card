@@ -8358,11 +8358,21 @@ async def test_the_completion_notify_clears_the_restart_group_in_front_of_it(tmp
         session.status = "completed"
         session.completion_notify_state = "idle"
         # Registered after the started event, so nothing else has had a chance to clear it.
-        app[sidecar_server.SUPERSEDED_NOTICE_IDS_KEY]["restart-notice:default:oc_abc:omt_thread"] = {
+        app[sidecar_server.SUPERSEDED_NOTICE_IDS_KEY][
+            sidecar_server._supersede_identity(
+                profile_id="default",
+                bot_id="",
+                chat_id="oc_abc",
+                thread_id="omt_thread",
+                family="restart-notice",
+            )
+        ] = {
             "message_id": "om_restart_online",
             "bot_id": "",
             "chat_id": "oc_abc",
             "conversation_id": "omt_thread",
+            "profile_id": "default",
+            "family": "restart-notice",
         }
         assert feishu_client.deleted == []
 
@@ -13839,7 +13849,8 @@ async def test_superseding_notices_retire_the_previous_one_of_their_family(clien
     first = await test_client.post(
         "/recall/schedule",
         json={"message_id": "om_restart_warning", "record_only": True,
-              "supersede_key": "restart-notice:default:oc_x:"},
+              "supersede_key": "restart-notice:default:oc_x:",
+              "route": {"chat_id": "oc_x", "conversation_id": "", "profile_id": "default"}},
     )
     assert first.status == 200
     first_body = await first.json()
@@ -13852,7 +13863,8 @@ async def test_superseding_notices_retire_the_previous_one_of_their_family(clien
     second = await test_client.post(
         "/recall/schedule",
         json={"message_id": "om_gateway_online", "record_only": True,
-              "supersede_key": "restart-notice:default:oc_x:"},
+              "supersede_key": "restart-notice:default:oc_x:",
+              "route": {"chat_id": "oc_x", "conversation_id": "", "profile_id": "default"}},
     )
     assert second.status == 200
     assert (await second.json())["superseded"] == "om_restart_warning"
@@ -13864,7 +13876,8 @@ async def test_superseding_notices_retire_the_previous_one_of_their_family(clien
     third = await test_client.post(
         "/recall/schedule",
         json={"message_id": "om_other_chat", "record_only": True,
-              "supersede_key": "restart-notice:default:oc_other:"},
+              "supersede_key": "restart-notice:default:oc_other:",
+              "route": {"chat_id": "oc_other", "conversation_id": "", "profile_id": "default"}},
     )
     assert third.status == 200
     assert (await third.json())["superseded"] is None
@@ -13880,7 +13893,7 @@ async def test_any_new_message_clears_the_restart_group_in_front_of_it(client):
     channel) go through ``/recall/supersede`` instead.
     """
     test_client, feishu_client = client
-    route = {"chat_id": "oc_topic", "conversation_id": "omt_topic"}
+    route = {"chat_id": "oc_topic", "conversation_id": "omt_topic", "profile_id": "default"}
 
     registered = await test_client.post(
         "/recall/schedule",
@@ -13918,7 +13931,7 @@ async def test_a_new_card_clears_the_restart_group_posted_before_it(client):
     into the thread, and the next turn's card is the first thing the user actually wants to read.
     """
     test_client, feishu_client = client
-    route = {"chat_id": "oc_card", "conversation_id": "omt_card"}
+    route = {"chat_id": "oc_card", "conversation_id": "omt_card", "profile_id": "default"}
 
     await test_client.post(
         "/recall/schedule",

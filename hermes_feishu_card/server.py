@@ -181,6 +181,11 @@ EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
 SUPERSEDED_NOTICE_IDS_KEY = web.AppKey("superseded_notice_ids", dict)
 # Upper bound on a caller-supplied ``supersede_key``: it is a map key, never echoed into a message.
 SUPERSEDE_KEY_MAX_LENGTH = 200
+# Bound on the supersede registry itself. Each entry is one identity (profile/bot/chat/thread/family)
+# holding one message id, so a chat that never receives another message must not be able to grow this
+# without limit. Oldest first when it fills — a notice no longer reachable by any send is worth less
+# than the memory it costs.
+SUPERSEDE_REGISTRY_MAX_ENTRIES = 500
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -6604,6 +6609,29 @@ def _extract_operator_name(payload: dict[str, Any]) -> str:
     ).strip()
 
 
+def _session_for_message(app: web.Application, message_id: str) -> Any | None:
+    """Resolve the session that owns a Feishu message id.
+
+    ``SESSIONS_KEY`` is keyed by SESSION KEY, not by message id, so ``SESSIONS_KEY[message_id]`` was
+    always a miss. ``FEISHU_MESSAGE_IDS_KEY`` is the mapping that actually relates the two
+    (``session_key -> message_id``), so the lookup goes through it.
+    """
+    sessions = app.get(SESSIONS_KEY)
+    if not isinstance(sessions, dict) or not message_id:
+        return None
+    message_ids = app.get(FEISHU_MESSAGE_IDS_KEY)
+    if isinstance(message_ids, dict):
+        for session_key, known_id in message_ids.items():
+            if known_id == message_id:
+                session = sessions.get(session_key)
+                if session is not None:
+                    return session
+        return None
+    # No mapping to consult: fall back to the direct lookup so behaviour is unchanged where the key
+    # really is the session key.
+    return sessions.get(message_id)
+
+
 def _find_session_by_interaction(
     app: web.Application,
     interaction_id: str,
@@ -7476,12 +7504,42 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     # ``record_only`` is for the member that must live until superseded: the caller wants the key
     # updated WITHOUT a deadline of its own. Without it a superseding caller would have to invent a
     # lifetime for a line whose whole point is that the next notice retires it.
+    #
+    # ``supersede_key`` still names the FAMILY for the immediate "previous member" withdrawal below,
+    # but it is no longer the registry key: the stored identity is built server-side from the verified
+    # route (review point 3), so two bots under one chat cannot collide or retire each other's notices.
+    #
+    # Only the family's LEADING SEGMENT is kept for the stored identity. Callers build ``supersede_key``
+    # with the whole route in it ("restart-notice:default:oc_x:omt_y") for their own bookkeeping, and
+    # the chat/thread are already separate parts of the identity — carrying them in the family too made
+    # the stored family differ from the one a later send computes, so nothing ever matched.
     supersede_key = _safe_command_string(payload.get("supersede_key"))
+    supersede_family = (
+        supersede_key[:SUPERSEDE_KEY_MAX_LENGTH].split(":", 1)[0] or "restart-notice"
+        if supersede_key
+        else "restart-notice"
+    )
     superseded: Optional[str] = None
     if supersede_key:
         supersede_key = supersede_key[:SUPERSEDE_KEY_MAX_LENGTH]
         registry = request.app[SUPERSEDED_NOTICE_IDS_KEY]
-        previous = registry.get(supersede_key)
+        # Looked up under the SAME server-built identity that registration writes, so the previous
+        # member is found by who owns it, not by a string the caller chose.
+        identity = _supersede_identity(
+            profile_id=_safe_command_string(
+                (route_data or {}).get("profile_id") if isinstance(route_data, dict) else ""
+            )
+            or "default",
+            bot_id=bot_id or "",
+            chat_id=_safe_command_string(
+                (route_data or {}).get("chat_id") if isinstance(route_data, dict) else ""
+            ),
+            thread_id=_safe_command_string(
+                (route_data or {}).get("conversation_id") if isinstance(route_data, dict) else ""
+            ),
+            family=supersede_family,
+        )
+        previous = registry.get(identity)
         if isinstance(previous, dict):
             previous = previous.get("message_id")
         if previous and previous != message_id:
@@ -7500,12 +7558,29 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         route_thread = _safe_command_string(
             (route_data or {}).get("conversation_id") if isinstance(route_data, dict) else ""
         )
-        registry[supersede_key] = {
-            "message_id": message_id,
-            "bot_id": bot_id or "",
-            "chat_id": route_chat,
-            "conversation_id": route_thread,
-        }
+        route_profile = _safe_command_string(
+            (route_data or {}).get("profile_id") if isinstance(route_data, dict) else ""
+        ) or "default"
+        # The identity is built HERE, from the route this request just had verified — not from the
+        # caller's ``supersede_key``, and not reused as a global map key (review point 3). Two bots
+        # under one chat therefore register two different entries, and neither can be retired by the
+        # other's credentials.
+        _register_superseded_notice(
+            registry,
+            identity=_supersede_identity(
+                profile_id=route_profile,
+                bot_id=bot_id or "",
+                chat_id=route_chat,
+                thread_id=route_thread,
+                family=supersede_family,
+            ),
+            message_id=message_id,
+            bot_id=bot_id or "",
+            chat_id=route_chat,
+            conversation_id=route_thread,
+            profile_id=route_profile,
+            family=supersede_family,
+        )
     if payload.get("record_only") is True:
         return web.json_response(
             {"ok": True, "message_id": message_id, "record_only": True, "superseded": superseded}
@@ -7523,8 +7598,72 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     )
 
 
+def _supersede_identity(*, profile_id: str, bot_id: str, chat_id: str, thread_id: str, family: str) -> str:
+    """Build the registry key from VERIFIED route parts — never from a caller-supplied string.
+
+    The review's point 1 and 3: the key used to be the caller's own ``supersede_key``, truncated and
+    used globally. Two bots registered under one chat then collided, and a later caller could ask for
+    the EARLIER bot's message to be deleted with its own credentials. The identity is therefore built
+    server-side, from the route this sidecar resolved and authenticated.
+
+    The thread is part of the identity and is never a wildcard (point 2): an empty thread means "the
+    chat's main conversation", which is a different place from any topic in that chat. A send to the
+    main conversation must not retire a notice standing in a topic.
+    """
+    parts = (
+        _safe_command_string(profile_id) or "default",
+        _safe_command_string(bot_id),
+        _safe_command_string(chat_id),
+        _safe_command_string(thread_id),
+        _safe_command_string(family) or "default",
+    )
+    return "\x1f".join(parts)
+
+
+def _register_superseded_notice(
+    registry: dict,
+    *,
+    identity: str,
+    message_id: str,
+    bot_id: str,
+    chat_id: str,
+    conversation_id: str,
+    profile_id: str,
+    family: str,
+) -> None:
+    """Register one notice under a server-built identity, keeping the registry bounded.
+
+    Bounded because the registry lives in the sidecar and outlives the notices it holds: a chat that
+    never receives another message would otherwise keep its entry forever (review point 3). When it
+    fills, the OLDEST identity goes first — dicts preserve insertion order, so that is the first key.
+    Dropping the oldest is safe: what it loses is the ability to retire one more stale notice, which
+    is a cosmetic miss, not a correctness one.
+    """
+    if not message_id:
+        return
+    while len(registry) >= SUPERSEDE_REGISTRY_MAX_ENTRIES:
+        oldest = next(iter(registry), None)
+        if oldest is None:
+            break
+        registry.pop(oldest, None)
+    registry[identity] = {
+        "message_id": message_id,
+        "bot_id": bot_id,
+        "chat_id": chat_id,
+        "conversation_id": conversation_id,
+        "profile_id": profile_id,
+        "family": family,
+    }
+
+
 def _supersede_restart_group_for_route(
-    app: web.Application, *, chat_id: str, conversation_id: str
+    app: web.Application,
+    *,
+    chat_id: str,
+    conversation_id: str,
+    bot_id: str | None = None,
+    profile_id: str | None = None,
+    family: str = "restart-notice",
 ) -> list[str]:
     """Withdraw the restart notices standing in front of a chat, now that something new was posted.
 
@@ -7535,42 +7674,57 @@ def _supersede_restart_group_for_route(
     through ``/recall/supersede``), and removes whatever restart notices were registered for that
     chat/thread.
 
-    Matching is by chat, with the thread as a narrowing when both sides name one: a home-channel
-    broadcast and a topic notice do not cancel each other, but the FIRST message in a topic still
-    clears a group registered on that same chat. Entries belonging to another chat are left alone.
+    Matching is on the FULL identity ``(profile, bot, chat, thread, family)`` — the review's point 1:
+    a chat can carry more than one bot, and retiring one must not schedule a delete for the other's
+    message. The thread is exact, never a wildcard (point 2): an empty thread is the chat's MAIN
+    conversation, which is a different place from any topic in that chat, so a send to the main
+    conversation leaves notices standing in topics of the same chat.
 
-    Best-effort: a refusal to schedule only leaves the old notice in place, and the key is dropped
-    either way (a stale key would otherwise re-target the same dead message on every send).
+    Registration is bounded (point 3): the registry holds at most ``SUPERSEDE_REGISTRY_MAX_ENTRIES``
+    identities and drops the oldest first, so a chat that never receives another message cannot grow
+    it without limit. An entry that could not be scheduled is put BACK rather than dropped, so the
+    next send retries it instead of the notice becoming un-retirable.
+
+    Best-effort: a refusal to schedule leaves the old notice in place.
     """
     registry = app.get(SUPERSEDED_NOTICE_IDS_KEY)
     if not isinstance(registry, dict) or not registry:
         return []
     target_chat = _safe_command_string(chat_id)
     target_thread = _safe_command_string(conversation_id)
-    if not target_chat and not target_thread:
+    if not target_chat:
         return []
+    target_bot = _safe_command_string(bot_id)
+    target_profile = _safe_command_string(profile_id) or "default"
+    target_family = _safe_command_string(family) or "default"
     withdrawn: list[str] = []
     for key in list(registry.keys()):
         entry = registry.get(key)
         if not isinstance(entry, dict):
             registry.pop(key, None)
             continue
-        entry_chat = _safe_command_string(entry.get("chat_id"))
-        entry_thread = _safe_command_string(entry.get("conversation_id"))
-        if target_chat and entry_chat and entry_chat != target_chat:
+        if _safe_command_string(entry.get("chat_id")) != target_chat:
             continue
-        if target_thread and entry_thread and entry_thread != target_thread:
+        # Exact on both sides: "" == "" is the main conversation, and "" != "omt_x" is the whole point.
+        if _safe_command_string(entry.get("conversation_id")) != target_thread:
             continue
-        if not target_chat and target_thread != entry_thread:
+        if target_bot and _safe_command_string(entry.get("bot_id")) != target_bot:
+            continue
+        if _safe_command_string(entry.get("profile_id") or "default") != target_profile:
+            continue
+        if _safe_command_string(entry.get("family") or "default") != target_family:
             continue
         message_id = _safe_command_string(entry.get("message_id"))
-        registry.pop(key, None)
         if not message_id:
+            registry.pop(key, None)
             continue
         if _schedule_ephemeral_recall(
             app, message_id=message_id, delay_seconds=0.0, bot_id=entry.get("bot_id") or None
         ):
+            registry.pop(key, None)
             withdrawn.append(message_id)
+        # Not scheduled -> KEEP the entry so the next send retries it. Dropping it here would leave
+        # the notice permanently un-retirable, which is the failure this feature exists to prevent.
     return withdrawn
 
 
@@ -7592,10 +7746,50 @@ async def _recall_supersede(request: web.Request) -> web.Response:
     if not isinstance(payload, dict):
         return web.json_response({"ok": False, "error": "payload must be an object"}, status=400)
     route_data = payload.get("route") if isinstance(payload.get("route"), dict) else {}
+    # Same route validation as /recall/schedule: verify the profile, then let the router name the
+    # bot. The review's point 1 was that this door accepted a caller-supplied chat/thread and acted
+    # on it without ever resolving which bot owns that place, so a caller could retire a notice
+    # belonging to a different bot in the same chat.
+    chat_id = _safe_command_string(route_data.get("chat_id"))
+    if not chat_id:
+        return web.json_response({"ok": False, "error": "recall chat is required"}, status=400)
+    clients = request.app[FEISHU_CLIENT_KEY]
+    profile_id = _safe_command_string(route_data.get("profile_id")) or "default"
+    if isinstance(clients, dict) and profile_id not in clients:
+        if profile_id == "default" and len(clients) == 1:
+            profile_id = next(iter(clients))
+        else:
+            return web.json_response(
+                {"ok": False, "error": "recall route is ambiguous"}, status=409
+            )
+    if not PROFILE_ID_PATTERN.fullmatch(profile_id):
+        return web.json_response({"ok": False, "error": "invalid recall profile"}, status=400)
+    probe = SidecarEvent.from_dict(
+        dict(
+            schema_version="1",
+            event="system.notice",
+            conversation_id=_safe_command_string(route_data.get("conversation_id")) or chat_id,
+            message_id=_safe_command_string(payload.get("message_id")) or "supersede-probe",
+            chat_id=chat_id,
+            platform="feishu",
+            sequence=0,
+            created_at=time.time(),
+            data={"profile_id": profile_id},
+        )
+    )
+    route = _resolve_route(request, probe)
+    if route is None:
+        return web.json_response({"ok": False, "error": "recall route unavailable"}, status=409)
+    try:
+        _client_for_bot(request.app, route.bot_id or None)
+    except (RuntimeError, ValueError, KeyError):
+        return web.json_response({"ok": False, "error": "recall route unavailable"}, status=409)
     withdrawn = _supersede_restart_group_for_route(
         request.app,
-        chat_id=_safe_command_string(route_data.get("chat_id")),
+        chat_id=chat_id,
         conversation_id=_safe_command_string(route_data.get("conversation_id")),
+        bot_id=route.bot_id or None,
+        profile_id=profile_id,
     )
     return web.json_response({"ok": True, "withdrawn": len(withdrawn)})
 
@@ -7693,12 +7887,19 @@ async def _update_card_for_app(
         # A card being updated IS the bot speaking in that chat, so it retires the restart group in
         # front of it too («任何一条自己发的消息都要把该话题前面的重启组清掉»). The route is read back
         # from the session this card belongs to — an update carries only a message id.
-        session = app.get(SESSIONS_KEY, {}).get(message_id)
+        #
+        # Found by the session through the app's OWN mapping rather than by indexing SESSIONS_KEY with
+        # the message id: that key is a session key, not a Feishu message id, so the lookup silently
+        # returned None for every card (review point 3). Without the bot and profile the identity is
+        # incomplete, and an update would not have matched the notice it is meant to retire.
+        session = _session_for_message(app, message_id)
         if session is not None:
             _supersede_restart_group_for_route(
                 app,
                 chat_id=_safe_command_string(getattr(session, "chat_id", "")),
                 conversation_id=_safe_command_string(getattr(session, "conversation_id", "")),
+                bot_id=bot_id,
+                profile_id=_safe_command_string(getattr(session, "profile_id", "")) or "default",
             )
         return True
     if notice_update:
