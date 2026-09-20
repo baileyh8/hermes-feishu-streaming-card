@@ -92,11 +92,18 @@ def fixture_check(root, environ):
     return report, fixture
 
 
-def changed_paths(root, base):
+def resolve_base(root, base):
     revision = run_read(["git", "rev-parse", "--verify", "--end-of-options", base + "^{commit}"], root)
     if revision.returncode:
         raise ValueError("invalid_base")
-    diff = run_read(["git", "diff", "--name-only", "-z", "--diff-filter=ACMR", revision.stdout.strip(), "--"], root)
+    return revision.stdout.strip()
+
+
+def changed_paths(root, base):
+    revision = resolve_base(root, base)
+    # Deletions are behavioral changes too. Treat renames as delete + add so
+    # moving a runtime file cannot silently omit its original test group.
+    diff = run_read(["git", "diff", "--name-only", "-z", "--no-renames", revision, "--"], root)
     untracked = run_read(["git", "ls-files", "--others", "--exclude-standard", "-z"], root)
     if diff.returncode or untracked.returncode:
         raise ValueError("changes_unavailable")
@@ -148,22 +155,32 @@ def needs_fixture(root, targets):
 def child_environment(environ, private, fixture):
     env = dict(environ)
     for key in list(env):
-        if key.startswith(("FEISHU_", "LARK_", "HERMES_FEISHU_CARD_")) or key in {"PYTHONPATH", "PYTEST_ADDOPTS"}:
+        if key.startswith(("FEISHU_", "LARK_", "HERMES_", "HFC_")) or key in {"PYTHONPATH", "PYTEST_ADDOPTS"}:
             env.pop(key)
     env.update({"HERMES_FEISHU_CARD_STATE_DIR": str(private / "state"),
                 "HERMES_HOME": str(private / "hermes"),
+                # Operations resolve these independently of HERMES_HOME. Never
+                # inherit a production checkout or fall back through cwd/HOME.
+                "HERMES_DIR": str(private / "hermes-source"),
+                "HFC_CONFIG": str(private / "state" / "config.yaml"),
+                "HFC_ENV_FILE": str(private / "state" / ".env"),
                 "HFC_FIXED_TAG_SOURCE_ROOT": str(fixture),
                 "PYTHONDONTWRITEBYTECODE": "1"})
     return env
 
 
-def execute_suite(root, targets, fixture, environ, report):
+def execute_suite(root, targets, fixture, environ, report, base="HEAD"):
     # Retain owner-only logs for local diagnosis; stdout JSON contains no paths
     # or raw pytest output (which can contain local paths and parametrized data).
     private = Path(tempfile.mkdtemp(prefix="hfc-preflight-"))
     private.chmod(0o700)
     (private / "state").mkdir(mode=0o700)
     (private / "hermes").mkdir(mode=0o700)
+    (private / "hermes-source").mkdir(mode=0o700)
+    for name, content in (("config.yaml", "{}\n"), (".env", "")):
+        with os.fdopen(os.open(private / "state" / name,
+                               os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
+            output.write(content)
     env = child_environment(environ, private, fixture)
     report["state_dir"] = {"status": "private", "created": True}
     log = private / "pytest.log"
@@ -186,9 +203,10 @@ def execute_suite(root, targets, fixture, environ, report):
             report["pytest"]["summary"] = "unavailable"
     if result.returncode:
         return result.returncode if result.returncode > 0 else 1
+    committed = run_read(["git", "diff", "--check", base, "HEAD", "--"], root)
     diff = run_read(["git", "diff", "--check"], root)
     staged = run_read(["git", "diff", "--cached", "--check"], root)
-    code = diff.returncode or staged.returncode
+    code = committed.returncode or diff.returncode or staged.returncode
     report["diff_check"] = {"status": "passed" if code == 0 else "failed", "exit_code": code}
     return code
 
@@ -227,9 +245,10 @@ def main(argv=None, *, root=None, cwd=None, environ=None):
         else:
             if not interpreter_ok:
                 raise ValueError("test_environment_incomplete")
+            base = resolve_base(root, args.base)
             targets, groups, unknown = ([], [], 0)
             if args.suite == "focused":
-                paths = [] if args.module else changed_paths(root, args.base)
+                paths = [] if args.module else changed_paths(root, base)
                 targets, groups, unknown = select_targets(paths, args.module)
                 report["selection"] = {"modules": groups, "targets": targets, "unmapped_changes": unknown}
                 if unknown or not targets:
@@ -238,7 +257,7 @@ def main(argv=None, *, root=None, cwd=None, environ=None):
                     raise ValueError("selected_test_missing")
             if needs_fixture(root, targets) and report["fixture"]["status"] != "verified":
                 raise ValueError("fixed_fixture_required")
-            code = execute_suite(root, targets, fixture, environ, report)
+            code = execute_suite(root, targets, fixture, environ, report, base)
             report["status"] = ("passed" if report["fixture"]["status"] == "verified" else "partial") if code == 0 else "failed"
     except (OSError, ValueError, SyntaxError, subprocess.SubprocessError) as exc:
         # Only fixed reason tokens may enter a shareable result.

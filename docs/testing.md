@@ -14,13 +14,13 @@ python tools/preflight.py --suite focused --module runtime --module render
 python tools/preflight.py --suite full
 ```
 
-默认只检查，不运行全量，也不安装依赖、fetch、修改 Hermes 或重启服务。检查包括 cwd 是否属于本 checkout、Python/venv、pytest 依赖、实际包来源和固定 Hermes fixture 的文件摘要。`ready` 只表示检查通过，`pytest.status=not_run` 明确表示还没测试；`--suite` 才会运行真正的 `python -m pytest`，通过后继续 `git diff --check`（含暂存区）。
+默认只检查，不运行全量，也不安装依赖、fetch、修改 Hermes 或重启服务。检查包括 cwd 是否属于本 checkout、Python/venv、pytest 依赖、实际包来源和固定 Hermes fixture 的文件摘要。`ready` 只表示检查通过，`pytest.status=not_run` 明确表示还没测试；`--suite` 才会运行真正的 `python -m pytest`，通过后分别检查指定 base 到 HEAD 的已提交差异、未暂存差异和暂存区的 `git diff --check`。
 
-`focused` 默认按相对 `HEAD` 的暂存、未暂存及新增文件选择测试；`--base origin/main` 还包含当前分支已提交改动。也可重复指定 `--module runtime|render|config|install|process|docs|preflight`。未知改动或没有匹配测试时会提示显式选择模块，不会偷偷扩成全量。聚焦选择只是起点；复杂改动仍按 [维护指南](wiki/maintenance-guide.md) 增加相关矩阵，发布前必须跑全量与 CI。
+`focused` 默认按相对 `HEAD` 的暂存、未暂存及新增文件选择测试；`--base origin/main` 还包含当前分支已提交改动。删除同样参与选择，重命名按旧路径删除和新路径新增处理；删除的测试会要求明确选择替代矩阵，不能静默略过。也可重复指定 `--module runtime|render|config|install|process|docs|preflight`。未知改动或没有匹配测试时会提示显式选择模块，不会偷偷扩成全量。聚焦选择只是起点；复杂改动仍按 [维护指南](wiki/maintenance-guide.md) 增加相关矩阵，发布前必须跑全量与 CI。
 
 固定源码通过 `HFC_FIXED_TAG_SOURCE_ROOT` 指定，默认与现有测试一致。工具只读核对仓库内 provenance 的 SHA256，不下载、修复或修改该目录。缺失返回 `missing`，摘要不同返回 `digest_mismatch`；需要 fixture 的测试和 `full` 会阻断，不能把缺环境当通过。不需要 fixture 的聚焦测试仍可执行，成功时整体为 `partial`，其 `pytest` 结果单独记录。
 
-每次测试使用独立私有目录作为 HFC state、Hermes home 和 pytest 临时目录；不会采用生产 state，也不会修改全局环境。原始 pytest 输出保存在本机私有日志，位置只写 stderr。stdout 是可分享 JSON，只含来源类别、相对测试路径、计数和退出码，不含绝对私有路径、凭据或原始异常。退出码 `0` 表示所请求检查/测试成功，`2` 表示前置检查不完整；pytest 失败保留它的退出码，详见 JSON 中的 `reason` 与 `pytest.exit_code`。
+每次测试使用独立私有目录作为 HFC state、Hermes home、默认 operations 源码目录、配置、env 文件和 pytest 临时目录。测试子进程清除继承的 `HERMES_*`、`HFC_*`、`FEISHU_*`、`LARK_*` 覆盖，再注入本轮私有目标和指定固定源码 fixture；固定源码只供显式 fixture 测试读取，不作为默认可写 operations 目标。不会修改全局环境。原始 pytest 输出保存在本机私有日志，位置只写 stderr。stdout 是可分享 JSON，只含来源类别、相对测试路径、计数和退出码，不含绝对私有路径、凭据或原始异常。退出码 `0` 表示所请求检查/测试成功，`2` 表示前置检查不完整；pytest 失败保留它的退出码，详见 JSON 中的 `reason` 与 `pytest.exit_code`。
 
 不要把本机原始日志直接贴到公开 issue；先检查脱敏。这个工具不替代真实飞书、手机/桌面、公开安装和 release 验收。
 
