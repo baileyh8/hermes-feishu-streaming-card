@@ -7141,6 +7141,33 @@ def test_request_interaction_does_not_retry_when_sidecar_reports_not_applied(
     assert [payload["sequence"] for payload in posted] == [0]
 
 
+def test_interaction_post_failure_waits_for_late_card_confirmation(monkeypatch):
+    responses = iter([
+        {"ok": True, "status": "pending", "interaction_id": "clarify-late"},
+        {"ok": True, "status": "completed", "interaction_id": "clarify-late", "choice": "A"},
+    ])
+    monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", "http://sidecar.test/events")
+    monkeypatch.setattr(
+        hook_runtime, "_post_interaction_event",
+        lambda *a, **k: hook_runtime._POST_FAILED,
+    )
+    monkeypatch.setattr(hook_runtime, "_get_json_sync", lambda *a, **k: next(responses))
+    monkeypatch.setattr(hook_runtime.time, "sleep", lambda _seconds: None)
+
+    result = hook_runtime.request_interaction_from_hermes_locals(
+        {"chat_id": "oc_abc", "message_id": "msg_1"},
+        kind="clarify",
+        interaction_id="clarify-late",
+        prompt="怎么处理？",
+        options=[{"label": "A", "value": "A"}],
+        timeout_seconds=1,
+        poll_interval_seconds=0,
+    )
+
+    assert result["status"] == "completed"
+    assert result["choice"] == "A"
+
+
 def test_interaction_request_uses_dedicated_five_second_delivery_timeout(
     monkeypatch,
 ):
