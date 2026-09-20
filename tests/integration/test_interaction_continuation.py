@@ -239,3 +239,66 @@ async def test_second_question_failure_updates_its_receipt_and_keeps_answer(mode
         assert receipts and "SECOND_QUESTION_FAILED" in str(receipts[-1])
         assert "interaction.select" not in str(receipts[-1])
         assert "KEEP_CONTINUATION" in app[SESSIONS_KEY]["turn_fixture"].answer_text
+
+
+@pytest.mark.asyncio
+async def test_the_card_a_continuation_leaves_behind_stops_looking_live():
+    """The owner a handoff moves AWAY from must not freeze mid-run.
+
+    A handoff switches the owner pointer and touches nothing else, so the card it leaves behind froze
+    at that instant: footer still spinning 执行中, the cumulative tool tally stale, and the decided
+    approval block still sitting on it. It never receives a terminal render either — not even when
+    the turn finishes — so on this exact flow it still read ⏳ / 执行中 / 已选择 long after
+    message.completed, and a reader scrolling the thread cannot tell which card owns the answer.
+    """
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "answer.delta", 1, {"text": "BEFORE_CHOICE"})
+        await interact(http, 3, "question_one", kind="approval")
+        await post(http, "answer.delta", 5, {"text": "AFTER_CHOICE"})
+        await post(http, "message.completed", 7, {"answer": "FINAL_ANSWER"})
+        await asyncio.sleep(.05)
+
+        left_behind = client.sent[0][0]
+        assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] != left_behind, "the owner must have moved"
+
+        updates = [card for mid, card in client.updated if mid == left_behind]
+        assert updates, "the card left behind was never closed"
+        final = updates[-1]
+        header = final.get("header") if isinstance(final.get("header"), dict) else {}
+        title = (header.get("title") or {}).get("content") or ""
+        subtitle = (header.get("subtitle") or {}).get("content") or ""
+        text = str(final)
+
+        assert "⏳" not in title, "a handed-off card must not still look like it is working"
+        assert "✅" in title
+        assert "执行中" not in text, "the footer must not still be spinning"
+        assert "已选择" not in text, "the decided approval block belongs to the approval card now"
+        assert "后续内容见下方新卡" in subtitle, "the reader has to be told where the turn went"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_continuation_leaves_the_old_card_alone():
+    """Only a CONFIRMED handoff closes the card it left behind.
+
+    When the new card is not delivered the old owner keeps the whole turn, so closing it there would
+    strand the reader with a card that says the turn moved on when it did not.
+    """
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "answer.delta", 1, {"text": "BEFORE_CHOICE"})
+        await interact(http, 3, "question_one", kind="approval")
+        client.fail = True
+        await post(http, "answer.delta", 5, {"text": "AFTER_CHOICE"})
+        await asyncio.sleep(.02)
+
+        first = client.sent[0][0]
+        assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] == first, "the owner must not move"
+        assert not any(
+            mid == first and "后续内容见下方新卡" in str(card)
+            for mid, card in client.updated
+        ), "a failed handoff must not close the card it did not replace"

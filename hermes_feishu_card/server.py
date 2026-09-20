@@ -5947,6 +5947,9 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         profile_id=profile_id,
     )
     state["pending"] = False
+    # The card this handoff takes the owner AWAY from, captured before the pointer moves: that card
+    # is the one that would otherwise freeze mid-run (see _close_handed_off_owner_card).
+    previous_message_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
     if delivery.delivered:
         state["generation"] += 1
         state["active"] = True
@@ -5959,6 +5962,79 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         state["failed"] = True
         app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = delivery.outcome
     _checkpoint_session(app, session_key, profile)
+    if delivery.delivered:
+        # Last, so the checkpoint is not held up by a second Feishu call.
+        await _close_handed_off_owner_card(
+            app, session, previous_message_id,
+            bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
+            session_key=session_key,
+        )
+
+
+async def _close_handed_off_owner_card(
+    app, session, previous_message_id, *, bot_id, session_key=None
+):
+    """Stop the card a continuation handed away from looking like it is still running.
+
+    A handoff switches the owner pointer and touches nothing else, so the card it left behind froze at
+    that instant: its footer kept spinning 执行中, its cumulative tool tally went stale, and the decided
+    approval block stayed in place. It never receives a terminal render either — not even when the turn
+    finishes — so measured on the real event flow the card still read ⏳ / 执行中 / 已选择 long after
+    ``message.completed``. A reader scrolling the thread then cannot tell which card owns the answer,
+    or whether the run is over.
+
+    Follows ``_finalize_interaction_predecessor``, which already closes a predecessor card the same way
+    when an interaction takes one over — the shape is deliberately identical so the two predecessors a
+    turn can leave behind (before the interaction, and before the continuation) read the same:
+
+      * ``active_interaction = None`` — the decided block belongs to the approval card, and the
+        continuation's own card does not repeat it (``display_view`` drops it there too);
+      * ``runtime_phase_text`` / ``latest_tool_preview`` cleared — no stale "正在读取 X" prose;
+      * ``display_status = "completed"`` with source ``explicit`` — ``resolve_display_status`` reads the
+        explicit value FIRST, so the card renders a finished look (✅ title, 已完成 footer, no spinner)
+        without touching ``session.status``, which would flip the render's disposition to native;
+      * a green header whose sub-title names where the turn went, plus the matching card summary.
+
+    Fail-soft by contract: an old card left exactly as it was is no worse than before this existed, so
+    nothing here may raise into the handoff.
+    """
+    if not previous_message_id or not session_key:
+        return False
+    if previous_message_id == app[FEISHU_MESSAGE_IDS_KEY].get(session_key):
+        return False
+    try:
+        snapshot = copy.deepcopy(session)
+        # Same shape as _finalize_interaction_predecessor, which already closes a predecessor card
+        # when an interaction takes one over: this card no longer owns the turn, so it must stop
+        # claiming to be running, and the decided approval block goes (the approval card is the
+        # decision's own record, and the continuation's card does not repeat it either).
+        snapshot.active_interaction = None
+        snapshot.latest_tool_preview = ""
+        snapshot.runtime_phase_text = ""
+        snapshot.display_status = "completed"
+        snapshot.display_status_source = "explicit"
+        card = _render_session_card_for_app(app, snapshot, session_key=session_key)
+        if not isinstance(card, dict):
+            app[DIAGNOSTICS_KEY]["last_handoff_owner_close"] = "skipped:no_card"
+            return False
+        if "streaming_mode" in card.get("config", {}):
+            card["config"]["streaming_mode"] = False
+        header = card.get("header")
+        title = header.get("title") if isinstance(header, dict) else None
+        if not isinstance(title, dict):
+            title = {"tag": "plain_text", "content": app[CARD_TITLE_KEY]}
+        card["header"] = {
+            "template": "green",
+            "title": title,
+            "subtitle": {"tag": "plain_text", "content": "本段已结束，后续内容见下方新卡"},
+        }
+        card.setdefault("config", {}).setdefault("summary", {})["content"] = "本段已结束，后续内容见下方新卡"
+        closed = await _update_card_for_app(app, previous_message_id, card, bot_id)
+        app[DIAGNOSTICS_KEY]["last_handoff_owner_close"] = "closed" if closed else "update_failed"
+        return bool(closed)
+    except Exception as exc:  # noqa: BLE001 - fail-soft by contract
+        app[DIAGNOSTICS_KEY]["last_handoff_owner_close"] = f"failed:{type(exc).__name__}"
+        return False
 
 
 async def _recover_terminal_card(
