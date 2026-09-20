@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release version: `4.6.5`. Scope: durable scoped notice ownership, known native producers, explicit tool-call deduplication, opt-in timeline controls, provider-error feedback and strict source migration. Automated success does not imply real-client acceptance.
+Current release version: `4.6.6`. Scope: durable scoped notice ownership, known native producers, explicit tool-call deduplication, opt-in timeline controls, provider-error feedback and strict source migration. Automated success does not imply real-client acceptance.
 
-Full tests, exact-merge CI, assets/checksums and public-tag ordinary installation remain release gates. Record desktop/mobile and production results separately in the [V4.6.5 acceptance checklist](wiki/feishu-acceptance-v4.6.5.md); unverified reports remain unverified.
+Full tests, exact-merge CI, assets/checksums and public-tag ordinary installation remain release gates. Record desktop/mobile and production results separately in the [V4.6.6 acceptance checklist](wiki/feishu-acceptance-v4.6.6.md); unverified reports remain unverified.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.

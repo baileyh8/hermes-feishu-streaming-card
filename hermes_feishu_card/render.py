@@ -12,6 +12,7 @@ from typing import Any, Dict, Literal, Optional
 
 from .card_limits import CardLimitInspection, inspect_card_limits
 from .card_timeline import TERMINAL_TOOL_STATUSES
+from .approval_receipts import has_confirmed_approval_receipt
 from .session import (
     CardSession,
     ToolState,
@@ -339,7 +340,7 @@ def _render_card_unchecked(
     ) or (hide_successful_tool_activity and session.status == "completed")
     tool_activity_elements = (
         []
-        if pending_approval or hide_terminal_tools
+        if pending_approval
         else _render_tool_activity_elements(
             session,
             text_sizes=text_sizes,
@@ -348,6 +349,7 @@ def _render_card_unchecked(
             # The content rows get the card's tool-detail budget — the same one the 思考过程 panel
             # uses, so a command reads the same length on both surfaces.
             max_chars=max_tool_result_chars,
+            hide_successful=hide_terminal_tools,
         )
     )
     elements.extend(tool_activity_elements)
@@ -1118,6 +1120,10 @@ def _render_interaction_elements(
     interaction = session.active_interaction
     if interaction is None:
         return []
+    if session.status in {"completed", "failed"} and has_confirmed_approval_receipt(session):
+        # #337/#339: only remove a duplicate after the complete independent
+        # receipt has been confirmed by Feishu; rendering a callback is no ACK.
+        return []
     if (
         interaction.status == "pending"
         and str(getattr(interaction, "feishu_message_id", "") or "").strip()
@@ -1245,7 +1251,8 @@ def _render_interaction_elements(
         choice = interaction.choice_label or interaction.choice or "已完成"
         user = f" by {interaction.user_name}" if interaction.user_name else ""
         content = f"已选择：{choice}{user}"
-        elements.extend(_interaction_review_elements(interaction))
+        for index, element in enumerate(_interaction_review_elements(interaction)):
+            elements.append(dict(element, element_id=f"interaction_review_{index}"))
         elements.append({
             "tag": "markdown", "element_id": "interaction_result",
             "content": content,
@@ -1612,31 +1619,7 @@ def _tool_is_running(tool: ToolState) -> bool:
     return str(tool.status or "").strip().lower() not in TERMINAL_TOOL_STATUSES | {"display_handoff", "display_receipt"}
 
 
-def _render_tool_activity_elements(
-    session: CardSession,
-    *,
-    text_sizes: Mapping[str, Any] | None = None,
-    used_text_size_roles: set[str] | None = None,
-    display_status: str = "",
-    max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
-) -> list[Dict[str, Any]]:
-    """Show what the agent is doing RIGHT NOW, right under the answer.
-
-    This used to be squeezed into the header as a truncated one-liner, where the session name
-    was the thing that got dropped. A row per tool with a coloured status pill instead: one
-    glance at the content area answers "still working?". The window is the last
-    ``_TOOL_ACTIVITY_WINDOW`` tools in start order, so a finished card still shows what it did and a
-    running card also shows the step it replaced (the full history lives in 思考过程, the count in the
-    footer).
-    """
-    if not session.tools:
-        return []
-    # A finished turn cannot have a running tool: without this, a tool whose terminal event
-    # never arrived sat on a "✅ 已完成" card labelled 运行中.
-    turn_is_live = display_status not in {"completed", "failed"} and session.status not in {
-        "completed",
-        "failed",
-    }
+def _selected_tool_activity(session: CardSession, *, turn_is_live: bool) -> list[ToolState]:
     running = [
         tool for tool in session.tools.values() if turn_is_live and _tool_is_running(tool)
     ]
@@ -1659,6 +1642,40 @@ def _render_tool_activity_elements(
         # Nothing is running: a finished card keeps the last two steps so a changeover is still
         # readable after the turn ends (same rule the user gave for the live case).
         selected = ordered[-_TOOL_ACTIVITY_WINDOW:]
+    return selected
+
+
+def _render_tool_activity_elements(
+    session: CardSession,
+    *,
+    text_sizes: Mapping[str, Any] | None = None,
+    used_text_size_roles: set[str] | None = None,
+    display_status: str = "",
+    max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
+    hide_successful: bool = False,
+) -> list[Dict[str, Any]]:
+    """Show what the agent is doing RIGHT NOW, right under the answer.
+
+    This used to be squeezed into the header as a truncated one-liner, where the session name
+    was the thing that got dropped. A row per tool with a coloured status pill instead: one
+    glance at the content area answers "still working?". The window is the last
+    ``_TOOL_ACTIVITY_WINDOW`` tools in start order, so a finished card still shows what it did and a
+    running card also shows the step it replaced (the full history lives in 思考过程, the count in the
+    footer).
+    """
+    if not session.tools:
+        return []
+    # A finished turn cannot have a running tool: without this, a tool whose terminal event
+    # never arrived sat on a "✅ 已完成" card labelled 运行中.
+    turn_is_live = display_status not in {"completed", "failed"} and session.status not in {
+        "completed",
+        "failed",
+    }
+    selected = _selected_tool_activity(session, turn_is_live=turn_is_live)
+    if hide_successful and not turn_is_live:
+        selected = sorted((tool for tool in session.tools.values()
+                           if str(tool.status).strip().lower() not in _SUCCESS_TOOL_STATUSES),
+                          key=lambda tool: tool.ordinal)[-_TOOL_ACTIVITY_WINDOW:]
     now = _time.time()
     text_size = _role_text_size(
         text_sizes,
@@ -1868,12 +1885,15 @@ def _tool_terminal_pill(tool: ToolState) -> tuple[str, str]:
     status = str(tool.status or "").strip().lower()
     if status in {"display_handoff", "display_receipt"}:
         return ("已转入续答" if status == "display_handoff" else "已记录"), "neutral"
-    if status in {"failed", "cancelled", "canceled"}:
+    if status in {"failed", "error", "cancelled", "canceled"}:
         return _FAILED_TOOL_PILL
+    if status == "interrupted":
+        return _INTERRUPTED_TOOL_PILL
     return _FINISHED_TOOL_PILL
 
 
 _TIMELINE_WORK_KINDS = frozenset({"reasoning", "tool", "subagent"})
+_SUCCESS_TOOL_STATUSES = frozenset({"completed", "success", "succeeded", "ok", "已完成", "完成", "成功"})
 
 
 def _render_timeline_elements(
@@ -1905,8 +1925,23 @@ def _render_timeline_elements(
         all_entries.append(live_entry)
     if not all_entries:
         return []
+    # Match the body window: an older running call and its immediate predecessor
+    # must not disappear merely because newer completed calls fill the panel.
+    live = session.status not in {"completed", "failed"}
+    running = sorted(
+        (tool for tool in session.tools.values() if live and _tool_is_running(tool)),
+        key=lambda tool: tool.ordinal, reverse=True,
+    )
+    selected_tools = _selected_tool_activity(session, turn_is_live=live) if running else []
+    priority_ids = tuple(dict.fromkeys(
+        [tool.tool_id for tool in running] + [tool.tool_id for tool in selected_tools]
+        + [entry.tool_id for entry in reversed(all_entries) if entry.kind == 'tool'
+           and str(entry.status).strip().lower() in {'failed','error','cancelled','canceled','interrupted'}]
+    ))
     entries = _select_timeline_entries(
-        _limit_tools_per_reasoning(all_entries, tools_per_reasoning), max_items=max_items)
+        _limit_tools_per_reasoning(all_entries, tools_per_reasoning, keep_tool_ids=priority_ids),
+        max_items=max_items, priority_tool_ids=priority_ids,
+    )
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
@@ -1980,7 +2015,9 @@ def _render_timeline_elements(
                 _timeline_markdown_elements(
                     _render_tool_timeline_row(
                         item.title,
-                        item.status,
+                        ("interrupted" if not live and str(item.status).strip().lower()
+                         not in TERMINAL_TOOL_STATUSES | {"display_handoff", "display_receipt"}
+                         else item.status),
                         detail,
                         duration,
                         # The panel row carries the same #N tally as the content-area row, so the
@@ -2186,6 +2223,9 @@ def _render_tool_timeline_row(
     elif normalized_status in {"cancelled", "canceled", "已取消", "取消"}:
         color = "grey"
         headline = f"⊘ **{safe_title}**{meta_suffix} · 已取消"
+    elif normalized_status == "interrupted":
+        color = "orange"
+        headline = f"⊘ **{safe_title}**{meta_suffix} · 已中断"
     elif normalized_status in {"display_handoff", "display_receipt"}:
         color = "grey"
         label = "已转入续答" if normalized_status == "display_handoff" else "已记录"
@@ -2275,7 +2315,7 @@ def _quote_markdown(content: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in content.splitlines())
 
 
-def _limit_tools_per_reasoning(entries: list[Any], limit: int) -> list[Any]:
+def _limit_tools_per_reasoning(entries: list[Any], limit: int, *, keep_tool_ids: tuple[str, ...] = ()) -> list[Any]:
     """Opt-in display pruning; keep failures/running work and all stored history."""
     if type(limit) is not int or limit <= 0:
         return entries
@@ -2285,15 +2325,52 @@ def _limit_tools_per_reasoning(entries: list[Any], limit: int) -> list[Any]:
         if entry.kind == "reasoning":
             omitted.update(group[:-limit])
             group = []
-        elif entry.kind == "tool" and str(entry.status).strip().lower() in {"completed", "已完成", "完成", "成功"}:
+        elif entry.kind == "tool" and str(entry.status).strip().lower() in _SUCCESS_TOOL_STATUSES:
             group.append(index)
     omitted.update(group[:-limit])
-    return [entry for index, entry in enumerate(entries) if index not in omitted]
+    return [entry for index, entry in enumerate(entries)
+            if index not in omitted or getattr(entry, "tool_id", "") in keep_tool_ids]
 
 
-def _select_timeline_entries(entries: list[Any], *, max_items: int) -> list[Any]:
+def _select_timeline_entries(entries: list[Any], *, max_items: int, priority_tool_ids: tuple[str, ...] = ()) -> list[Any]:
     if max_items <= 0 or len(entries) <= max_items:
         return list(entries)
+
+    if priority_tool_ids:
+        # Reserve bounded slots for live work, then its context. Retained old
+        # tools need their owning reasoning, not a newer unrelated heading.
+        chosen = []
+        owners = {}
+        owner = None
+        for index, entry in enumerate(entries):
+            if entry.kind == 'reasoning':
+                owner = index
+            elif entry.kind == 'tool' and owner is not None:
+                owners[index] = owner
+        for tool_id in priority_tool_ids:
+            index = next((i for i in range(len(entries) - 1, -1, -1)
+                          if entries[i].kind == "tool" and entries[i].tool_id == tool_id), None)
+            if index is not None and index not in chosen:
+                chosen.append(index)
+        chosen = chosen[:max_items]
+        # Newer owners first: if a tiny budget cannot fit every heading, the
+        # remaining older unheaded tools precede all selected reasoning groups.
+        for index in sorted({owners[i] for i in chosen if i in owners}, reverse=True):
+            if len(chosen) < max_items and index not in chosen:
+                chosen.append(index)
+        latest_reasoning = next((i for i in range(len(entries)-1, -1, -1)
+                                 if entries[i].kind == "reasoning"), None)
+        if len(chosen) < max_items and latest_reasoning is not None and latest_reasoning not in chosen:
+            chosen.append(latest_reasoning)
+        for index in range(len(entries)-1, -1, -1):
+            if index in chosen:
+                continue
+            additions = [index]
+            if index in owners and owners[index] not in chosen:
+                additions.append(owners[index])
+            if len(chosen) + len(additions) <= max_items:
+                chosen.extend(additions)
+        return [entries[i] for i in sorted(chosen)]
 
     selected_indexes = list(range(len(entries) - max_items, len(entries)))
     if max_items <= 1:

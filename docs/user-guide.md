@@ -586,7 +586,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.6.5`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.6.6`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -594,7 +594,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.5
+export HFC_VERSION=v4.6.6
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -1025,12 +1025,12 @@ MIT License，详见 [LICENSE](../LICENSE)。
 
 ## 完成后的正文工具区
 
-设置 `card.hide_completed_tool_activity: true`，在 completed/failed 后隐藏正文工具行及工具摘要回退。默认 `false` 保持已有显示；运行进度、审批布局、折叠过程和 footer 工具计数不变。修改配置后重启 sidecar 生效。
+设置 `card.hide_completed_tool_activity: true`，在 completed/failed 后隐藏成功的正文工具行及工具摘要回退；失败、取消和中断工具仍保留。默认 `false` 保持已有显示；运行进度、审批布局、折叠过程和 footer 工具计数不变。修改配置后重启 sidecar 生效。
 
 ## V4.6.3：进行中思考正文开关
 
 设置 `card.stream_thinking_to_body: false`，答案未输出时正文保留等待状态或工具活动，实时思考进入有长度上限的折叠预览；默认 `true` 保持旧行为。预览由 `show_reasoning` 控制，使用 `max_reasoning_chars`，不写入持久时间线。完成/失败内容、审批和历史 `reasoning_format` 不变。超长自定义面板预算和超长答案仍受整卡容量限制。修改后重启 sidecar。
 
-## V4.6.5 候选：首次按钮与顺序续答
+## V4.6.6：审批、工具可见性与通知收尾
 
-首次 clarify/approval 无需 slash 卡预热；选择后有实际输出才创建续答卡，问题与选择保留。缺省和已有显式设置不变，`card.reading_preset` 可选，`card-config` 只读解释有效配置。详见[候选说明](release-notes-v4.6.5.md)、[交互续答](wiki/interaction-continuation.md)、[阅读预设](wiki/reading-presets.md)与[本轮真实验收](wiki/feishu-acceptance-v4.6.5.md)。这些说明不代表已经正式发布或通过设备验收。
+已完成审批只有在独立完整回执确认投递后才精简重复审阅区。较早仍在运行的工具及其前一步优先进入有界过程面板，与正文编号一致。已知原生重启通知在 15 秒后撤回，或由同路由成功投递提前收尾；成功后台任务的一行提示、过期审批的一行提示也会到期撤回。失败、带输出结果与完整审批回执保留。详见[发布说明](release-notes-v4.6.6.md)、[阅读设置](wiki/reading-presets.md)与[验收证据](wiki/feishu-acceptance-v4.6.6.md)。

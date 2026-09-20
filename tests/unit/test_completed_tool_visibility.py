@@ -46,3 +46,14 @@ def test_switch_preserves_live_progress_and_default():
     assert tool_rows(render_card(session))
     session.tools.clear()
     assert render_card(session) == render_card(session, hide_completed_tool_activity=True)
+
+
+@pytest.mark.parametrize('status',['failed','error','cancelled','interrupted','running'])
+@pytest.mark.parametrize('flag',['hide_completed_tool_activity','hide_successful_tool_activity'])
+def test_terminal_compaction_preserves_unsuccessful_tool_evidence(status,flag):
+    session=session_with_tool()
+    session.tools['fixture-tool'].status=status
+    session.status='completed'
+    card=render_card(session,**{flag:True})
+    assert tool_rows(card)
+    assert '已完成' not in tool_rows(card)[0]['content']

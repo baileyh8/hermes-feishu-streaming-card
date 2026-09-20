@@ -119,6 +119,8 @@ class InteractionState:
     # The approval card's own Feishu message id, recorded when the card is delivered. A timed-out
     # approval refreshes THAT card in place instead of sending a second paused card (#314).
     feishu_message_id: str = ""
+    # Set only after an explicit successful PATCH of the complete standalone receipt.
+    receipt_fingerprint: str = ""
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission
@@ -184,6 +186,8 @@ class CardSession:
     subscription_usage_checked: bool = False
     attachments: list[dict[str, str]] = field(default_factory=list)
     active_interaction: InteractionState | None = None
+    # At most 32 bounded static predecessor cards; never persisted or restored.
+    approval_retirements: list[dict[str, Any]] = field(default_factory=list, repr=False)
     delivery_kind: str = "chat"
     reply_to_message_id: str = ""
     reply_in_thread: bool = False

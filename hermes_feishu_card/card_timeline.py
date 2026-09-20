@@ -4,6 +4,11 @@ from dataclasses import dataclass, field
 
 TERMINAL_TOOL_STATUSES = {
     "completed",
+    "success",
+    "succeeded",
+    "ok",
+    "error",
+    "interrupted",
     "failed",
     "cancelled",
     "canceled",

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [4.6.6] - 2026-09-21
+
+- Compact duplicated terminal approval review blocks only after an explicit successful PATCH of the separate full question/scope/decision receipt; retain unproven, pending, sole-owner and failed-delivery cases (#337, PR #339).
+- Keep older running tool calls and their immediate predecessors in the bounded timeline window, matching body ordinals; terminal unfinished tools display as interrupted (#340).
+- Add 15-second expiry to owned restart notices, including Home and requester notifications; confirmed same-route delivery can wake an existing timer early. Restore deadlines across sidecar restart and retain failed-delete cooldowns.
+- Recognize exact native background-success, expired-approval and drain producers, preserve failures/output-bearing results, and color the native requester restart icon. Ordinary quoted text grants no recall authority (PR #338).
+- Terminal tool compaction retains unsuccessful tools. Existing reading defaults, timeline ordering and per-reasoning limits remain unchanged. Thanks to [mouyong](https://github.com/mouyong) for proposals, adapted code and #337/#340 evidence; original authorship is retained.
+- See [Chinese notes](docs/release-notes-v4.6.6.md), [English notes](docs/release-notes-v4.6.6.en.md) and [acceptance](docs/wiki/feishu-acceptance-v4.6.6.md). Release and client gates are recorded separately.
+
 ## [4.6.5] - 2026-09-20
 
 - Keep text-mode decision receipts static across consecutive questions and preserve interaction-first legacy dialects. Retire the previous schema-2 card after confirmed continuation delivery, preserving its pre-output snapshot and decision receipt. Use a neutral handoff state, preserve legacy dialects, and keep the new owner when the old PATCH fails (adapted from PR #339 after real desktop reproduction).

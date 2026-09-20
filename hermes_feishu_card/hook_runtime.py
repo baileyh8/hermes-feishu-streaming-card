@@ -6405,14 +6405,17 @@ async def _hfc_send_with_native_command_result_card(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_send", None)
-    from .notice_producers import notice_route_for_send
-    notice_route = notice_route_for_send(self, chat_id, content, metadata)
-    if notice_route is not None and callable(original):
-        result = await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+    from .notice_producers import notice_for_send
+    try:
+        notice = notice_for_send(self, chat_id, content, metadata)
+    except Exception:
+        notice = None
+    if notice is not None and callable(original):
+        result = await original(self, chat_id, notice['content'], reply_to=reply_to, metadata=metadata)
         if getattr(result, "success", False) is True:
             await schedule_message_recall_async(
                 str(getattr(result, "message_id", "") or ""),
-                route=notice_route, notice_family="restart",
+                route=notice['route'], notice_family=notice['family'],
             )
         return result
     handoff_context = _native_handoff_for_send(self, chat_id, content, metadata)
@@ -9408,6 +9411,8 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
                 adapter_ready = True
 
             current_send = adapter_type.__dict__.get("send")
+            from .notice_producers import install_adapter_notice_producers
+            install_adapter_notice_producers(adapter, runner)
             if current_send is _hfc_send_with_native_command_result_card:
                 setattr(adapter_type, "_hfc_command_result_send_wrapped", True)
                 adapter_ready = True

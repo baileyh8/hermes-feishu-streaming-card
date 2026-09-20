@@ -19,7 +19,7 @@ MAX_RECORD_BYTES = 1024 * 1024
 MAX_RECORDS = 128
 RETENTION_SECONDS = 24 * 3600
 _EXCLUDED = {'tools', 'timeline', 'thinking_normalizer', 'answer_normalizer',
-             'active_interaction', 'terminal_handoff_record', 'route_profile_id'}
+             'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id'}
 _FIELDS = {f.name for f in fields(CardSession)} - _EXCLUDED
 
 
