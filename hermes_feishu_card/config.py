@@ -41,7 +41,10 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "streaming_mode": False,
         "show_reasoning": True,
         "stream_thinking_to_body": True,
-        "hide_completed_tool_activity": False,
+        # Default True, against upstream's False: the user's call is that a finished card should read
+        # as answer + footer, and a deployment that wants the rows back sets it false.
+        # 「如果整个卡已经完成，那么正文里面最近的工具行也的确可以关闭展示了」
+        "hide_completed_tool_activity": True,
         "reasoning_format": "panel",
         "timeline_expanded": False,
         "max_timeline_items": 12,

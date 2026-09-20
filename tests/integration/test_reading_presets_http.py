@@ -68,7 +68,12 @@ async def test_focused_http_keeps_failed_activity_and_legacy_overrides(terminal,
         card = await wait_for(capture, "FINAL_RESULT" if terminal == "completed" else "FAILURE_REASON")
         assert "PRESERVED_PARTIAL" in str(card)
         tool_rows = [e for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_")]
-        should_hide = explicit_hide if explicit_hide is not None else terminal == "completed"
+        # A failed turn keeps its rows even when the switch is on (contract difference from
+        # upstream): they carry the 已中断 pill the reader opens a failed card for.
+        if terminal == "failed":
+            should_hide = False
+        else:
+            should_hide = explicit_hide if explicit_hide is not None else True
         assert bool(tool_rows) is not should_hide
         assert inspect_card_limits(card).safe
         assert len(capture.sent) == 1

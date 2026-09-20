@@ -179,6 +179,14 @@ EPHEMERAL_RECALL_MAX_SECONDS = 600.0
 EPHEMERAL_RECALL_MAX_PENDING = 1024
 EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
 RESTART_NOTICES_KEY = web.AppKey("restart_notices", RestartNoticeRegistry)
+# ``(profile, bot)`` -> the chat that is that profile's HOME channel, learned from the restart notices
+# the hook registers. Kept here because the sidecar's own sends (card send/update) never pass the hook,
+# and yet they are exactly the sends that have to clear a stale restart line standing in home
+# («任何一条自己发的消息都要把该话题前面的重启组清掉，同时触发 home channel 前面的重启消息撤回»).
+HOME_CHAT_IDS_KEY = web.AppKey("home_chat_ids", dict)
+# Bound on the home table: same reasoning as the notice registry — a deployment that keeps seeing new
+# (profile, bot) pairs must not be able to grow this without limit. Oldest first.
+HOME_CHAT_IDS_MAX_ENTRIES = 500
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -586,6 +594,7 @@ def create_app(
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[EPHEMERAL_RECALL_TASKS_KEY] = {}
     app[RESTART_NOTICES_KEY] = RestartNoticeRegistry()
+    app[HOME_CHAT_IDS_KEY] = {}
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -7667,6 +7676,15 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
     if family is not None:
+        # Remember where HOME is for this (profile, bot) before registering. The hook is the only
+        # sender that knows it (it reads FEISHU_HOME_CHANNEL), and every later send — including the
+        # sidecar's own card sends, which never pass the hook — needs it to clear home from a topic.
+        _remember_home_chat(
+            request.app,
+            profile_id=profile,
+            bot_id=bot_id or "",
+            home_chat_id=payload.get("home_chat_id"),
+        )
         if not request.app[RESTART_NOTICES_KEY].register(scope, message_id):
             return web.json_response({"ok": False, "error": "notice capacity reached"}, status=429)
         return web.json_response({"ok": True, "message_id": message_id, "record_only": True})
@@ -7735,9 +7753,77 @@ def _restart_scope_for_message(app, message_id, bot_id) -> NoticeScope | None:
     return scopes[0] if scopes and all(scope == scopes[0] for scope in scopes) else None
 
 
-def _retire_restart_notices(app, scope, snapshot) -> None:
-    if scope is None:
+def _home_chat_key(*, profile_id: str, bot_id: str) -> str:
+    return "\x1f".join(
+        (_safe_command_string(profile_id) or "default", _safe_command_string(bot_id))
+    )
+
+
+def _remember_home_chat(
+    app: web.Application, *, profile_id: str, bot_id: str, home_chat_id: str
+) -> None:
+    """Record which chat is the HOME channel for one (profile, bot).
+
+    Needed because the home broadcast and the topic send are different routes: by the time the reader
+    posts in a topic, the only way to name home again is to have written it down. The hook passes it on
+    every restart-notice registration (it reads ``FEISHU_HOME_CHANNEL``, the same source the gateway
+    seeds its own home channel from), and the sidecar reuses it for the sends it makes itself — card
+    sends and updates never pass the hook, so they would otherwise have no way to reach home.
+    """
+    chat = _safe_command_string(home_chat_id)
+    if not chat:
         return
+    table = app.get(HOME_CHAT_IDS_KEY)
+    if not isinstance(table, dict):
+        return
+    key = _home_chat_key(profile_id=profile_id, bot_id=bot_id)
+    if len(table) >= HOME_CHAT_IDS_MAX_ENTRIES and key not in table:
+        oldest = next(iter(table), None)
+        if oldest is not None:
+            table.pop(oldest, None)
+    table[key] = chat
+
+
+def _known_home_chat(app: web.Application, *, profile_id: str, bot_id: str) -> str:
+    """The home chat recorded for ``(profile, bot)``, or ``""`` when none was ever seen.
+
+    Falls back to the profile's sole entry when the caller has no bot — several internal send paths
+    (a card update carries only a message id) know the profile but not which bot owns the message, and
+    refusing to answer there would silently drop the home clear on exactly those sends.
+    """
+    table = app.get(HOME_CHAT_IDS_KEY)
+    if not isinstance(table, dict):
+        return ""
+    profile = _safe_command_string(profile_id) or "default"
+    exact = _safe_command_string(table.get(_home_chat_key(profile_id=profile, bot_id=bot_id)))
+    if exact:
+        return exact
+    prefix = f"{profile}\x1f"
+    matches = {
+        _safe_command_string(value)
+        for key, value in table.items()
+        if str(key).startswith(prefix) and _safe_command_string(value)
+    }
+    return matches.pop() if len(matches) == 1 else ""
+
+
+def _home_notice_scope(app, scope) -> NoticeScope | None:
+    """The notice scope standing in HOME, when that is a DIFFERENT place from ``scope``.
+
+    This is the cross-surface half of the user's rule («任何一条自己发的消息都要把该话题前面的重启组清掉，
+    同时触发 home channel 前面的重启消息撤回»): a send in a topic must also retire the restart line
+    that is standing in the home channel, because both announce the same restart and the reader sees
+    them side by side. When the send already IS the home conversation there is nothing extra to clear.
+    """
+    home_chat = _known_home_chat(app, profile_id=scope.profile_id, bot_id=scope.bot_id)
+    if not home_chat:
+        return None
+    if home_chat == scope.chat_id and not scope.thread_id:
+        return None
+    return NoticeScope(scope.profile_id, scope.bot_id, home_chat, "")
+
+
+def _retire_one_notice_scope(app, scope, snapshot) -> None:
     registry = app[RESTART_NOTICES_KEY]
     for message_id, generation in snapshot:
         if not registry.ready(scope, message_id, generation):
@@ -7747,6 +7833,20 @@ def _retire_restart_notices(app, scope, snapshot) -> None:
         _schedule_ephemeral_recall(
             app, message_id=message_id, delay_seconds=0, bot_id=scope.bot_id or None,
             notice_owner=(scope, generation),
+        )
+
+
+def _retire_restart_notices(app, scope, snapshot) -> None:
+    if scope is None:
+        return
+    _retire_one_notice_scope(app, scope, snapshot)
+    # The OTHER surface: the same restart was announced in home as well, and this send has to clear
+    # that copy too. Read from the table the hook filled in (``home_chat_id`` on registration), because
+    # the sidecar's own sends never pass the hook and would otherwise have no way to name home.
+    home_scope = _home_notice_scope(app, scope)
+    if home_scope is not None:
+        _retire_one_notice_scope(
+            app, home_scope, _restart_notice_snapshot(app, home_scope)
         )
 
 
