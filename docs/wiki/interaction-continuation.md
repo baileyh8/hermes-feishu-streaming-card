@@ -1,6 +1,6 @@
 # 交互后的续答与显示归属
 
-V4.6.4 候选使 clarify 和 approval 之后的结果按聊天创建时间自然向下排列。普通问答仍更新原卡；只有交互选择边界之后的实际输出才按需创建续答。相关入口：[事件流](event-flow.md)、[阅读预设](reading-presets.md)、[本轮真实验收](feishu-acceptance-v4.6.4.md)。
+V4.6.4 已发布，使 clarify 和 approval 之后的结果按聊天创建时间自然向下排列。普通问答仍更新原卡；只有交互选择边界之后的实际输出才按需创建续答。相关入口：[事件流](event-flow.md)、[阅读预设](reading-presets.md)、[本轮真实验收](feishu-acceptance-v4.6.4.md)。
 
 ## 三种身份不能混用
 
