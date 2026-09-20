@@ -2,6 +2,30 @@
 
 [中文](testing.md) | [English](testing.en.md)
 
+## Contributor preflight (Issue #330)
+
+From the checkout root, use the Python interpreter intended for testing:
+
+```bash
+python tools/preflight.py --check-only
+python tools/preflight.py --suite focused
+python tools/preflight.py --suite focused --base origin/main
+python tools/preflight.py --suite focused --module runtime --module render
+python tools/preflight.py --suite full
+```
+
+The default only checks readiness. It does not install dependencies, fetch, edit Hermes, or restart services. Checks cover the current checkout, Python/venv, pytest dependencies, effective package source, and fixed Hermes fixture hashes. `ready` is not a test result: `pytest.status=not_run` remains explicit. An explicit `--suite` runs real `python -m pytest`, followed on success by `git diff --check`, including staged changes.
+
+`focused` selects tests from staged, unstaged, and new files relative to `HEAD`; `--base origin/main` also includes committed branch changes. Repeat `--module runtime|render|config|install|process|docs|preflight` for explicit groups. Unknown changes or an empty selection require explicit modules rather than silently running everything. This is a starting point: use the [maintenance guide](wiki/maintenance-guide.md) for related matrices, and run the full suite plus CI before release.
+
+Set `HFC_FIXED_TAG_SOURCE_ROOT` to the fixed source fixture; its default matches the existing tests. The checker verifies SHA256 against repository provenance without downloading, repairing, or changing the fixture. Missing sources report `missing`; changed hashes report `digest_mismatch`. Fixture-dependent selections and `full` are blocked until verified. An unrelated focused selection can still run, but its overall result is `partial` with an independently reported pytest result.
+
+Each run uses a private temporary HFC state, Hermes home, and pytest directory. It does not reuse production state or change the global environment. Raw pytest output stays in a private local log whose location is printed only to stderr. Shareable stdout JSON contains source categories, relative test paths, counts, and exit codes, without absolute private paths, credentials, or raw exceptions. Exit `0` means the requested checks/tests succeeded; `2` denotes incomplete preflight checks. Pytest failures retain their exit code; inspect `reason` and `pytest.exit_code` to distinguish them.
+
+Review and redact raw local logs before attaching them to a public issue. Preflight does not replace real Feishu, desktop/mobile, public-install, or release acceptance.
+
+If test dependencies are missing, run `python -m pip install -e ".[test]"` in your chosen development environment. The full matrix requires a separate official Hermes `v2026.8.3` source checkout at commit `3c27eb6234bf91b8ceee9e9071591b31e9b148cb`, selected with `HFC_FIXED_TAG_SOURCE_ROOT`; see the `fixed-hermes-fixture` job in `.github/workflows/tests.yml`. Do not substitute a running production Hermes checkout for the fixed test source.
+
 ## Unit Tests
 
 ```bash
