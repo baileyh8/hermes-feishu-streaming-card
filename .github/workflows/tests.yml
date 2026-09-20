@@ -242,7 +242,7 @@ jobs:
           python -m pip install -e ".[test]"
           python -m pip install "lark-oapi==1.6.8" "websockets==15.0.1"
       - name: Test live handler compatibility
-        run: python -m pytest tests/integration/test_feishu_sdk_compat.py -q
+        run: python -m pytest tests/integration/test_feishu_sdk_compat.py tests/unit/test_cold_start_card_callbacks.py -q
 
   docker-compose-runtime-smoke:
     runs-on: ubuntu-latest

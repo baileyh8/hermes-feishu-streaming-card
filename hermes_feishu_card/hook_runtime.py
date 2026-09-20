@@ -1864,6 +1864,7 @@ def emit_from_hermes_locals(
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
+        _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
             return False
@@ -1893,6 +1894,7 @@ def emit_from_hermes_locals_threadsafe(
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
+        _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
             return False
@@ -3107,6 +3109,7 @@ def request_interaction_from_hermes_locals(
                 f"kind={kind} {_hfc_log_reference('interaction', interaction_id)}"
             )
             return None
+        _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, "interaction.requested")
         if not gate.card:
             _hfc_warn(
@@ -3382,6 +3385,35 @@ def _uses_text_interaction_fallback(result: Any) -> bool:
         and str(result.get("interaction_mode") or "").strip().lower()
         in {"text", "markdown", "reply"}
     )
+
+
+def _hfc_eager_ensure_command_card_hooks(local_vars: dict[str, Any]) -> bool:
+    """Wire the first interaction even when optional startup hooks were unavailable.
+
+    Resolve through the actual turn's runner/profile contract. A connected SDK
+    dispatcher is refreshed in place by the installer; no connect wrapper or
+    transport reconstruction is needed. New transports bind the patched method.
+    """
+    try:
+        owner = local_vars.get("self")
+        source = local_vars.get("source") or getattr(local_vars.get("event"), "source", None)
+        if source is None or _platform_name(local_vars, source) != "feishu":
+            return False
+        # Current Hermes moves callbacks into TurnRunner; legacy hooks still
+        # receive GatewayRunner as self. Never guess another profile's adapter.
+        runner = local_vars.get("runner") or getattr(owner, "_runner", None) or owner
+        adapter = _hfc_feishu_adapter_from_runner(runner, source)
+        if adapter is None:
+            return False
+        adapter_type = type(adapter)
+        if (getattr(adapter_type, "_hfc_command_card_methods_installed", False)
+                and getattr(adapter_type, "_on_card_action_trigger", None)
+                is _hfc_on_feishu_card_action_trigger):
+            _hfc_refresh_feishu_event_handler(adapter)
+            return True
+        return install_feishu_command_card_adapter_methods(runner)
+    except Exception:
+        return False
 
 
 def _hfc_native_feishu_command_cards_available(local_vars: dict[str, Any]) -> bool:
@@ -8788,13 +8820,6 @@ async def _hfc_handle_feishu_card_action_event(self: Any, data: Any) -> None:
 
 
 def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
-    if getattr(adapter, "_hfc_command_card_event_handler_refreshed", False) or getattr(
-        adapter,
-        "_hfc_command_card_event_handler_refresh_scheduled",
-        False,
-    ):
-        return False
-
     current_handler = getattr(adapter, "_event_handler", None)
     ws_client = getattr(adapter, "_ws_client", None)
     ws_handler = getattr(ws_client, "_event_handler", None) if ws_client is not None else None
@@ -8809,6 +8834,17 @@ def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
     for handler in (current_handler, ws_handler):
         if handler is not None and all(handler is not item for item in handlers):
             handlers.append(handler)
+
+    # A boolean "refreshed once" becomes stale after reconnect. Inspect the
+    # currently attached processors so a new dispatcher can be refreshed too.
+    processors = []
+    for handler in handlers:
+        mapping = getattr(handler, "_callback_processor_map", None)
+        processor = mapping.get("p2.card.action.trigger") if isinstance(mapping, dict) else None
+        if processor is not None and hasattr(processor, "f"):
+            processors.append(processor)
+    if not processors or all(processor.f == callback for processor in processors):
+        return False
 
     def refresh_card_action_callback() -> bool:
         refreshed = False
@@ -8848,23 +8884,36 @@ def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
     if not callable(call_soon_threadsafe) or ws_loop_closed:
         _hfc_warn("Feishu card action callback refresh skipped: WS loop unavailable")
         return False
+    target = (current_handler, ws_handler, ws_client, ws_loop)
+    pending = getattr(adapter, "_hfc_command_card_event_handler_refresh_target", None)
+    if (getattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+            and isinstance(pending, tuple) and len(pending) == len(target)
+            and all(before is now for before, now in zip(pending, target))):
+        return False
     try:
+        setattr(adapter, "_hfc_command_card_event_handler_refresh_target", target)
         setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", True)
 
         def refresh_on_ws_loop() -> None:
             try:
-                refresh_card_action_callback()
+                # An old WS loop must never mutate the transport that replaced
+                # it. The next turn/interaction can schedule the new target.
+                if (getattr(adapter, "_event_handler", None) is current_handler
+                        and getattr(adapter, "_ws_client", None) is ws_client
+                        and getattr(ws_client, "_event_handler", None) is ws_handler
+                        and getattr(adapter, "_ws_thread_loop", None) is ws_loop):
+                    refresh_card_action_callback()
             finally:
-                setattr(
-                    adapter,
-                    "_hfc_command_card_event_handler_refresh_scheduled",
-                    False,
-                )
+                if getattr(adapter, "_hfc_command_card_event_handler_refresh_target", None) is target:
+                    setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+                    setattr(adapter, "_hfc_command_card_event_handler_refresh_target", None)
 
         call_soon_threadsafe(refresh_on_ws_loop)
         return True
     except Exception as exc:
-        setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+        if getattr(adapter, "_hfc_command_card_event_handler_refresh_target", None) is target:
+            setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+            setattr(adapter, "_hfc_command_card_event_handler_refresh_target", None)
         _hfc_warn(
             "Feishu card action callback refresh failed: "
             f"{_hfc_exception_summary(exc)}"
