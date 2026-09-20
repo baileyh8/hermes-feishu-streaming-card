@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from .delivery_policy import normalize_native_chats
+from .reading import expand_reading_preset, normalize_reading_preset
 
 
 DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
@@ -148,7 +149,7 @@ def merge_card_config(
     override: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     resolved = copy.deepcopy(dict(base or {}))
-    incoming = copy.deepcopy(dict(override or {}))
+    incoming = expand_reading_preset(override)
     has_incoming_sizes = "text_sizes" in incoming
     incoming_sizes = incoming.pop("text_sizes", None)
     resolved.update(incoming)
@@ -430,6 +431,10 @@ def _normalize_bot_card_configs(value: object, *, path: str) -> None:
 def _normalize_card_config(value: object, *, path: str) -> None:
     if not isinstance(value, dict):
         return
+    if "reading_preset" in value:
+        value["reading_preset"] = normalize_reading_preset(
+            value["reading_preset"], path=f"{path}.reading_preset"
+        )
     if "text_sizes" in value:
         value["text_sizes"] = normalize_text_sizes(
             value["text_sizes"], path=f"{path}.text_sizes"
@@ -477,7 +482,9 @@ def _merge_sections(config: dict[str, dict[str, Any]], loaded: dict[str, Any]) -
         if section in KNOWN_SECTIONS and not isinstance(value, dict):
             raise ValueError(f"Config section {section} must be a mapping")
 
-        if isinstance(value, dict) and isinstance(config.get(section), dict):
+        if section == "card" and isinstance(value, dict):
+            config[section] = merge_card_config(config.get(section), value)
+        elif isinstance(value, dict) and isinstance(config.get(section), dict):
             config[section].update(value)
         else:
             config[section] = value

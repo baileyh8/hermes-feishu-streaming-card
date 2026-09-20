@@ -1864,6 +1864,7 @@ def emit_from_hermes_locals(
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
+        _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
             return False
@@ -1893,6 +1894,7 @@ def emit_from_hermes_locals_threadsafe(
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
+        _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
             return False
@@ -3107,6 +3109,7 @@ def request_interaction_from_hermes_locals(
                 f"kind={kind} {_hfc_log_reference('interaction', interaction_id)}"
             )
             return None
+        _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, "interaction.requested")
         if not gate.card:
             _hfc_warn(
@@ -3382,6 +3385,68 @@ def _uses_text_interaction_fallback(result: Any) -> bool:
         and str(result.get("interaction_mode") or "").strip().lower()
         in {"text", "markdown", "reply"}
     )
+
+
+def _hfc_eager_runner_from_turn_context(local_vars: dict[str, Any], source: Any) -> Any:
+    """Recover closure ownership only through the exact live turn/adapter route."""
+    ctx = local_vars.get("_hfc_turn_ctx") or local_vars.get("ctx")
+    if ctx is None or getattr(ctx, "source", None) is not source:
+        return None
+    expected_adapter = getattr(ctx, "_status_adapter", None)
+    if expected_adapter is None or getattr(expected_adapter, "_client", None) is None:
+        return None
+    candidates = []
+    # Nested callbacks capture ctx, but Python does not include run_sync's self
+    # in their locals. Hermes wires these bound methods before creating them.
+    for name in ("progress_callback", "_status_callback_sync"):
+        callback_owner = getattr(getattr(ctx, name, None), "__self__", None)
+        if callback_owner is not None and getattr(callback_owner, "_ctx", None) is ctx:
+            candidate = getattr(callback_owner, "_runner", None)
+            if candidate is not None:
+                candidates.append(candidate)
+    # Older contexts may not retain bound methods. Use the remembered Gateway
+    # only when its profile-aware resolver returns the very same live adapter.
+    with _GATEWAY_RUNNER_LOCK:
+        reference = _GATEWAY_RUNNER_REF
+    if reference is not None:
+        remembered = reference()
+        if remembered is not None:
+            candidates.append(remembered)
+    for candidate in candidates:
+        if _hfc_feishu_adapter_from_runner(candidate, source) is expected_adapter:
+            return candidate
+    return None
+
+
+def _hfc_eager_ensure_command_card_hooks(local_vars: dict[str, Any]) -> bool:
+    """Wire the first interaction even when optional startup hooks were unavailable.
+
+    Resolve through the actual turn's runner/profile contract. A connected SDK
+    dispatcher is refreshed in place by the installer; no connect wrapper or
+    transport reconstruction is needed. New transports bind the patched method.
+    """
+    try:
+        owner = local_vars.get("self")
+        source = local_vars.get("source") or getattr(local_vars.get("event"), "source", None)
+        if source is None or _platform_name(local_vars, source) != "feishu":
+            return False
+        # Current Hermes moves callbacks into TurnRunner; legacy hooks still
+        # receive GatewayRunner as self. Never guess another profile's adapter.
+        runner = local_vars.get("runner") or getattr(owner, "_runner", None) or owner
+        if runner is None:
+            runner = _hfc_eager_runner_from_turn_context(local_vars, source)
+        adapter = _hfc_feishu_adapter_from_runner(runner, source)
+        if adapter is None:
+            return False
+        adapter_type = type(adapter)
+        if (getattr(adapter_type, "_hfc_command_card_methods_installed", False)
+                and getattr(adapter_type, "_on_card_action_trigger", None)
+                is _hfc_on_feishu_card_action_trigger):
+            _hfc_refresh_feishu_event_handler(adapter)
+            return True
+        return install_feishu_command_card_adapter_methods(runner)
+    except Exception:
+        return False
 
 
 def _hfc_native_feishu_command_cards_available(local_vars: dict[str, Any]) -> bool:
@@ -5093,6 +5158,10 @@ async def _hfc_send_plain_notice(
     try:
         result = await original(adapter, chat_id, text, reply_to=reply_to, metadata=metadata)
         if getattr(result, "success", False):
+            await _hfc_recall_plain_text_status_notice(
+                chat_id, text, metadata, result, reply_to=reply_to,
+                generated_restart_notice=(text == _HFC_GATEWAY_ONLINE_TEXT),
+            )
             return result
         return _send_result(False, error="delivery_disposition=native")
     except Exception as exc:
@@ -6415,7 +6484,9 @@ async def _hfc_send_with_native_command_result_card(
         return _send_result(False, error="original Feishu send unavailable")
     if callable(original):
         result = await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
-        await _hfc_recall_plain_text_status_notice(chat_id, content, metadata, result)
+        await _hfc_recall_plain_text_status_notice(
+            chat_id, content, metadata, result, reply_to=reply_to,
+        )
         return result
     return _send_result(False, error="original Feishu send unavailable")
 
@@ -6425,6 +6496,9 @@ async def _hfc_recall_plain_text_status_notice(
     content: Any,
     metadata: Any,
     result: Any,
+    *,
+    reply_to: str | None = None,
+    generated_restart_notice: bool = False,
 ) -> bool:
     """Best-effort recall of known status templates on the task's own route.
 
@@ -6447,6 +6521,23 @@ async def _hfc_recall_plain_text_status_notice(
             profile_id=str(context.get("profile_id") or ""),
             thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
         )
+        # Text recognition alone never authorizes withdrawal: an ordinary answer
+        # can quote the exact template. Only HFC's dedicated notice producer sets
+        # this provenance bit; native/home/adapter.send text has no such proof.
+        if generated_restart_notice and str(content or "") == _HFC_GATEWAY_ONLINE_TEXT:
+            if getattr(result, "success", False) is not True:
+                return False
+            profile, provenance = _profile_identity({}, source, None)
+            if provenance.startswith("sanitized_"):
+                return False
+            # With no explicit topic, a reply anchor is safer than guessing home.
+            thread_id = source.thread_id or str(reply_to or "")
+            return await schedule_message_recall_async(
+                str(getattr(result, "message_id", "") or ""),
+                route={"profile_id": profile, "chat_id": source.chat_id,
+                       "conversation_id": thread_id},
+                notice_family="restart",
+            )
         return await recall_transient_thread_notice_async(source, content, result)
     except Exception:
         return False
@@ -8788,13 +8879,6 @@ async def _hfc_handle_feishu_card_action_event(self: Any, data: Any) -> None:
 
 
 def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
-    if getattr(adapter, "_hfc_command_card_event_handler_refreshed", False) or getattr(
-        adapter,
-        "_hfc_command_card_event_handler_refresh_scheduled",
-        False,
-    ):
-        return False
-
     current_handler = getattr(adapter, "_event_handler", None)
     ws_client = getattr(adapter, "_ws_client", None)
     ws_handler = getattr(ws_client, "_event_handler", None) if ws_client is not None else None
@@ -8809,6 +8893,17 @@ def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
     for handler in (current_handler, ws_handler):
         if handler is not None and all(handler is not item for item in handlers):
             handlers.append(handler)
+
+    # A boolean "refreshed once" becomes stale after reconnect. Inspect the
+    # currently attached processors so a new dispatcher can be refreshed too.
+    processors = []
+    for handler in handlers:
+        mapping = getattr(handler, "_callback_processor_map", None)
+        processor = mapping.get("p2.card.action.trigger") if isinstance(mapping, dict) else None
+        if processor is not None and hasattr(processor, "f"):
+            processors.append(processor)
+    if not processors or all(processor.f == callback for processor in processors):
+        return False
 
     def refresh_card_action_callback() -> bool:
         refreshed = False
@@ -8848,23 +8943,36 @@ def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
     if not callable(call_soon_threadsafe) or ws_loop_closed:
         _hfc_warn("Feishu card action callback refresh skipped: WS loop unavailable")
         return False
+    target = (current_handler, ws_handler, ws_client, ws_loop)
+    pending = getattr(adapter, "_hfc_command_card_event_handler_refresh_target", None)
+    if (getattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+            and isinstance(pending, tuple) and len(pending) == len(target)
+            and all(before is now for before, now in zip(pending, target))):
+        return False
     try:
+        setattr(adapter, "_hfc_command_card_event_handler_refresh_target", target)
         setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", True)
 
         def refresh_on_ws_loop() -> None:
             try:
-                refresh_card_action_callback()
+                # An old WS loop must never mutate the transport that replaced
+                # it. The next turn/interaction can schedule the new target.
+                if (getattr(adapter, "_event_handler", None) is current_handler
+                        and getattr(adapter, "_ws_client", None) is ws_client
+                        and getattr(ws_client, "_event_handler", None) is ws_handler
+                        and getattr(adapter, "_ws_thread_loop", None) is ws_loop):
+                    refresh_card_action_callback()
             finally:
-                setattr(
-                    adapter,
-                    "_hfc_command_card_event_handler_refresh_scheduled",
-                    False,
-                )
+                if getattr(adapter, "_hfc_command_card_event_handler_refresh_target", None) is target:
+                    setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+                    setattr(adapter, "_hfc_command_card_event_handler_refresh_target", None)
 
         call_soon_threadsafe(refresh_on_ws_loop)
         return True
     except Exception as exc:
-        setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+        if getattr(adapter, "_hfc_command_card_event_handler_refresh_target", None) is target:
+            setattr(adapter, "_hfc_command_card_event_handler_refresh_scheduled", False)
+            setattr(adapter, "_hfc_command_card_event_handler_refresh_target", None)
         _hfc_warn(
             "Feishu card action callback refresh failed: "
             f"{_hfc_exception_summary(exc)}"
@@ -9740,6 +9848,7 @@ async def schedule_message_recall_async(
     delay_seconds: float = 15.0,
     bot_id: str = "",
     route: dict[str, str] | None = None,
+    notice_family: str = "",
 ) -> bool:
     """Ask the sidecar to withdraw ``message_id`` ``delay_seconds`` after it was posted.
 
@@ -9762,6 +9871,10 @@ async def schedule_message_recall_async(
             payload["bot_id"] = str(bot_id)
         if route is not None:
             payload["route"] = dict(route)
+        if notice_family:
+            payload.pop("delay_seconds", None)
+            payload["notice_family"] = notice_family
+            payload["record_only"] = True
         url = f"{_summary_base_url(config.event_url)}/recall/schedule"
         result = await _post_json_ordered_response(url, payload, config.timeout_seconds)
         return isinstance(result, dict) and result.get("ok") is True
