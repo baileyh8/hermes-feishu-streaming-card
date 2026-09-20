@@ -13437,8 +13437,11 @@ def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
             sent.append((chat_id, content))
             return SimpleNamespace(success=True, message_id="om_plain")
 
-    def no_card(*args, **kwargs):
-        pytest.fail("the restart-completion notice must not post a card payload")
+    async def no_card(url, payload, timeout):
+        assert url.endswith("/recall/schedule"), "restart completion must not post a card"
+        assert payload["notice_family"] == "restart"
+        assert payload["record_only"] is True
+        return {"ok": True}
 
     monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", no_card)
 

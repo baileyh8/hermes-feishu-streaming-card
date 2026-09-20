@@ -79,6 +79,7 @@
 - interaction deadline 由 sidecar 接收时刻与 `timeout_seconds` 计算为绝对截止时间 `expires_at`；action、result poll 与周期清理都在现有 session lock 下先做幂等过期转换。未声明暂停能力的过期状态为 failed；声明 pause_on_timeout 且没有 native runtime admission 的同步 Gateway 审批可转 paused，并撤销旧 token。晚到按钮/form 均不能批准过期操作。恢复按钮要求 Gateway 在最近 15 秒内仍轮询，旋转 token 并重新展示完整范围，只恢复审阅窗口；后续明确选择才解析原 request_id。不得延长 native admission 证明或把重启后旧执行当作仍在等待。
 - card action 是认证的 out-of-band 回调：它生成的内部 `interaction.completed` 可以执行 identity/stale 校验，但不得推进 Hermes `/events` transport 的 `last_sequence`。batch 下一条 `interaction.requested` 必须仍按严格单调序列接受；callback 响应卡要在同一 session lock 内快照，不能混入随后到达的下一题。
 - cleanup 只把尚未到期的 pending interaction 视为活跃；周期循环先转换/刷新过期 interaction，再执行普通 retention cleanup，避免永久保留或删掉仍显示可点击按钮的旧卡。
+- 重启临时文本的撤回遵循 [通知生命周期](notice-lifecycle.md)：精确 profile/bot/chat/thread、发送前登记代次快照、成功投递后调度、DELETE 成功后释放记录。不能用空 thread 通配其他话题、话题活动清 home、或静默替换失败的待撤回项。新增发卡入口必须传入当前 profile，更新入口通过真实消息 owner 取身份。
 
 ### `hermes_feishu_card/install/patcher.py`
 

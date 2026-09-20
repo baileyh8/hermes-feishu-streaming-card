@@ -60,6 +60,7 @@ from .lifecycle import (
     cleanup_runtime_state,
 )
 from .metrics import SidecarMetrics
+from .notice_lifecycle import NoticeScope, RestartNoticeRegistry
 from .native_handoff import (
     NativeHandoffRecord,
     NativeHandoffStore,
@@ -174,6 +175,7 @@ EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
 EPHEMERAL_RECALL_MAX_SECONDS = 600.0
 EPHEMERAL_RECALL_MAX_PENDING = 1024
 EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
+RESTART_NOTICES_KEY = web.AppKey("restart_notices", RestartNoticeRegistry)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -580,6 +582,7 @@ def create_app(
     app[CARD_ANIMATION_TASKS_KEY] = {}
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[EPHEMERAL_RECALL_TASKS_KEY] = {}
+    app[RESTART_NOTICES_KEY] = RestartNoticeRegistry()
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -2056,6 +2059,7 @@ async def _commands(request: web.Request) -> web.Response:
             thread_id=thread_id or None,
             reply_to_message_id=reply_to_message_id or message_id,
             operation_id=operation_id,
+            profile_id=_policy_profile_id(event),
         )
     )
     task.add_done_callback(_log_background_task_failure)
@@ -2074,6 +2078,7 @@ async def _send_command_card(
     thread_id: str | None = None,
     reply_to_message_id: str | None = None,
     operation_id: str = "",
+    profile_id: str | None = None,
 ) -> str | None:
     delivery = await _send_card_for_app(
         app,
@@ -2084,6 +2089,7 @@ async def _send_command_card(
         reply_to_message_id=reply_to_message_id,
         delivery_key=operation_id or reply_to_message_id or "command",
         delivery_kind="command",
+        profile_id=profile_id,
     )
     if not delivery.delivered:
         logger.warning(
@@ -5165,6 +5171,7 @@ async def _apply_event_locked_inner(
                 reply_in_thread=_reply_in_thread_for_event(event),
                 delivery_key=session_key,
                 delivery_kind=_delivery_kind(event) or "chat",
+                profile_id=_policy_profile_id(event),
             )
             if not delivery.delivered:
                 _cleanup_failed_session_state(
@@ -5345,6 +5352,7 @@ async def _apply_event_locked_inner(
                     delivery_key=session_key,
                     delivery_kind=_delivery_kind(event)
                     or ("notice" if event.event == "system.notice" else "chat"),
+                    profile_id=_policy_profile_id(event),
                 )
                 if not delivery.delivered:
                     _cleanup_failed_session_state(
@@ -5610,6 +5618,7 @@ async def _apply_event_locked_inner(
             ),
             delivery_key=f"{session_key}:interaction:{interaction_id}",
             delivery_kind="interaction",
+            profile_id=_policy_profile_id(event),
         )
         delivered_interaction = session.active_interaction
         if delivery.delivered and delivered_interaction is not None:
@@ -5929,6 +5938,7 @@ async def _recover_terminal_card(
         reply_in_thread=session.reply_in_thread,
         delivery_key=f"{session_key}:{original_message_id}:{event.sequence}",
         delivery_kind="terminal-recovery",
+        profile_id=_policy_profile_id(event),
     )
     session.terminal_delivery_state = (
         "recovered" if delivery.outcome == "delivered" else delivery.outcome
@@ -5978,7 +5988,8 @@ async def _maybe_send_completion_notify(
     if notify_config.get("placement", "message") == "card":
         session.completion_notify_state = "sent"
         return
-    client = _client_for_bot(app, app[MESSAGE_BOT_IDS_KEY].get(session_key))
+    bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
+    client = _client_for_bot(app, bot_id)
     send_text = getattr(client, "send_text_message", None)
     if not callable(send_text):
         return
@@ -5992,6 +6003,12 @@ async def _maybe_send_completion_notify(
         else ""
     )
     text = f"{mention_prefix}✅ 本轮回复结束{suffix}"
+    notice_scope = _restart_notice_scope(
+        profile_id=_policy_profile_id(event), bot_id=bot_id, chat_id=session.chat_id,
+        thread_id=_thread_id_for_event(event) or (
+            session.reply_to_message_id if session.reply_in_thread else None),
+    )
+    notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     try:
         send_kwargs: dict[str, Any] = {
             "thread_id": _thread_id_for_event(event) or None,
@@ -5999,7 +6016,7 @@ async def _maybe_send_completion_notify(
         }
         if session.reply_in_thread:
             send_kwargs["reply_in_thread"] = True
-        await send_text(session.chat_id, text, **send_kwargs)
+        sent_message_id = await send_text(session.chat_id, text, **send_kwargs)
     except asyncio.CancelledError:
         session.completion_notify_state = "idle"
         raise
@@ -6010,6 +6027,8 @@ async def _maybe_send_completion_notify(
             exc.__class__.__name__,
         )
         return
+    if isinstance(sent_message_id, str) and sent_message_id:
+        _retire_restart_notices(app, notice_scope, notice_snapshot)
     session.completion_notify_state = "sent"
     logger.info(
         "completion notify sent (sender_hash=%s session_hash=%s)",
@@ -6132,6 +6151,7 @@ async def _complete_runtime_interaction_delivery(
         reply_in_thread=reservation.reply_in_thread,
         delivery_key=reservation.delivery_key,
         delivery_kind="interaction",
+        profile_id=_notice_profile_for_session_key(reservation.session_key),
     )
     if delivery.delivered:
         # Same reuse contract as the callback-mode card (#314).
@@ -6451,6 +6471,7 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
                 reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
                 delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
                 delivery_kind="interaction",
+                profile_id=_notice_profile_for_session_key(session_key),
             )
         if (result.outcome != "delivered" and session.active_interaction is interaction
                 and interaction.status == "paused" and interaction.pause_generation == generation):
@@ -7154,6 +7175,7 @@ async def _send_card(
     reply_in_thread: bool = False,
     delivery_key: str = "",
     delivery_kind: str = "chat",
+    profile_id: str | None = None,
 ) -> CardDeliveryResult:
     return await _send_card_for_app(
         request.app,
@@ -7165,6 +7187,7 @@ async def _send_card(
         reply_in_thread=reply_in_thread,
         delivery_key=delivery_key,
         delivery_kind=delivery_kind,
+        profile_id=profile_id,
     )
 
 
@@ -7178,6 +7201,7 @@ async def _send_card_for_app(
     reply_in_thread: bool = False,
     delivery_key: str = "",
     delivery_kind: str = "chat",
+    profile_id: str | None = None,
 ) -> CardDeliveryResult:
     metrics: SidecarMetrics = app[METRICS_KEY]
     metrics.feishu_send_attempts += 1
@@ -7208,6 +7232,14 @@ async def _send_card_for_app(
         delivery_kind=delivery_kind,
     )
     client = _client_for_bot(app, bot_id)
+    notice_scope = _restart_notice_scope(
+        profile_id=profile_id, bot_id=bot_id, chat_id=chat_id,
+        thread_id=thread_id or (reply_to_message_id if reply_in_thread else None),
+    )
+    notice_snapshot = (
+        # A second restart/draining notice is not evidence of resumed activity.
+        _restart_notice_snapshot(app, notice_scope) if delivery_kind != "notice" else ()
+    )
     try:
         send_delivery = getattr(client, "send_card_delivery", None)
         if callable(send_delivery):
@@ -7269,6 +7301,7 @@ async def _send_card_for_app(
         return result
     metrics.feishu_send_retries += retry_count
     metrics.feishu_send_successes += 1
+    _retire_restart_notices(app, notice_scope, notice_snapshot)
     return CardDeliveryResult(
         message_id=message_id,
         outcome="delivered",
@@ -7467,7 +7500,7 @@ async def _recall_schedule(request: web.Request) -> web.Response:
             )
     if not math.isfinite(delay):
         return web.json_response({"ok": False, "error": "delay_seconds must be finite"}, status=400)
-    if message_id in request.app[FEISHU_MESSAGE_IDS_KEY].values():
+    if _is_retained_card_message(request.app, message_id):
         return web.json_response({"ok": False, "error": "owned session card cannot be recalled"}, status=409)
     # Caller owns the delay: only the upper bound is enforced (see EPHEMERAL_RECALL_MAX_SECONDS).
     # No floor, because the sidecar has no way to know what "too soon" means for the caller — the
@@ -7478,31 +7511,63 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     clients = request.app[FEISHU_CLIENT_KEY]
     if route_data is not None and not isinstance(route_data, dict):
         return web.json_response({"ok":False,"error":"invalid recall route"}, status=400)
+    # Family registration is narrower than the historical timer API: always
+    # resolve a complete route, even when the caller also supplies a bot id.
+    family = payload.get("notice_family")
+    if family is not None:
+        if family != "restart" or payload.get("record_only") is not True:
+            return web.json_response({"ok": False, "error": "invalid notice policy"}, status=400)
+        if len(message_id) > 256:
+            return web.json_response({"ok": False, "error": "invalid notice message id"}, status=400)
+        if not isinstance(route_data, dict) or not route_data.get("profile_id"):
+            return web.json_response({"ok": False, "error": "notice route required"}, status=400)
+        if not isinstance(route_data.get("conversation_id", ""), str):
+            return web.json_response({"ok": False, "error": "invalid notice topic"}, status=400)
+        requested_bot_id = bot_id
+        bot_id = None
     if bot_id is None and (route_data is not None or isinstance(clients, dict)):
         route_data = dict(route_data or {})
         profile = route_data.get('profile_id') or 'default'
+        if not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile):
+            return web.json_response({"ok":False,"error":"invalid recall profile"}, status=400)
         if isinstance(clients, dict) and profile not in clients:
+            if family is not None:
+                return web.json_response({"ok": False, "error": "unknown notice profile"}, status=409)
             if profile == 'default' and len(clients) == 1:
                 profile = next(iter(clients))
             else:
                 return web.json_response({"ok":False,"error":"recall route is ambiguous"}, status=409)
-        if not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile):
-            return web.json_response({"ok":False,"error":"invalid recall profile"}, status=400)
         chat = _safe_command_string(route_data.get('chat_id'))
         if not chat:
             return web.json_response({"ok":False,"error":"recall chat is required"}, status=400)
+        route_fields = {'profile_id': profile}
+        if family is not None and route_data.get('bot_id'):
+            route_fields['bot_id'] = _safe_command_string(route_data.get('bot_id'))
         probe = SidecarEvent.from_dict(dict(schema_version='1', event='system.notice',
             conversation_id=_safe_command_string(route_data.get('conversation_id')) or chat,
             message_id=message_id, chat_id=chat, platform='feishu', sequence=0,
-            created_at=time.time(), data={'profile_id':profile}))
+            created_at=time.time(), data=route_fields))
         route = _resolve_route(request, probe)
         if route is None:
             return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
         bot_id = route.bot_id or None
+    if family is not None:
+        if requested_bot_id is not None and requested_bot_id != bot_id:
+            return web.json_response({"ok": False, "error": "notice bot mismatch"}, status=409)
+        scope = _restart_notice_scope(
+            profile_id=profile, bot_id=bot_id, chat_id=chat,
+            thread_id=_safe_command_string(route_data.get("conversation_id")),
+        )
+        if scope is None:
+            return web.json_response({"ok": False, "error": "notice route unavailable"}, status=409)
     try:
         _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
+    if family is not None:
+        if not request.app[RESTART_NOTICES_KEY].register(scope, message_id):
+            return web.json_response({"ok": False, "error": "notice capacity reached"}, status=429)
+        return web.json_response({"ok": True, "message_id": message_id, "record_only": True})
     scheduled = _schedule_ephemeral_recall(
         request.app,
         message_id=message_id,
@@ -7514,7 +7579,80 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message_id": message_id, "delay_seconds": delay})
 
 
-def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id) -> bool:
+def _notice_profile_for_session_key(session_key: str) -> str:
+    return session_key.split(":", 1)[0] if ":" in session_key else "default"
+
+
+def _is_retained_card_message(app: web.Application, message_id: str) -> bool:
+    if (message_id in app[FEISHU_MESSAGE_IDS_KEY].values()
+            or message_id in app[CARD_SUMMARIES_KEY]):
+        return True
+    return any(
+        session.active_interaction is not None
+        and session.active_interaction.feishu_message_id == message_id
+        for session in app[SESSIONS_KEY].values()
+    )
+
+
+def _restart_notice_scope(*, profile_id, bot_id, chat_id, thread_id) -> NoticeScope | None:
+    """Keep empty thread and empty bot exact; neither is a wildcard."""
+    bot = str(bot_id or "")
+    bot_profile = bot.split(":", 1)[0] if ":" in bot else ""
+    profile = profile_id or bot_profile or "default"
+    if (not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile)
+            or (bot_profile and bot_profile != profile) or not chat_id
+            or any(len(str(value or "")) > 256 for value in (bot_id, chat_id, thread_id))):
+        return None
+    return NoticeScope(profile, bot, str(chat_id), str(thread_id or ""))
+
+
+def _restart_notice_snapshot(app, scope):
+    return app[RESTART_NOTICES_KEY].snapshot(scope) if scope is not None else ()
+
+
+def _restart_scope_for_message(app, message_id, bot_id) -> NoticeScope | None:
+    """Resolve an edit through actual message ownership, never session-id guessing."""
+    scopes = []
+    for session_key, session in app[SESSIONS_KEY].items():
+        if session.delivery_kind == "notice":
+            continue
+        interaction = session.active_interaction
+        if app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == message_id:
+            thread_id = session.conversation_id
+            if thread_id == session.chat_id or not thread_id.startswith(("om_", "omt_")):
+                thread_id = session.reply_to_message_id if session.reply_in_thread else ""
+        elif interaction is not None and interaction.feishu_message_id == message_id:
+            thread_id = interaction.thread_id or (
+                interaction.reply_to_message_id if interaction.reply_in_thread else "")
+        else:
+            continue
+        if app[MESSAGE_BOT_IDS_KEY].get(session_key) != bot_id:
+            continue
+        scope = _restart_notice_scope(
+            profile_id=_notice_profile_for_session_key(session_key), bot_id=bot_id,
+            chat_id=session.chat_id, thread_id=thread_id,
+        )
+        if scope is not None:
+            scopes.append(scope)
+    return scopes[0] if scopes and all(scope == scopes[0] for scope in scopes) else None
+
+
+def _retire_restart_notices(app, scope, snapshot) -> None:
+    if scope is None:
+        return
+    registry = app[RESTART_NOTICES_KEY]
+    for message_id, generation in snapshot:
+        if not registry.ready(scope, message_id, generation):
+            continue
+        # Keep ownership until actual deletion succeeds, including task-capacity
+        # rejection. A later successful send can retry the same pending notice.
+        _schedule_ephemeral_recall(
+            app, message_id=message_id, delay_seconds=0, bot_id=scope.bot_id or None,
+            notice_owner=(scope, generation),
+        )
+
+
+def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id, notice_owner=None) -> bool:
     tasks = app[EPHEMERAL_RECALL_TASKS_KEY]
     key = (bot_id or "", message_id)
     if key in tasks:
@@ -7522,7 +7660,8 @@ def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id) -> boo
     if len(tasks) >= EPHEMERAL_RECALL_MAX_PENDING:
         return False
     task = asyncio.create_task(_run_ephemeral_recall(
-        app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id))
+        app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id,
+        notice_owner=notice_owner))
     tasks[key] = task
     task.add_done_callback(lambda done: tasks.pop(key, None) if tasks.get(key) is done else None)
     app[METRICS_KEY].ephemeral_recalls_scheduled += 1
@@ -7535,15 +7674,25 @@ async def _run_ephemeral_recall(
     message_id: str,
     delay_seconds: float,
     bot_id: str | None,
+    notice_owner: tuple[NoticeScope, int] | None = None,
 ) -> None:
     metrics: SidecarMetrics = app[METRICS_KEY]
     try:
         await asyncio.sleep(delay_seconds)
-        if message_id in app[FEISHU_MESSAGE_IDS_KEY].values():
+        if notice_owner is not None:
+            scope, generation = notice_owner
+            if not app[RESTART_NOTICES_KEY].contains(scope, message_id, generation):
+                return
+        if _is_retained_card_message(app, message_id):
             # Counted as a failure, but leave a trace: this branch used to be completely silent, so a
             # recall that "failed" because the message had meanwhile become an owned session card was
             # indistinguishable from one the API refused. Debug, not warning — skipping is correct here.
             metrics.ephemeral_recall_failures += 1
+            if notice_owner is not None:
+                # This message acquired durable content. Retire its disposable
+                # status permanently, before ordinary session retention expires.
+                scope, generation = notice_owner
+                app[RESTART_NOTICES_KEY].discard(scope, message_id, generation)
             logger.debug(
                 "Ephemeral recall skipped: %s became an owned session card",
                 _diagnostic_id_hash(message_id),
@@ -7551,12 +7700,21 @@ async def _run_ephemeral_recall(
             return
         if await _delete_card_for_app(app, message_id, bot_id):
             metrics.ephemeral_recalls_completed += 1
+            if notice_owner is not None:
+                scope, generation = notice_owner
+                app[RESTART_NOTICES_KEY].discard(scope, message_id, generation)
         else:
             metrics.ephemeral_recall_failures += 1
+            if notice_owner is not None:
+                scope, generation = notice_owner
+                app[RESTART_NOTICES_KEY].defer(scope, message_id, generation)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         metrics.ephemeral_recall_failures += 1
+        if notice_owner is not None:
+            scope, generation = notice_owner
+            app[RESTART_NOTICES_KEY].defer(scope, message_id, generation)
         logger.debug("Ephemeral recall failed: %s", exc)
 
 
@@ -7580,6 +7738,8 @@ async def _update_card_for_app(
     notice_update: bool = False,
 ) -> bool:
     metrics: SidecarMetrics = app[METRICS_KEY]
+    notice_scope = _restart_scope_for_message(app, message_id, bot_id)
+    notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     for attempt in range(UPDATE_MAX_ATTEMPTS):
         if is_current is not None and not is_current():
             return False
@@ -7604,6 +7764,7 @@ async def _update_card_for_app(
         metrics.feishu_update_successes += 1
         if is_current is not None and not is_current():
             return False
+        _retire_restart_notices(app, notice_scope, notice_snapshot)
         return True
     if notice_update:
         metrics.notice_update_failures += 1

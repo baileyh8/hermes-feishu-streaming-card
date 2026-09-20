@@ -5125,6 +5125,10 @@ async def _hfc_send_plain_notice(
     try:
         result = await original(adapter, chat_id, text, reply_to=reply_to, metadata=metadata)
         if getattr(result, "success", False):
+            await _hfc_recall_plain_text_status_notice(
+                chat_id, text, metadata, result, reply_to=reply_to,
+                generated_restart_notice=(text == _HFC_GATEWAY_ONLINE_TEXT),
+            )
             return result
         return _send_result(False, error="delivery_disposition=native")
     except Exception as exc:
@@ -6447,7 +6451,9 @@ async def _hfc_send_with_native_command_result_card(
         return _send_result(False, error="original Feishu send unavailable")
     if callable(original):
         result = await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
-        await _hfc_recall_plain_text_status_notice(chat_id, content, metadata, result)
+        await _hfc_recall_plain_text_status_notice(
+            chat_id, content, metadata, result, reply_to=reply_to,
+        )
         return result
     return _send_result(False, error="original Feishu send unavailable")
 
@@ -6457,6 +6463,9 @@ async def _hfc_recall_plain_text_status_notice(
     content: Any,
     metadata: Any,
     result: Any,
+    *,
+    reply_to: str | None = None,
+    generated_restart_notice: bool = False,
 ) -> bool:
     """Best-effort recall of known status templates on the task's own route.
 
@@ -6479,6 +6488,23 @@ async def _hfc_recall_plain_text_status_notice(
             profile_id=str(context.get("profile_id") or ""),
             thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
         )
+        # Text recognition alone never authorizes withdrawal: an ordinary answer
+        # can quote the exact template. Only HFC's dedicated notice producer sets
+        # this provenance bit; native/home/adapter.send text has no such proof.
+        if generated_restart_notice and str(content or "") == _HFC_GATEWAY_ONLINE_TEXT:
+            if getattr(result, "success", False) is not True:
+                return False
+            profile, provenance = _profile_identity({}, source, None)
+            if provenance.startswith("sanitized_"):
+                return False
+            # With no explicit topic, a reply anchor is safer than guessing home.
+            thread_id = source.thread_id or str(reply_to or "")
+            return await schedule_message_recall_async(
+                str(getattr(result, "message_id", "") or ""),
+                route={"profile_id": profile, "chat_id": source.chat_id,
+                       "conversation_id": thread_id},
+                notice_family="restart",
+            )
         return await recall_transient_thread_notice_async(source, content, result)
     except Exception:
         return False
@@ -9789,6 +9815,7 @@ async def schedule_message_recall_async(
     delay_seconds: float = 15.0,
     bot_id: str = "",
     route: dict[str, str] | None = None,
+    notice_family: str = "",
 ) -> bool:
     """Ask the sidecar to withdraw ``message_id`` ``delay_seconds`` after it was posted.
 
@@ -9811,6 +9838,10 @@ async def schedule_message_recall_async(
             payload["bot_id"] = str(bot_id)
         if route is not None:
             payload["route"] = dict(route)
+        if notice_family:
+            payload.pop("delay_seconds", None)
+            payload["notice_family"] = notice_family
+            payload["record_only"] = True
         url = f"{_summary_base_url(config.event_url)}/recall/schedule"
         result = await _post_json_ordered_response(url, payload, config.timeout_seconds)
         return isinstance(result, dict) and result.get("ok") is True
