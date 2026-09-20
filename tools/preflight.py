@@ -88,6 +88,24 @@ def fixture_check(root, environ):
             report["status"] = "digest_mismatch"
             return report, fixture
         report["verified_files"] += 1
+    # Native capability gates clone the fixture and inspect its exact commit.
+    # Matching source files in an archive or a different checkout are not a
+    # substitute. Disable optional index writes to preserve check-only mode.
+    git_root = run_read(["git", "--no-optional-locks", "rev-parse", "--show-toplevel"], fixture)
+    if git_root.returncode:
+        report["status"] = "git_checkout_required"
+        return report, fixture
+    if Path(git_root.stdout.strip()).resolve() != fixture.resolve():
+        report["status"] = "git_root_mismatch"
+        return report, fixture
+    head = run_read(["git", "--no-optional-locks", "rev-parse", "--verify", "HEAD"], fixture)
+    if head.returncode or head.stdout.strip() != provenance.get("commit"):
+        report["status"] = "commit_mismatch"
+        return report, fixture
+    status = run_read(["git", "--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all"], fixture)
+    if status.returncode or status.stdout:
+        report["status"] = "unverified" if status.returncode else "dirty"
+        return report, fixture
     report["status"] = "verified"
     return report, fixture
 

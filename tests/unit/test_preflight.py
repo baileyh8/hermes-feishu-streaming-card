@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -28,11 +29,15 @@ def repo(tmp_path):
     provenance = package / "install/_native_hook_provenance/provenance.json"
     provenance.parent.mkdir(parents=True)
     source = b"fixed fixture\n"
-    provenance.write_text(json.dumps({"files": [{"relative_path": "gateway/run.py",
-        "sha256": "sha256:" + hashlib.sha256(source).hexdigest()}]}))
     fixture = tmp_path / "private-fixed-source"
     (fixture / "gateway").mkdir(parents=True)
     (fixture / "gateway/run.py").write_bytes(source)
+    (fixture / "README.md").write_text("Fixture documentation\n")
+    subprocess.run(["git", "init", "-q", str(fixture)], check=True)
+    _commit_all(fixture, "fixed source")
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=fixture, text=True).strip()
+    provenance.write_text(json.dumps({"commit": commit, "files": [{"relative_path": "gateway/run.py",
+        "sha256": "sha256:" + hashlib.sha256(source).hexdigest()}]}))
     (root / "tests/unit").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -80,6 +85,44 @@ def test_wrong_fixture_is_not_reported_ready(repo, capsys):
     code, report, _ = invoke(capsys, repo, ["--check-only"])
     assert code == 2
     assert report["fixture"]["status"] == "digest_mismatch"
+
+
+@pytest.mark.parametrize("condition,status", [
+    ("archive", "git_checkout_required"),
+    ("wrong_commit", "commit_mismatch"),
+    ("dirty_worktree", "dirty"),
+    ("dirty_index", "dirty"),
+    ("untracked", "dirty"),
+    ("nested", "git_root_mismatch"),
+])
+def test_matching_hashes_require_clean_exact_git_checkout(repo, capsys, monkeypatch, condition, status):
+    root, fixture = repo
+    if condition == "archive":
+        shutil.rmtree(fixture / ".git")
+    elif condition == "wrong_commit":
+        subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                        "commit", "--allow-empty", "-qm", "different commit, same files"], cwd=fixture, check=True)
+    elif condition in {"dirty_worktree", "dirty_index"}:
+        (fixture / "README.md").write_text("Changed outside the hashed files\n")
+        if condition == "dirty_index":
+            subprocess.run(["git", "add", "README.md"], cwd=fixture, check=True)
+    elif condition == "untracked":
+        (fixture / "local.py").write_text("# unexpected local source\n")
+    else:
+        parent = root / "nested-source"
+        parent.mkdir()
+        moved = parent / fixture.name
+        shutil.move(str(fixture), moved)
+        shutil.rmtree(moved / ".git")
+        fixture = moved
+    monkeypatch.setattr(preflight, "execute_suite", lambda *args: pytest.fail("pytest started with unverified checkout"))
+    for args in (["--check-only"], ["--suite", "full"]):
+        code, report, _ = invoke(capsys, (root, fixture), args)
+        assert code == 2
+        assert report["fixture"]["verified_files"] == 1
+        assert report["fixture"]["status"] == status
+        assert report["status"] == ("incomplete" if args == ["--check-only"] else "blocked")
+        assert report["pytest"]["status"] == "not_run"
 
 
 @pytest.mark.parametrize("passes", [True, False])
