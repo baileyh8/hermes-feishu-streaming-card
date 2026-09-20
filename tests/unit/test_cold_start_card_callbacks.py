@@ -333,3 +333,112 @@ def test_disabled_runtime_does_not_patch_adapter(runtime, monkeypatch):
     assert hook_runtime.emit_from_hermes_locals(locals_for(Runner(adapter))) is False
     assert callback(adapter) is original
     assert not adapter._ws_thread_loop.callbacks
+
+
+def generated_turn_callbacks(adapter, runner, *, profile="default"):
+    """Execute the patcher-produced Hermes closure, with its real freevars."""
+    from pathlib import Path
+    from hermes_feishu_card.install import patcher
+
+    source = (Path(__file__).parents[1] / "fixtures/hermes_turn_runner.py").read_text()
+    patched = patcher._apply_turn_callbacks(source, strategy="gateway_run_013_plus")
+    namespace = {}
+    exec(compile(patched, "hermes_turn_runner_fixture.py", "exec"), namespace)
+    runner.agent = SimpleNamespace()
+    runner.stream_consumer = SimpleNamespace()
+    runner.voice_ack_callback = lambda *args: None
+    ctx = SimpleNamespace(
+        source=locals_for(runner, profile=profile)["source"],
+        _status_adapter=adapter,
+        _status_chat_id=f"chat-{profile}",
+        session_key=f"session-{profile}",
+        event_message_id=f"message-{profile}",
+        _loop_for_step=None,
+        _run_still_current=lambda: True,
+        wait_for_clarify=lambda *args: "native clarification",
+        send_approval=lambda *args: None,
+    )
+    turn = namespace["TurnRunner"](runner, ctx)
+    ctx.progress_callback = turn.progress_callback
+    ctx._status_callback_sync = turn._status_callback_sync
+    return turn.run_sync(), ctx
+
+
+@pytest.mark.parametrize("kind", ["approval", "clarify"])
+@pytest.mark.parametrize("profile", ["default", "work"])
+@pytest.mark.parametrize("real_sdk", [False, True])
+def test_actual_generated_first_interaction_closure_wires_first_click(runtime, monkeypatch, kind, profile, real_sdk):
+    handler_factory = None
+    if real_sdk:
+        pytest.importorskip("lark_oapi")
+        from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+        handler_factory = lambda f: EventDispatcherHandler.builder("", "").register_p2_card_action_trigger(f).build()
+    default, work = make_adapter(handler_factory), make_adapter(handler_factory)
+    runner = Runner(default, work)
+    adapter = work if profile == "work" else default
+    agent, ctx = generated_turn_callbacks(adapter, runner, profile=profile)
+    forwarded_locals, resolved = [], []
+    original = hook_runtime.request_interaction_from_hermes_locals
+
+    def request(values, **kwargs):
+        forwarded_locals.append(values)
+        return original(values, **kwargs)
+
+    def publish(values, url, payload, timeout):
+        adapter._ws_thread_loop.drain()
+        processor = adapter._ws_client._event_handler._callback_processor_map["p2.card.action.trigger"]
+        dispatch = processor.do if real_sdk else processor.f
+        dispatch(click(profile=profile, choice="once" if kind == "approval" else "Option A"))
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(hook_runtime, "request_interaction_from_hermes_locals", request)
+    monkeypatch.setattr(hook_runtime, "_post_interaction_event", publish)
+    monkeypatch.setattr(hook_runtime, "_get_json_sync", lambda *args: (
+        {"status": "completed", "choice": runtime.posts[0]["action"]["value"]["choice"]}
+        if runtime.posts else {"status": "failed"}))
+    monkeypatch.setattr(hook_runtime, "resolve_approval_choice", lambda data, session, choice: resolved.append((session, choice)))
+    if kind == "clarify":
+        assert agent.clarify_callback("Choose", ["Option A", "Option B"]) == "Option A"
+    else:
+        agent.approval_callback({"command": "echo test", "description": "test only"})
+        assert resolved == [(ctx.session_key, "once")]
+    assert len(forwarded_locals) == 1
+    assert "self" not in forwarded_locals[0] and "runner" not in forwarded_locals[0]
+    assert forwarded_locals[0]["_hfc_turn_ctx"] is ctx
+    assert len(runtime.posts) == 1
+    assert runtime.posts[0]["context"]["profile_id"] == profile
+    assert adapter.native_calls == []
+
+
+@pytest.mark.parametrize("route", ["same-live-adapter", "foreign-adapter", "missing-profile", "disconnected"])
+def test_generated_closure_remembered_gateway_requires_exact_live_profile_adapter(runtime, monkeypatch, route):
+    adapter = make_adapter()
+    runner = Runner(adapter)
+    agent, ctx = generated_turn_callbacks(adapter, runner)
+    # Earlier contexts may retain only generic callbacks. The fallback Gateway
+    # must prove ownership rather than picking whichever runner was remembered.
+    ctx.progress_callback = lambda *args: None
+    ctx._status_callback_sync = lambda *args: None
+    remembered = Runner(make_adapter()) if route == "foreign-adapter" else runner
+    hook_runtime._remember_gateway_runner(remembered)
+    if route == "missing-profile":
+        ctx.source.profile = "missing"
+    elif route == "disconnected":
+        adapter._client = None
+
+    def publish(values, url, payload, timeout):
+        adapter._ws_thread_loop.drain()
+        callback(adapter)(click(choice="Option A"))
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(hook_runtime, "_post_interaction_event", publish)
+    monkeypatch.setattr(hook_runtime, "_get_json_sync", lambda *args: (
+        {"status": "completed", "choice": "Option A"} if runtime.posts else {"status": "failed"}))
+    answer = agent.clarify_callback("Choose", ["Option A", "Option B"])
+    if route == "same-live-adapter":
+        assert answer == "Option A"
+        assert len(runtime.posts) == 1 and adapter.native_calls == []
+    else:
+        assert answer == "native clarification"
+        assert runtime.posts == [] and len(adapter.native_calls) == 1
+        assert callback(adapter).__func__ is not hook_runtime._hfc_on_feishu_card_action_trigger

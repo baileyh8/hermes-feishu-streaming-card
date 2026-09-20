@@ -3387,6 +3387,37 @@ def _uses_text_interaction_fallback(result: Any) -> bool:
     )
 
 
+def _hfc_eager_runner_from_turn_context(local_vars: dict[str, Any], source: Any) -> Any:
+    """Recover closure ownership only through the exact live turn/adapter route."""
+    ctx = local_vars.get("_hfc_turn_ctx") or local_vars.get("ctx")
+    if ctx is None or getattr(ctx, "source", None) is not source:
+        return None
+    expected_adapter = getattr(ctx, "_status_adapter", None)
+    if expected_adapter is None or getattr(expected_adapter, "_client", None) is None:
+        return None
+    candidates = []
+    # Nested callbacks capture ctx, but Python does not include run_sync's self
+    # in their locals. Hermes wires these bound methods before creating them.
+    for name in ("progress_callback", "_status_callback_sync"):
+        callback_owner = getattr(getattr(ctx, name, None), "__self__", None)
+        if callback_owner is not None and getattr(callback_owner, "_ctx", None) is ctx:
+            candidate = getattr(callback_owner, "_runner", None)
+            if candidate is not None:
+                candidates.append(candidate)
+    # Older contexts may not retain bound methods. Use the remembered Gateway
+    # only when its profile-aware resolver returns the very same live adapter.
+    with _GATEWAY_RUNNER_LOCK:
+        reference = _GATEWAY_RUNNER_REF
+    if reference is not None:
+        remembered = reference()
+        if remembered is not None:
+            candidates.append(remembered)
+    for candidate in candidates:
+        if _hfc_feishu_adapter_from_runner(candidate, source) is expected_adapter:
+            return candidate
+    return None
+
+
 def _hfc_eager_ensure_command_card_hooks(local_vars: dict[str, Any]) -> bool:
     """Wire the first interaction even when optional startup hooks were unavailable.
 
@@ -3402,6 +3433,8 @@ def _hfc_eager_ensure_command_card_hooks(local_vars: dict[str, Any]) -> bool:
         # Current Hermes moves callbacks into TurnRunner; legacy hooks still
         # receive GatewayRunner as self. Never guess another profile's adapter.
         runner = local_vars.get("runner") or getattr(owner, "_runner", None) or owner
+        if runner is None:
+            runner = _hfc_eager_runner_from_turn_context(local_vars, source)
         adapter = _hfc_feishu_adapter_from_runner(runner, source)
         if adapter is None:
             return False
