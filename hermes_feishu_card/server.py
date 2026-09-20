@@ -5480,7 +5480,10 @@ async def _apply_event_locked_inner(
     if applied and not terminal_already_handled:
         render_result = _render_session_card_result_for_app(request.app, session)
         if needs_continuation(session, event) and render_result.disposition == "card":
-            await _open_display_continuation(request, session_key, session, render_result.card)
+            await _open_display_continuation(
+                request, session_key, session, render_result.card,
+                profile_id=_policy_profile_id(event),
+            )
             feishu_message_id = feishu_message_ids.get(session_key)
             render_result = _render_session_card_result_for_app(request.app, session)
         if event_is_terminal and render_result.disposition == "native":
@@ -5672,6 +5675,30 @@ async def _apply_event_locked_inner(
         ), None
     if applied and event.event.startswith("interaction."):
         _store_interaction_result(request.app, session)
+        # Callback responses replace their own legacy card in Feishu. Gateway
+        # text completions and failure events have no such response: settle the
+        # actual auxiliary message explicitly rather than leaving dead controls.
+        receipt = session.active_interaction
+        if (receipt is not None and receipt.feishu_message_id
+                and receipt.status in {"completed", "failed"}
+                and (event.event == "interaction.failed"
+                     or event.event == "interaction.completed" and advance_sequence)):
+            receipt_snapshot = copy.deepcopy(session)
+            receipt_snapshot.display_segment = {}
+            if _interaction_mode_for_session_key(request.app, session_key) == "callback":
+                receipt_card = _render_interaction_callback_card_for_app(
+                    request.app, receipt_snapshot, session_key=session_key
+                )
+            else:
+                receipt_card = _render_session_card_for_app(
+                    request.app, receipt_snapshot, session_key=session_key
+                )
+            updated = await _update_card_for_app(
+                request.app, receipt.feishu_message_id, receipt_card,
+                message_bot_ids.get(session_key),
+                is_current=lambda: sessions.get(session_key) is session and session.active_interaction is receipt,
+            )
+            request.app[DIAGNOSTICS_KEY]["last_interaction_receipt_update"] = "delivered" if updated else "failed"
     if event_is_terminal:
         request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
             "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -5878,7 +5905,7 @@ async def _apply_event_locked_inner(
     return web.json_response(response_payload), post_lock_task
 
 
-async def _open_display_continuation(request, session_key, session, card):
+async def _open_display_continuation(request, session_key, session, card, *, profile_id):
     """Commit a new display owner only after a confirmed, same-route send.
 
     Called under the turn lock. A failed/uncertain create gets no per-delta
@@ -5890,7 +5917,7 @@ async def _open_display_continuation(request, session_key, session, card):
     if old_animation is not None:
         old_animation.cancel()
         await asyncio.gather(old_animation, return_exceptions=True)
-    profile = session_key.split(":", 1)[0] if ":" in session_key else ""
+    profile = profile_id or ""
     # The accepted interaction already checkpointed the boundary. Do not save
     # a newly applied terminal event before its platform create has a result.
     delivery = await _send_card_for_app(
@@ -5900,11 +5927,14 @@ async def _open_display_continuation(request, session_key, session, card):
         reply_in_thread=state["reply_in_thread"] or session.reply_in_thread,
         delivery_key=f"{session_key}:continuation:{state['interaction_id']}:{state['boundary_sequence']}",
         delivery_kind="chat",
+        profile_id=profile_id,
     )
     state["pending"] = False
     if delivery.delivered:
         state["generation"] += 1
         state["active"] = True
+        if state["reply_in_thread"] and state["reply_to_message_id"]:
+            session.reply_to_message_id = state["reply_to_message_id"]
         app[FEISHU_MESSAGE_IDS_KEY][session_key] = delivery.message_id
         app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = "delivered"
     else:

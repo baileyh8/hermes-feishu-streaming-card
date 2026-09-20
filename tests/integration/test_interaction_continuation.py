@@ -9,6 +9,11 @@ from aiohttp.test_utils import TestClient, TestServer
 from hermes_feishu_card.server import create_app, SESSIONS_KEY, FEISHU_MESSAGE_IDS_KEY
 
 
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(tmp_path / "state"))
+
+
 class Client:
     def __init__(self):
         self.sent = []
@@ -209,3 +214,28 @@ async def test_native_runtime_selection_reaches_new_owner_without_consuming_tran
             assert "NATIVE_RESUMED" in str(client.sent[-1][1])
     finally:
         listener.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["callback", "text"])
+async def test_second_question_failure_updates_its_receipt_and_keeps_answer(mode):
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0, "interaction_mode": mode})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "question_one")
+        await post(http, "answer.delta", 3, {"text": "KEEP_CONTINUATION"})
+        await post(http, "interaction.requested", 4, {
+            "interaction_id": "question_two", "kind": "clarify", "prompt": "Second question",
+            "options": [{"label": "B", "value": "b"}],
+            "reply_to_message_id": "om_fixture_anchor", "reply_in_thread": True,
+        })
+        receipt_id = client.sent[-1][0]
+        await post(http, "interaction.failed", 5, {
+            "interaction_id": "question_two", "error": "SECOND_QUESTION_FAILED",
+        })
+        await asyncio.sleep(.02)
+        receipts = [card for mid, card in client.updated if mid == receipt_id]
+        assert receipts and "SECOND_QUESTION_FAILED" in str(receipts[-1])
+        assert "interaction.select" not in str(receipts[-1])
+        assert "KEEP_CONTINUATION" in app[SESSIONS_KEY]["turn_fixture"].answer_text

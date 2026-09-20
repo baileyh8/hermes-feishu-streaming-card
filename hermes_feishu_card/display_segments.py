@@ -99,7 +99,7 @@ def display_view(session):
     if not state:
         return session
     interaction = session.active_interaction
-    if interaction is not None and interaction.status in {"pending", "paused"}:
+    if interaction is not None and interaction.status in {"pending", "paused", "failed"}:
         return session
     if state.get("failed"):
         view = copy.copy(session)
