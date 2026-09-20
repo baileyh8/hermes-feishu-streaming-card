@@ -10,6 +10,7 @@ from pathlib import Path
 from .card_timeline import CardTimeline, TimelineEntry
 from .session import CardSession, ToolState
 from .display_segments import valid_checkpoint_state
+from .legacy_owner import valid_legacy_receipt
 from .native_handoff import (
     _prepare_private_root, _validate_existing_private_file, _atomic_write_private,
 )
@@ -36,6 +37,11 @@ class SessionStore:
             self.remove(key)
             return
         body = {k: getattr(session, k) for k in _FIELDS}
+        # Ordinary cards remain readable by v4.6.3 after a rollback. Records
+        # using new presentation ownership need the newer reader instead.
+        for optional in ('display_segment', 'legacy_owner_receipt'):
+            if not body[optional]:
+                body.pop(optional)
         body['tools'] = {k: asdict(v) for k, v in session.tools.items()}
         body['timeline'] = asdict(session.timeline)
         body['normalizers'] = [session.thinking_normalizer._pending, session.answer_normalizer._pending]
@@ -96,9 +102,12 @@ class SessionStore:
                 # v4.6.3 records predate display segments. Preserve their exact
                 # semantics; new records retain the original logical identity.
                 data.setdefault('display_segment', {})
+                data.setdefault('legacy_owner_receipt', {})
                 if set(data) != _FIELDS | {'tools','timeline','normalizers'}:
                     continue
                 if not valid_checkpoint_state(data['display_segment']):
+                    continue
+                if not valid_legacy_receipt(data['legacy_owner_receipt']):
                     continue
                 session = CardSession(**{k:data[k] for k in _FIELDS})
                 if not all(isinstance(getattr(session,k),str) and getattr(session,k)

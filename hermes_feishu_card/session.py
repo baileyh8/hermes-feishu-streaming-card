@@ -199,6 +199,9 @@ class CardSession:
         repr=False,
     )
     display_segment: dict[str, Any] = field(default_factory=dict)
+    # Non-empty only when the writable owner is the initial legacy receipt.
+    # Persist rendered static text, never InteractionState or callback tokens.
+    legacy_owner_receipt: dict[str, Any] = field(default_factory=dict)
     _tool_call_count: int = field(default=0)
     _answer_archive_index: int | None = None
     timeline: CardTimeline = field(default_factory=CardTimeline)

@@ -87,6 +87,8 @@ from .render import (
     CardRenderResult,
     _format_duration,
     _is_initial_loading,
+    _primary_text_for_session,
+    _render_limit_handoff_card,
     render_card_result,
     render_legacy_interaction_callback_card,
     render_terminal_limit_handoff_card,
@@ -94,6 +96,7 @@ from .render import (
 from .process import state_dir
 from .session import CardSession
 from .display_segments import display_view, needs_continuation
+from .legacy_owner import legacy_owner_body, static_legacy_receipt
 from .status import StatusConfig
 from .subscription_usage import fetch_codex_subscription_usage
 from .install.detect import HermesDetection, detect_hermes
@@ -4734,6 +4737,7 @@ async def _stop_card_restore(app):
 async def _apply_event_locked(request, event, *, advance_sequence=True):
     result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
     key = _resolve_session_key(request.app, event)
+    _remember_legacy_owner_receipt(request.app, key)
     profile = _policy_profile_id(event)
     if profile is not None:
         _checkpoint_session(request.app, key, profile)
@@ -5376,6 +5380,8 @@ async def _apply_event_locked_inner(
                 message_id = str(delivery.message_id)
                 feishu_message_ids[session_key] = message_id
                 message_bot_ids[session_key] = route.bot_id
+                if render_result.card.get("schema") != "2.0":
+                    session.legacy_owner_receipt = static_legacy_receipt(render_result.card)
                 if _is_heartbeat_notice(event):
                     # A heartbeat is transient by nature: arm the recall deadline now and re-arm it
                     # on every later edit, so it disappears once it stops carrying news.
@@ -5486,6 +5492,8 @@ async def _apply_event_locked_inner(
             )
             feishu_message_id = feishu_message_ids.get(session_key)
             render_result = _render_session_card_result_for_app(request.app, session)
+        if event.event != "interaction.requested":
+            render_result = _existing_owner_render_result(request.app, session, render_result, session_key=session_key)
         if event_is_terminal and render_result.disposition == "native":
             handoff_record, handoff_created = _begin_native_handoff(
                 request.app,
@@ -5768,6 +5776,7 @@ async def _apply_event_locked_inner(
                 populated_result = _render_session_card_result_for_app(
                     request.app, latest_session
                 )
+                populated_result = _existing_owner_render_result(request.app, latest_session, populated_result, session_key=session_key)
                 if populated_result.disposition == "card":
                     latest_card = populated_result.card
                 else:
@@ -5778,6 +5787,7 @@ async def _apply_event_locked_inner(
                     bounded_result = _render_session_card_result_for_app(
                         request.app, latest_session
                     )
+                    bounded_result = _existing_owner_render_result(request.app, latest_session, bounded_result, session_key=session_key)
                     if bounded_result.disposition == "card":
                         latest_card = bounded_result.card
             updated = await _update_card_for_app(
@@ -5935,6 +5945,7 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         state["active"] = True
         if state["reply_in_thread"] and state["reply_to_message_id"]:
             session.reply_to_message_id = state["reply_to_message_id"]
+        session.legacy_owner_receipt = {}
         app[FEISHU_MESSAGE_IDS_KEY][session_key] = delivery.message_id
         app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = "delivered"
     else:
@@ -6929,11 +6940,52 @@ def _render_session_card_for_app(
     *,
     session_key: str | None = None,
 ) -> dict[str, Any]:
-    return _render_session_card_result_for_app(
+    result = _render_session_card_result_for_app(
         app,
         session,
         session_key=session_key,
-    ).card
+    )
+    return _existing_owner_render_result(app, session, result, session_key=session_key).card
+
+
+def _remember_legacy_owner_receipt(app, session_key):
+    session = app[SESSIONS_KEY].get(session_key)
+    if session is None or not session.legacy_owner_receipt:
+        return
+    interaction = session.active_interaction
+    if interaction is None or interaction.feishu_message_id != app[FEISHU_MESSAGE_IDS_KEY].get(session_key):
+        return
+    snapshot = copy.deepcopy(session)
+    if snapshot.active_interaction.status in {"pending", "paused"}:
+        # The live request still uses its original card. This static checkpoint
+        # is only the safe fallback after a restart, where its waiter is gone.
+        snapshot.active_interaction.status = "failed"
+        snapshot.active_interaction.error = "原交互已失效，请重新发起请求。"
+    session.legacy_owner_receipt = static_legacy_receipt(
+        _render_interaction_callback_card_for_app(app, snapshot, session_key=session_key)
+    )
+
+
+def _existing_owner_render_result(app, session, result, *, session_key=None):
+    if not session.legacy_owner_receipt or result.card.get("schema") != "2.0":
+        return result
+    _, config, title, _ = _session_card_render_context(app, session, session_key=session_key)
+    primary = (_primary_text_for_session(display_view(session), stream_thinking_to_body=_safe_bool(
+        config.get("stream_thinking_to_body"), True
+    )) if result.disposition == "card" else None)
+    card = legacy_owner_body(session.legacy_owner_receipt, result.card, primary)
+    inspection = inspect_card_limits(card)
+    if inspection.safe:
+        return replace(result, card=card, inspection=inspection)
+    terminal = session.status in {"completed", "failed"}
+    placeholder = _render_limit_handoff_card(title=title, terminal=terminal)
+    bounded = legacy_owner_body(session.legacy_owner_receipt, placeholder)
+    if not inspect_card_limits(bounded).safe:
+        # The original receipt already passed the shared limit. Preserve it
+        # unchanged instead of trimming the question or accepted decision.
+        bounded = copy.deepcopy(session.legacy_owner_receipt)
+    return replace(result, card=bounded, disposition="native" if terminal else "deferred_native",
+                   inspection=inspection, limit_reason=inspection.primary_reason)
 
 
 def _render_session_card_result_for_app(
