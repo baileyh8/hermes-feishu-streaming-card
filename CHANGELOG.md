@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 - Add 15-second expiry to owned restart notices, including Home and requester notifications; confirmed same-route delivery can wake an existing timer early. Restore deadlines across sidecar restart and retain failed-delete cooldowns.
 - Recognize exact native background-success, expired-approval and drain producers, preserve failures/output-bearing results, and color the native requester restart icon. Ordinary quoted text grants no recall authority (PR #338).
 - Terminal tool compaction retains unsuccessful tools. Existing reading defaults, timeline ordering and per-reasoning limits remain unchanged. Thanks to [mouyong](https://github.com/mouyong) for proposals, adapted code and #337/#340 evidence; original authorship is retained.
+- Retain tidytorch’s original PR #342 commit for delayed read-only confirmation after an ambiguous interaction POST; cap each lookup to the remaining grace budget and verify a real lost-response HTTP flow never replays the event.
 - See [Chinese notes](docs/release-notes-v4.6.6.md), [English notes](docs/release-notes-v4.6.6.en.md) and [acceptance](docs/wiki/feishu-acceptance-v4.6.6.md). Release and client gates are recorded separately.
 
 ## [4.6.5] - 2026-09-20

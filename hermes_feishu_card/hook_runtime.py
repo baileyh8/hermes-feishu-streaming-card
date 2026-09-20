@@ -9614,7 +9614,7 @@ def _post_interaction_event(
 
 
 def _hfc_interaction_card_confirmed(
-    config: RuntimeConfig, interaction_id: str
+    config: RuntimeConfig, interaction_id: str, *, timeout_seconds: float | None = None
 ) -> bool:
     """Return True when the sidecar already tracks the interaction (card sent).
 
@@ -9625,7 +9625,7 @@ def _hfc_interaction_card_confirmed(
     try:
         base_url = _summary_base_url(config.event_url)
         url = f"{base_url}/interactions/{parse.quote(interaction_id, safe='')}"
-        result = _get_json_sync(url, config.timeout_seconds)
+        result = _get_json_sync(url, config.timeout_seconds if timeout_seconds is None else timeout_seconds)
         return isinstance(result, dict) and result.get("status") in (
             "pending",
             "paused",
@@ -9647,11 +9647,19 @@ def _wait_for_interaction_card_confirmation(
     """
     deadline = time.monotonic() + max(0.0, min(float(grace_seconds), 5.0))
     while True:
-        if _hfc_interaction_card_confirmed(config, interaction_id):
-            return True
-        if time.monotonic() >= deadline:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             return False
-        time.sleep(0.1)
+        # The read itself consumes the grace budget. A slow lookup must not add
+        # a full configured timeout after the deadline has already expired.
+        if _hfc_interaction_card_confirmed(
+            config, interaction_id, timeout_seconds=min(config.timeout_seconds, remaining)
+        ):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.1, remaining))
 
 
 def _timeout_for_event(config: RuntimeConfig, event_name: str) -> float:

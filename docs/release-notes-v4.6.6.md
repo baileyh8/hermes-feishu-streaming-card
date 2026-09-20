@@ -8,6 +8,8 @@
 - 成功后台任务的一行提示、原生过期审批的一行提示按 15 秒收尾；失败、带输出的结果和完整审批回执保留。实际发送必须来自已知 producer，并验证 adapter、profile 和应用；普通答案引用相同文案不获得撤回权。原生 requester 重启完成提示使用彩色 ♻️，保留原文含义。
 - 开启 `hide_completed_tool_activity` 后，仅隐藏成功工具，失败、取消和中断仍显示。`focused` 在成功回合中也保留这些异常工具。默认仍为 `false`；过程默认仍为 `newest_first`、`timeline_tools_per_reasoning: 0`。
 
+- 交互 POST 响应丢失时不重发事件，改为在短暂宽限期内只读确认稍晚出现的卡片，避免过早原生回退造成重复。默认 3 秒、最多 5 秒，每次查询与间隔均受剩余预算约束；明确拒绝仍立即回退。保留 [tidytorch](https://github.com/tidytorch) 的 [PR #342](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/342) 原作者提交，并增加先不可见后出现的真实 HTTP 丢响应回归。
+
 详见[通知生命周期](wiki/notice-lifecycle.md)、[审批续答](wiki/interaction-continuation.md)、[阅读设置](wiki/reading-presets.md)和[验收记录](wiki/feishu-acceptance-v4.6.6.md)。平台拒绝撤回、来源不明历史或未知 Hermes 签名会保留消息；本版不承诺跨系统原子投递，不变更 AMD/9Router、模型选择或 Hermes 核心。
 
 感谢 [mouyong](https://github.com/mouyong) 的 [PR #338](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/338)、[PR #339](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/339) 方案与代码，以及 [#337](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/337)、[#340](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/340) 的现场证据。按来源证明和回执确认边界适配，保留贡献署名；历史贡献者仍完整保留于 README。
