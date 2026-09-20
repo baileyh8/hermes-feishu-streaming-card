@@ -39,3 +39,7 @@ V4.6.4 已发布，使 clarify 和 approval 之后的结果按聊天创建时间
 重点用例：`test_cold_start_card_callbacks.py`、`test_interaction_continuation.py`、`test_legacy_owner_fallback.py`、`test_legacy_owner_checkpoint.py` 以及真实 SDK compatibility matrix。覆盖真实生成闭包、首次选择、多个 profile、连续题目、失败/重复/迟到事件、方言保持、检查点与内容/统计保留。
 
 自动化不证明飞书手机排版、原生点击手感、推送或真实上游执行已完成。按[本轮清单](feishu-acceptance-v4.6.4.md)记录实际候选、设备、触发方式和结果。
+
+## V4.6.5 旧段收尾
+
+新续答确认送达后，旧 schema-2 卡使用新输出之前的快照保留原文、工具历史与选择回执，并标记“本段已转入续答”。这是显示归属转移，不是整轮执行成功；局部工具/子任务也改为转交状态，canonical 数据不改。创建失败/不确定时不收尾，唯一 legacy 回执不跨方言更新。旧 PATCH 失败保留新 owner 并记录诊断，不能阻断终局。参考 PR #339，未采纳无条件移除已决定审批的部分。

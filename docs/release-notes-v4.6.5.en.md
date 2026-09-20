@@ -2,6 +2,7 @@
 
 This patch continues the V4.6.x experience plan without changing reading defaults. AMD/9Router operations, default-model changes and Hermes core upgrades remain separate.
 
+- Retire the previous schema-2 card only after confirmed continuation. Preserve the pre-output snapshot and decision receipt, use neutral handoff text instead of turn success, skip legacy owners and keep the new owner if the old PATCH fails. Adapted from PR #339; unconditional removal of decided approvals remains separate.
 - Persist exact profile/bot/chat/thread restart-notice ownership across sidecar restarts. Recognize only known native startup/home/shutdown producers with matching adapter and application identity. Ordinary answers quoting the same text remain untouched; failed deletions retain retry ownership.
 - Deduplicate explicit executor `call_id` / `tool_call_id` terminal events, preserving counts, ordinals and duration; late starts cannot reopen completed calls. Legacy name-only events retain their existing behavior.
 - Add optional `timeline_order: chronological` (default `newest_first`) and `timeline_tools_per_reasoning: 2` (default `0`, unlimited per block). The latter keeps the latest successful tools per reasoning block while failures/running work remain eligible for the global item/card budgets. Body code reasoning stays chronological; stored history and counts are unchanged.
@@ -13,6 +14,6 @@ The private notice ledger is bounded to 500 scopes, eight members each, seven da
 
 Automation covers generated callbacks, actual loopback HTTP acknowledgements/rejections, restart/topic isolation, identity mismatch, failed writes, strict source migration/restore, late/duplicate tool events and opt-in display behavior. Full pytest, exact-merge CI, annotated tag, asset checksums and a normal public-tag install remain release gates; evidence is recorded with the [Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.5).
 
-The local 4.6.4 production upgrade passed. A real clarify attempt stopped on DeepSeek HTTP 503 before any tool call; desktop first-click and mobile acceptance remain unverified. Automation does not close #335 or unrelated field reports. See the [acceptance record](wiki/feishu-acceptance-v4.6.5.md).
+The local 4.6.4 production upgrade passed. An initial clarify attempt stopped on DeepSeek HTTP 503. Later macOS Feishu selection of A produced a retained receipt followed by “Acceptance complete: choice A”, while reproducing the old card remaining live. Strict first-click timing, mobile and final 4.6.5 acceptance remain separate. Automation does not close #335 or unrelated field reports. See the [acceptance record](wiki/feishu-acceptance-v4.6.5.md).
 
 Thanks to [mouyong](https://github.com/mouyong) for the notice/tool/timeline work in [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) and contributor preflight request [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330). This selectively adapts those ideas and preserves historical credits; it does not merge the entire PR.

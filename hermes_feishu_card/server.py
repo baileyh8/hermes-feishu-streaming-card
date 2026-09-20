@@ -5475,6 +5475,12 @@ async def _apply_event_locked_inner(
             session,
             now=interaction_checked_at,
         )
+    continuation_predecessor = (
+        copy.deepcopy(display_view(session))
+        if session.display_segment.get("pending")
+        and event.event in {"answer.delta", "thinking.delta", "tool.updated", "subagent.updated", "message.completed", "message.failed"}
+        else None
+    )
     applied = session.apply(event, advance_sequence=advance_sequence)
     if applied:
         _refresh_session_display_status(request, session)
@@ -5501,6 +5507,7 @@ async def _apply_event_locked_inner(
             await _open_display_continuation(
                 request, session_key, session, render_result.card,
                 profile_id=_policy_profile_id(event),
+                predecessor_snapshot=continuation_predecessor,
             )
             feishu_message_id = feishu_message_ids.get(session_key)
             render_result = _render_session_card_result_for_app(request.app, session)
@@ -5930,7 +5937,8 @@ async def _apply_event_locked_inner(
     return web.json_response(response_payload), post_lock_task
 
 
-async def _open_display_continuation(request, session_key, session, card, *, profile_id):
+async def _open_display_continuation(request, session_key, session, card, *, profile_id,
+                                     predecessor_snapshot=None):
     """Commit a new display owner only after a confirmed, same-route send.
 
     Called under the turn lock. A failed/uncertain create gets no per-delta
@@ -5943,6 +5951,7 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         old_animation.cancel()
         await asyncio.gather(old_animation, return_exceptions=True)
     profile = profile_id or ""
+    previous_message_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
     # The accepted interaction already checkpointed the boundary. Do not save
     # a newly applied terminal event before its platform create has a result.
     delivery = await _send_card_for_app(
@@ -5967,6 +5976,61 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         state["failed"] = True
         app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = delivery.outcome
     _checkpoint_session(app, session_key, profile)
+    if delivery.delivered and predecessor_snapshot is not None:
+        await _retire_continuation_predecessor(
+            app, session_key, previous_message_id, predecessor_snapshot,
+            bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
+        )
+
+
+async def _retire_continuation_predecessor(app, session_key, message_id, snapshot, *, bot_id):
+    """Freeze a confirmed handoff without claiming that the whole turn succeeded.
+
+    Adapted from PR #339's predecessor-close proposal. Keep the pre-output
+    snapshot and decision receipt; a sole legacy owner already has a static
+    receipt and must never receive a schema-2 PATCH.
+    """
+    if (not message_id or message_id == app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+            or snapshot.legacy_owner_receipt):
+        return False
+    try:
+        snapshot.display_segment = {}
+        snapshot.runtime_phase_text = ""
+        snapshot.latest_tool_preview = ""
+        snapshot.display_status = "waiting"
+        snapshot.display_status_source = "explicit"
+        snapshot.timeline.record_answer_started()
+        from .card_timeline import TERMINAL_TOOL_STATUSES, TERMINAL_SUBAGENT_STATUSES
+        for tool in snapshot.tools.values():
+            if tool.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
+                tool.status = "display_handoff"
+        for entry in snapshot.timeline.snapshot():
+            if entry.kind == "tool" and entry.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
+                entry.status = "display_handoff"
+            elif entry.kind == "subagent" and entry.status.strip().lower() not in TERMINAL_SUBAGENT_STATUSES:
+                entry.status = "display_handoff"
+        result = _render_session_card_result_for_app(app, snapshot, session_key=session_key)
+        if result.disposition != "card" or result.card.get("schema") != "2.0":
+            return False  # Do not replace preserved content with a limit placeholder.
+        card = result.card
+        note = "本段已转入续答，后续进展与结果见下方新卡"
+        card.setdefault("config", {})["streaming_mode"] = False
+        card["config"].setdefault("summary", {})["content"] = note
+        configured_title = _session_card_render_context(app, snapshot, session_key=session_key)[2]
+        title = {"tag":"plain_text", "content":"↪ " + configured_title}
+        card["header"] = {"template":"blue", "title":title,
+                          "subtitle":{"tag":"plain_text", "content":note}}
+        for element in card.get("body", {}).get("elements", []):
+            if element.get("element_id") == "footer":
+                element["content"] = note
+        if not inspect_card_limits(card).safe:
+            return False
+        updated = await _update_card_for_app(app, message_id, card, bot_id)
+        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "retired" if updated else "update_failed"
+        return bool(updated)
+    except Exception:
+        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "update_failed"
+        return False
 
 
 async def _recover_terminal_card(

@@ -1609,7 +1609,7 @@ def _name_tag(name: str) -> str:
 
 
 def _tool_is_running(tool: ToolState) -> bool:
-    return str(tool.status or "").strip().lower() not in TERMINAL_TOOL_STATUSES
+    return str(tool.status or "").strip().lower() not in TERMINAL_TOOL_STATUSES | {"display_handoff"}
 
 
 def _render_tool_activity_elements(
@@ -1866,6 +1866,8 @@ def _tool_activity_row(
 
 def _tool_terminal_pill(tool: ToolState) -> tuple[str, str]:
     status = str(tool.status or "").strip().lower()
+    if status == "display_handoff":
+        return "已转入续答", "neutral"
     if status in {"failed", "cancelled", "canceled"}:
         return _FAILED_TOOL_PILL
     return _FINISHED_TOOL_PILL
@@ -2184,6 +2186,9 @@ def _render_tool_timeline_row(
     elif normalized_status in {"cancelled", "canceled", "已取消", "取消"}:
         color = "grey"
         headline = f"⊘ **{safe_title}**{meta_suffix} · 已取消"
+    elif normalized_status == "display_handoff":
+        color = "grey"
+        headline = f"↪ **{safe_title}**{meta_suffix} · 已转入续答"
     elif normalized_status in {"queued", "waiting", "排队中", "等待中"}:
         color = "grey"
         headline = f"○ **{safe_title}**{meta_suffix} · 等待中"
@@ -2209,6 +2214,8 @@ def _render_subagent_timeline_row(title: str, status: str, detail: str) -> str:
         color, headline = "grey", f"⊘ **{label}** · 已取消"
     elif normalized_status == "interrupted":
         color, headline = "grey", f"⊘ **{label}** · 已中断"
+    elif normalized_status == "display_handoff":
+        color, headline = "grey", f"↪ **{label}** · 已转入续答"
     elif normalized_status in {"queued", "waiting"}:
         color, headline = "grey", f"○ **{label}** · 等待中"
     else:

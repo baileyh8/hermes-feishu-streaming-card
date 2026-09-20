@@ -4,6 +4,8 @@
 
 ## 修复与新增
 
+- 新续答确认发送成功后收尾上方旧卡：保留新输出到来前的正文、历史与选择回执，状态改为“本段已转入续答”，不宣称整轮成功。失败/不确定的新发送不收尾；唯一 legacy 回执不接收 schema 2.0 PATCH，旧卡更新失败不阻断新卡。此项由实际桌面复现，并参考 PR #339；无条件隐藏已决定审批的部分尚未吸收。
+
 - 重启通知的精确 profile/bot/chat/thread 归属写入私有账本，sidecar 重启后可在同一作用域成功投递时清理。只有已知原生 startup/home/shutdown producer、实际 adapter 和应用身份相符的消息可登记；普通答案即使引用相同文案也不登记。删除失败保留重试，来源不明的历史提示保留。
 - 工具事件使用上游明确的 `call_id` / `tool_call_id`：同一次调用重复终态不增加计数或条目，迟到的 start 不把终态改回运行；持续时间与 ordinal 保留。只有工具名、没有调用 ID 的旧事件继续原语义，不能可靠推断为同一调用。
 - 可选 `card.timeline_order: chronological` 让过程面板按时间正序；默认仍为 `newest_first`。`card.timeline_tools_per_reasoning: 2` 在每段思考之后显示最近两个成功工具步骤；默认 `0` 不额外限制。失败、运行步骤不被此规则裁掉，仍受 `max_timeline_items` 和卡片容量限制。正文 code 思考始终正序，历史与工具总数不变。
@@ -21,6 +23,6 @@
 
 自动化覆盖生成 callback 的实际执行、真实回环 HTTP 的明确 ACK/拒绝/缺字段、通知两次重启与跨话题隔离、应用身份不符、持久化失败、严格迁移与还原、工具重复/迟到事件及显示默认兼容。完整 pytest、精确合并 CI、annotated tag、资产/checksum 与公开 tag 普通安装是发布门禁，最终证据随 [Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.5) 登记。
 
-4.6.4 本机生产升级已通过；真实 clarify 测试被 DeepSeek HTTP 503 阻塞，未发生工具调用或成功首次点击。本版自动化不替代真实桌面/手机验收，也不据此关闭 #335 等现场问题。参见[本版验收](wiki/feishu-acceptance-v4.6.5.md)。
+4.6.4 本机生产升级已通过。初次 clarify 被 DeepSeek HTTP 503 阻塞，随后 macOS 飞书真实选择 A 成功，回执下方收到“Acceptance complete: choice A”，同时复现旧卡仍显示执行中。严格首击时序与手机体验没有单独证明，4.6.5 升级后结果另记。本版自动化不替代真实桌面/手机验收，也不据此关闭 #335 等现场问题。参见[本版验收](wiki/feishu-acceptance-v4.6.5.md)。
 
 继续感谢 [mouyong](https://github.com/mouyong) 在 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 的通知、工具和时间线方案及 [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330) 的贡献者验证需求。本版按子项适配，保留旧默认与原有贡献署名，不代表整 PR 合并。
