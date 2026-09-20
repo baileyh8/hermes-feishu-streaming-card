@@ -92,6 +92,7 @@ from .render import (
 )
 from .process import state_dir
 from .session import CardSession
+from .display_segments import display_view, needs_continuation
 from .status import StatusConfig
 from .subscription_usage import fetch_codex_subscription_usage
 from .install.detect import HermesDetection, detect_hermes
@@ -4703,6 +4704,8 @@ async def _restore_card_checkpoints(app):
                 display.status = 'failed'
                 display.display_status = ''
                 display.answer_text += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
+                if display.display_segment.get("active"):
+                    display.display_segment["answer"] += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
                 display.timeline.complete()
             try:
                 updated = await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
@@ -5383,6 +5386,8 @@ async def _apply_event_locked_inner(
                     bot_id=route.bot_id,
                 )
                 if event.event == "interaction.requested":
+                    if session.active_interaction is not None:
+                        session.active_interaction.feishu_message_id = message_id
                     _store_interaction_result(request.app, session)
                 if event_is_terminal:
                     _store_card_summary(request.app, event, session, message_id)
@@ -5466,6 +5471,10 @@ async def _apply_event_locked_inner(
     handoff_record: NativeHandoffRecord | None = None
     if applied and not terminal_already_handled:
         render_result = _render_session_card_result_for_app(request.app, session)
+        if needs_continuation(session, event) and render_result.disposition == "card":
+            await _open_display_continuation(request, session_key, session, render_result.card)
+            feishu_message_id = feishu_message_ids.get(session_key)
+            render_result = _render_session_card_result_for_app(request.app, session)
         if event_is_terminal and render_result.disposition == "native":
             handoff_record, handoff_created = _begin_native_handoff(
                 request.app,
@@ -5680,6 +5689,7 @@ async def _apply_event_locked_inner(
         is_terminal = event_is_terminal
         controller = _flush_controller_for_session(request.app, session_key)
         bot_id = message_bot_ids.get(session_key)
+        owner_generation = session.display_segment.get("generation", 0)
         _ensure_card_animation(
             request.app,
             session_key=session_key,
@@ -5693,6 +5703,8 @@ async def _apply_event_locked_inner(
             # Keep recovery content and routing bound to the accepted old turn.
             latest_session = session if is_terminal else sessions.get(session_key)
             if latest_session is None:
+                return False
+            if latest_session is not session or session.display_segment.get("generation", 0) != owner_generation:
                 return False
             # Freeze the card while an interaction is pending: Feishu card
             # updates are full replacements, so any PATCH resets the
@@ -5708,6 +5720,13 @@ async def _apply_event_locked_inner(
             ):
                 return False
             latest_card = render_result.card
+            if (str(event.event).startswith("interaction.")
+                    and interaction is not None
+                    and interaction.feishu_message_id == feishu_message_id
+                    and _interaction_mode_for_session_key(request.app, session_key) == "callback"):
+                latest_card = _render_interaction_callback_card_for_app(
+                    request.app, latest_session, session_key=session_key
+                )
             if is_terminal and render_result.disposition == "card":
                 await _populate_subscription_usage(request.app, latest_session)
                 populated_result = _render_session_card_result_for_app(
@@ -5731,6 +5750,7 @@ async def _apply_event_locked_inner(
                 latest_card,
                 bot_id,
                 notice_update=event.event == "system.notice",
+                is_current=lambda: session.display_segment.get("generation", 0) == owner_generation,
             )
             if not updated and is_terminal:
                 updated = await _retry_terminal_update(
@@ -5847,6 +5867,41 @@ async def _apply_event_locked_inner(
             _session_key(event),
         )
     return web.json_response(response_payload), post_lock_task
+
+
+async def _open_display_continuation(request, session_key, session, card):
+    """Commit a new display owner only after a confirmed, same-route send.
+
+    Called under the turn lock. A failed/uncertain create gets no per-delta
+    retries with fresh identities; the existing owner retains the full content.
+    """
+    app = request.app
+    state = session.display_segment
+    old_animation = app[CARD_ANIMATION_TASKS_KEY].pop(session_key, None)
+    if old_animation is not None:
+        old_animation.cancel()
+        await asyncio.gather(old_animation, return_exceptions=True)
+    profile = session_key.split(":", 1)[0] if ":" in session_key else ""
+    # The accepted interaction already checkpointed the boundary. Do not save
+    # a newly applied terminal event before its platform create has a result.
+    delivery = await _send_card_for_app(
+        app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
+        thread_id=state["thread_id"] or None,
+        reply_to_message_id=state["reply_to_message_id"] or session.reply_to_message_id or None,
+        reply_in_thread=state["reply_in_thread"] or session.reply_in_thread,
+        delivery_key=f"{session_key}:continuation:{state['interaction_id']}:{state['boundary_sequence']}",
+        delivery_kind="chat",
+    )
+    state["pending"] = False
+    if delivery.delivered:
+        state["generation"] += 1
+        state["active"] = True
+        app[FEISHU_MESSAGE_IDS_KEY][session_key] = delivery.message_id
+        app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = "delivered"
+    else:
+        state["failed"] = True
+        app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = delivery.outcome
+    _checkpoint_session(app, session_key, profile)
 
 
 async def _recover_terminal_card(
@@ -6863,7 +6918,7 @@ def _render_session_card_result_for_app(
     completion_in_card = (isinstance(notify, dict) and notify.get("enabled") is True
                           and notify.get("placement", "message") == "card")
     result = render_card_result(
-        session,
+        display_view(session),
         footer_fields=footer_fields,
         title=title,
         interaction_mode=interaction_mode,

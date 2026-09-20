@@ -16,6 +16,7 @@ from .events import SidecarEvent
 from .native_handoff import NativeHandoffRecord
 from .status import StatusConfig, resolve_display_status
 from .text import StreamingTextNormalizer, normalize_stream_text
+from .display_segments import append_answer, begin_continuation, record_terminal, update_thinking
 
 
 MIN_COMPLETED_SUFFIX_CHARS = 20
@@ -197,6 +198,7 @@ class CardSession:
         default=None,
         repr=False,
     )
+    display_segment: dict[str, Any] = field(default_factory=dict)
     _tool_call_count: int = field(default=0)
     _answer_archive_index: int | None = None
     timeline: CardTimeline = field(default_factory=CardTimeline)
@@ -275,6 +277,7 @@ class CardSession:
             if mode == "replace":
                 normalized = normalize_stream_text(raw_text)
                 self.thinking_text = normalized
+                update_thinking(self, normalized, mode)
             elif mode == "append_block":
                 text = normalize_stream_text(raw_text).strip()
                 if text:
@@ -282,16 +285,19 @@ class CardSession:
                         self.thinking_text = self.thinking_text.rstrip() + "\n\n" + text
                     else:
                         self.thinking_text = text
+                    update_thinking(self, text, mode)
             else:
                 delta = self.thinking_normalizer.feed(raw_text)
                 if delta:
                     self.thinking_text += delta
+                    update_thinking(self, delta, mode)
         elif event.event == "answer.delta":
             delta = self.answer_normalizer.feed(str(event.data.get("text", "")))
             if delta:
                 if self._answer_archive_index is not None:
                     self._archive_current_answer_to_reasoning()
                 self.answer_text += delta
+                append_answer(self, delta)
         elif event.event == "tool.updated":
             raw_preview = event.data.get("detail")
             if isinstance(raw_preview, str):
@@ -529,6 +535,12 @@ class CardSession:
             self._adopt_failure_metrics(event.data)
             partial = self._adopt_in_progress_content()
             self.answer_text = partial + "\n\n> " + error if partial else error
+        if event.event in {"message.completed", "message.failed"}:
+            record_terminal(self, event)
+        if self.display_segment and event.event in {"tool.updated", "subagent.updated"}:
+            self.display_segment["has_output"] = bool(
+                self.display_segment["has_output"] or event.data.get("tool_id") or event.data.get("child_id")
+            )
         self.updated_at = time.time()
         self.refresh_display_status_source()
         return True
@@ -641,6 +653,8 @@ class CardSession:
         ).strip()
         self.active_interaction.user_name = str(data.get("user_name") or "").strip()
         self.active_interaction.runtime_admission = None
+
+        begin_continuation(self)
 
     def _fail_interaction(self, data: dict[str, Any]) -> None:
         interaction_id = str(data.get("interaction_id") or "").strip()

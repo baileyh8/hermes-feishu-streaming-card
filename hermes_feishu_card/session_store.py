@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .card_timeline import CardTimeline, TimelineEntry
 from .session import CardSession, ToolState
+from .display_segments import valid_checkpoint_state
 from .native_handoff import (
     _prepare_private_root, _validate_existing_private_file, _atomic_write_private,
 )
@@ -92,7 +93,12 @@ class SessionStore:
                 if not r['message_id'] or r['bot_id'] is not None and not isinstance(r['bot_id'],str):
                     continue
                 data = r['session']
+                # v4.6.3 records predate display segments. Preserve their exact
+                # semantics; new records retain the original logical identity.
+                data.setdefault('display_segment', {})
                 if set(data) != _FIELDS | {'tools','timeline','normalizers'}:
+                    continue
+                if not valid_checkpoint_state(data['display_segment']):
                     continue
                 session = CardSession(**{k:data[k] for k in _FIELDS})
                 if not all(isinstance(getattr(session,k),str) and getattr(session,k)
@@ -109,6 +115,7 @@ class SessionStore:
                     session.display_status = ''
                     session.answer_text += '\n\n连接已重建，原授权已失效，请重新发起请求。'
                     session.timeline.complete()
+                    session.display_segment = {}
                 r['session'] = session
                 records.append(r)
             except (ValueError, TypeError, KeyError, AttributeError, OSError):
