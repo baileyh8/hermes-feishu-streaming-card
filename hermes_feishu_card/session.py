@@ -207,6 +207,9 @@ class CardSession:
     timeline: CardTimeline = field(default_factory=CardTimeline)
     thinking_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
     answer_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
+    # Immutable route provenance, populated by the server from the accepted
+    # event or checkpoint envelope. Logical turn IDs may contain colons.
+    route_profile_id: str | None = None
 
     @property
     def tool_count(self) -> int:

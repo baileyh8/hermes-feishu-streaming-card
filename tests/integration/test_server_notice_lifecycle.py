@@ -1,5 +1,7 @@
 """PR #331: only a confirmed later delivery may retire same-route restart text."""
 import asyncio
+import copy
+import json
 import time
 from types import SimpleNamespace
 
@@ -18,6 +20,7 @@ from hermes_feishu_card.session import CardSession, InteractionState
 class Client:
     def __init__(self):
         self.sent = []
+        self.updated = []
         self.deleted = []
         self.fail_send = False
         self.fail_delete = False
@@ -39,6 +42,7 @@ class Client:
             await self.before_update()
         if self.fail_update:
             raise FeishuAPIError("fixture update refusal")
+        self.updated.append((message_id, copy.deepcopy(card)))
         return None
 
     async def send_text_message(self, chat_id, text, **kwargs):
@@ -87,6 +91,57 @@ async def drain():
     for _ in range(4):
         await asyncio.sleep(0)
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("profile", [None, "work"])
+@pytest.mark.parametrize("first_event", ["message.started", "answer.delta"])
+@pytest.mark.parametrize("restore", [False, True])
+async def test_opaque_turn_id_uses_event_profile_for_notice_cleanup(
+    tmp_path, monkeypatch, profile, first_event, restore,
+):
+    monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(tmp_path / "state"))
+    fake = Client()
+
+    def make_app():
+        return server.create_app(fake, card_config={"flush_interval_ms": 0},
+                                 session_store_directory=tmp_path / "checkpoints")
+
+    def event(kind, sequence, **data):
+        if profile is not None:
+            data["profile_id"] = profile
+        return dict(schema_version="1", event=kind, platform="feishu",
+                    conversation_id="oc_fixture", message_id="om_source",
+                    turn_id="opaque:turn", chat_id="oc_fixture", sequence=sequence,
+                    created_at=time.time(), data=data)
+
+    async def assert_update_scope(http, app):
+        assert (await register(http, "om_own", profile=profile or "default")).status == 200
+        assert (await register(http, "om_other_profile", profile="opaque")).status == 200
+        response = await http.post("/events", json=event("answer.delta", 1, text="VISIBLE_RESULT"))
+        assert response.status == 200, await response.text()
+        await asyncio.sleep(.03)
+        key = f"{profile}:opaque:turn" if profile else "opaque:turn"
+        assert "VISIBLE_RESULT" in app[server.SESSIONS_KEY][key].answer_text
+        assert "VISIBLE_RESULT" in str(fake.updated[-1][1])
+        assert fake.deleted == ["om_own"]
+        assert len(fake.sent) == 1
+
+    app = make_app()
+    async with TestClient(TestServer(app)) as http:
+        response = await http.post("/events", json=event(first_event, 0, text="INITIAL"))
+        assert response.status == 200, await response.text()
+        if not restore:
+            await assert_update_scope(http, app)
+    if restore:
+        app = make_app()
+        async with TestClient(TestServer(app)) as http:
+            await app[server.SESSION_RESTORE_TASK_KEY]
+            await assert_update_scope(http, app)
+
+    # The profile stays in the existing checkpoint envelope, without adding a
+    # new session field that would invalidate older display-checkpoint readers.
+    for path in (tmp_path / "checkpoints").rglob("*.json"):
+        assert "route_profile_id" not in json.loads(path.read_text())["record"]["session"]
 
 @pytest.mark.asyncio
 async def test_restart_scope_is_exact_and_card_delivery_supersedes_only_its_scope():

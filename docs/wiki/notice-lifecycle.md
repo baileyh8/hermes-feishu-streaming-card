@@ -24,6 +24,8 @@ V4.6.x 从 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pu
 sidecar 的 `RestartNoticeRegistry` 保存服务端解析后的精确 scope 和已投递消息 ID，
 不保存正文。空 thread 表示空 thread，不匹配其他话题；缺少 thread 的新话题首回复使用
 reply anchor 隔离。任何话题的活动都不会顺带清理 home。
+卡片 owner 的 profile 在创建时从已校验事件固定，重启后从检查点已有的路由字段恢复；
+不从 turn ID 或 session key 拆分猜测，合法的 `opaque:turn` 不会变成另一个 profile。
 
 发送/更新开始前先取得登记代次快照，只有确认投递成功后才安排撤回。
 因此正在投递期间新登记的重启提示不会被一个迟到的成功结果删掉。

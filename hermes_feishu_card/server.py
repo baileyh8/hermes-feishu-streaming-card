@@ -4692,6 +4692,7 @@ async def _restore_card_checkpoints(app):
             continue
         if key != _session_key(probe):
             continue
+        session.route_profile_id = profile or "default"
         app[SESSIONS_KEY][key] = session
         app[FEISHU_MESSAGE_IDS_KEY][key] = record['message_id']
         app[MESSAGE_BOT_IDS_KEY][key] = record['bot_id']
@@ -5103,6 +5104,7 @@ async def _apply_event_locked_inner(
             conversation_id=event.conversation_id,
             message_id=event.message_id,
             chat_id=event.chat_id,
+            route_profile_id=_policy_profile_id(event) or "default",
         )
         if preview.apply(event, advance_sequence=advance_sequence):
             preview_result = _render_session_card_result_for_app(
@@ -5137,6 +5139,7 @@ async def _apply_event_locked_inner(
             conversation_id=event.conversation_id,
             message_id=event.message_id,
             chat_id=event.chat_id,
+            route_profile_id=_policy_profile_id(event) or "default",
         )
         sessions[session_key] = session
         applied = session.apply(event)
@@ -5236,6 +5239,7 @@ async def _apply_event_locked_inner(
                 conversation_id=event.conversation_id,
                 message_id=event.message_id,
                 chat_id=event.chat_id,
+                route_profile_id=_policy_profile_id(event) or "default",
             )
             sessions[session_key] = session
             applied = session.apply(event)
@@ -6195,7 +6199,7 @@ async def _complete_runtime_interaction_delivery(
         reply_in_thread=reservation.reply_in_thread,
         delivery_key=reservation.delivery_key,
         delivery_kind="interaction",
-        profile_id=_notice_profile_for_session_key(reservation.session_key),
+        profile_id=reservation.session.route_profile_id,
     )
     if delivery.delivered:
         # Same reuse contract as the callback-mode card (#314).
@@ -6515,7 +6519,7 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
                 reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
                 delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
                 delivery_kind="interaction",
-                profile_id=_notice_profile_for_session_key(session_key),
+                profile_id=session.route_profile_id,
             )
         if (result.outcome != "delivered" and session.active_interaction is interaction
                 and interaction.status == "paused" and interaction.pause_generation == generation):
@@ -7677,10 +7681,6 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message_id": message_id, "delay_seconds": delay})
 
 
-def _notice_profile_for_session_key(session_key: str) -> str:
-    return session_key.split(":", 1)[0] if ":" in session_key else "default"
-
-
 def _is_retained_card_message(app: web.Application, message_id: str) -> bool:
     if (message_id in app[FEISHU_MESSAGE_IDS_KEY].values()
             or message_id in app[CARD_SUMMARIES_KEY]):
@@ -7727,7 +7727,7 @@ def _restart_scope_for_message(app, message_id, bot_id) -> NoticeScope | None:
         if app[MESSAGE_BOT_IDS_KEY].get(session_key) != bot_id:
             continue
         scope = _restart_notice_scope(
-            profile_id=_notice_profile_for_session_key(session_key), bot_id=bot_id,
+            profile_id=session.route_profile_id, bot_id=bot_id,
             chat_id=session.chat_id, thread_id=thread_id,
         )
         if scope is not None:
