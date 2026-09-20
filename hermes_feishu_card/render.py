@@ -1913,24 +1913,19 @@ def _render_timeline_elements(
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
-    # NEWEST FIRST — for the PANEL. The user asked for the panel to read in reverse order so the most
-    # recent work is the first thing they see ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). A live
-    # log's useful end is its LAST entry, and this panel is appended to the bottom of a card that is
-    # read downward — so the newest work used to be the furthest thing from the reader's eye.
-    # Only the DISPLAY order flips: _select_timeline_entries still decides which entries fit (it
-    # keeps the newest window and guarantees the latest reasoning is included).
+    # CHRONOLOGICAL — for the PANEL. The order was briefly reversed (newest first, so the latest work
+    # sat nearest the reader's eye); the user then asked for it back the other way
+    # (「Timeline 的工具正序一下」). A panel that reads top-to-bottom as the turn actually happened is
+    # easier to follow than one you scan upward, and it matches the body's reasoning entries, which
+    # are chronological for the same reason (「正文的思考应该正序」).
     #
-    # Maintainer note (contract change): the reasoning entries that render into the CARD BODY are the
-    # exception, and they keep chronological order. Body thinking is prose the reader follows
-    # FORWARD ("思考 1", then "思考 2"), not a log they scan for the latest state — newest-first made
-    # the body read bottom-up, which is what the user reported ("正文的思考应该正序"). `index` still
-    # carries each entry's original position, so element ids are unchanged and identical entries are
-    # still selected; only the order they are written in differs per surface.
-    panel_order = [(i, e) for i, e in reversed(list(enumerate(entries)))]
+    # Maintainer note (contract difference): upstream v4.6.4 keeps the panel NEWEST-FIRST
+    # (`reversed(list(enumerate(entries)))`). This fork's change came later (09-18 23:33 vs their
+    # 09-18 01:28) and was an explicit user request, so the panel stays chronological here.
+    panel_order = list(enumerate(entries))
     if reasoning_format == "code":
         # "code" puts reasoning in the body (see the target_elements split below) and tools in the
-        # panel, so the two orders can differ. Any other format folds reasoning into the panel,
-        # where newest-first applies to everything.
+        # panel. Both surfaces are chronological now, so the two groups keep their original order.
         ordered = [(i, e) for i, e in enumerate(entries) if e.kind == "reasoning"] + [
             (i, e) for i, e in panel_order if e.kind != "reasoning"
         ]
