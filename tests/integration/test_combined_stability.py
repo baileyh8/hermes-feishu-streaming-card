@@ -46,7 +46,11 @@ async def test_http_terminal_tool_visibility_preserves_answer_and_single_card(te
         assert len(fake.sent) == 1
         card = fake.updated[-1][1]
         assert 'KEEP_ANSWER' in str(card)
-        assert ('tool_activity_' in str(card)) is (not hide)
+        # Contract difference from upstream, on purpose: a FAILED turn keeps its tool rows even with
+        # the switch on, because they carry the 已中断 pill — WHERE the run stopped, the one thing a
+        # reader opens a failed card for. Upstream hides them for `failed` too.
+        expect_rows = (not hide) or terminal == 'message.failed'
+        assert ('tool_activity_' in str(card)) is expect_rows
         assert '工具 #1' in str(card)
         if terminal == 'message.failed':
             assert 'FIXTURE_FAILURE' in str(card)

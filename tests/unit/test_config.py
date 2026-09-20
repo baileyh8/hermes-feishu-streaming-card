@@ -58,7 +58,7 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
             "interaction_mode": "auto",
         "streaming_mode": False,
             "show_reasoning": True,
-            "hide_completed_tool_activity": True,
+        "hide_completed_tool_activity": True,
             "stream_thinking_to_body": True,
             "reasoning_format": "panel",
             "timeline_expanded": False,

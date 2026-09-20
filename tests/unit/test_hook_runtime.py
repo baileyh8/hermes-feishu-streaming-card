@@ -3820,25 +3820,6 @@ def test_system_notice_delivered_suppresses_native_fallback(monkeypatch):
     assert calls == []
 
 
-def _notice_posts(posted):
-    """The sidecar calls that carried a NOTICE — the recall housekeeping is not one.
-
-    The plain-text egress door now also retires the restart notices standing in front of the message
-    it just sent (``POST /recall/supersede``), and a transient notice still arms its own withdrawal
-    (``POST /recall/schedule``). Neither carries a notice payload, so a test about WHICH notice
-    reaches the sidecar filters them out by url. Entries recorded as a bare payload cannot be a
-    recall call — only the notice path records without a url, and every recall call has one.
-    """
-    kept = []
-    for entry in posted:
-        if isinstance(entry, tuple) and entry:
-            url = str(entry[0])
-            if url.endswith("/recall/supersede") or url.endswith("/recall/schedule"):
-                continue
-        kept.append(entry)
-    return kept
-
-
 def _install_background_notice_probe(
     monkeypatch,
     *,
@@ -4033,13 +4014,11 @@ def test_status_notice_family_is_plain_text_but_other_notices_still_are_cards():
     )
     assert hook_runtime.STATUS_NOTICE_PREFIX == "⏳"
 
-    # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family, with
-    # the ONE exception inside it: the draining-gateway line. It is not a status ping about this turn;
-    # it announces the same event as the ⚠️ restart warning, so it is plain text and a member of that
-    # family instead of a card of its own (see test_the_draining_gateway_line_is_no_longer_a_card).
-    draining = "⏳ Gateway is restarting and is not accepting new work right now."
-    assert hook_runtime._hfc_classify_system_notice(draining) is None
-    assert hook_runtime._hfc_is_restart_notice(draining) is True
+    # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family.
+    restart = hook_runtime._hfc_classify_system_notice(
+        "⏳ Gateway is restarting and is not accepting new work right now."
+    )
+    assert restart is not None and restart["notice_kind"] == "gateway-restart"
     reset = hook_runtime._hfc_classify_system_notice("Session automatically reset")
     assert reset is not None and reset["notice_kind"] == "session-reset"
 
@@ -4302,9 +4281,7 @@ def test_malformed_background_notice_fails_open(monkeypatch, content):
 
     assert result.success is True
     assert result.message_id == "om_native_text"
-    # No NOTICE reached the sidecar (the restart-group housekeeping is not a notice, see
-    # `_notice_posts`).
-    assert _notice_posts(posted) == []
+    assert posted == []
     assert adapter.text_sent == [("oc_abc", content, None, None)]
 
 
@@ -4501,7 +4478,7 @@ def test_gateway_platform_notice_falls_back_for_non_system_notice(monkeypatch):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
-        posted.append((url, payload))
+        posted.append(payload)
         return {"ok": True, "applied": True}
 
     monkeypatch.setattr(
@@ -4546,7 +4523,7 @@ def test_gateway_platform_notice_falls_back_for_non_system_notice(monkeypatch):
 
     assert result.success is True
     assert result.message_id == "om_native_notice"
-    assert _notice_posts(posted) == []
+    assert posted == []
     assert runner.native_notices == [(source, "ordinary native notice")]
     assert adapter.text_sent == [
         ("oc_topic", "ordinary native notice", None, None),
@@ -4630,7 +4607,7 @@ def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
-        posted.append((url, payload))
+        posted.append(payload)
         return {
             "ok": True,
             "applied": True,
@@ -4696,20 +4673,15 @@ def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
     assert adapter.text_sent == ["⏳ Working — 2 min — iteration 1/90, terminal"]
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
-    # The dispatch that reaches the sidecar for that plain-text line is its withdrawal request —
+    # The ONLY thing that reaches the sidecar is the withdrawal request for that plain-text line —
     # no card is minted, so the sidecar can neither swallow nor duplicate the heartbeat. The
     # plain-text egress door schedules it (`_hfc_recall_plain_text_status_notice`), which is what
     # stops a ⏳ line from sitting in the thread after the turn ends: a card used to inherit the
     # sidecar's own recall deadline, and plain text has none.
-    recalls = [payload for url, payload in posted if str(url).endswith("/recall/schedule")]
-    assert len(recalls) == 1
-    recall = recalls[0]
+    assert len(posted) == 1
+    recall = posted[0]
     assert recall["message_id"] == sent.message_id
     assert recall["delay_seconds"] == hook_runtime.STATUS_NOTICE_RECALL_SECONDS
-    # And the same door retires the restart group standing in front of the line it just sent, so a
-    # restart notice does not outlive the first message that follows it.
-    assert any(str(url).endswith("/recall/supersede") for url, _ in posted)
-    assert _notice_posts(posted) == []
 
 
 def test_native_feishu_stream_edit_drops_metadata_when_original_does_not_accept_it():
@@ -4876,7 +4848,7 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     ]
 
     async def fake_post_json_ordered_response(url, payload, timeout):
-        posted.append((url, payload))
+        posted.append(payload)
         return responses.pop(0)
 
     monkeypatch.setattr(
@@ -4932,12 +4904,10 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
     # The send never depends on the sidecar: it landed as plain text and the edit updated THAT line.
-    # The refusing responses above prove a refused recall cannot undo the send — which is exactly
-    # what the two refusals here are for (a recall the sidecar declined, then one it could not route).
-    recalls = [payload for url, payload in posted if str(url).endswith("/recall/schedule")]
-    assert len(recalls) == 1
-    assert recalls[0]["message_id"] == sent.message_id
-    assert _notice_posts(posted) == []
+    # The only request the sidecar sees is the withdrawal for that line, and the refusing responses
+    # above prove a refused recall cannot undo the send.
+    assert len(posted) == 1
+    assert posted[0]["message_id"] == sent.message_id
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():
@@ -13436,6 +13406,7 @@ def test_paused_approval_outage_does_not_turn_into_denial(monkeypatch):
     assert result['choice'] == 'once'
 
 @pytest.mark.parametrize('text,title,level', [
+    ('⏳ Gateway is restarting and is not accepting new work right now.', 'Gateway 正在重启', 'warning'),
     ('♻ Gateway restarted successfully. Your session continues.', 'Gateway 重启完成', 'success'),
 ])
 def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, title, level):
@@ -13449,32 +13420,6 @@ def test_restart_notices_are_explicit_snapshots_not_running_heartbeats(text, tit
         notice=notice, notice_scope='independent', message_id='notice_restart')
     assert payload['data']['content'] == notice['content']
     assert '预计' not in payload['data']['content']
-
-
-def test_the_draining_gateway_line_is_no_longer_a_card():
-    """The ⏳ draining line is plain text now, like every other restart line.
-
-    Maintainer note (contract change): it used to be classified as a card titled「Gateway 正在重启」. That
-    put it OUTSIDE the restart family — so it fell through to the "any other message clears the group"
-    rule and DELETED the ⚠️ warning it was announcing, while itself carrying no deadline and therefore
-    never being retired. Both halves of the fix are asserted here: no card, and recognised as one of the
-    lines that registers itself (with its own 15s deadline) instead of clearing the group.
-    """
-    assert hook_runtime._hfc_classify_system_notice(
-        '⏳ Gateway is restarting and is not accepting another turn right now.'
-    ) is None
-    assert hook_runtime._hfc_is_restart_notice(
-        '⏳ Gateway is restarting and is not accepting another turn right now.'
-    ) is True
-    # Both gerunds and both tails are real (``_status_action_gerund()`` × the two doorways).
-    for variant in (
-        '⏳ Gateway is shutting down and is not accepting another turn right now.',
-        '⏳ Gateway is restarting and is not accepting new work right now.',
-        '⏳ Gateway is shutting down and is not accepting new work right now.',
-        '⏳ Gateway restarting — queued for the next turn after it comes back.',
-        '⏳ Gateway shutting down — queued for the next turn after it comes back.',
-    ):
-        assert hook_runtime._hfc_is_restart_notice(variant) is True, variant
 
 
 def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
@@ -13492,13 +13437,10 @@ def test_restart_completion_notice_is_sent_as_text_not_a_card(monkeypatch):
             sent.append((chat_id, content))
             return SimpleNamespace(success=True, message_id="om_plain")
 
-    def no_card(*args, **kwargs):
-        # ``_post_json_ordered_response`` carries BOTH a card/render payload and the RECALL request.
-        # Only the former is forbidden here: the online line now arms its own withdrawal, because the
-        # restart pair retires itself (the next restart's "⚠️" notice withdraws this one). A recall
-        # posts a message id to be deleted — no card, no content.
-        url = args[0] if args else kwargs.get("url", "")
-        assert "/recall/" in str(url), "the restart-completion notice must not post a card payload"
+    async def no_card(url, payload, timeout):
+        assert url.endswith("/recall/schedule"), "restart completion must not post a card"
+        assert payload["notice_family"] == "restart"
+        assert payload["record_only"] is True
         return {"ok": True}
 
     monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", no_card)
@@ -13530,109 +13472,3 @@ def test_only_the_restart_completion_notice_skips_the_card():
     assert hook_runtime._hfc_notice_plain_text(waiting) is None
     assert hook_runtime._hfc_notice_plain_text(compression) is None
     assert hook_runtime._hfc_notice_plain_text(None) is None
-
-
-def test_the_core_restart_line_is_delivered_as_the_coloured_online_line(monkeypatch):
-    """The chat that requested the restart gets the same line Home gets, in colour.
-
-    The core writes 「♻ Gateway restarted successfully. Your session continues.」 with a bare U+267B
-    and sends it straight through ``adapter.send`` to that chat/thread. Feishu renders a bare U+267B
-    monochrome, so one restart showed a black ♻ in the thread and a coloured ♻️ in Home
-    («希望话题里面的线程收到的也是彩色的»). The wrapper rewrites it to ``_HFC_GATEWAY_ONLINE_TEXT``,
-    which also puts it on the recall paths a raw ``adapter.send`` bypasses.
-    """
-    sent = []
-    recalls = []
-
-    class FakeAdapter:
-        async def _hfc_original_send(self, chat_id, content, reply_to=None, metadata=None):
-            sent.append((chat_id, content))
-            return SimpleNamespace(success=True, message_id="om_restart")
-
-    async def capture(url, payload, *args, **kwargs):
-        recalls.append((str(url), dict(payload)))
-        return {"ok": True}
-
-    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", capture)
-
-    # The failing branch: when the card policy declines this chat, the wrapper used to hand the core's
-    # text straight to ``original`` — bare U+267B, monochrome, and on no recall path at all. Forcing
-    # the denial here is what makes this test pin the fix instead of a passing coincidence.
-    async def card_policy_denied(chat_id):
-        return False
-
-    monkeypatch.setattr(hook_runtime, "_hfc_direct_card_allowed_async", card_policy_denied)
-
-    result = asyncio.run(
-        hook_runtime._hfc_send_with_native_command_result_card(
-            FakeAdapter(),
-            "oc_fixture",
-            "♻ Gateway restarted successfully. Your session continues.",
-            metadata={"thread_id": "omt_fixture"},
-        )
-    )
-
-    assert result.success is True
-    assert sent == [("oc_fixture", hook_runtime._HFC_GATEWAY_ONLINE_TEXT)]
-    assert "\u267b\ufe0f" in sent[0][1], "the delivered line must carry the variation selector (colour)"
-    # It registers with the restart family AND arms its own 15s deadline («我觉得都应该挂 15 秒清就好了»).
-    recall_payloads = [payload for url, payload in recalls if "/recall/schedule" in url]
-    assert any(payload.get("supersede_key") for payload in recall_payloads), \
-        "the notice must register so a later message can retire it sooner"
-    assert all(
-        float(payload.get("delay_seconds", 0)) == hook_runtime.RESTART_NOTICE_RECALL_SECONDS
-        for payload in recall_payloads
-    ), "every restart line carries the same 15s deadline"
-
-
-def test_every_restart_line_carries_the_same_fifteen_second_deadline(monkeypatch):
-    """One class, one rule: no group boundaries, no group-vs-non-group distinction.
-
-    Field report: 「我觉得都应该挂 15 秒清就好了 不用说那么复杂的去区分组和非组」. So every line of the
-    family — the ⚠️ warning, the ♻️ online notice, the ⏳ draining doorway and the ⏳ queued line — behaves
-    identically: registered (so a later message can retire it sooner) and armed with the same 15s.
-    """
-    recalls = []
-
-    async def capture(url, payload, *args, **kwargs):
-        recalls.append((str(url), dict(payload)))
-        return {"ok": True}
-
-    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", capture)
-
-    for content in (
-        "⚠️ Gateway shutting down — Your current task will be interrupted.",
-        hook_runtime._HFC_GATEWAY_ONLINE_TEXT,
-        "⏳ Gateway is restarting and is not accepting another turn right now.",
-        "⏳ Gateway restarting — queued for the next turn after it comes back.",
-    ):
-        recalls.clear()
-        asyncio.run(
-            hook_runtime._hfc_recall_plain_text_status_notice(
-                "oc_fixture", content, {"thread_id": "omt_fixture"},
-                SimpleNamespace(success=True, message_id="om_restart"),
-            )
-        )
-        recall_payloads = [payload for url, payload in recalls if "/recall/schedule" in url]
-        assert len(recall_payloads) == 1, content
-        assert recall_payloads[0]["supersede_key"], content
-        assert float(recall_payloads[0]["delay_seconds"]) == hook_runtime.RESTART_NOTICE_RECALL_SECONDS, content
-        # Never record_only: that flag means "no deadline of its own", which is the opposite of the rule.
-        assert recall_payloads[0].get("record_only") is not True, content
-        # …and never the "clear the group" door: a restart line announces the group, it does not end it.
-        assert not any(url.endswith("/recall/supersede") for url, _ in recalls), content
-
-
-def test_only_the_core_restart_wording_is_rewritten():
-    """The rewrite is scoped to the core's legacy line — not to arbitrary text, and not to Home's."""
-    online = hook_runtime._HFC_GATEWAY_ONLINE_TEXT
-    assert hook_runtime._hfc_restart_notice_rewrite(
-        "♻ Gateway restarted successfully. Your session continues."
-    ) == online
-    assert hook_runtime._hfc_restart_notice_rewrite(
-        "♻️ Gateway restarted successfully. Your session continues."
-    ) == online
-    # Already the hfc wording: left alone so Home's send keeps its own fallback contract.
-    assert hook_runtime._hfc_restart_notice_rewrite(online) is None
-    assert hook_runtime._hfc_restart_notice_rewrite("⚠️ Gateway shutting down — x") is None
-    assert hook_runtime._hfc_restart_notice_rewrite("随便一句话") is None

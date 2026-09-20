@@ -7,7 +7,7 @@
 
 ![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)
 
-Hermes 飞书流式卡片插件把 Hermes Agent Gateway 的飞书/Lark 回复变成一张持续更新的交互式卡片。思考过程、工具调用、最终答案、授权确认、选项选择、系统提示和运行统计会收束在卡片内，而不是散落成多条灰色原生消息。<br><br>它面向真实飞书使用场景：流式内容漏字/乱序、长表格和代码块变成 raw markdown、工具过程不可见、approval/clarify 需要手工回复、话题里卡片不更新、多 bot / 多 profile 难排查，以及 Hermes 升级后 hook 兼容不确定。
+Hermes 飞书流式卡片插件把 Hermes Agent Gateway 的飞书/Lark 回复变成持续更新的交互式卡片。普通问答保持原卡；审批、澄清之后按实际输出创建顺序连贯的续答卡。思考过程、工具调用、最终答案、授权确认、选项选择、系统提示和运行统计会收束在卡片内，而不是散落成多条灰色原生消息。<br><br>它面向真实飞书使用场景：流式内容漏字/乱序、长表格和代码块变成 raw markdown、工具过程不可见、approval/clarify 需要手工回复、话题里卡片不更新、多 bot / 多 profile 难排查，以及 Hermes 升级后 hook 兼容不确定。
 ![Hermes 飞书卡片命令交互、结果反馈与工具 timeline 展示](docs/assets/feishu-card-showcase-v385.png)
 
 <h2>可选网页抓取服务</h2><p>如果 Agent 工作流需要获取受反爬限制的公开网页，可了解 <a href="https://scrapingant.com/?ref=zwq4ngy">ScrapingAnt</a> 这项可选网页抓取服务。其 Web Scraping API 每月提供 10,000 个免费 API credits，无需信用卡；它不是本插件的必需依赖。</p><blockquote>说明：以上链接为 Affiliate link；符合条件的首次付费订阅可能为本项目带来佣金。</blockquote>
@@ -23,7 +23,7 @@ Hermes 飞书流式卡片插件把 Hermes Agent Gateway 的飞书/Lark 回复变
 
 ## 你能看到什么
 
-- **一张持续更新的飞书卡片**：`thinking.delta`、`answer.delta`、`tool.updated`、`message.completed` 会合并到同一张卡片。
+- **普通问答持续更新，交互后顺序续答**：`thinking.delta`、`answer.delta`、`tool.updated`、`message.completed` 会合并到同一张卡片。
 - **运行态 Header 看见当前动作**：Header title 保留用户自定义标题（默认 `Hermes Agent`），subtitle 将工具名与 `tool.updated.detail` 整理为实时动作摘要；完整命令留在 timeline。
 - **主答案和过程分区**：最终答案留在正文区，pre-tool answer、工具调用、系统 notice 进入“思考与工具” timeline。
 - **卡片内交互**：approval / clarify choices 渲染为按钮；`/new`、`/reset`、`/undo`、`/model` 等独立命令使用原生 interactive card。V4 的 `/model` 与 Hermes CLI 使用同一 Provider/模型列表，按 Provider → Model 两级选择，不再把全部模型挤进一个下拉框。
@@ -61,10 +61,7 @@ irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main
 安装脚本会安装或升级插件、读取/提示飞书凭据、写入本地 `.env`，并调用整合安装器：
 
 ```bash
-python3 -m hermes_feishu_card.cli setup \
-  --hermes-dir ~/.hermes/hermes-agent \
-  --config ~/.hermes/config.yaml \
-  --yes
+python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --config ~/.hermes/config.yaml --yes
 ```
 
 安装完成后检查 sidecar：
@@ -114,9 +111,7 @@ FEISHU_HOME_CHANNEL=oc_xxx
 
 ## Hermes 流式配置
 
-确认 `streaming.enabled` 为 `true`，并让 Hermes 使用 edit transport。
-
-确保 Hermes `config.yaml` 中启用流式编辑：
+在 Hermes `config.yaml` 中将 `streaming.enabled` 设为 `true`，使用 edit transport：
 
 ```yaml
 streaming:
@@ -133,7 +128,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.3
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.4
 bash install-docker.sh
 ```
 
@@ -170,9 +165,12 @@ bash install-docker.sh
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MS` | `250` | Gateway 内 delta 最大合并等待时间 |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_CHARS` | `600` | pending delta 达到字符数后立即 flush |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | pending delta session 上限 |
+版本范围与验收边界：[V4.6.4](docs/release-notes-v4.6.4.md)、[交互续答](docs/wiki/interaction-continuation.md)、[阅读预设](docs/wiki/reading-presets.md)、[提交前检查](docs/testing.md)。升级不会自动启用新的默认阅读方式。
+
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.6.4](docs/release-notes-v4.6.4.md) | 首次按钮接线、顺序续答、可选阅读预设与作用域通知清理 |
 | [v4.6.3](docs/release-notes-v4.6.3.md) | 实时思考正文开关、工具耗时与中断用量 |
 | [v4.6.2](docs/release-notes-v4.6.2.md) | 原生插件共存维护证明与可选终态工具区 |
 | [v4.6.1](docs/release-notes-v4.6.1.md) | Hermes 0.21.3 hook、状态撤回和审批展示修复 |
@@ -270,6 +268,8 @@ Hermes Gateway
 - 项目维护 Wiki：[docs/wiki](docs/wiki/README.md)；[V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md) 遇到 `manual_review_required` 时，先执行 `hermes-feishu-card status --config /path/to/feishu-card.yaml --hermes-dir /path/to/hermes-agent`；V4.4.6 的 `integrity.next_command` 会给出可复制的只读诊断命令。迁移与启动顺序见 [Hermes 完整性排障](docs/wiki/hermes-decomposed-patcher.md)，本轮修复及待验证问题见 [Issues/PR 处理记录](docs/issue-triage-2026-09-15.md)。
 
 ## 贡献者
+
+- V4.6.4：感谢 [sthnow](https://github.com/sthnow) 在 [#335](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/335) 提供冷启动按钮与交互后排序证据，以及补丁作者 **babypanda** 的 eager-hook 实现；适配部分保留 `Co-authored-by`。感谢 [mouyong](https://github.com/mouyong) 的 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 续答与通知生命周期方案、代码贡献及 [#330](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/330) 提交前验证需求；本轮按子项吸收，不等于整 PR 合并。可选阅读预设继续回应 [jackwude](https://github.com/jackwude) 的 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 与 [leavrcn](https://github.com/leavrcn) 的 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333)。保留以下全部历史贡献记录。
 
 - V4.6.3：感谢 [leavrcn](https://github.com/leavrcn) 的 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333) 长思考复现与配置建议；适配 [mouyong](https://github.com/mouyong) 的 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 工具排序、耗时与中断用量实现，保留代码署名；通知撤回等其余改动仍独立审查。
 - V4.6.2：感谢 [jackwude](https://github.com/jackwude) 提出 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328)，并补记其对 4.6.1 [#329](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/329) 的复现贡献；[mouyong](https://github.com/mouyong) 在 [PR #331](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/331) 提供 `hide_completed_tool_activity` 配置方案。本版仅适配这一功能，保留默认显示并覆盖 completed/failed；#331 其余改动仍待审查。
