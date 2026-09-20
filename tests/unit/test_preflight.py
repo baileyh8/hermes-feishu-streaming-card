@@ -94,7 +94,7 @@ def test_isolated_run():
     assert state.is_dir()
     if os.name != "nt":
         assert state.stat().st_mode & 0o777 == 0o700
-    assert os.environ["HERMES_HOME"] != "/private/production-hermes"
+    assert os.environ.get("HERMES_HOME") != "/private/production-hermes"
     assert "FEISHU_APP_SECRET" not in os.environ
     assert %r
 ''' % passes)
@@ -173,7 +173,7 @@ def test_child_environment_cannot_resolve_inherited_production_targets(tmp_path)
     private = tmp_path / "private-run"
     private.mkdir()
     production = tmp_path / "production-canary-never-created"
-    original = dict(os.environ, HERMES_DIR=str(production), HFC_HERMES_DIR=str(production),
+    original = dict(os.environ, HERMES_HOME=str(production), HERMES_DIR=str(production), HFC_HERMES_DIR=str(production),
                     HERMES_AGENT_ROOT=str(production), HFC_CONFIG=str(production / "config.yaml"),
                     HFC_ENV_FILE=str(production / ".env"), HERMES_CRON_AUTO_DELIVER_CHAT_ID="PRIVATE_CHAT",
                     HFC_INSTALL_SPEC="PRIVATE_INSTALL_TARGET", FEISHU_APP_SECRET="PRIVATE_SECRET")
@@ -195,7 +195,7 @@ print(json.dumps({"operations": str(resolve_operations_hermes_root()),
     assert targets.pop("lifecycle") is None
     for value in targets.values():
         assert value is not None and Path(value).is_relative_to(private)
-    assert not {"HERMES_DIR", "HFC_CONFIG", "HFC_ENV_FILE"}.intersection(env)
+    assert not {"HERMES_HOME", "HERMES_DIR", "HFC_CONFIG", "HFC_ENV_FILE"}.intersection(env)
     assert all(value != "PRIVATE_CHAT" and value != "PRIVATE_INSTALL_TARGET" and value != "PRIVATE_SECRET"
                for value in env.values())
     assert original["HERMES_DIR"] == str(production)

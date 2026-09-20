@@ -163,7 +163,6 @@ def child_environment(environ, private, fixture):
     isolated_home = str(private / "home")
     env.update({"HOME": isolated_home, "USERPROFILE": isolated_home,
                 "HERMES_FEISHU_CARD_STATE_DIR": str(private / "state"),
-                "HERMES_HOME": str(private / "hermes"),
                 "HFC_FIXED_TAG_SOURCE_ROOT": str(fixture),
                 "PYTHONDONTWRITEBYTECODE": "1"})
     return env
@@ -177,7 +176,6 @@ def execute_suite(root, targets, fixture, environ, report, base="HEAD"):
     private = Path(tempfile.mkdtemp(prefix="hfc-preflight-")).resolve()
     private.chmod(0o700)
     (private / "state").mkdir(mode=0o700)
-    (private / "hermes").mkdir(mode=0o700)
     (private / "home").mkdir(mode=0o700)
     env = child_environment(environ, private, fixture)
     report["state_dir"] = {"status": "private", "created": True}
