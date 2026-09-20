@@ -1936,7 +1936,9 @@ def _render_timeline_elements(
     priority_ids = tuple(dict.fromkeys(
         [tool.tool_id for tool in running] + [tool.tool_id for tool in selected_tools]
         + [entry.tool_id for entry in reversed(all_entries) if entry.kind == 'tool'
-           and str(entry.status).strip().lower() in {'failed','error','cancelled','canceled','interrupted'}]
+           and (str(entry.status).strip().lower() in {'failed','error','cancelled','canceled','interrupted'}
+                or not live and str(entry.status).strip().lower()
+                not in TERMINAL_TOOL_STATUSES | {'display_handoff','display_receipt'})]
     ))
     entries = _select_timeline_entries(
         _limit_tools_per_reasoning(all_entries, tools_per_reasoning, keep_tool_ids=priority_ids),

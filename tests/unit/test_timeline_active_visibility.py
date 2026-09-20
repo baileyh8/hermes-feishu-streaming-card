@@ -58,3 +58,14 @@ def test_retained_old_tool_keeps_its_own_reasoning_inside_the_global_budget():
     assert text.index('thought-20')<text.index('work-24')<text.index('thought-24')<text.index('work-25')
     assert text.index('thought-32')<text.index('work-35')<text.index('work-36')
     assert len([e for e in p['elements'] if 'folded' not in e.get('element_id','')])<=12
+
+
+@pytest.mark.parametrize('terminal',['completed','failed'])
+def test_terminal_compaction_keeps_old_interrupted_body_tools_in_the_panel(terminal):
+    s=fixture();s.status=terminal;s.timeline.complete()
+    card=render_card(s,max_timeline_items=12,hide_completed_tool_activity=True)
+    body=json.dumps([e for e in card['body']['elements'] if e.get('element_id','').startswith('tool_activity_')],ensure_ascii=False)
+    process=json.dumps(panel(card),ensure_ascii=False)
+    for n in (25,36):
+        assert f'work-{n}' in body and f'work-{n}' in process
+    assert '执行中' not in process and '已中断' in process
