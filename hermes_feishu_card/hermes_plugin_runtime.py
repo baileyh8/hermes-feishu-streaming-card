@@ -2035,6 +2035,7 @@ class PluginRuntime:
         status = "pending" if pending else self._tool_status(kwargs.get("status"))
         data: dict[str, object] = {
             "tool_id": tool_call_id,
+            "call_id": tool_call_id,
             "name": self._preview(tool_name),
             "status": status,
         }

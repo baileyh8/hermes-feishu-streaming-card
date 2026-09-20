@@ -2,6 +2,17 @@
 
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
 
+## 当前交付状态（2026-09-20）
+
+- [x] V4.6.4 已发布：PR #336，精确合并 `457f0d00ddedc0e4dc6a507cf79c4ddfc6aaa17e`；4055 passed、12 skipped，CI、annotated tag、资产与公开安装已验证。
+- [x] 本机生产升级到普通 site-packages 的 4.6.4，保留 staged index 与 AMD 定制；Gateway/sidecar readiness 已验证。
+- [x] V4.6.5 实现：持久通知归属、已知 native home/startup/shutdown 来源、明确 call_id 去重、可选时间线顺序和分组条数、重复故障提示、旧段中性收尾及严格升级迁移。
+- [ ] V4.6.5 完整发布门禁：全量回归、PR CI、精确合并、tag、资产和公开安装，以 Release 交付记录为准。
+- [x] 4.6.4 真实桌面 clarify 选择 A 与回执下方续答；旧卡执行中残留已复现并纳入 4.6.5。
+- [ ] 4.6.5 升级后的真实交互、严格首击时序、approval 和手机视觉。
+
+以下为历史版本实施快照，未勾选项不自动代表当前版本仍未交付；当前计划见 [V4.6.x](docs/superpowers/plans/2026-09-20-v4.6.x-experience.md)。
+
 ## V3.8 / V3.9 / V3.10 / V4 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13 / V4.0.14 / V4.0.15 / V4.0.16 / V4.0.17 / V4.0.18 / V4.0.19 / V4.0.20 / V4.0.21 / V4.1.0 / V4.1.1 / V4.1.2 / V4.1.3 / V4.1.4 / V4.2.0 / V4.2.1 / V4.2.2 / V4.2.3 / V4.2.4 / V4.2.5 / V4.2.6 / V4.2.7 / V4.2.8 / V4.2.9 / V4.2.10 / V4.2.11 / V4.2.12 / V4.3.0 / V4.3.1 / V4.3.2 / V4.3.3 / V4.3.4 / V4.3.5 / V4.3.6 / V4.3.7 / V4.3.8 / V4.4.0 / V4.4.1 / V4.4.2 / V4.4.3 / V4.4.4
 
 详细路线见 [docs/superpowers/specs/2026-06-30-v3-8-design.md](docs/superpowers/specs/2026-06-30-v3-8-design.md) 和 [docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md](docs/superpowers/plans/2026-06-30-v3-8-card-ux-stability.md)。

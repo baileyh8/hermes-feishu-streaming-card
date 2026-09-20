@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.4`.
+The Compose example defaults `HFC_VERSION` to `v4.6.5`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.4
+export HFC_VERSION=v4.6.5
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -957,6 +957,6 @@ Set `card.hide_completed_tool_activity: true` to hide content-area tool rows aft
 
 Set `card.stream_thinking_to_body: false` to keep waiting/tool activity in the body until an answer arrives, with live thinking in a bounded panel preview. The default `true` preserves existing behavior. `show_reasoning` and `max_reasoning_chars` control the render-only preview. Completed/failed content, approval and archived `reasoning_format` behavior are unchanged. Large custom panels and answers remain subject to whole-card limits. Restart the sidecar after editing configuration.
 
-## V4.6.4 candidate: First clicks and ordered continuation
+## V4.6.5 candidate: First clicks and ordered continuation
 
-The candidate wires the first clarify/approval callback without slash-card warmup, and opens a continuation only after a choice and actual subsequent output. Questions and decisions remain readable; existing defaults and explicit settings stay unchanged. `card.reading_preset` is opt-in and `card-config` explains the effective configuration. See [candidate notes](release-notes-v4.6.4.en.md), [continuation](wiki/interaction-continuation.md), [reading presets](wiki/reading-presets.md) and the [current real-client checklist](wiki/feishu-acceptance-v4.6.4.md). These documents do not claim the release or device acceptance has completed.
+The candidate wires the first clarify/approval callback without slash-card warmup, and opens a continuation only after a choice and actual subsequent output. Questions and decisions remain readable; existing defaults and explicit settings stay unchanged. `card.reading_preset` is opt-in and `card-config` explains the effective configuration. See [candidate notes](release-notes-v4.6.5.en.md), [continuation](wiki/interaction-continuation.md), [reading presets](wiki/reading-presets.md) and the [current real-client checklist](wiki/feishu-acceptance-v4.6.5.md). These documents do not claim the release or device acceptance has completed.

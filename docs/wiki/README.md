@@ -69,3 +69,5 @@ The private Feishu `/update` workflow is documented in
 [`event-flow.md`](event-flow.md), operated through
 [`maintenance-guide.md`](maintenance-guide.md), and verified with the
 [`feishu-acceptance.md`](feishu-acceptance.md) checklist.
+
+V4.6.5：[通知归属](notice-ownership.md)、[验收记录](feishu-acceptance-v4.6.5.md)、[发布说明](../release-notes-v4.6.5.md)。

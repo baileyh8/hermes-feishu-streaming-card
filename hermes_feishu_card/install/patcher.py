@@ -2990,6 +2990,13 @@ def _find_simple_owned_patch(
             _render_v452_queued_final_hook_block(indent, newline),
             _render_pr310_queued_final_hook_block(indent, newline),
         ])
+    if renderer is _render_queued_followup_hook_block:
+        expected_blocks.append(_render_v462_queued_followup_hook_block(indent, newline))
+    if renderer is _render_status_hook_block:
+        expected_blocks.extend([
+            _render_v464_status_hook_block(indent, newline),
+            _render_turn_context_hook_block(_render_v464_status_hook_block, indent, newline),
+        ])
     if renderer is _render_stable_tool_lifecycle_hook_block:
         # v4.5.2 installed blocks predate the dedicated reasoning callback.
         expected_blocks.extend([
@@ -3657,6 +3664,16 @@ def _render_queued_followup_hook_block(indent: str, newline: str):
     ]
 
 
+def _render_v462_queued_followup_hook_block(indent: str, newline: str):
+    """Exact pre-4.6.3 generated body, retained only for verified removal."""
+    block = _render_queued_followup_hook_block(indent, newline)
+    return [line.replace(
+        "_hfc_interrupted_locals(source, _hfc_original_message_id, result)",
+        '{"source": source, "chat_id": getattr(source, "chat_id", None), '
+        '"message_id": _hfc_original_message_id, "error": "用户已打断当前任务"}',
+    ) for line in block if "import interrupted_turn_locals as _hfc_interrupted_locals" not in line]
+
+
 def _render_v452_queued_final_hook_block(indent: str, newline: str):
     inner = _child_indent(indent)
     deeper = _child_indent(inner)
@@ -4245,7 +4262,7 @@ def _render_approval_hook_block(indent: str, newline: str):
     ]
 
 
-def _render_status_hook_block(indent: str, newline: str):
+def _render_status_hook_block(indent: str, newline: str, *, suppress_owned: bool = True):
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     return [
@@ -4256,16 +4273,21 @@ def _render_status_hook_block(indent: str, newline: str):
             f"import handle_status_from_hermes_locals as _hfc_handle_status{newline}"
         ),
         f"{inner_indent}if _run_still_current():{newline}",
-        f"{deeper_indent}_hfc_handle_status({{{newline}",
+        f"{deeper_indent}{'if ' if suppress_owned else ''}_hfc_handle_status({{{newline}",
         f"{deeper_indent}    **locals(),{newline}",
         f"{deeper_indent}    \"source\": source,{newline}",
         f"{deeper_indent}    \"chat_id\": _status_chat_id,{newline}",
         f"{deeper_indent}    \"message_id\": event_message_id,{newline}",
         f"{deeper_indent}    \"_hfc_loop\": _loop_for_step,{newline}",
-        f"{deeper_indent}}}, event_type=event_type, message=message){newline}",
+        f"{deeper_indent}}}, event_type=event_type, message=message){':' if suppress_owned else ''}{newline}",
+        *([f"{deeper_indent}    return{newline}"] if suppress_owned else []),
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{STATUS_PATCH_END}{newline}",
     ]
+
+
+def _render_v464_status_hook_block(indent: str, newline: str):
+    return _render_status_hook_block(indent, newline, suppress_owned=False)
 
 
 def _render_slash_confirm_hook_block(indent: str, newline: str):

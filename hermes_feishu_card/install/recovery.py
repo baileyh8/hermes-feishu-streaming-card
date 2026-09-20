@@ -41,6 +41,7 @@ KNOWN_STATES = {
     "clean",
     "installed",
     "stale_unpatched",
+    "stale_reapplied",
     "owned_incomplete",
     "corrupt_owned",
     "refused",

@@ -586,7 +586,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.6.4`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.6.5`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -594,7 +594,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.4
+export HFC_VERSION=v4.6.5
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -1031,6 +1031,6 @@ MIT License，详见 [LICENSE](../LICENSE)。
 
 设置 `card.stream_thinking_to_body: false`，答案未输出时正文保留等待状态或工具活动，实时思考进入有长度上限的折叠预览；默认 `true` 保持旧行为。预览由 `show_reasoning` 控制，使用 `max_reasoning_chars`，不写入持久时间线。完成/失败内容、审批和历史 `reasoning_format` 不变。超长自定义面板预算和超长答案仍受整卡容量限制。修改后重启 sidecar。
 
-## V4.6.4 候选：首次按钮与顺序续答
+## V4.6.5 候选：首次按钮与顺序续答
 
-首次 clarify/approval 无需 slash 卡预热；选择后有实际输出才创建续答卡，问题与选择保留。缺省和已有显式设置不变，`card.reading_preset` 可选，`card-config` 只读解释有效配置。详见[候选说明](release-notes-v4.6.4.md)、[交互续答](wiki/interaction-continuation.md)、[阅读预设](wiki/reading-presets.md)与[本轮真实验收](wiki/feishu-acceptance-v4.6.4.md)。这些说明不代表已经正式发布或通过设备验收。
+首次 clarify/approval 无需 slash 卡预热；选择后有实际输出才创建续答卡，问题与选择保留。缺省和已有显式设置不变，`card.reading_preset` 可选，`card-config` 只读解释有效配置。详见[候选说明](release-notes-v4.6.5.md)、[交互续答](wiki/interaction-continuation.md)、[阅读预设](wiki/reading-presets.md)与[本轮真实验收](wiki/feishu-acceptance-v4.6.5.md)。这些说明不代表已经正式发布或通过设备验收。

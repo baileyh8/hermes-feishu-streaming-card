@@ -18,6 +18,7 @@ BACKUP_SUFFIX = ".hermes_feishu_card.bak"
 SOURCE_TARGETS = ("gateway/run.py", *patcher.DECOMPOSED_GATEWAY_TARGETS,
                   "cron/scheduler.py", "cron/scheduler_delivery.py", "gateway/platforms/base.py")
 VERSION_TARGETS = ("VERSION", "hermes_cli/__init__.py", ".git/HEAD", ".git/packed-refs")
+EXPLICIT_UPGRADE_STATES = frozenset({"stale_unpatched", "stale_reapplied"})
 
 
 def is_managed(root: Path) -> bool:
@@ -68,6 +69,15 @@ def _snapshot(root):
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("decomposed ownership evidence must be a regular file")
         result[name] = path.read_bytes()
+    # A symbolic HEAD file does not change when its branch advances. Bind the
+    # resolved commit too, including when the source set itself is unchanged.
+    result["!resolved_git_head"] = None
+    if (root / ".git").exists():
+        from .integrity import _exact_git_root, _git_head
+        try:
+            result["!resolved_git_head"] = _git_head(_exact_git_root(root)).encode("ascii")
+        except (OSError, ValueError):
+            pass  # Ordinary owned installs do not require Git; rebasing does.
     return result
 
 
@@ -138,6 +148,27 @@ def _remove_target(target, raw):
     if target.startswith("cron/"):
         return patcher.remove_cron_patch(text).encode("utf-8")
     return patcher.remove_patch(text).encode("utf-8")
+
+
+def _verified_reapplied_source(root, target, raw, snapshot):
+    """Accept only known generated hooks over the exact current Git blob.
+
+    This is read-only evidence for an explicitly accepted upstream migration,
+    never automatic repair authority or permission to discard local edits.
+    """
+    from .integrity import _exact_git_root, _git_blob, _git_head
+    head = snapshot.get("!resolved_git_head")
+    if head is None:
+        raise ValueError(f"{target}: source drift has no exact Git proof")
+    git_root = _exact_git_root(root)
+    revision = head.decode("ascii")
+    original = _remove_target(target, raw)
+    if (b"HERMES_FEISHU_CARD_" in original
+            or original != _git_blob(git_root, revision, target).encode("utf-8")
+            or _git_head(git_root) != revision):
+        raise ValueError(f"{target}: source drift is not a verified reapplied hook")
+    compile(original, target, "exec")
+    return original
 
 
 def _legacy_upgrade_sources(snapshot, sources, manifest):
@@ -226,6 +257,7 @@ def _inspect(root, *, render_hooks=True):
         raise ValueError("unowned decomposed backup exists")
     clean_targets = []
     replacements = {}
+    reapplied = False
     for target, raw in sources.items():
         row = manifest["targets"][target]
         if sha256(raw).hexdigest() == row["patched_sha256"]:
@@ -238,11 +270,12 @@ def _inspect(root, *, render_hooks=True):
         elif b"HERMES_FEISHU_CARD_" not in raw:
             replacements[target] = raw
         else:
-            raise ValueError(f"{target}: source drift; refusing mutation")
+            replacements[target] = _verified_reapplied_source(root, target, raw, snapshot)
+            reapplied = True
     if replacements:
         originals = {**originals, **replacements}
         rendered = render(originals) if render_hooks else None
-        return snapshot, originals, rendered, "stale_unpatched"
+        return snapshot, originals, rendered, "stale_reapplied" if reapplied else "stale_unpatched"
     rendered = render(originals) if render_hooks else None
     renderer_changed = rendered is not None and any(
         sha256(raw).hexdigest() != manifest["targets"][target]["patched_sha256"]
@@ -255,13 +288,18 @@ def plan(detection, *, accept_hermes_upgrade=False):
     try:
         snapshot, _, _, state = _inspect(detection.root)
         fingerprint = _fingerprint(snapshot)
-        executable = state == "owned_incomplete" or (state == "stale_unpatched" and accept_hermes_upgrade and detection.supported)
-        actions = ("restore_owned_hooks",) if state == "owned_incomplete" else ("accept_hermes_upgrade",) if state == "stale_unpatched" else ()
+        executable = state == "owned_incomplete" or (state in EXPLICIT_UPGRADE_STATES and accept_hermes_upgrade and detection.supported)
+        actions = ("restore_owned_hooks",) if state == "owned_incomplete" else ("accept_hermes_upgrade",) if state in EXPLICIT_UPGRADE_STATES else ()
         findings = ()
         if state == "stale_unpatched":
             findings = (RecoveryFinding("hermes_upgrade_hooks_missing", "warning",
                         "Hermes source changed without owned hooks (an updater/autostash may remove them). "
                         "Use install --accept-hermes-upgrade --yes after reviewing the upgrade; "
+                        "restart Gateway after successful repair."),)
+        elif state == "stale_reapplied":
+            findings = (RecoveryFinding("hermes_upgrade_hooks_reapplied", "warning",
+                        "Known hooks were reapplied over the exact current Git sources while ownership remained stale. "
+                        "Review the upgrade and use install --accept-hermes-upgrade --yes; "
                         "restart Gateway after successful repair."),)
         return RecoveryPlan(detection.root, state, executable, fingerprint, actions, findings)
     except (OSError, ValueError, UnicodeError):
@@ -285,9 +323,9 @@ def install(detection, *, no_repair=False, expected_fingerprint=None, accept_her
             raise ValueError("unsupported decomposed Hermes: " + detection.reason)
         if state == "installed":
             return False
-        if state in {"owned_incomplete", "stale_unpatched"} and no_repair:
+        if state in {"owned_incomplete", *EXPLICIT_UPGRADE_STATES} and no_repair:
             raise ValueError("decomposed ownership needs repair; --no-repair set")
-        if state == "stale_unpatched" and not (accept_hermes_upgrade and detection.supported):
+        if state in EXPLICIT_UPGRADE_STATES and not (accept_hermes_upgrade and detection.supported):
             raise ValueError("decomposed source upgrade requires --accept-hermes-upgrade")
         fresh = plan(detection, accept_hermes_upgrade=accept_hermes_upgrade)
         if fresh.fingerprint != _fingerprint(snapshot):
@@ -305,7 +343,7 @@ def install(detection, *, no_repair=False, expected_fingerprint=None, accept_her
         validate_manifest(manifest)
         changes = [(detection.root / name, raw.decode("utf-8")) for name, raw in rendered.items()
                    if snapshot[name] != raw]
-        if state in {"clean", "stale_unpatched"}:
+        if state in {"clean", *EXPLICIT_UPGRADE_STATES}:
             changes = [(detection.root / (name + BACKUP_SUFFIX), raw.decode("utf-8"))
                        for name, raw in originals.items()] + changes
         changes.append((detection.root / MANIFEST_NAME, json.dumps(manifest, indent=2) + "\n"))
@@ -335,7 +373,7 @@ def restore(detection):
         snapshot, originals, _, state = _inspect(detection.root, render_hooks=False)
         if state == "clean":
             return
-        if state == "stale_unpatched":
+        if state in EXPLICIT_UPGRADE_STATES:
             raise ValueError("decomposed source drift; refusing restore until upgrade is accepted")
         fresh = plan(detection)
         if fresh.fingerprint != _fingerprint(snapshot):

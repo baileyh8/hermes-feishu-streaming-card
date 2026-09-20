@@ -139,8 +139,13 @@ def test_maintenance_status_reports_unavailable_without_mutating(
 def test_maintenance_resume_launches_real_independent_runner(
     monkeypatch, tmp_path, capsys
 ):
+    from hermes_feishu_card.maintenance_store import JOB_ENVIRONMENT_KEYS
+    for key in JOB_ENVIRONMENT_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     job_path = tmp_path / "maintenance" / "jobs" / "job-1.json"
     job = SimpleNamespace(
+        job_id="job-1",
         path=job_path,
         artifact_version=PACKAGE_VERSION,
         hermes_root=tmp_path / "hermes",
@@ -153,6 +158,11 @@ def test_maintenance_resume_launches_real_independent_runner(
         manager="systemd-user",
     )
     calls = []
+    monkeypatch.setattr(
+        cli_module, "stage_job_credentials",
+        lambda paths, *, job_id, environment:
+            calls.append(("credentials", paths, job_id, environment)),
+    )
     monkeypatch.setattr(cli_module, "load_job", lambda path: job)
     monkeypatch.setattr(
         cli_module,
@@ -179,6 +189,7 @@ def test_maintenance_resume_launches_real_independent_runner(
 
     assert code == 0
     assert calls[0] == ("paths", job_path.parent.parent)
+    assert calls[1] == ("credentials", "paths", "job-1", {"NO_PROXY": "127.0.0.1,localhost"})
     assert calls[-1] == ("launch", runtime, job)
     assert "maintenance: started" in capsys.readouterr().out
 
