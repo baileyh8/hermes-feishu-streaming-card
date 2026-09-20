@@ -517,7 +517,7 @@ def create_app(
     if event_auth_required and not valid_transport_root:
         raise ValueError("event authentication requires a private transport root")
     app = web.Application()
-    card_config = card_config or {}
+    card_config = merge_card_config({}, card_config)
     app[FEISHU_CLIENT_KEY] = feishu_client
     app[SESSIONS_KEY] = {}
     app[FEISHU_MESSAGE_IDS_KEY] = {}
@@ -6929,6 +6929,9 @@ def _render_session_card_result_for_app(
         ),
         hide_completed_tool_activity=_safe_bool(
             card_config.get("hide_completed_tool_activity"), False
+        ),
+        hide_successful_tool_activity=_safe_bool(
+            card_config.get("_hide_successful_tool_activity"), False
         ),
         reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),

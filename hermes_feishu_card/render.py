@@ -121,6 +121,7 @@ def render_card(
     completion_mention: bool = False,
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
+    hide_successful_tool_activity: bool = False,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -141,6 +142,7 @@ def render_card(
         completion_mention=completion_mention,
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
+        hide_successful_tool_activity=hide_successful_tool_activity,
     ).card
 
 
@@ -163,6 +165,7 @@ def render_card_result(
     completion_mention: bool = False,
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
+    hide_successful_tool_activity: bool = False,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body
@@ -190,6 +193,7 @@ def render_card_result(
         completion_mention=completion_mention,
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
+        hide_successful_tool_activity=hide_successful_tool_activity,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -235,6 +239,7 @@ def _render_card_unchecked(
     completion_mention: bool = False,
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
+    hide_successful_tool_activity: bool = False,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -319,7 +324,9 @@ def _render_card_unchecked(
         )
     # Keep live progress and pending interaction layouts unchanged. Only the
     # content tool area is optional; timeline evidence and counts stay intact.
-    hide_terminal_tools = hide_completed_tool_activity and session.status in {"completed", "failed"}
+    hide_terminal_tools = (
+        hide_completed_tool_activity and session.status in {"completed", "failed"}
+    ) or (hide_successful_tool_activity and session.status == "completed")
     tool_activity_elements = (
         []
         if pending_approval or hide_terminal_tools

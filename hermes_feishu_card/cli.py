@@ -198,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "card-config":
+        return _run_card_config(args)
     if args.command == "setup":
         return _run_setup(args)
     if args.command == "start":
@@ -248,6 +250,14 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_output = doctor.add_mutually_exclusive_group()
     doctor_output.add_argument("--json", action="store_true", dest="json_output")
     doctor_output.add_argument("--explain", action="store_true")
+
+    card_config = subparsers.add_parser(
+        "card-config", help="explain effective reading options without changing configuration",
+    )
+    card_config.add_argument("--config", required=True)
+    card_config.add_argument("--profile-id")
+    card_config.add_argument("--bot-id")
+    card_config.add_argument("--json", action="store_true", dest="json_output")
 
     setup = subparsers.add_parser(
         "setup",
@@ -879,6 +889,35 @@ card:
     - output_tokens
     - context
 """
+
+
+def _run_card_config(args: argparse.Namespace) -> int:
+    from .reading import explain_reading_config
+
+    try:
+        path = Path(args.config).expanduser()
+        # Validate using the runtime loader; read raw scopes to distinguish
+        # explicit YAML values from the defaults injected by that loader.
+        load_config(path)
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError, yaml.YAMLError):
+        print("Unable to read valid card configuration.", file=sys.stderr)
+        return 2
+    try:
+        report = explain_reading_config(
+            raw, profile_id=args.profile_id, bot_id=args.bot_id,
+        )
+    except ValueError as exc:
+        # Selection errors contain fixed messages, never YAML values.
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.json_output:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        for key, value in report["values"].items():
+            print(f"{key}: {json.dumps(value, ensure_ascii=False)}  [{report['sources'][key]}]")
+        print(report["note"])
+    return 0
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
