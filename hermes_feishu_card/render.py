@@ -1106,6 +1106,31 @@ def _render_interaction_elements(
     interaction = session.active_interaction
     if interaction is None:
         return []
+    if interaction.status != "pending" and session.status in {"completed", "failed"}:
+        # Maintainer note (contract change, #337): the decided approval is a WORKING surface, not a
+        # permanent fixture. While the turn runs it is the one place a reader can see what was
+        # approved and what that approval then ran; once the turn is over it is only weight, and on
+        # a long turn it is the bulkiest part of the card — the question, the full (masked) command
+        # and the option list — so it is dropped, exactly as the completed tool rows are.
+        #
+        # Where the audit record lives now: the standalone approval card. It is a separate message
+        # that keeps the question, the options and 已选择：… and drops only the buttons and the
+        # callback token (see ``render_legacy_interaction_callback_card``), so a decided approval is
+        # still reconstructible there for as long as the chat keeps the message.
+        #
+        # Why the gate is the TURN's status and not the interaction's: an interaction is "completed"
+        # the moment the user clicks, which is exactly when the block still has to be readable —
+        # that is the window the previous contract protected («neither the approver nor anyone
+        # reviewing the chat afterwards could see what had actually been approved»). Gating on
+        # ``interaction.status`` would delete it during execution, which is the bug that note warns
+        # about; gating on ``session.status`` keeps it for the whole time it is being read.
+        #
+        # This is also upstream's own posture — they drop the operation scope earlier still (as soon
+        # as a decision is taken) because the card is one message edited in place, so not rendering
+        # the scope is how the command leaves the group's history. Moving the drop to the end of the
+        # turn keeps both properties: no stale command sitting in a finished card, and the scope
+        # visible for as long as it informs a decision.
+        return []
     if (
         interaction.status == "pending"
         and str(getattr(interaction, "feishu_message_id", "") or "").strip()
