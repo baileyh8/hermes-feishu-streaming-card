@@ -18,6 +18,7 @@ class Client:
     def __init__(self):
         self.sent = []
         self.updated = []
+        self.cross_dialect = []
         self.fail = False
 
     async def send_card(self, chat_id, card, **kwargs):
@@ -29,6 +30,8 @@ class Client:
 
     async def update_card_message(self, mid, card):
         original = next(c for m, c, _ in self.sent if m == mid)
+        if original.get("schema") != card.get("schema"):
+            self.cross_dialect.append(mid)
         assert original.get("schema") == card.get("schema"), "cross-dialect PATCH"
         self.updated.append((mid, copy.deepcopy(card)))
 
@@ -294,3 +297,35 @@ async def test_failed_predecessor_patch_keeps_new_owner_and_terminal_delivery():
         assert owner == 'om_segment_3'
         assert 'FINAL_NEW_OWNER' in str(client.updated[-1][1])
         assert app[DIAGNOSTICS_KEY]['last_continuation_predecessor'] == 'update_failed'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('start_first', [True, False])
+@pytest.mark.parametrize('mode', ['text', 'callback'])
+async def test_resolved_receipts_keep_dialect_choices_and_live_turn(start_first, mode):
+    client = Client()
+    app = create_app(client, card_config={'interaction_mode':mode, 'flush_interval_ms':0})
+    async with TestClient(TestServer(app)) as http:
+        if start_first:
+            await post(http, 'message.started', 0)
+            await post(http, 'tool.updated', 1, {'tool_id':'live', 'name':'clarify', 'status':'running'})
+        receipt_ids = []
+        for seq in (2, 4):
+            await interact(http, seq, f'question_{seq}')
+            receipt_ids.append(app[SESSIONS_KEY]['turn_fixture'].active_interaction.feishu_message_id)
+            await asyncio.sleep(.02)
+            for mid in receipt_ids:
+                card = next(c for m, c in reversed(client.updated) if m == mid)
+                if mode == 'text':
+                    assert card['schema'] == '2.0'
+                    assert '交互结果已记录' in str(card)
+                else:
+                    assert card.get('schema') is None
+                    assert 'interaction.select' not in str(card)
+                assert not client.cross_dialect
+                assert 'Choose fixture' in str(card) and '已选择' in str(card)
+                assert '执行中' not in str(card) and '已中断' not in str(card)
+                assert '本轮回复结束' not in str(card)
+            assert app[SESSIONS_KEY]['turn_fixture'].status not in {'completed','failed'}
+        await post(http, 'message.completed', 6, {'answer':'FINAL_AFTER_TWO'})
+        assert 'FINAL_AFTER_TWO' in str(client.updated[-1][1])

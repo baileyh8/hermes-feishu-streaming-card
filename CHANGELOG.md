@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [4.6.5] - 2026-09-20
 
-- Retire the previous schema-2 card after confirmed continuation delivery, preserving its pre-output snapshot and decision receipt. Use a neutral handoff state, preserve legacy dialects, and keep the new owner when the old PATCH fails (adapted from PR #339 after real desktop reproduction).
+- Keep text-mode decision receipts static across consecutive questions and preserve interaction-first legacy dialects. Retire the previous schema-2 card after confirmed continuation delivery, preserving its pre-output snapshot and decision receipt. Use a neutral handoff state, preserve legacy dialects, and keep the new owner when the old PATCH fails (adapted from PR #339 after real desktop reproduction).
 
 - Persist bounded restart-notice ownership across sidecar restarts; recognize exact native startup/shutdown producers with profile, adapter, application and topic proof. Preserve unknown messages and failed deletions (continued adaptation of mouyong's PR #331).
 - Use explicit executor `call_id` to deduplicate repeated terminal events and reject late starts without changing legacy name-only counting. Preserve duration, history and ordinals.

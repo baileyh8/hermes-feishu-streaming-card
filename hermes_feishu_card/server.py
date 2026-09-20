@@ -5720,9 +5720,15 @@ async def _apply_event_locked_inner(
                     request.app, receipt_snapshot, session_key=session_key
                 )
             else:
-                receipt_card = _render_session_card_for_app(
-                    request.app, receipt_snapshot, session_key=session_key
+                receipt_card = _render_static_display_card(
+                    request.app, receipt_snapshot, session_key=session_key,
+                    note="交互结果已记录，后续进展以回复卡为准",
+                    display_state="display_receipt",
                 )
+                if receipt_card is None:
+                    receipt_card = _render_session_card_for_app(
+                        request.app, copy.deepcopy(session), session_key=session_key
+                    )
             updated = await _update_card_for_app(
                 request.app, receipt.feishu_message_id, receipt_card,
                 message_bot_ids.get(session_key),
@@ -5788,11 +5794,30 @@ async def _apply_event_locked_inner(
             latest_card = render_result.card
             if (str(event.event).startswith("interaction.")
                     and interaction is not None
+                    and interaction.feishu_message_id
+                    and interaction.feishu_message_id != feishu_message_id
+                    and (latest_session.legacy_owner_receipt
+                         or _interaction_mode_for_session_key(request.app, session_key) == "text")):
+                # The dedicated receipt was updated above. Do not repaint
+                # an older receipt/owner with this newer question's state.
+                return True
+            if (str(event.event).startswith("interaction.")
+                    and interaction is not None
                     and interaction.feishu_message_id == feishu_message_id
                     and _interaction_mode_for_session_key(request.app, session_key) == "callback"):
                 latest_card = _render_interaction_callback_card_for_app(
                     request.app, latest_session, session_key=session_key
                 )
+            elif (str(event.event).startswith("interaction.")
+                    and interaction is not None
+                    and interaction.status not in {"pending", "paused"}
+                    and interaction.feishu_message_id == feishu_message_id
+                    and _interaction_mode_for_session_key(request.app, session_key) == "text"):
+                latest_card = _render_static_display_card(
+                    request.app, copy.deepcopy(latest_session), session_key=session_key,
+                    note="交互结果已记录，后续进展以回复卡为准",
+                    display_state="display_receipt",
+                ) or latest_card
             if is_terminal and render_result.disposition == "card":
                 await _populate_subscription_usage(request.app, latest_session)
                 populated_result = _render_session_card_result_for_app(
@@ -5983,6 +6008,44 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         )
 
 
+def _render_static_display_card(app, snapshot, *, session_key, note, display_state):
+    """Render a private display copy, without mutating execution or deleting evidence."""
+    try:
+        snapshot.display_segment = {}
+        snapshot.runtime_phase_text = ""
+        snapshot.latest_tool_preview = ""
+        snapshot.display_status = "waiting"
+        snapshot.display_status_source = "explicit"
+        snapshot.timeline.record_answer_started()
+        from .card_timeline import TERMINAL_TOOL_STATUSES, TERMINAL_SUBAGENT_STATUSES
+        for tool in snapshot.tools.values():
+            if tool.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
+                tool.status = display_state
+        for entry in snapshot.timeline.snapshot():
+            if entry.kind == "tool" and entry.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
+                entry.status = display_state
+            elif entry.kind == "subagent" and entry.status.strip().lower() not in TERMINAL_SUBAGENT_STATUSES:
+                entry.status = display_state
+        result = _render_session_card_result_for_app(app, snapshot, session_key=session_key)
+        if result.disposition != "card" or result.card.get("schema") != "2.0":
+            return None  # Do not replace preserved content with a limit placeholder.
+        card = result.card
+        card.setdefault("config", {})["streaming_mode"] = False
+        card["config"].setdefault("summary", {})["content"] = note
+        configured_title = _session_card_render_context(app, snapshot, session_key=session_key)[2]
+        title = {"tag":"plain_text", "content":"↪ " + configured_title}
+        card["header"] = {"template":"blue", "title":title,
+                          "subtitle":{"tag":"plain_text", "content":note}}
+        for element in card.get("body", {}).get("elements", []):
+            if element.get("element_id") == "footer":
+                element["content"] = note
+        if not inspect_card_limits(card).safe:
+            return None
+        return card
+    except Exception:
+        return None
+
+
 async def _retire_continuation_predecessor(app, session_key, message_id, snapshot, *, bot_id):
     """Freeze a confirmed handoff without claiming that the whole turn succeeded.
 
@@ -5994,36 +6057,12 @@ async def _retire_continuation_predecessor(app, session_key, message_id, snapsho
             or snapshot.legacy_owner_receipt):
         return False
     try:
-        snapshot.display_segment = {}
-        snapshot.runtime_phase_text = ""
-        snapshot.latest_tool_preview = ""
-        snapshot.display_status = "waiting"
-        snapshot.display_status_source = "explicit"
-        snapshot.timeline.record_answer_started()
-        from .card_timeline import TERMINAL_TOOL_STATUSES, TERMINAL_SUBAGENT_STATUSES
-        for tool in snapshot.tools.values():
-            if tool.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
-                tool.status = "display_handoff"
-        for entry in snapshot.timeline.snapshot():
-            if entry.kind == "tool" and entry.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
-                entry.status = "display_handoff"
-            elif entry.kind == "subagent" and entry.status.strip().lower() not in TERMINAL_SUBAGENT_STATUSES:
-                entry.status = "display_handoff"
-        result = _render_session_card_result_for_app(app, snapshot, session_key=session_key)
-        if result.disposition != "card" or result.card.get("schema") != "2.0":
-            return False  # Do not replace preserved content with a limit placeholder.
-        card = result.card
-        note = "本段已转入续答，后续进展与结果见下方新卡"
-        card.setdefault("config", {})["streaming_mode"] = False
-        card["config"].setdefault("summary", {})["content"] = note
-        configured_title = _session_card_render_context(app, snapshot, session_key=session_key)[2]
-        title = {"tag":"plain_text", "content":"↪ " + configured_title}
-        card["header"] = {"template":"blue", "title":title,
-                          "subtitle":{"tag":"plain_text", "content":note}}
-        for element in card.get("body", {}).get("elements", []):
-            if element.get("element_id") == "footer":
-                element["content"] = note
-        if not inspect_card_limits(card).safe:
+        card = _render_static_display_card(
+            app, snapshot, session_key=session_key,
+            note="本段已转入续答，后续进展与结果见下方新卡",
+            display_state="display_handoff",
+        )
+        if card is None:
             return False
         updated = await _update_card_for_app(app, message_id, card, bot_id)
         app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "retired" if updated else "update_failed"
@@ -6222,6 +6261,24 @@ async def _finalize_interaction_predecessor(
     if animation_task is not None:
         animation_task.cancel()
         await asyncio.gather(animation_task, return_exceptions=True)
+
+    previous_interaction = predecessor_snapshot.active_interaction
+    if (previous_interaction is not None
+            and previous_interaction.feishu_message_id == predecessor_message_id
+            and previous_interaction.status not in {"pending", "paused"}):
+        if _interaction_mode_for_session_key(app, session_key) == "callback":
+            card = _render_interaction_callback_card_for_app(
+                app, predecessor_snapshot, session_key=session_key
+            )
+        else:
+            card = _render_static_display_card(
+                app, predecessor_snapshot, session_key=session_key,
+                note="交互结果已记录，后续进展以回复卡为准",
+                display_state="display_receipt",
+            )
+        if card is None:
+            return False
+        return await _update_card_for_app(app, predecessor_message_id, card, bot_id)
 
     predecessor_snapshot.active_interaction = None
     predecessor_snapshot.latest_tool_preview = ""
@@ -6423,7 +6480,8 @@ def _card_animation_is_current(
     # Freeze loading/tool animations while an interaction is pending —
     # periodic PATCHes would reset the user's in-progress selections/input.
     interaction = session.active_interaction
-    if interaction is not None and interaction.status in {"pending", "paused"}:
+    if (session.display_segment.get("pending")
+            or (interaction is not None and interaction.status in {"pending", "paused"})):
         return False
     return app[SESSIONS_KEY].get(session_key) is session and (
         _is_initial_loading(session) or _has_running_tool(session)
