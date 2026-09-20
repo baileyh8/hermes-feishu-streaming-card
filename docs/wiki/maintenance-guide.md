@@ -247,3 +247,11 @@ native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependen
 - 阅读预设可选，未设置保持旧默认；全局/profile/bot 每层先预设后显式字段。`hide_completed_tool_activity` 显式 true/false 语义不变，`card-config` 仅说明配置而非证明进程已加载。
 - 重启通知只登记有来源证明的 exact profile/bot/chat/thread。后续成功投递/更新只清理之前快照，删除失败保留记录；空 thread 不通配。答案、交互回执和来源不明的原生 home 通知不清理。
 - 提交前使用[preflight](../testing.md)核对环境和所选差异基线；候选状态及真实验收分别见[实施状态](../superpowers/plans/2026-09-20-v4.6.x-experience.md)和[V4.6.4验收](feishu-acceptance-v4.6.4.md)。
+
+## V4.6.5 故障、通知和升级边界
+
+模型重试耗尽的同步状态 callback 只能在另一个仍运行的 Gateway loop 上等待有界 HTTP 明确 ACK；空/旧/拒绝响应不抑制原生提示，同 loop 不阻塞。未知文案不通过宽泛关键词接管。通知持久化和已知 native producer 的归属见[通知归属](notice-ownership.md)。
+
+工具去重必须使用明确 call_id，不能把重复工具名猜成同一次调用。默认时间线行为不变，分组裁剪只改变显示。带 call_id 的新展示检查点回退旧版可能被跳过，不得因此恢复执行。
+
+`stale_reapplied` 只允许显式接受上游升级：旧 backup 必须匹配 manifest，严格移除已知模板后逐字等于当前 Git blob，检查 resolved HEAD 与事务 fingerprint；中途漂移、未知 marker 和无 Git 证明拒绝。保留 staged index 与无关定制，不手改 installed gateway 或伪造 manifest。

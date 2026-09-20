@@ -44,6 +44,8 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "hide_completed_tool_activity": False,
         "reasoning_format": "panel",
         "timeline_expanded": False,
+        "timeline_order": "newest_first",
+        "timeline_tools_per_reasoning": 0,
         "max_timeline_items": 12,
         "max_reasoning_chars": 1200,
         "max_tool_result_chars": 600,
@@ -452,6 +454,15 @@ def _normalize_card_config(value: object, *, path: str) -> None:
         if not isinstance(raw_format, str) or raw_format.strip().lower() not in {"panel", "code"}:
             raise ValueError(f"{path}.reasoning_format must be panel or code")
         value["reasoning_format"] = raw_format.strip().lower()
+    if "timeline_order" in value:
+        raw_order = value["timeline_order"]
+        if not isinstance(raw_order, str) or raw_order.strip().lower() not in {"newest_first", "chronological"}:
+            raise ValueError(f"{path}.timeline_order must be newest_first or chronological")
+        value["timeline_order"] = raw_order.strip().lower()
+    if "timeline_tools_per_reasoning" in value:
+        limit = value["timeline_tools_per_reasoning"]
+        if type(limit) is not int or not 0 <= limit <= 100:
+            raise ValueError(f"{path}.timeline_tools_per_reasoning must be an integer from 0 to 100")
     if "mentions_in_cards" in value and value["mentions_in_cards"] is not None:
         value["mentions_in_cards"] = _normalize_boolean(
             value["mentions_in_cards"], f"{path}.mentions_in_cards"

@@ -122,6 +122,8 @@ def render_card(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
+    timeline_order: str = "newest_first",
+    timeline_tools_per_reasoning: int = 0,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -143,6 +145,8 @@ def render_card(
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
         hide_successful_tool_activity=hide_successful_tool_activity,
+        timeline_order=timeline_order,
+        timeline_tools_per_reasoning=timeline_tools_per_reasoning,
     ).card
 
 
@@ -166,6 +170,8 @@ def render_card_result(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
+    timeline_order: str = "newest_first",
+    timeline_tools_per_reasoning: int = 0,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body
@@ -194,6 +200,8 @@ def render_card_result(
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
         hide_successful_tool_activity=hide_successful_tool_activity,
+        timeline_order=timeline_order,
+        timeline_tools_per_reasoning=timeline_tools_per_reasoning,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -240,6 +248,8 @@ def _render_card_unchecked(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
+    timeline_order: str = "newest_first",
+    timeline_tools_per_reasoning: int = 0,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -349,6 +359,8 @@ def _render_card_unchecked(
             max_items=max_timeline_items,
             max_reasoning_chars=max_reasoning_chars,
             max_tool_result_chars=max_tool_result_chars,
+            timeline_order=timeline_order,
+            tools_per_reasoning=timeline_tools_per_reasoning,
             text_sizes=text_sizes,
             used_text_size_roles=used_text_size_roles,
             reasoning_format=reasoning_format,
@@ -1873,6 +1885,8 @@ def _render_timeline_elements(
     used_text_size_roles: set[str] | None = None,
     reasoning_format: str = "panel",
     live_thinking: str = "",
+    timeline_order: str = "newest_first",
+    tools_per_reasoning: int = 0,
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
@@ -1889,7 +1903,8 @@ def _render_timeline_elements(
         all_entries.append(live_entry)
     if not all_entries:
         return []
-    entries = _select_timeline_entries(all_entries, max_items=max_items)
+    entries = _select_timeline_entries(
+        _limit_tools_per_reasoning(all_entries, tools_per_reasoning), max_items=max_items)
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
@@ -1907,6 +1922,8 @@ def _render_timeline_elements(
     # carries each entry's original position, so element ids are unchanged and identical entries are
     # still selected; only the order they are written in differs per surface.
     panel_order = [(i, e) for i, e in reversed(list(enumerate(entries)))]
+    if timeline_order == "chronological":
+        panel_order.reverse()
     if reasoning_format == "code":
         # "code" puts reasoning in the body (see the target_elements split below) and tools in the
         # panel, so the two orders can differ. Any other format folds reasoning into the panel,
@@ -2026,8 +2043,7 @@ def _render_timeline_elements(
         # that stands for them belongs at the BOTTOM, below the oldest entry still shown. Emitting it
         # first (as it did in chronological order) would put a "here is where the history was cut"
         # marker above the newest work, which reads as if the cut happened at the top.
-        panel_elements.extend(
-            _timeline_markdown_elements(
+        folded_elements = _timeline_markdown_elements(
                 f"> 已折叠 {folded} 条早期思考/工具记录",
                 "auxiliary_timeline_folded",
                 text_size=_role_text_size(
@@ -2037,7 +2053,10 @@ def _render_timeline_elements(
                     used_roles=used_text_size_roles,
                 ),
             )
-        )
+        if timeline_order == "chronological":
+            panel_elements[0:0] = folded_elements
+        else:
+            panel_elements.extend(folded_elements)
     if panel_elements:
         # The panel is named for thinking and tool work. A timeline holding only notices (a deferred
         # compression hint, a skill-loading note) is neither, and folding those into it produced
@@ -2245,6 +2264,22 @@ def _set_text_size(element: dict[str, Any], text_size: str | None) -> None:
 
 def _quote_markdown(content: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in content.splitlines())
+
+
+def _limit_tools_per_reasoning(entries: list[Any], limit: int) -> list[Any]:
+    """Opt-in display pruning; keep failures/running work and all stored history."""
+    if type(limit) is not int or limit <= 0:
+        return entries
+    omitted = set()
+    group = []
+    for index, entry in enumerate(entries):
+        if entry.kind == "reasoning":
+            omitted.update(group[:-limit])
+            group = []
+        elif entry.kind == "tool" and str(entry.status).strip().lower() in {"completed", "已完成", "完成", "成功"}:
+            group.append(index)
+    omitted.update(group[:-limit])
+    return [entry for index, entry in enumerate(entries) if index not in omitted]
 
 
 def _select_timeline_entries(entries: list[Any], *, max_items: int) -> list[Any]:

@@ -661,6 +661,14 @@ def create_app(
     app.router.add_post("/events", _events)
     app[SESSION_STORE_KEY] = None
     if session_store_directory is not None:
+        app[RESTART_NOTICES_KEY] = RestartNoticeRegistry(
+            directory=session_store_directory,
+            identity_for_scope=lambda scope: _checkpoint_client_identity(app, scope.bot_id or None)
+                if _policy_decision(app, scope.chat_id, profile_id=scope.profile_id).disposition == CARD_DISPOSITION
+                else None,
+            state_changed=lambda state: app[DIAGNOSTICS_KEY].__setitem__("restart_notice_store_state", state),
+        )
+    if session_store_directory is not None:
         from .session_store import SessionStore
         try:
             app[SESSION_STORE_KEY] = SessionStore(session_store_directory)
@@ -7058,6 +7066,8 @@ def _render_session_card_result_for_app(
         ),
         reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
+        timeline_order=card_config.get("timeline_order", "newest_first"),
+        timeline_tools_per_reasoning=card_config.get("timeline_tools_per_reasoning", 0),
         max_timeline_items=_safe_positive_int(
             card_config.get("max_timeline_items"), 12
         ),
@@ -7663,10 +7673,16 @@ async def _recall_schedule(request: web.Request) -> web.Response:
         if scope is None:
             return web.json_response({"ok": False, "error": "notice route unavailable"}, status=409)
     try:
-        _client_for_bot(request.app, bot_id)
+        recall_client = _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
     if family is not None:
+        app_hash = route_data.get("app_id_hash")
+        if app_hash is not None:
+            app_id = getattr(getattr(recall_client, "config", None), "app_id", None)
+            if (not isinstance(app_hash, str) or not isinstance(app_id, str) or not app_id
+                    or hashlib.sha256(app_id.encode()).hexdigest() != app_hash):
+                return web.json_response({"ok":False,"error":"notice application mismatch"}, status=409)
         if not request.app[RESTART_NOTICES_KEY].register(scope, message_id):
             return web.json_response({"ok": False, "error": "notice capacity reached"}, status=429)
         return web.json_response({"ok": True, "message_id": message_id, "record_only": True})

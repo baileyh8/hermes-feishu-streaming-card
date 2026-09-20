@@ -2116,15 +2116,15 @@ def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
         plan = decomposed.plan(detection)
         report = {"checked": True, "status": plan.state,
                 "manifest_exists": (detection.root / MANIFEST_NAME).exists(),
-                "manual_action_required": plan.state in {"refused", "stale_unpatched"},
+                "manual_action_required": plan.state in {"refused", *decomposed.EXPLICIT_UPGRADE_STATES},
                 "automatic_repair_available": plan.executable,
                 "message": "Decomposed ownership: " + plan.state}
-        if plan.state == "stale_unpatched":
+        if plan.state in decomposed.EXPLICIT_UPGRADE_STATES:
             accepted = decomposed.plan(detection, accept_hermes_upgrade=True)
             if accepted.executable:
                 report["message"] = (
                     "Hermes source changed and HFC hooks need reinstalling; an updater/autostash "
-                    "may have removed them. Review the upgrade, run the explicit repair command, "
+                    "may have removed or reapplied them. Review the upgrade, run the explicit repair command, "
                     "then restart Gateway.")
                 report["repair_command"] = shlex.join([
                     "hermes-feishu-card", "install", "--hermes-dir", str(detection.root),
@@ -2694,7 +2694,7 @@ def _lifecycle_hook_check(args: argparse.Namespace) -> dict[str, object] | None:
         return {"status": "installed", "blocking": False, "root": verified_root}
     if plan.state == "clean":
         return {"status": "not_installed", "blocking": False, "root": verified_root}
-    if plan.state == "stale_unpatched":
+    if plan.state in {"stale_unpatched", "stale_reapplied"}:
         accepted = plan_recovery(detection, accept_hermes_upgrade=True)
         if accepted.executable:
             return {
@@ -4272,7 +4272,7 @@ def _recovery_refusal_message(
     hermes_root: Path | None = None,
 ) -> str:
     message = _first_refusal(plan)
-    if plan.state == "stale_unpatched" and not accept_hermes_upgrade:
+    if plan.state in {"stale_unpatched", "stale_reapplied"} and not accept_hermes_upgrade:
         if hermes_root is None:
             command = "--accept-hermes-upgrade --yes"
         else:

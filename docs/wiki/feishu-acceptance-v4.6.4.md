@@ -11,6 +11,13 @@
 - 原生产实例受管源码与安装 manifest 漂移，安全安装器拒绝覆盖；保留本地改动、原服务和 HFC 4.6.2。升级原实例不计入本版完成项。
 - 精确合并、tag、资产和公开安装的最终证据随 [Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.4) 登记。
 
+## 2026-09-20 后续核验
+
+- v4.6.4 精确合并 `457f0d00ddedc0e4dc6a507cf79c4ddfc6aaa17e`：4055 passed、12 skipped；PR/main CI、annotated tag、三平台资产/checksum 和公开 tag 普通安装通过。
+- 原实例的 stale ownership 已经官方 patcher 的显式、严格 Git 来源迁移修复；普通 site-packages 包为 4.6.4，staged index 和 AMD 定制保留。Gateway/sidecar 均运行，readiness=ready、版本一致、活动计数完整。
+- 真实用户发起首次 clarify 测试，但 DeepSeek 连续三次 HTTP 503，工具调用数为 0，尚未进入按钮阶段。失败卡正确显示停止，另有重复原生灰色提示；后者在 4.6.5 修复。此次不算首次按钮或续答通过。
+- 手机视觉和真实审批首按钮仍未验证；上面的早期候选记录保留为历史过程。
+
 ## 目标与证据
 
 复用已经授权的 Hermes/HFC 实例和测试会话。先核对 hostname、配置来源、Python/包来源、Hermes/HFC 版本、Gateway/sidecar PID、profile/bot 和真实会话；多个实例或会话不能混为一项。检查当前工作是否允许重启，使用既有安全安装/维护流程，保留用户配置和本地定制。
@@ -21,7 +28,7 @@
 
 | 场景 | 通过条件 | 当前记录 |
 | --- | --- | --- |
-| 冷启动首次 clarify | 重启候选 Gateway 后不先发 slash/model/resume，真实用户触发首轮 clarify；首次点击到达原等待方且只执行一次 | 真实客户端未运行 |
+| 冷启动首次 clarify | 重启候选 Gateway 后不先发 slash/model/resume，真实用户触发首轮 clarify；首次点击到达原等待方且只执行一次 | 已发起，模型 503 阻塞在调用 clarify 之前 |
 | 冷启动首次 approval | 独立冷启动，真实审批首个按钮可用；允许/拒绝含义正确，重复点击和旧按钮不再次执行 | 真实客户端未运行 |
 | 顺序续答 | 先有回答，再 clarify/approval，再有真实输出；续答出现在选择之后，问题、范围、选择仍可回看 | 真实客户端未运行 |
 | 连续题目与输入 | 单选、多选、自定义答案和两道连续题不串值；中间无输出时不夹空卡，输入中无无关 PATCH 清空控件 | 真实客户端未运行 |

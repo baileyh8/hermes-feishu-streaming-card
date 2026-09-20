@@ -978,9 +978,10 @@ def test_task4_official_tool_kwargs_drop_every_raw_canary_and_map_statuses():
     runtime.drain_observers(1.0)
 
     assert [payload["data"] for payload in posted] == [
-        {"tool_id": "call-1", "name": "shell", "status": "pending"},
+        {"tool_id": "call-1", "call_id": "call-1", "name": "shell", "status": "pending"},
         {
             "tool_id": "call-1",
+            "call_id": "call-1",
             "name": "shell",
             "status": "failed",
             "duration_ms": 9,

@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [4.6.5] - 2026-09-20
+
+- Persist bounded restart-notice ownership across sidecar restarts; recognize exact native startup/shutdown producers with profile, adapter, application and topic proof. Preserve unknown messages and failed deletions (continued adaptation of mouyong's PR #331).
+- Use explicit executor `call_id` to deduplicate repeated terminal events and reject late starts without changing legacy name-only counting. Preserve duration, history and ordinals.
+- Add opt-in `timeline_order: chronological` and `timeline_tools_per_reasoning`; defaults remain newest-first and unlimited per block. Keep failures/running work eligible for the existing global display budget.
+- Suppress the duplicate native provider-error warning only after an explicit sidecar acknowledgement; timeout, unknown formats and unavailable routes retain native fallback.
+- Accept exact known hooks reapplied onto verified current Git sources only with explicit upstream-upgrade consent, preserving staged state and unrelated customizations; isolate proxy variables in preflight child processes.
+- See [Chinese notes](docs/release-notes-v4.6.5.md) and [English notes](docs/release-notes-v4.6.5.en.md). Real first-button acceptance is still blocked by an upstream DeepSeek 503; automated coverage is not a successful real click.
+
 ## [4.6.4] - 2026-09-20
 
 - Wire the first Feishu turn/interaction callback without slash-card warmup, including generated TurnRunner closures; preserve live SDK dispatcher identity and exact profile/adapter ownership (#335, sthnow; patch by babypanda).

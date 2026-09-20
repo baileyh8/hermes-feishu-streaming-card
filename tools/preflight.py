@@ -173,7 +173,9 @@ def needs_fixture(root, targets):
 def child_environment(environ, private, fixture):
     env = dict(environ)
     for key in list(env):
-        if key.startswith(("FEISHU_", "LARK_", "HERMES_", "HFC_")) or key in {"PYTHONPATH", "PYTEST_ADDOPTS"}:
+        if (key.startswith(("FEISHU_", "LARK_", "HERMES_", "HFC_"))
+                or key in {"PYTHONPATH", "PYTEST_ADDOPTS"}
+                or key.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}):
             env.pop(key)
     # Give only the pytest subprocess a private user home. Do not pin an
     # explicit Hermes/config target: that changes no-target CLI behavior, and

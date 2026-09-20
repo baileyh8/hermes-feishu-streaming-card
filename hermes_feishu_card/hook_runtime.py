@@ -1959,7 +1959,11 @@ def handle_status_from_hermes_locals(
         source = local_vars.get("source")
         if _platform_name(local_vars, source) != "feishu":
             return False
-        if not _CONTEXT_COMPACTION_STATUS_RE.search(str(message or "")):
+        provider_failure = bool(
+            event_type == "lifecycle" and isinstance(message, str) and len(message) <= 1000
+            and re.fullmatch(r"❌ (?:API failed|Rate limited) after [1-9][0-9]{0,2} retries — [^\r\n]+", message)
+        )
+        if not provider_failure and not _CONTEXT_COMPACTION_STATUS_RE.search(str(message or "")):
             return False
         run_guard = local_vars.get("_run_still_current")
         if callable(run_guard) and not run_guard():
@@ -1976,6 +1980,15 @@ def handle_status_from_hermes_locals(
             "display_status": "in_progress",
             "content": "正在总结较早的对话，完成后会继续当前任务。",
         }
+        if provider_failure:
+            event_locals.update({
+                "_hfc_notice_title": "模型服务异常",
+                "_hfc_notice_level": "warning",
+                "_hfc_notice_kind": "provider-failure",
+                "_hfc_notice_id": "provider-failure:terminal",
+                "content": "模型服务请求失败，本轮正在结束。错误说明会保留在结果卡中。",
+            })
+            return _emit_status_notice_confirmed(event_locals)
         return emit_from_hermes_locals_threadsafe(
             event_locals,
             event_name="system.notice",
@@ -1984,9 +1997,36 @@ def handle_status_from_hermes_locals(
         return False
 
 
+def _emit_status_notice_confirmed(local_vars: dict[str, Any]) -> bool:
+    """Suppress native failure text only after a bounded sidecar acknowledgement."""
+    loop = local_vars.get("_hfc_loop")
+    future = None
+    try:
+        if loop is None or not loop.is_running():
+            return False
+        try:
+            if asyncio.get_running_loop() is loop:
+                return False  # Never block the loop needed to deliver this event.
+        except RuntimeError:
+            pass
+        timeout = min(10.0, max(1.0, load_runtime_config().timeout_seconds + 1.0))
+        coroutine = emit_from_hermes_locals_async(local_vars, "system.notice", require_ack=True)
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except Exception:
+            coroutine.close()
+            raise
+        return future.result(timeout=timeout) is True
+    except Exception:
+        if future is not None:
+            future.cancel()
+        return False
+
+
 async def emit_from_hermes_locals_async(
     local_vars: dict[str, Any],
     event_name: str = "message.started",
+    *, require_ack: bool = False,
 ) -> bool:
     try:
         config = load_runtime_config()
@@ -2021,7 +2061,7 @@ async def emit_from_hermes_locals_async(
                 _register_native_handoff_descriptor(payload, result)
             applied = _event_was_applied(
                 result,
-                strict=event_name in {"message.completed", "message.failed"},
+                strict=require_ack or event_name in {"message.completed", "message.failed"},
             )
             if event_name == "message.completed":
                 _register_native_media_text_suppression(payload, applied=applied)
@@ -6365,6 +6405,16 @@ async def _hfc_send_with_native_command_result_card(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_send", None)
+    from .notice_producers import notice_route_for_send
+    notice_route = notice_route_for_send(self, chat_id, content, metadata)
+    if notice_route is not None and callable(original):
+        result = await original(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        if getattr(result, "success", False) is True:
+            await schedule_message_recall_async(
+                str(getattr(result, "message_id", "") or ""),
+                route=notice_route, notice_family="restart",
+            )
+        return result
     handoff_context = _native_handoff_for_send(self, chat_id, content, metadata)
     if handoff_context is not None and callable(original):
         descriptor = handoff_context["descriptor"]
@@ -9248,6 +9298,8 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
             _HFC_FEISHU_DELIVERY_CONTEXT.set(None)
             return False
         runner_type = type(runner)
+        from .notice_producers import install_notice_producers
+        install_notice_producers(runner_type)
         _install_startup_resume_wait(runner_type)
         if callable(getattr(runner_type, "_thread_metadata_for_target", None)):
             _hfc_install_policy_adapter_method(
@@ -10678,6 +10730,9 @@ def _event_data(
         status = _first_string(local_vars, ("status", "tool_status")) or "running"
         detail = _first_string(local_vars, ("detail", "tool_detail")) or ""
         data.update({"tool_id": tool_id, "name": name, "status": status, "detail": detail})
+        call_id = _first_string(local_vars, ("call_id", "tool_call_id"))
+        if call_id and len(call_id) <= 256:
+            data["call_id"] = call_id
         arguments = _tool_arguments(local_vars)
         if arguments is not None:
             data["arguments"] = arguments

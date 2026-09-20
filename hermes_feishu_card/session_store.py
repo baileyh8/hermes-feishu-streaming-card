@@ -43,6 +43,9 @@ class SessionStore:
             if not body[optional]:
                 body.pop(optional)
         body['tools'] = {k: asdict(v) for k, v in session.tools.items()}
+        for tool in body['tools'].values():
+            if not tool['call_id']:
+                tool.pop('call_id')
         body['timeline'] = asdict(session.timeline)
         body['normalizers'] = [session.thinking_normalizer._pending, session.answer_normalizer._pending]
         prefix = f"{profile_id}:" if profile_id else ""

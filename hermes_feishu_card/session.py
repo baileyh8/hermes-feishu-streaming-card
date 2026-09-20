@@ -78,6 +78,8 @@ class ToolState:
     ordinal: int = 0
     # Retained after completion and in private display checkpoints.
     duration_ms: float | None = None
+    # Explicit executor identity; a legacy tool name is not a call identity.
+    call_id: str = ""
 
 
 @dataclass
@@ -305,18 +307,15 @@ class CardSession:
                 self.answer_text += delta
                 append_answer(self, delta)
         elif event.event == "tool.updated":
-            raw_preview = event.data.get("detail")
-            if isinstance(raw_preview, str):
-                normalized_preview = normalize_stream_text(raw_preview).strip()
-                if normalized_preview:
-                    self.latest_tool_preview = _runtime_tool_summary(
-                        event.data.get("name"), normalized_preview
-                    )
             tool_id = event.data.get("tool_id")
             if not isinstance(tool_id, str) or not tool_id:
                 self.updated_at = time.time()
                 self.refresh_display_status_source()
                 return True
+            call_id = event.data.get("call_id")
+            call_id = call_id if isinstance(call_id, str) and 0 < len(call_id) <= 256 else ""
+            if call_id:
+                tool_id = call_id
             if self.answer_text and self._answer_archive_index is None:
                 self._answer_archive_index = self.timeline.entry_count
             name = event.data.get("name")
@@ -330,12 +329,30 @@ class CardSession:
                 previous_tool is not None
                 and previous_tool.status.strip().lower() in TERMINAL_TOOL_STATUSES
             )
+            same_call = bool(call_id and previous_tool is not None and previous_tool.call_id == call_id)
+            if same_call and previous_is_terminal and not is_terminal:
+                # A higher transport sequence can still contain a late start.
+                # Explicit call identity prevents terminal state/count regression.
+                self.updated_at = time.time()
+                self.refresh_display_status_source()
+                return True
+            raw_preview = event.data.get("detail")
+            if isinstance(raw_preview, str):
+                normalized_preview = normalize_stream_text(raw_preview).strip()
+                if normalized_preview:
+                    self.latest_tool_preview = _runtime_tool_summary(
+                        event.data.get("name"), normalized_preview
+                    )
             if previous_tool is None or (previous_is_terminal and not is_terminal):
                 started_at = None if is_terminal else event.created_at
             else:
                 started_at = previous_tool.started_at
             detail_data = event.data
             resolved_duration_ms = _tool_duration_milliseconds(event.data)
+            if same_call and previous_is_terminal and resolved_duration_ms is None:
+                resolved_duration_ms = previous_tool.duration_ms
+                if resolved_duration_ms is not None:
+                    detail_data = dict(event.data, duration_ms=resolved_duration_ms)
             if (
                 is_terminal
                 and resolved_duration_ms is None
@@ -355,7 +372,7 @@ class CardSession:
                     previous_tool.detail,
                     resolved_detail,
                 )
-            if previous_tool is None or previous_is_terminal:
+            if previous_tool is None or (previous_is_terminal and not same_call):
                 self._tool_call_count += 1
                 call_ordinal = self._tool_call_count
             elif previous_tool.ordinal:
@@ -371,8 +388,10 @@ class CardSession:
                 started_at=started_at,
                 ordinal=call_ordinal,
                 duration_ms=resolved_duration_ms,
+                call_id=call_id,
             )
-            self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail)
+            self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail,
+                                      replace_terminal=same_call)
         elif event.event == "subagent.updated":
             child_id = event.data.get("child_id")
             if type(child_id) is str and child_id.strip():

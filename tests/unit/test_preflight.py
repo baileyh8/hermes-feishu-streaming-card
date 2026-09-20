@@ -220,7 +220,13 @@ def test_child_environment_cannot_resolve_inherited_production_targets(tmp_path)
                     HERMES_AGENT_ROOT=str(production), HFC_CONFIG=str(production / "config.yaml"),
                     HFC_ENV_FILE=str(production / ".env"), HERMES_CRON_AUTO_DELIVER_CHAT_ID="PRIVATE_CHAT",
                     HFC_INSTALL_SPEC="PRIVATE_INSTALL_TARGET", FEISHU_APP_SECRET="PRIVATE_SECRET")
+    proxies = {key: "http://PRIVATE_PROXY.invalid:7897" for key in (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "http_proxy", "https_proxy", "all_proxy", "no_proxy")}
+    original.update(proxies)
     env = preflight.child_environment(original, private, tmp_path / "fixed-source")
+    assert not proxies.keys() & env.keys()
+    assert all(original[key] == value for key, value in proxies.items())
     # Exercise the consumers that choose a writable source/config, without
     # opening the canary or invoking install/process/maintenance operations.
     probe = subprocess.run([sys.executable, "-c", '''

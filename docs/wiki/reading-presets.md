@@ -63,3 +63,13 @@ hermes-feishu-card card-config --config /path/to/config.yaml --profile-id work -
 ## 验证边界
 
 自动化使用真实回环 HTTP 覆盖全局/profile/bot 覆盖、两种 streaming 模式、completed/failed、显式 true/false、超长思考、同卡终局和晚到事件。共享 serializer 继续裁决容量。模拟 Feishu 客户端只能证明生成与路由行为；桌面、Android 和 iOS 的真实阅读效果仍需按[飞书验收](feishu-acceptance.md)检查。
+
+## V4.6.5 可选过程面板
+
+```yaml
+card:
+  timeline_order: chronological       # 默认 newest_first
+  timeline_tools_per_reasoning: 2      # 默认 0，不额外限制；可设 0..100
+```
+
+顺序只影响过程面板，正文 code 思考仍按正序。每段思考的条数仅限制成功完成工具，保留最近 N 条；失败与运行步骤不被此规则移除，但所有条目仍受全局 `max_timeline_items` 和卡片容量门禁约束。历史、工具总数、审批和正文不变。字段遵循相同 global/profile/bot 显式覆盖顺序，`card-config` 展示其来源，预设不会自动启用它们。
