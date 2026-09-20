@@ -149,12 +149,12 @@ async def test_background_only_known_success_one_liner_gets_timer(wired,text,dis
     assert len(registered)==int(disposable)
 
 
-async def test_expired_approval_and_drain_use_known_producers_only(wired):
+async def test_expired_approval_correction_is_retained_even_from_its_real_producer(wired):
     runner,registered,sent=wired
     await runner.adapter._resolve_approval('fixture','once','tester',chat_id='oc_test')
-    assert registered[0][1]['notice_family']==''
+    assert registered==[]  # Native card may already say Approved; keep the correction.
     await runner.adapter.send('oc_test',sent[0][1])
-    assert len(registered)==1
+    assert len(registered)==0
     event=SimpleNamespace(source=SimpleNamespace(platform='feishu',chat_id='oc_test',thread_id='omt_test'))
     await runner._send_busy_drain_notice(event,'session','queue')
     assert registered[-1][1]['notice_family']=='restart'

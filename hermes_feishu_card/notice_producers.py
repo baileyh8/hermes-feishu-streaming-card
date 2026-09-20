@@ -8,7 +8,6 @@ from functools import wraps
 from hashlib import sha256
 import inspect
 import re
-import weakref
 
 
 ONLINE = "♻️ Gateway online — Hermes is back and ready."
@@ -71,7 +70,7 @@ def notice_for_send(adapter, chat, text, metadata):
                        and text == context['text'] and chat == context['chat']
                        and str(metadata.get('thread_id') or '') == context['thread'])
         else:
-            allowed = producer == 'approval' and context['adapter'] is adapter and text == EXPIRED_APPROVAL
+            allowed = False
         if not allowed:
             return None
         context = _context(context['runner'], adapter, chat, str(metadata.get('thread_id') or ''), text)
@@ -168,30 +167,13 @@ def _wrap(original, name):
 
 
 def install_adapter_notice_producers(adapter, runner):
-    """Bind the native expired-approval correction to its actual registered bot."""
+    """Wrap deferred sends, without granting native approval corrections a TTL.
+
+    Native _resolve_approval may discover expiry after its callback has already
+    displayed Approved. Its correction can be the only record that no command
+    ran; a known producer alone is not evidence of another complete receipt.
+    """
     _install_delivery_envelopes(type(adapter))
-    original = getattr(type(adapter), '_resolve_approval', None)
-    try:
-        adapter._hfc_notice_runner_ref = weakref.ref(runner)
-        if getattr(original, '_hfc_notice_producer', False) or not inspect.iscoroutinefunction(original):
-            return
-        parameters=list(inspect.signature(original).parameters.values())
-        if ([p.name for p in parameters] != ['self','approval_id','choice','user_name','open_id','chat_id']
-                or [p.kind for p in parameters] != [inspect.Parameter.POSITIONAL_OR_KEYWORD]*4 + [inspect.Parameter.KEYWORD_ONLY]*2):
-            return
-    except (TypeError, AttributeError, ValueError):
-        return
-    @wraps(original)
-    async def wrapped(self, *args, **kwargs):
-        ref=getattr(self,'_hfc_notice_runner_ref',None)
-        owner=ref() if callable(ref) else None
-        token=_CONTEXT.set(dict(producer='approval',runner=owner,adapter=self) if owner is not None else None)
-        try:
-            return await original(self,*args,**kwargs)
-        finally:
-            _CONTEXT.reset(token)
-    wrapped._hfc_notice_producer=True
-    setattr(type(adapter),'_resolve_approval',wrapped)
 
 
 def _install_delivery_envelopes(adapter_type):
