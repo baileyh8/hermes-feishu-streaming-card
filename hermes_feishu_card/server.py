@@ -5693,6 +5693,9 @@ async def _apply_event_locked_inner(
                      or event.event == "interaction.completed" and advance_sequence)):
             receipt_snapshot = copy.deepcopy(session)
             receipt_snapshot.display_segment = {}
+            # This snapshot targets the auxiliary receipt, not the historical
+            # body owner. A restored legacy owner must not change its dialect.
+            receipt_snapshot.legacy_owner_receipt = {}
             if _interaction_mode_for_session_key(request.app, session_key) == "callback":
                 receipt_card = _render_interaction_callback_card_for_app(
                     request.app, receipt_snapshot, session_key=session_key
@@ -6969,6 +6972,19 @@ def _remember_legacy_owner_receipt(app, session_key):
 def _existing_owner_render_result(app, session, result, *, session_key=None):
     if not session.legacy_owner_receipt or result.card.get("schema") != "2.0":
         return result
+    resolved_key = session_key or _session_key_for_session(app, session)
+    interaction = session.active_interaction
+    if (session.status not in {"completed", "failed"}
+            and interaction is not None and interaction.status in {"pending", "paused"}
+            and interaction.feishu_message_id
+            and interaction.feishu_message_id == app[FEISHU_MESSAGE_IDS_KEY].get(resolved_key)):
+        # A live first-message interaction owns this legacy card. Its private
+        # checkpoint is deliberately static, but must never replace live input
+        # controls. Restored sessions have no InteractionState or old token.
+        live_card = _render_interaction_callback_card_for_app(app, session, session_key=resolved_key)
+        inspection = inspect_card_limits(live_card)
+        if inspection.safe:
+            return replace(result, card=live_card, disposition="card", inspection=inspection, limit_reason="")
     _, config, title, _ = _session_card_render_context(app, session, session_key=session_key)
     primary = (_primary_text_for_session(display_view(session), stream_thinking_to_body=_safe_bool(
         config.get("stream_thinking_to_body"), True

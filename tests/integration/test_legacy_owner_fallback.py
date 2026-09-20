@@ -122,3 +122,44 @@ async def test_failed_continuation_legacy_owner_uses_native_handoff_for_large_fi
         assert "ORIGINAL_QUESTION" in str(client.updated[-1][1])
         assert "ORIGINAL_CHOICE" in str(client.updated[-1][1])
         assert inspect_card_limits(client.updated[-1][1]).safe
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["completed", "failed"])
+async def test_restored_legacy_owner_does_not_change_new_text_receipt_dialect(tmp_path, transition):
+    client = Client()
+    first = create_app(client, card_config={"interaction_mode": "callback", "flush_interval_ms": 0}, session_store_directory=tmp_path)
+    async with TestClient(TestServer(first)) as http:
+        await request_first(http, first)
+    second = create_app(client, card_config={"interaction_mode": "text", "flush_interval_ms": 0}, session_store_directory=tmp_path)
+    async with TestClient(TestServer(second)) as http:
+        await asyncio.sleep(.02)
+        await post(http, "interaction.requested", 3, {"interaction_id": "q2", "kind": "clarify", "prompt": "SECOND_QUESTION", "options": [{"label": "TEXTCHOICE", "value": "b"}]})
+        receipt_mid = second[SESSIONS_KEY]["turn"].active_interaction.feishu_message_id
+        receipt_card = next(card for mid, card in client.sent if mid == receipt_mid)
+        assert receipt_card.get("schema") == "2.0"
+        data = ({"interaction_id": "q2", "choice": "b", "choice_label": "TEXTCHOICE"}
+                if transition == "completed" else {"interaction_id": "q2", "error": "TEXT_RECEIPT_FAILED"})
+        await post(http, f"interaction.{transition}", 4, data)
+        assert not client.cross_dialect
+        visible = dict(client.sent)
+        visible.update(dict(client.updated))
+        assert visible[receipt_mid].get("schema") == "2.0"
+        assert ("已选择：TEXTCHOICE" if transition == "completed" else "TEXT_RECEIPT_FAILED") in str(visible[receipt_mid])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["completed", "failed"])
+async def test_terminal_first_legacy_owner_never_restores_pending_controls(terminal):
+    client = Client()
+    app = create_app(client, card_config={"interaction_mode": "callback", "flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        old_token = await request_first(http, app, complete=False)
+        data = {"answer": "TERMINAL_BODY"} if terminal == "completed" else {"error": "TERMINAL_FAILURE"}
+        await post(http, f"message.{terminal}", 2, data)
+        card = client.updated[-1][1]
+        assert not client.cross_dialect
+        assert "ORIGINAL_QUESTION" in str(card)
+        assert ("TERMINAL_BODY" if terminal == "completed" else "TERMINAL_FAILURE") in str(card)
+        assert old_token not in str(card)
+        assert "interaction.select" not in str(card)
