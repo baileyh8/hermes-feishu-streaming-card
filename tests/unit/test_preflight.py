@@ -185,18 +185,42 @@ import json, os
 from types import SimpleNamespace
 from hermes_feishu_card.config import resolve_operations_hermes_root
 from hermes_feishu_card.cli import _configured_lifecycle_hermes_root
-args = SimpleNamespace(config=os.environ.get("HFC_CONFIG", ""), hermes_dir=None, env_file=None)
+from pathlib import Path
+args = SimpleNamespace(config=str(Path.home() / ".hermes_feishu_card/config.yaml"), hermes_dir=None, env_file=None)
 print(json.dumps({"operations": str(resolve_operations_hermes_root()),
-                  "lifecycle": str(_configured_lifecycle_hermes_root(args)),
-                  "config": os.environ.get("HFC_CONFIG"), "env": os.environ.get("HFC_ENV_FILE")}))
+                  "lifecycle": _configured_lifecycle_hermes_root(args),
+                  "home": str(Path.home())}))
 '''], cwd=preflight.ROOT, env=env, capture_output=True, text=True, check=True)
     targets = json.loads(probe.stdout)
+    assert targets.pop("lifecycle") is None
     for value in targets.values():
         assert value is not None and Path(value).is_relative_to(private)
+    assert not {"HERMES_DIR", "HFC_CONFIG", "HFC_ENV_FILE"}.intersection(env)
     assert all(value != "PRIVATE_CHAT" and value != "PRIVATE_INSTALL_TARGET" and value != "PRIVATE_SECRET"
                for value in env.values())
     assert original["HERMES_DIR"] == str(production)
     assert not production.exists()
+
+
+def test_private_suite_state_resolves_macos_temporary_directory_alias(repo, capsys, monkeypatch, tmp_path):
+    if os.name == "nt":
+        pytest.skip("POSIX temporary directory alias")
+    root, _ = repo
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    original = preflight.tempfile.mkdtemp
+    monkeypatch.setattr(preflight.tempfile, "mkdtemp", lambda **kw: original(dir=alias, **kw))
+    (root / "tests/unit/test_example.py").write_text('''import os
+from pathlib import Path
+def test_state_has_no_symlink_ancestors():
+    state = Path(os.environ["HERMES_FEISHU_CARD_STATE_DIR"])
+    assert all(not parent.is_symlink() for parent in (state, *state.parents))
+''')
+    code, report, _ = invoke(capsys, repo, ["--suite", "full"])
+    assert code == 0
+    assert report["pytest"]["status"] == "passed"
 
 
 def _commit_all(root, message):

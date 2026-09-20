@@ -157,13 +157,13 @@ def child_environment(environ, private, fixture):
     for key in list(env):
         if key.startswith(("FEISHU_", "LARK_", "HERMES_", "HFC_")) or key in {"PYTHONPATH", "PYTEST_ADDOPTS"}:
             env.pop(key)
-    env.update({"HERMES_FEISHU_CARD_STATE_DIR": str(private / "state"),
+    # Give only the pytest subprocess a private user home. Do not pin an
+    # explicit Hermes/config target: that changes no-target CLI behavior, and
+    # setup tests can rewrite a shared explicit .env for all subsequent tests.
+    isolated_home = str(private / "home")
+    env.update({"HOME": isolated_home, "USERPROFILE": isolated_home,
+                "HERMES_FEISHU_CARD_STATE_DIR": str(private / "state"),
                 "HERMES_HOME": str(private / "hermes"),
-                # Operations resolve these independently of HERMES_HOME. Never
-                # inherit a production checkout or fall back through cwd/HOME.
-                "HERMES_DIR": str(private / "hermes-source"),
-                "HFC_CONFIG": str(private / "state" / "config.yaml"),
-                "HFC_ENV_FILE": str(private / "state" / ".env"),
                 "HFC_FIXED_TAG_SOURCE_ROOT": str(fixture),
                 "PYTHONDONTWRITEBYTECODE": "1"})
     return env
@@ -172,15 +172,13 @@ def child_environment(environ, private, fixture):
 def execute_suite(root, targets, fixture, environ, report, base="HEAD"):
     # Retain owner-only logs for local diagnosis; stdout JSON contains no paths
     # or raw pytest output (which can contain local paths and parametrized data).
-    private = Path(tempfile.mkdtemp(prefix="hfc-preflight-"))
+    # macOS tempfile paths commonly start with the /var symlink. The delivery
+    # ledger deliberately refuses symlink ancestors, so pass a canonical path.
+    private = Path(tempfile.mkdtemp(prefix="hfc-preflight-")).resolve()
     private.chmod(0o700)
     (private / "state").mkdir(mode=0o700)
     (private / "hermes").mkdir(mode=0o700)
-    (private / "hermes-source").mkdir(mode=0o700)
-    for name, content in (("config.yaml", "{}\n"), (".env", "")):
-        with os.fdopen(os.open(private / "state" / name,
-                               os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as output:
-            output.write(content)
+    (private / "home").mkdir(mode=0o700)
     env = child_environment(environ, private, fixture)
     report["state_dir"] = {"status": "private", "created": True}
     log = private / "pytest.log"
