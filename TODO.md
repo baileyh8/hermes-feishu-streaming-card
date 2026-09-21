@@ -1,5 +1,11 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.6.7
+
+- [x] Working heartbeat retention and compact approval controls (#345).
+- [ ] Exact release, installation, desktop acceptance and replies; see GitHub Release for final delivery evidence.
+- [ ] Reporter version/reproduction for #344; mobile visual acceptance remains separate.
+
 ## V4.6.6 consolidation
 
 - [x] Approval receipt proof before duplicate cleanup (#337/#339).

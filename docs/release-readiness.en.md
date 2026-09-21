@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release version: `4.6.6`. Scope: durable scoped notice ownership, known native producers, explicit tool-call deduplication, opt-in timeline controls, provider-error feedback and strict source migration. Automated success does not imply real-client acceptance.
+Current release version: `4.6.7`. Scope: editable Working heartbeats and compact approval buttons, preserving reading defaults and notice provenance. Automated success does not imply real-client acceptance.
 
 Full tests, exact-merge CI, assets/checksums and public-tag ordinary installation remain release gates. Record desktop/mobile and production results separately in the [V4.6.6 acceptance checklist](wiki/feishu-acceptance-v4.6.6.md); unverified reports remain unverified.
 

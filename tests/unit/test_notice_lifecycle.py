@@ -100,15 +100,17 @@ async def test_registration_failure_never_changes_successful_plain_notice_send(r
     assert result is sent
 
 
-async def test_existing_working_notice_keeps_its_fifteen_second_timer(runtime_route):
-    assert await runtime._hfc_recall_plain_text_status_notice(
+async def test_working_heartbeat_has_no_timer_but_one_shot_status_does(runtime_route):
+    assert not await runtime._hfc_recall_plain_text_status_notice(
         "oc_fixture", "⏳ Working — 12 min — receiving stream response", None,
         SimpleNamespace(success=True, message_id="om_working"),
     )
-    payload = runtime_route[0][1]
-    assert payload["delay_seconds"] == 15
-    assert "notice_family" not in payload
-    assert "record_only" not in payload
+    assert runtime_route == []
+    assert await runtime._hfc_recall_plain_text_status_notice(
+        "oc_fixture", "⏳ Compressing context", None,
+        SimpleNamespace(success=True, message_id="om_status"),
+    )
+    assert runtime_route[0][1]["delay_seconds"] == 15
 
 
 async def test_ordinary_adapter_answer_equal_to_template_is_not_disposable(runtime_route, monkeypatch):

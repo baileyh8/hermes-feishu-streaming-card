@@ -586,7 +586,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.6.6`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.6.7`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -594,7 +594,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.6
+export HFC_VERSION=v4.6.7
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -1034,3 +1034,8 @@ MIT License，详见 [LICENSE](../LICENSE)。
 ## V4.6.6：审批、工具可见性与通知收尾
 
 已完成审批只有在独立完整回执确认投递后才精简重复审阅区。较早仍在运行的工具及其前一步优先进入有界过程面板，与正文编号一致。已知原生重启通知在 15 秒后撤回，或由同路由成功投递提前收尾；成功后台任务的一行提示也会到期撤回。原生过期审批的未执行纠正提示、失败、带输出结果与完整审批回执保留。详见[发布说明](release-notes-v4.6.6.md)、[阅读设置](wiki/reading-presets.md)与[验收证据](wiki/feishu-acceptance-v4.6.6.md)。
+
+
+## V4.6.7：心跳与审批布局
+
+Working 心跳保留原地编辑，不再由 HFC 定时撤回。审批按钮改用紧凑自动宽度列，完整正文与回调身份保留。

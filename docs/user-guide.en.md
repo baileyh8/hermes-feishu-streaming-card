@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.6`.
+The Compose example defaults `HFC_VERSION` to `v4.6.7`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.6
+export HFC_VERSION=v4.6.7
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -960,3 +960,8 @@ Set `card.stream_thinking_to_body: false` to keep waiting/tool activity in the b
 ## V4.6.6: Approval, tool visibility and notice cleanup
 
 Completed approvals lose duplicated review blocks only after a separate full receipt is confirmed delivered. A long-running tool and its immediate predecessor remain eligible for the bounded process panel, matching their body ordinals. Known native restart notices expire after 15 seconds or earlier after a confirmed same-route delivery; one-line successful background notices also expire. Native expired-approval corrections, failures, output-bearing results and complete approval receipts remain. See [release notes](release-notes-v4.6.6.en.md), [reading presets](wiki/reading-presets.md) and [acceptance evidence](wiki/feishu-acceptance-v4.6.6.md).
+
+
+## V4.6.7: Heartbeat and approval layout
+
+Working heartbeats remain editable; approval buttons use compact auto-width columns. Full scope and callback identity are retained.

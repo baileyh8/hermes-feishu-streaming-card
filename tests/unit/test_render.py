@@ -922,9 +922,9 @@ def test_render_pending_interaction_as_buttons():
     action = next(
         element
         for element in card["elements"]
-        if element.get("tag") == "action"
+        if element.get("tag") == "column_set"
     )
-    buttons = action["actions"]
+    buttons = [column["elements"][0] for column in action["columns"]]
     assert [item["text"]["content"] for item in buttons] == ["1", "2"]
     assert "behaviors" not in buttons[0]
     assert buttons[0]["value"]["hfc_action"] == "interaction.select"

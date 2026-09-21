@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [4.6.7] - 2026-09-21
+
+- Preserve Working heartbeat messages so Hermes can edit them in place instead of repeatedly sending after timed recall; one-shot status expiry is unchanged.
+- Render approval choice buttons in compact auto-width columns while retaining full descriptions and legacy callback identity. Clarify layout and reading defaults are unchanged.
+- Selectively adapted from mouyong's PR #345. Keep timeline budgets and producer-based notice ownership; #344 remains unconfirmed on the reporter's version.
+- See [Chinese notes](docs/release-notes-v4.6.7.md) and [English notes](docs/release-notes-v4.6.7.en.md).
+
 ## [4.6.6] - 2026-09-21
 
 - Compact duplicated terminal approval review blocks only after an explicit successful PATCH of the separate full question/scope/decision receipt; retain unproven, pending, sole-owner and failed-delivery cases (#337, PR #339).

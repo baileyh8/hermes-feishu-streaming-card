@@ -128,7 +128,7 @@ Hermes `v2026.4.23` 起的旧版和 Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x/0
 已有 Hermes 容器优先使用：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.6
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.7
 bash install-docker.sh
 ```
 
@@ -164,11 +164,12 @@ bash install-docker.sh
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MS` | `250` | Gateway 内 delta 最大合并等待时间 |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_CHARS` | `600` | pending delta 达到字符数后立即 flush |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | pending delta session 上限 |
-版本范围与验收边界：[V4.6.6](docs/release-notes-v4.6.6.md)、[交互续答](docs/wiki/interaction-continuation.md)、[阅读预设](docs/wiki/reading-presets.md)、[提交前检查](docs/testing.md)。升级不会自动启用新的默认阅读方式。
+版本范围与验收边界：[V4.6.7](docs/release-notes-v4.6.7.md)、[交互续答](docs/wiki/interaction-continuation.md)、[阅读预设](docs/wiki/reading-presets.md)、[提交前检查](docs/testing.md)。升级不会自动启用新的默认阅读方式。
 
 ## 最新版本
 | 版本 | 重点 |
 |---|---|
+| [v4.6.7](docs/release-notes-v4.6.7.md) | 保留可编辑心跳，紧凑审批按钮与完整正文 |
 | [v4.6.6](docs/release-notes-v4.6.6.md) | 审批回执确认后精简重复、运行工具可见与原生通知自动收尾 |
 | [v4.6.5](docs/release-notes-v4.6.5.md) | 重启通知持久归属、工具调用去重、可选时间线显示与模型报错去重 |
 | [v4.6.4](docs/release-notes-v4.6.4.md) | 首次按钮接线、顺序续答、可选阅读预设与作用域通知清理 |

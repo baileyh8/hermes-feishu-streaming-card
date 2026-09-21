@@ -6,6 +6,10 @@ from hermes_feishu_card import hook_runtime
 from hermes_feishu_card.install import patcher
 
 HEARTBEAT = "⏳ Working — 12 min — iteration 42/150, receiving stream response"
+# A one-shot status line that STILL qualifies for withdrawal. The patch mechanism is exercised with
+# this instead of the heartbeat, because the heartbeat is now exempt — a test that used it would
+# pass for the wrong reason (or fail on the exemption, not on the mechanism).
+ONE_SHOT_STATUS = "⏳ Retrying in 3.0s (attempt 2/3)"
 REDIRECT = "↪ Redirected current run. I'll adjust using your correction."
 PROVIDER_FAILURE = (
     "⚠️ The model provider failed after retries. I kept raw provider details out of chat; "
@@ -80,7 +84,7 @@ async def test_only_transient_notices_are_withdrawn(monkeypatch):
     feishu = SimpleNamespace(platform="feishu")
     sent = SimpleNamespace(success=True, message_id="om_notice")
 
-    assert await hook_runtime.recall_transient_thread_notice_async(feishu, HEARTBEAT, sent)
+    assert await hook_runtime.recall_transient_thread_notice_async(feishu, ONE_SHOT_STATUS, sent)
     assert calls == [("om_notice", 15.0)]
     assert await hook_runtime.recall_transient_thread_notice_async(feishu, REDIRECT, sent)
 
@@ -88,12 +92,16 @@ async def test_only_transient_notices_are_withdrawn(monkeypatch):
     # Content the user still needs, a failed send, a non-Feishu platform and a missing id all stay.
     assert not await hook_runtime.recall_transient_thread_notice_async(feishu, PROVIDER_FAILURE, sent)
     assert not await hook_runtime.recall_transient_thread_notice_async(feishu, "改完了。", sent)
+    # The heartbeat is exempt: core edits that one line in place every HERMES_AGENT_NOTIFY_INTERVAL,
+    # so withdrawing it made the next edit fail (message gone) and re-sent the line — one heartbeat
+    # became "new message + withdrawal" every cycle («working background 等等。这些心跳感觉太多了»).
+    assert not await hook_runtime.recall_transient_thread_notice_async(feishu, HEARTBEAT, sent)
     assert not await hook_runtime.recall_transient_thread_notice_async(
-        feishu, HEARTBEAT, SimpleNamespace(success=False, message_id="om_x"))
+        feishu, ONE_SHOT_STATUS, SimpleNamespace(success=False, message_id="om_x"))
     assert not await hook_runtime.recall_transient_thread_notice_async(
-        SimpleNamespace(platform="telegram"), HEARTBEAT, sent)
+        SimpleNamespace(platform="telegram"), ONE_SHOT_STATUS, sent)
     assert not await hook_runtime.recall_transient_thread_notice_async(
-        feishu, HEARTBEAT, SimpleNamespace(success=True, message_id=""))
+        feishu, ONE_SHOT_STATUS, SimpleNamespace(success=True, message_id=""))
     assert calls == []
 
 
@@ -123,7 +131,7 @@ async def test_generated_heartbeat_hook_only_recalls_successful_fresh_sends(monk
         async def edit_message(self, *args):
             return SimpleNamespace(success=edit_success, message_id='notice-1')
     source = SOURCE.replace('        while True:',
-        f'        _heartbeat_msg_id = None\n        _heartbeat_text = {HEARTBEAT!r}\n        cleanup = False\n        cleanup_ids = []\n        for _ in range(2):')
+        f'        _heartbeat_msg_id = None\n        _heartbeat_text = {ONE_SHOT_STATUS!r}\n        cleanup = False\n        cleanup_ids = []\n        for _ in range(2):')
     patched = patcher._apply_long_running_recall_patch(source)
     namespace = {}
     exec(compile(patched, '<heartbeat-flow>', 'exec'), namespace)
@@ -140,6 +148,6 @@ async def test_notice_recall_does_not_guess_unknown_platform_names(monkeypatch, 
         return True
     monkeypatch.setattr(hook_runtime, 'schedule_message_recall_async', schedule)
     assert not await hook_runtime.recall_transient_thread_notice_async(
-        SimpleNamespace(platform=platform), HEARTBEAT,
+        SimpleNamespace(platform=platform), ONE_SHOT_STATUS,
         SimpleNamespace(success=True, message_id='notice-fixture'))
     assert calls == []
