@@ -9830,8 +9830,9 @@ def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
     # The adapter also sends answers and important queue/error acknowledgements.
     # An hourglass alone is not evidence that a message is disposable status.
     if text.startswith(STATUS_NOTICE_PREFIX):
+        # Core edits Working heartbeats in place. A timer would delete the target
+        # and force a fresh send on every later tick; core owns final cleanup.
         status_patterns = (
-            r"⏳ Working — \d+ min(?: — [^\r\n]+)?",
             r"⏳ (?:Compressing context|Waiting for approval|tool execution timed out; retrying)(?:\.\.\.)?",
             r"⏳ Retrying in \d+(?:\.\d+)?s \(attempt \d+/\d+\)(?:\.\.\.)?",
             r"⏳ loading [^\r\n]+ into memory — \d+(?:\.\d+)?%[^\r\n]*",

@@ -4004,14 +4004,24 @@ def test_status_notice_family_is_plain_text_but_other_notices_still_are_cards():
     ):
         assert hook_runtime._hfc_classify_system_notice(text) is None, text
 
-    # The withdrawal contract covers the whole family, not just the heartbeat, so no line in it can
-    # outlive the turn by accident.
-    assert hook_runtime._transient_notice_recall_seconds("⏳ Working — 12 min") == (
-        hook_runtime.STATUS_NOTICE_RECALL_SECONDS
-    )
-    assert hook_runtime._transient_notice_recall_seconds("⏳ Compressing context") == (
-        hook_runtime.STATUS_NOTICE_RECALL_SECONDS
-    )
+    # Withdrawal is scoped to the one-shot members of the family. ⏳ Working is deliberately exempt:
+    # the core keeps EDITING that one in place (`HERMES_AGENT_NOTIFY_INTERVAL`, default 180s), so
+    # withdrawing it made the next edit fail (the message was gone) and turned a single heartbeat
+    # into a fresh message PLUS a withdrawal every cycle — the churn the user reported
+    # («working background 等等。这些心跳感觉太多了»). Left alone it is one quiet in-place update.
+    assert hook_runtime._transient_notice_recall_seconds("⏳ Working — 12 min") is None
+    assert hook_runtime._transient_notice_recall_seconds(
+        "⏳ Working — 6 min — iteration 10/90, receiving stream response"
+    ) is None
+    for one_shot in (
+        "⏳ Compressing context",
+        "⏳ Waiting for approval",
+        "⏳ Retrying in 3.0s (attempt 2/3)",
+        "⏳ loading Qwen3 into memory — 42%",
+    ):
+        assert hook_runtime._transient_notice_recall_seconds(one_shot) == (
+            hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+        ), one_shot
     assert hook_runtime.STATUS_NOTICE_PREFIX == "⏳"
 
     # Notices the user still needs keep their cards — the opt-out stays scoped to the ⏳ family.
@@ -4673,15 +4683,13 @@ def test_heartbeat_plain_text_send_and_edit_update_one_message(monkeypatch):
     assert adapter.text_sent == ["⏳ Working — 2 min — iteration 1/90, terminal"]
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
-    # The ONLY thing that reaches the sidecar is the withdrawal request for that plain-text line —
-    # no card is minted, so the sidecar can neither swallow nor duplicate the heartbeat. The
-    # plain-text egress door schedules it (`_hfc_recall_plain_text_status_notice`), which is what
-    # stops a ⏳ line from sitting in the thread after the turn ends: a card used to inherit the
-    # sidecar's own recall deadline, and plain text has none.
-    assert len(posted) == 1
-    recall = posted[0]
-    assert recall["message_id"] == sent.message_id
-    assert recall["delay_seconds"] == hook_runtime.STATUS_NOTICE_RECALL_SECONDS
+    # The heartbeat reaches the sidecar with NO withdrawal request. It is the one ⏳ line the core
+    # keeps EDITING in place, so withdrawing it made the next edit fail (message gone) and re-send
+    # the line — one heartbeat became "new message + withdrawal" every cycle
+    # («working background 等等。这些心跳感觉太多了»). The plain-text egress door
+    # (`_hfc_recall_plain_text_status_notice`) still withdraws the one-shot ⏳ shapes; see
+    # test_the_working_heartbeat_is_not_withdrawn_but_one_shot_status_still_is.
+    assert posted == []
 
 
 def test_native_feishu_stream_edit_drops_metadata_when_original_does_not_accept_it():
@@ -4834,22 +4842,18 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     sequence of failing sidecar responses and assert it reused ONE independent notice card. The
     heartbeat is plain text now, so there is no card to reuse — the property that matters is that
     the send never depends on the sidecar: it still lands as text, and the edit still updates THAT
-    line in place instead of stacking a new one. The sidecar is asked only to withdraw that line,
-    and the refusing responses above prove a refused recall cannot undo a send that succeeded.
+    line in place instead of stacking a new one. The sidecar is not asked for anything at all now —
+    the heartbeat is exempt from withdrawal, which makes this the strongest form of the property.
     """
     posted = []
-    responses = [
-        {"ok": True, "applied": False},
-        {
-            "ok": False,
-            "error": "feishu send failed",
-            "delivery": {"outcome": "unknown"},
-        },
-    ]
 
     async def fake_post_json_ordered_response(url, payload, timeout):
         posted.append(payload)
-        return responses.pop(0)
+        return {
+            "ok": False,
+            "error": "feishu send failed",
+            "delivery": {"outcome": "unknown"},
+        }
 
     monkeypatch.setattr(
         hook_runtime,
@@ -4904,10 +4908,9 @@ def test_heartbeat_never_posts_a_card_even_under_an_unreachable_sidecar(monkeypa
     assert len(adapter.edited) == 1
     assert adapter.edited[0][1] == sent.message_id
     # The send never depends on the sidecar: it landed as plain text and the edit updated THAT line.
-    # The only request the sidecar sees is the withdrawal for that line, and the refusing responses
-    # above prove a refused recall cannot undo the send.
-    assert len(posted) == 1
-    assert posted[0]["message_id"] == sent.message_id
+    # With the heartbeat exempt from withdrawal the sidecar is not contacted at all, so a broken or
+    # unreachable sidecar cannot delay, duplicate or drop the heartbeat.
+    assert posted == []
 
 
 def test_install_feishu_command_card_methods_repairs_stale_install_marker():

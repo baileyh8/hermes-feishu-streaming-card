@@ -8,7 +8,8 @@ V4.6.6 继续适配 [PR #338](https://github.com/baileyh8/hermes-feishu-streamin
 - Home 使用自己的期限，其他话题活动不触发 Home 提前清理。重启/排队独立 notice 卡不算工作恢复，不触发提前清理。
 - 原生后台成功一行提示使用 15 秒计时。原生审批已过期的“命令未执行”纠正记录、失败信息、带输出结果、完整审批决定及所有正式结果卡保持留存。原生 callback 可能已显示 Approved，不能把唯一纠正记录当临时提示删除。
 - requester 的原生重启完成提示使用彩色 ♻️。普通回答即使逐字引用相同文本也不会因此改写或撤回。
-- 既有 Working、Redirect、Interrupt、Steer 使用原有策略。未知模板、未知签名、无法验证的 adapter 或 profile 保留原始行为。
+- Working 心跳由 Hermes 原地更新并负责终轮清理，HFC 不再安排 15 秒撤回，避免删除更新目标后每轮重新发送。一次性的压缩、等待审批、重试提示仍使用原有 15 秒策略。
+- Redirect、Interrupt、Steer 使用原有策略。未知模板、未知签名、无法验证的 adapter 或 profile 保留原始行为。
 
 ## 身份、期限和失败边界
 

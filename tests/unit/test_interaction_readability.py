@@ -16,6 +16,8 @@ def test_short_buttons_keep_full_option_explanations_and_callback_identity(kind)
     elements = card["elements"]
     body = "\n".join(e.get("content", "") for e in elements if e.get("tag") == "markdown")
     buttons = [b for e in elements if e.get("tag") == "action" for b in e["actions"]]
+    buttons += [b for e in elements if e.get("tag") == "column_set"
+                for c in e["columns"] for b in c["elements"]]
     assert "1. " + label in body
     assert "2. 继续" in body
     assert [b["text"]["content"] for b in buttons] == ["1", "2"]
