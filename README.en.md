@@ -140,7 +140,7 @@ The compatibility matrix covers older Hermes starting at `v2026.4.23` and Hermes
 For an existing Hermes container:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.6
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.7
 bash install-docker.sh
 ```
 
@@ -177,11 +177,12 @@ High-frequency stream tuning usually needs no change. For DeepSeek burst, token-
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MS` | `250` | Max Gateway-side delta coalescing wait |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_CHARS` | `600` | Flush pending delta when this character budget is reached |
 | `HERMES_FEISHU_CARD_DELTA_COALESCE_MAX_PENDING` | `128` | Pending delta session cap |
-Release scope and acceptance limits: [V4.6.6](docs/release-notes-v4.6.6.en.md), [interaction continuation](docs/wiki/interaction-continuation.md), [reading presets](docs/wiki/reading-presets.md), [contributor preflight](docs/testing.en.md). No new default is enabled automatically.
+Release scope and acceptance limits: [V4.6.7](docs/release-notes-v4.6.7.en.md), [interaction continuation](docs/wiki/interaction-continuation.md), [reading presets](docs/wiki/reading-presets.md), [contributor preflight](docs/testing.en.md). No new default is enabled automatically.
 
 ## Latest Releases
 | Version | Highlights |
 |---|---|
+| [v4.6.7](docs/release-notes-v4.6.7.en.md) | Preserve editable heartbeats and compact approval buttons |
 | [v4.6.6](docs/release-notes-v4.6.6.en.md) | Verified approval-receipt compaction, visible active tools and native notice expiry |
 | [v4.6.5](docs/release-notes-v4.6.5.en.md) | Persistent notice ownership, explicit tool-call identity, optional timeline controls and provider-error deduplication |
 | [v4.6.4](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
