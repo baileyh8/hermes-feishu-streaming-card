@@ -73,6 +73,12 @@ python3 -m hermes_feishu_card.cli setup \
   --yes
 ```
 
+> **macOS note**: reboot persistence (`enable`) depends on systemd and is Linux-only.
+> On macOS the installer starts the sidecar transiently and prints a notice; this is
+> expected. For login/boot autostart, configure your own user-level `launchd`
+> LaunchAgent that runs `hermes-feishu-card start` — the project does not manage
+> LaunchAgents. See [installer safety](docs/installer-safety.en.md).
+
 Check the sidecar after install:
 
 ```bash

@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- macOS: guided `setup` no longer suggests running `hermes-feishu-card enable` after warning that persistence is unavailable — that command can never succeed off Linux, so the hint was a dead end. macOS now prints a launchd LaunchAgent note instead, and the enable error message names the platform requirement explicitly.
+- macOS: the "no verified pidfile" recovery hint now explains that a launchd-managed sidecar is intentional and how to stop it (`launchctl bootout` / `unload`) before rerunning the installer, instead of a bare "stop the old sidecar service manually" loop.
+- Docs: README (zh/en) Quick Install and docs/installer-safety.md now document the expected transient-sidecar behavior on macOS and the supported self-managed LaunchAgent autostart path (per #183, LaunchAgent management stays out of project scope).
+
 ## [4.6.7] - 2026-09-21
 
 - Preserve Working heartbeat messages so Hermes can edit them in place instead of repeatedly sending after timed recall; one-shot status expiry is unchanged.

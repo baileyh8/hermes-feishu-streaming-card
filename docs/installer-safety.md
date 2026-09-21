@@ -16,6 +16,21 @@
 
 检查失败时不写入 Hermes 文件。
 
+## macOS 行为（transient sidecar 属预期）
+
+重启持久化（`enable` / 持久 user service）依赖 systemd，仅限 Linux；macOS 不在本项目
+自启动管理范围内（决策见 issue #183）。因此 macOS 上 `setup` / `install.sh` 会：
+
+1. 以 transient 方式启动 sidecar（`manager: detached`），并输出
+   `warning: persistent sidecar unavailable: persistent service requires Linux systemd`；
+2. 不给出 `enable` 建议（该命令在 macOS 上必然失败）。
+
+如需登录/开机自启动，自行配置用户级 `launchd` LaunchAgent，让它执行
+`hermes-feishu-card start`。注意：由 launchd 直接托管的 runner 不写 HFC 受管 pidfile，
+此时重跑 `setup` / `install.sh` 可能报
+`a running sidecar cannot be managed safely without a verified pidfile`——按提示先用
+`launchctl bootout gui/$(id -u)/<label>`（或 `unload`）停掉 LaunchAgent 托管的实例再重跑。
+
 安装前可先运行只读诊断：
 
 ```bash

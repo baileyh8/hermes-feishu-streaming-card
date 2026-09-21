@@ -64,6 +64,11 @@ irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main
 python3 -m hermes_feishu_card.cli setup --hermes-dir ~/.hermes/hermes-agent --config ~/.hermes/config.yaml --yes
 ```
 
+> **macOS 提示**：重启持久化（`enable`）依赖 systemd，仅限 Linux。macOS 上安装器会以
+> transient 方式启动 sidecar 并给出提示，这是预期行为；开机/登录自启动请自行配置
+> 用户级 `launchd` LaunchAgent（让它执行 `hermes-feishu-card start`），本项目不代管
+> LaunchAgent。详见 [安装安全](docs/installer-safety.md)。
+
 安装完成后检查 sidecar：
 
 ```bash
