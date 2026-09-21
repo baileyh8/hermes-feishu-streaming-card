@@ -41,11 +41,20 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "streaming_mode": False,
         "show_reasoning": True,
         "stream_thinking_to_body": True,
-        "hide_completed_tool_activity": False,
+        # Default True, against upstream's False: the user's call is that a finished card should read
+        # as answer + footer, and a deployment that wants the rows back sets it false.
+        # 「如果整个卡已经完成，那么正文里面最近的工具行也的确可以关闭展示了」
+        "hide_completed_tool_activity": True,
         "reasoning_format": "panel",
         "timeline_expanded": False,
-        "timeline_order": "newest_first",
-        "timeline_tools_per_reasoning": 0,
+        # Defaults differ from upstream on purpose (fork contract). Upstream v4.6.5 added both knobs
+        # but defaults them to the OLD behaviour — ``newest_first`` and ``0`` (no per-block window) —
+        # and told users to opt in. The user's stance is the opposite: the convenient behaviour has to
+        # be what a reader gets without configuring anything (「要争默认值。使用者便利第一位。不应该给
+        # 使用者增加麻烦」). So the panel reads chronologically and every thinking block keeps its last
+        # two tool rows by default. An explicit value in a config file still wins over both.
+        "timeline_order": "chronological",
+        "timeline_tools_per_reasoning": 2,
         "max_timeline_items": 12,
         "max_reasoning_chars": 1200,
         "max_tool_result_chars": 600,

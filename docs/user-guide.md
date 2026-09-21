@@ -1025,8 +1025,7 @@ MIT License，详见 [LICENSE](../LICENSE)。
 
 ## 完成后的正文工具区
 
-设置 `card.hide_completed_tool_activity: true`，在 completed/failed 后隐藏成功的正文工具行及工具摘要回退；失败、取消和中断工具仍保留。默认 `false` 保持已有显示；运行进度、审批布局、折叠过程和 footer 工具计数不变。修改配置后重启 sidecar 生效。
-
+设置 `card.hide_completed_tool_activity: false` 可保留 completed 后正文里成功完成的工具行及工具摘要回退；**本 fork 默认 `true`**（上游默认 `false`）—— 整个卡完成后正文立即收干净，只剩答案与 footer。失败、取消和中断的工具行**始终保留**（它们带着 `已中断` 标记，是读者打开失败卡要看的东西），运行进度、审批布局、折叠过程和 footer 工具计数不变。修改配置后重启 sidecar 生效。
 ## V4.6.3：进行中思考正文开关
 
 设置 `card.stream_thinking_to_body: false`，答案未输出时正文保留等待状态或工具活动，实时思考进入有长度上限的折叠预览；默认 `true` 保持旧行为。预览由 `show_reasoning` 控制，使用 `max_reasoning_chars`，不写入持久时间线。完成/失败内容、审批和历史 `reasoning_format` 不变。超长自定义面板预算和超长答案仍受整卡容量限制。修改后重启 sidecar。

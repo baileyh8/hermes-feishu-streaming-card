@@ -8551,7 +8551,16 @@ async def test_card_config_controls_timeline_rendering():
         if item.get("element_id") == "auxiliary_timeline"
     )
     assert timeline["expanded"] is True
-    assert "已折叠 1 条早期思考/工具记录" in str(timeline)
+    # Fork contract: the panel GROWS rather than drops evidence, so a tiny `max_timeline_items` does
+    # NOT fold rows away here. This fork keeps a tool row together with the reasoning it belongs to,
+    # and the user endorsed overshooting the cap over losing rows — 「是不是突破13条，这样就能解决前面
+    # 的问题」, said after twice reporting that rows had gone missing from this panel. Measured on this
+    # exact flow the panel keeps 2 elements under a cap of 1 (the reasoning + its tool row) and emits
+    # no fold marker, so the old "已折叠 1 条早期思考/工具记录" assertion described pre-fork behaviour.
+    # What must hold is that BOTH survived — dropping either is the regression this fork exists to fix.
+    assert "已折叠" not in str(timeline)
+    assert "第一段很长很长很长很长很长" in str(timeline), "the reasoning must not be dropped"
+    assert "read_file" in str(timeline), "the tool row must not be dropped"
     assert "工具详情过长，已截断" in str(timeline)
     assert "内容已折叠" not in str(timeline)
 

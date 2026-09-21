@@ -58,12 +58,16 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
             "interaction_mode": "auto",
         "streaming_mode": False,
             "show_reasoning": True,
-        "hide_completed_tool_activity": False,
+        "hide_completed_tool_activity": True,
             "stream_thinking_to_body": True,
             "reasoning_format": "panel",
             "timeline_expanded": False,
-            "timeline_order": "newest_first",
-            "timeline_tools_per_reasoning": 0,
+            # Fork contract: both defaults are the opposite of upstream's. Upstream v4.6.5 added the
+            # knobs defaulting to the old behaviour (newest_first / 0 = no per-block window) and made
+            # the reader opt in; the user's call is that the convenient behaviour must be the default
+            # (「要争默认值。使用者便利第一位。不应该给使用者增加麻烦」).
+            "timeline_order": "chronological",
+            "timeline_tools_per_reasoning": 2,
             "max_timeline_items": 12,
             "max_reasoning_chars": 1200,
             "max_tool_result_chars": 600,
@@ -301,12 +305,13 @@ card:
         "interaction_mode": "auto",
         "streaming_mode": False,
         "show_reasoning": True,
-        "hide_completed_tool_activity": False,
+        "hide_completed_tool_activity": True,
         "stream_thinking_to_body": True,
         "reasoning_format": "panel",
         "timeline_expanded": False,
-        "timeline_order": "newest_first",
-        "timeline_tools_per_reasoning": 0,
+        # Fork contract: chronological panel + a 2-row window per thinking block, as above.
+        "timeline_order": "chronological",
+        "timeline_tools_per_reasoning": 2,
         "max_timeline_items": 12,
         "max_reasoning_chars": 1200,
         "max_tool_result_chars": 600,

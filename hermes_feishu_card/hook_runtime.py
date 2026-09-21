@@ -86,6 +86,75 @@ BUSY_STEER_ACK_RECALL_SECONDS = 15.0
 
 STATUS_NOTICE_PREFIX = "⏳"
 STATUS_NOTICE_RECALL_SECONDS = 15.0
+# The approval-expiry receipts — the two ⌛ lines a user sees when their click reached an approval
+# nobody was waiting on any more:
+#   "⌛ That approval had already expired — the command was not run (it timed out or was resolved
+#    elsewhere)."   (plugins/platforms/feishu/adapter.py, the click path)
+#   "⌛ Approval timed out after 5 minutes — the command was NOT run. Ask me to try again …"
+#    (gateway/platforms/base_exec_approval.py, the runner's settle path)
+# Both are one-shot receipts about a decision that is already over: the agent is no longer blocked and
+# nothing will act on the answer. On Feishu these are the only two ⌛ strings, so the emoji is a safe
+# prefix — every other platform's ⌛ wording never reaches a Feishu send.
+APPROVAL_EXPIRED_NOTICE_PREFIX = "⌛"
+APPROVAL_EXPIRED_NOTICE_RECALL_SECONDS = 15.0
+# The background-process completion receipt («✅ Background task finished — `cmd` (6s)»), built by the
+# core's `_format_concise_process_notification`. Nothing knew this wording, so every finished
+# background task left a permanent line in the thread. Only the SUCCESS wording is listed: the failure
+# variant («❌ Background task failed … Last output: …») carries the output tail and the "ask me to
+# rerun it" prompt, which is the diagnostic the reader opens it for.
+BACKGROUND_TASK_NOTICE_PREFIX = "✅ Background task finished"
+BACKGROUND_TASK_NOTICE_RECALL_SECONDS = 15.0
+# Shape, not prefix alone: the receipt embeds a variable command and duration. Matched after the
+# command is shortened by `_shorten_command_for_display`, so the command part stays one line.
+BACKGROUND_TASK_NOTICE_PATTERNS = (
+    r"✅ Background task finished(?: — `[^\r\n]*`)?(?: \([^)\r\n]*\))?",
+)
+# The restart notices: one class, one rule. "⚠️ Hermes is restarting / shutting down …" warns that the
+# task is about to be cut; "♻️ Gateway online …" says it came back; the "⏳ Gateway is restarting …"
+# doorways tell a busy sender their message was refused or queued. They are read TOGETHER
+# (「网关关机和网关重启是同时存在的」), so none of them may delete the ones before it — the group is
+# retired by the next thing the bot posts («在它们之后 如果有消息的话 才撤回它们»).
+#
+# The notices come from DIFFERENT processes (the warning from the process going down, the online line
+# from its replacement), so hfc cannot hold them in memory: the registration lives in the SIDECAR.
+#
+# Every phrasing is listed: Hermes 0.21.0 said "⚠️ Gateway restarting — Your current task …" and 0.21.3
+# says "⚠️ Hermes is restarting — your current task …", and a gateway updated mid-flight can still have
+# the older line sitting in the thread.
+RESTART_NOTICE_PREFIXES = (
+    "⚠️ Hermes is restarting",
+    "⚠️ Hermes is shutting down",
+    "⚠️ Gateway restarting",
+    "⚠️ Gateway shutting down",
+    "♻️ Gateway online",
+    "♻️ Gateway restarted",
+    "♻ Gateway restarted",
+    # The inbound/draining doorways. Left out, these fell through to the generic "any other message
+    # clears the group" rule and DELETED the very warning they were announcing, while themselves
+    # carrying no clock and so never being retired. `_status_action_gerund()` supplies both gerunds.
+    "⏳ Gateway is restarting",
+    "⏳ Gateway is shutting down",
+    "⏳ Gateway restarting",
+    "⏳ Gateway shutting down",
+)
+# The prefix tuple above is only a cheap gate; the notice itself must then match its FULL known shape.
+# Same reason as the ⏳ arm: a warning emoji is not evidence that a message is disposable, and the user
+# quoting a restart line back at the bot is a message in its own right.
+RESTART_NOTICE_PATTERNS = (
+    r"⚠️ Hermes is restarting — your current task will be interrupted\. Send any message after the restart and I'll try to resume where you left off\.",
+    r"⚠️ Hermes is shutting down — your current task will be interrupted\. When it is back online, send any message and I'll try to pick up where we left off\.",
+    # The 0.21.0 wording; the tail is not worth pinning exactly, since only this head was ever shipped.
+    r"⚠️ Gateway (?:restarting|shutting down) — Your current task will be interrupted\.[^\r\n]*",
+    r"♻ Gateway restarted successfully\. Your session continues\.",
+    # The online notice may carry a second line (the free-tier note) appended by the boot path.
+    r"♻️ Gateway online — Hermes is back and ready\.(?:\n[^\r\n]*)?",
+    # The draining doorway. Both tails are real: ``run_busy``/``run_inbound`` send "another turn" to a
+    # user message, and ``run_inbound`` sends "new work" to a command. Both gerunds, too — "restarting"
+    # and "shutting down" are the same template with ``_status_action_gerund()``.
+    r"⏳ Gateway is (?:restarting|shutting down) and is not accepting (?:another turn|new work) right now\.",
+    # …and the sibling that tells the user their OWN message was queued for after the restart.
+    r"⏳ Gateway (?:restarting|shutting down) — queued for the next turn after it comes back\.",
+)
 # (text prefix, seconds to wait before withdrawing) — every transient notice hfc withdraws after the
 # user has had a chance to read it. Content the user still needs (queued acks, provider-
 # failure replies) is deliberately absent: only self-erasing status pings belong here.
@@ -5164,6 +5233,29 @@ def _hfc_content_notice_id(kind: str, content: str) -> str:
 
 _HFC_GATEWAY_ONLINE_TEXT = "♻️ Gateway online — Hermes is back and ready."
 
+# The core still emits the restart-completion line with a BARE U+267B, and it reaches this wrapper only
+# on its way to the chat/thread that REQUESTED the restart. Feishu renders that bare glyph monochrome,
+# while the variation-selector form below is coloured — so the requester got a black ♻ in the thread
+# and a coloured ♻️ in Home (「希望话题里面的线程收到的也是彩色的」). Both spellings are listed because
+# the core has shipped each of them.
+_CORE_RESTART_ONLINE_TEXTS = frozenset({
+    "♻ Gateway restarted successfully. Your session continues.",
+    "♻️ Gateway restarted successfully. Your session continues.",
+})
+
+
+def _hfc_restart_notice_rewrite(content: Any) -> str | None:
+    """Return ``_HFC_GATEWAY_ONLINE_TEXT`` for a core restart-completion line, else ``None``.
+
+    Scope is deliberately narrow: only the core's legacy wording is rewritten, so the home-channel
+    line (already `_HFC_GATEWAY_ONLINE_TEXT`) keeps taking its own path through
+    ``_hfc_send_plain_notice`` and its existing fallback contract.
+    """
+    text = str(content or "").strip()
+    if text in _CORE_RESTART_ONLINE_TEXTS:
+        return _HFC_GATEWAY_ONLINE_TEXT
+    return None
+
 
 def _hfc_notice_plain_text(notice: Any) -> str | None:
     """Wording for a notice the gateway should deliver as PLAIN TEXT instead of a card.
@@ -6140,6 +6232,73 @@ def _native_handoff_post_requires_text_fallback(adapter: Any, value: Any) -> boo
     return "post" in lowered and ("invalid" in lowered or "format" in lowered)
 
 
+def _feishu_send_payload_text(payload: Any) -> str:
+    """The plain text a Feishu send carried, or ``""`` when it was not a text message.
+
+    This layer holds the already-encoded wire body — ``json.dumps({"text": ...})`` — never clean
+    text, so the acknowledgement markers have to be matched against the decoded field.
+    """
+    raw = payload if isinstance(payload, str) else ""
+    if not raw:
+        return ""
+    try:
+        decoded = json.loads(raw)
+    except (ValueError, TypeError):
+        return ""
+    if isinstance(decoded, dict):
+        text = decoded.get("text")
+        return str(text) if isinstance(text, str) else ""
+    return ""
+
+
+async def recall_delivered_notice_from_send_async(
+    self: Any,
+    chat_id: str,
+    payload: Any,
+    metadata: Any,
+    response: Any,
+) -> bool:
+    """Withdraw a transient acknowledgement from the one door every Feishu send passes through.
+
+    ``_feishu_send_with_retry`` is the single choke point for a Feishu send: the ``send`` wrapper
+    above it has seven-plus return paths (handoff, system-notice card, command-result card, direct
+    card, several fallbacks) and one of them posts the text WITHOUT arming a withdrawal, so an
+    acknowledgement sent down that path used to sit in the thread forever. Sitting below all of them
+    means the acknowledgement is retired whichever way it was delivered.
+
+    Best-effort throughout: a failure here must never disturb a send that already succeeded, so
+    every path returns False instead of raising.
+    """
+    try:
+        text = _feishu_send_payload_text(payload)
+        if not text or _transient_notice_recall_seconds(text) is None:
+            return False
+        if not _native_handoff_response_succeeded(self, response):
+            return False
+        message_id = _hfc_response_message_id(response)
+        if not message_id:
+            return False
+        context = _HFC_FEISHU_DELIVERY_CONTEXT.get()
+        if not isinstance(context, dict):
+            context = _HFC_FEISHU_NOTICE_CONTEXT.get()
+        if not isinstance(context, dict):
+            context = {}
+        if context.get("profile_invalid"):
+            return False
+        metadata = metadata if isinstance(metadata, dict) else {}
+        source = SimpleNamespace(
+            platform="feishu",
+            chat_id=str(chat_id or ""),
+            profile_id=str(context.get("profile_id") or ""),
+            thread_id=str(metadata.get("thread_id") or context.get("thread_id") or ""),
+        )
+        return await recall_transient_thread_notice_async(
+            source, text, SimpleNamespace(success=True, message_id=message_id),
+        )
+    except Exception:
+        return False
+
+
 async def _hfc_feishu_send_with_native_handoff_tracking(
     self: Any,
     *,
@@ -6154,7 +6313,7 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
         raise RuntimeError("original Feishu retry helper unavailable")
     tracker = _HFC_NATIVE_HANDOFF_SEND_TRACKER.get()
     if not isinstance(tracker, dict):
-        return await original(
+        response = await original(
             self,
             chat_id=chat_id,
             msg_type=msg_type,
@@ -6162,6 +6321,12 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
             reply_to=reply_to,
             metadata=metadata,
         )
+        # Below every branch of the ``send`` wrapper, so an acknowledgement is retired whichever
+        # way it was delivered — including the paths that never arm a withdrawal themselves.
+        await recall_delivered_notice_from_send_async(
+            self, chat_id, payload, metadata, response,
+        )
+        return response
     fallback_ordinal = tracker.get("fallback_ordinal")
     if msg_type == "text" and isinstance(fallback_ordinal, int):
         ordinal = fallback_ordinal
@@ -6196,6 +6361,9 @@ async def _hfc_feishu_send_with_native_handoff_tracking(
             and _native_handoff_post_requires_text_fallback(self, response)
         ):
             tracker["fallback_ordinal"] = ordinal
+        await recall_delivered_notice_from_send_async(
+            self, chat_id, payload, metadata, response,
+        )
         return response
     except Exception as exc:
         required[ordinal] = False
@@ -6405,6 +6573,31 @@ async def _hfc_send_with_native_command_result_card(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_send", None)
+    # The core's restart-completion line reaches this wrapper only on its way to the chat/thread that
+    # REQUESTED the restart, and it is the one send that must not keep the core's monochrome ♻ (see
+    # `_CORE_RESTART_ONLINE_TEXTS`). Handled in front of the handoff/card branches so a single place
+    # owns both the wording and the withdrawal — `_hfc_recall_plain_text_status_notice` retires the
+    # ⚠️ warning in front of it and arms this line's own 15s deadline.
+    #
+    # Doing it HERE rather than in the notice classifier matters: the classifier only runs when the
+    # card policy ACCEPTS the chat. When it declines, the wrapper used to hand the core's text
+    # straight to ``original`` — bare U+267B, monochrome, and on no recall path at all. Placed here,
+    # every path that reaches this wrapper gets the coloured line and its withdrawal.
+    #
+    # Fork contract: upstream v4.6.6 routes notices through ``notice_for_send`` (which also returns the
+    # content it wants sent). This branch stays IN FRONT of it and returns early, because the fork has
+    # to own this line on paths the router does not reach — and it must still be the coloured text.
+    restart_online = _hfc_restart_notice_rewrite(content)
+    if restart_online is not None and callable(original):
+        result = await original(
+            self, chat_id, restart_online, reply_to=reply_to, metadata=metadata,
+        )
+        await _hfc_recall_plain_text_status_notice(
+            chat_id, restart_online, metadata, result,
+            reply_to=reply_to,
+            generated_restart_notice=True,
+        )
+        return result
     from .notice_producers import notice_for_send
     try:
         notice = notice_for_send(self, chat_id, content, metadata)
@@ -6544,6 +6737,36 @@ async def _hfc_send_with_native_command_result_card(
     return _send_result(False, error="original Feishu send unavailable")
 
 
+def _hfc_is_restart_notice(content: Any) -> bool:
+    """True for the restart/online notices that stand together as one family.
+
+    See ``RESTART_NOTICE_PREFIXES`` for the cheap gate and ``RESTART_NOTICE_PATTERNS`` for why the
+    full shape is then required: a warning emoji is not evidence that a message is disposable, and a
+    user quoting a restart line back at the bot is a message in its own right.
+    """
+    text = str(content or "")
+    if not text or not text.startswith(RESTART_NOTICE_PREFIXES):
+        return False
+    return any(re.fullmatch(pattern, text) for pattern in RESTART_NOTICE_PATTERNS)
+
+
+def _hfc_home_chat_id() -> str:
+    """The Feishu HOME channel chat id, or ``""`` when this deployment has none.
+
+    Read through the core's own scope-aware reader so a secondary profile gets ITS home (`os.environ`
+    holds the LAUNCH profile's value under multiplex, and a leaked read would clear the wrong chat's
+    notices). Falls back to a plain env read when the core helper is unavailable — the value is not a
+    secret, and the fallback is the pre-multiplex behaviour rather than a new failure mode.
+    """
+    try:
+        from gateway.platforms._shared import get_scoped_secret
+
+        value = get_scoped_secret("FEISHU_HOME_CHANNEL", "")
+    except Exception:
+        value = os.environ.get("FEISHU_HOME_CHANNEL", "")
+    return str(value or "").strip()
+
+
 async def _hfc_recall_plain_text_status_notice(
     chat_id: str,
     content: Any,
@@ -6590,6 +6813,30 @@ async def _hfc_recall_plain_text_status_notice(
                 route={"profile_id": profile, "chat_id": source.chat_id,
                        "conversation_id": thread_id},
                 notice_family="restart",
+                # Tells the sidecar where HOME is, so a later send in this topic can also clear the
+                # restart line standing there («同时触发 home channel 前面的重启消息撤回»). This is
+                # the only door that knows the value: it comes from FEISHU_HOME_CHANNEL, which the
+                # sidecar's own card sends never see.
+                home_chat_id=_hfc_home_chat_id(),
+            )
+        # The other restart lines — the ⚠️ warning from the process going down and the ⏳ doorways that
+        # tell a busy sender their message was refused or queued. They are the same family as the ♻️
+        # line above and are read together, so they register in the sidecar too instead of being
+        # retired on the spot. Matching is by FULL shape (see RESTART_NOTICE_PATTERNS): a warning
+        # emoji alone is not evidence that a message is disposable.
+        if _hfc_is_restart_notice(content):
+            if getattr(result, "success", False) is not True:
+                return False
+            profile, provenance = _profile_identity({}, source, None)
+            if provenance.startswith("sanitized_"):
+                return False
+            thread_id = source.thread_id or str(reply_to or "")
+            return await schedule_message_recall_async(
+                str(getattr(result, "message_id", "") or ""),
+                route={"profile_id": profile, "chat_id": source.chat_id,
+                       "conversation_id": thread_id},
+                notice_family="restart",
+                home_chat_id=_hfc_home_chat_id(),
             )
         return await recall_transient_thread_notice_async(source, content, result)
     except Exception:
@@ -9830,8 +10077,13 @@ def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
     # The adapter also sends answers and important queue/error acknowledgements.
     # An hourglass alone is not evidence that a message is disposable status.
     if text.startswith(STATUS_NOTICE_PREFIX):
-        # Core edits Working heartbeats in place. A timer would delete the target
-        # and force a fresh send on every later tick; core owns final cleanup.
+        # ⏳ Working is deliberately NOT here. It is the one ⏳ line the core keeps UPDATING in
+        # place (`HERMES_AGENT_NOTIFY_INTERVAL`, default 180s, edits `_heartbeat_msg_id`), so
+        # withdrawing it broke the edit: the next cycle found a deleted message, the edit failed,
+        # and the core fell back to sending a FRESH one — one heartbeat turned into "new message +
+        # withdrawal" every cycle, which is what flooded the thread («working background 等等。这些
+        # 心跳感觉太多了»). Left alone, the heartbeat is a single quiet in-place update; the other
+        # five ⏳ shapes are genuinely one-shot and keep their 15s.
         status_patterns = (
             r"⏳ (?:Compressing context|Waiting for approval|tool execution timed out; retrying)(?:\.\.\.)?",
             r"⏳ Retrying in \d+(?:\.\d+)?s \(attempt \d+/\d+\)(?:\.\.\.)?",
@@ -9840,6 +10092,21 @@ def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
         )
         return (STATUS_NOTICE_RECALL_SECONDS
                 if any(re.fullmatch(pattern, text) for pattern in status_patterns)
+                else None)
+    if text.startswith(APPROVAL_EXPIRED_NOTICE_PREFIX):
+        approval_patterns = (
+            r"⌛ That approval had already expired — the command was not run \([^\r\n]*\)\.",
+            r"⌛ Approval timed out after [^—\r\n]+ — the command was NOT run\.[^\r\n]*",
+        )
+        return (APPROVAL_EXPIRED_NOTICE_RECALL_SECONDS
+                if any(re.fullmatch(pattern, text) for pattern in approval_patterns)
+                else None)
+    # The background-process completion receipt. Same reason as the ⏳ arm for the shape gate: the
+    # wording embeds whichever command ran, and a user quoting the line back is a message in its own
+    # right.
+    if text.startswith(BACKGROUND_TASK_NOTICE_PREFIX):
+        return (BACKGROUND_TASK_NOTICE_RECALL_SECONDS
+                if any(re.fullmatch(pattern, text) for pattern in BACKGROUND_TASK_NOTICE_PATTERNS)
                 else None)
     for prefix, delay in TRANSIENT_THREAD_NOTICES:
         if text.startswith(prefix):
@@ -9933,12 +10200,17 @@ async def schedule_message_recall_async(
     bot_id: str = "",
     route: dict[str, str] | None = None,
     notice_family: str = "",
+    home_chat_id: str = "",
 ) -> bool:
     """Ask the sidecar to withdraw ``message_id`` ``delay_seconds`` after it was posted.
 
     Used for acknowledgements the user reads once and that then only clutter the thread — the
     core's "↪ Redirected current run …" notice. The gateway's own adapter cannot delete (its Feishu
     implementation inherits the ``return False`` default), so the sidecar owns this path.
+
+    ``home_chat_id`` rides along on a notice-family registration so the sidecar learns where HOME is
+    for this (profile, bot). The sidecar's own sends never pass the hook, so without this it could not
+    clear a restart line standing in home when a message is later posted in a topic.
     """
     try:
         recall_id = str(message_id or "").strip()
@@ -9959,6 +10231,8 @@ async def schedule_message_recall_async(
             payload.pop("delay_seconds", None)
             payload["notice_family"] = notice_family
             payload["record_only"] = True
+            if home_chat_id:
+                payload["home_chat_id"] = str(home_chat_id)
         url = f"{_summary_base_url(config.event_url)}/recall/schedule"
         result = await _post_json_ordered_response(url, payload, config.timeout_seconds)
         return isinstance(result, dict) and result.get("ok") is True

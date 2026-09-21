@@ -68,8 +68,8 @@ hermes-feishu-card card-config --config /path/to/config.yaml --profile-id work -
 
 ```yaml
 card:
-  timeline_order: chronological       # 默认 newest_first
-  timeline_tools_per_reasoning: 2      # 默认 0，不额外限制；可设 0..100
+  timeline_order: chronological       # FORK 默认 chronological（上游默认 newest_first，需主动开启）
+  timeline_tools_per_reasoning: 2      # FORK 默认 2（上游默认 0=不额外限制）；可设 0..100
 ```
 
 顺序只影响过程面板，正文 code 思考仍按正序。每段思考的条数仅限制成功完成工具，保留最近 N 条；失败与运行步骤不被此规则移除，但所有条目仍受全局 `max_timeline_items` 和卡片容量门禁约束。历史、工具总数、审批和正文不变。字段遵循相同 global/profile/bot 显式覆盖顺序，`card-config` 展示其来源，预设不会自动启用它们。

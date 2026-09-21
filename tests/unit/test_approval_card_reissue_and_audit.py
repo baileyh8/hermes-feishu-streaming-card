@@ -237,5 +237,124 @@ def test_mobile_approval_explains_expand_before_full_scope_and_consent():
     assert '展开仅查看内容，不会提交授权' in card['elements'][0]['content']
     assert 'echo review-scope' in str(card)
     scope_index = next(i for i,e in enumerate(card['elements']) if 'echo review-scope' in str(e))
-    action_index = next(i for i,e in enumerate(card['elements']) if e['tag'] == 'column_set')
-    assert scope_index < action_index
+    # The options moved out of the legacy ``action`` container into a ``column_set`` of auto-width
+    # columns so they render compact («能否用小按钮而不是长按钮»); locate them by the click payload they
+    # carry rather than by the container tag.
+    button_index = next(
+        i for i, element in enumerate(card['elements'])
+        if 'interaction.select' in str(element)
+    )
+    assert scope_index < button_index
+
+
+# ---------------------------------------------------------------------------
+# The decided block is a WORKING surface, not a permanent fixture (#337)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("turn_status", ["completed", "failed"])
+def test_a_finished_turn_drops_the_decided_approval_block(turn_status):
+    """Once the turn is over the block is only weight, so it goes.
+
+    The user's ask (#337): «操作执行完成后，下方这个就可以去掉了。不必一直占着空间位置». On a long turn the
+    block is the bulkiest thing in the card — the question, the whole masked command and the option
+    list — and none of it is read once the work it authorised has finished.
+
+    Precondition adopted from upstream v4.6.6: the duplicate only goes once the INDEPENDENT receipt
+    card is confirmed delivered (see `approval_receipts`) — that card is where the audit record lives
+    now, so removing the block before that proof exists would leave the only surviving record to
+    chance. The next test pins the flip side: without that proof the block STAYS.
+    """
+    from hermes_feishu_card.approval_receipts import approval_receipt_fingerprint
+
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.active_interaction = _approval("completed")
+    session.status = turn_status
+    session.answer_text = "做完了"
+    # The receipt was delivered: its fingerprint is what proves it.
+    session.active_interaction.feishu_message_id = "receipt-message"
+    session.active_interaction.receipt_fingerprint = approval_receipt_fingerprint(
+        session, session.active_interaction
+    )
+
+    text = str(render_card(session))
+
+    assert "需要授权后继续执行" not in text, "the question must be gone"
+    assert COMMAND not in text, "the operation scope must be gone"
+    assert "已选择：允许一次" not in text, "the outcome row goes with the block"
+    assert "做完了" in text, "the answer itself must survive"
+
+
+@pytest.mark.parametrize("turn_status", ["completed", "failed"])
+def test_a_finished_turn_keeps_the_block_until_the_receipt_is_confirmed(turn_status):
+    """No proof of the independent receipt ⇒ the block stays, because it is the only record left.
+
+    Upstream's rule (v4.6.6) and the reason the fork adopts it: if the receipt card's update failed,
+    this block is the one place the question, the command and the choice are still readable. The
+    fork's #337 ask («不必一直占着空间位置») is still served — the block goes as soon as the receipt is
+    confirmed, which is the normal path, and this test only covers the degenerate one.
+    """
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.active_interaction = _approval("completed")
+    session.status = turn_status
+    session.answer_text = "做完了"
+
+    text = str(render_card(session))
+
+    assert "需要授权后继续执行" in text
+    assert COMMAND in text, "the command is the audit record on this path"
+    assert "已选择：允许一次" in text
+    assert "做完了" in text
+
+
+def test_a_running_turn_keeps_the_decided_approval_readable():
+    """The window the previous contract protected: while the work runs, the decision must be readable.
+
+    This is why the gate is ``session.status`` and not ``interaction.status`` — an interaction reads
+    "completed" the instant the user clicks, which is exactly when the block still has to be there.
+    Gating on the interaction would delete it mid-execution, the bug the earlier note warns about.
+    """
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.active_interaction = _approval("completed")
+
+    text = str(render_card(session))
+
+    assert "需要授权后继续执行" in text  # what was asked
+    assert "已选择：允许一次" in text  # what was chosen
+    assert COMMAND in text  # what it authorised, still identifiable
+
+
+def test_a_pending_approval_survives_a_terminal_turn():
+    """A still-PENDING approval is not "decided weight" — dropping it would hide a live question.
+
+    A turn can reach a terminal state with the approval unresolved (the run failed or ended while the
+    question was open), and that question is the one thing the reader has to act on.
+    """
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.active_interaction = _approval("pending")
+    session.status = "failed"
+
+    text = str(render_card(session))
+
+    assert "需要授权后继续执行" in text
+    assert "1. 允许一次" in text
+
+
+def test_the_standalone_approval_card_still_carries_the_record_after_the_turn():
+    """Where the audit record lives once the turn's card lets it go.
+
+    The standalone approval card is its own message: it keeps the question, the options and 已选择：…
+    and drops only the buttons and the callback token, so the decision stays reconstructible there
+    even after the session card has stopped showing it.
+    """
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.active_interaction = _approval("completed")
+    session.status = "completed"
+
+    card = render_legacy_interaction_callback_card(session, title="Hermes Agent")
+    text = str(card["elements"])
+
+    assert "需要授权后继续执行" in text, "the question survives on the approval's own card"
+    assert "1. 允许一次" in text, "so do the options"
+    assert "已选择：允许一次" in text, "and the outcome"
+    assert COMMAND.split()[0] in text, "and what would run"

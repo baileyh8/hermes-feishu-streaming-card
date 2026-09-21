@@ -232,7 +232,7 @@ CardKit 创建和所有更新必须经过同一短 ID 映射：字符串不同�
 
 native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependent`：它观察 Gateway 接纳的轮次，上报自己的活动计数，不独立声明 Gateway 准入与 HOME 身份。只有同一 worker 中有效的 Gateway 聚合 owner 存在时，才借用该 owner 的 drain/home 证明。native 活动、计数不完整、未知 owner、Gateway 释放、HOME 不符及 epoch 变化仍保守拒绝停服。不得用常量 true 或忽略所有缺失 provider 解除门禁。
 
-终态工具区使用 `card.hide_completed_tool_activity`，默认 false 保持旧行为；true 仅在 completed/failed 隐藏正文工具行及旧摘要回退，不改变折叠记录、计数、正文或审批布局。
+终态工具区使用 `card.hide_completed_tool_activity`，**FORK 默认 true**（上游默认 false、保持旧行为）；true 仅在 completed/failed 隐藏正文工具行及旧摘要回退，不改变折叠记录、计数、正文或审批布局。显式设为 false 即回到上游默认行为。
 
 ## V4.6.3 正文思考与测量边界
 

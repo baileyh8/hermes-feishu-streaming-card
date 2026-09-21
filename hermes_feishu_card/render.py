@@ -123,8 +123,8 @@ def render_card(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
-    timeline_order: str = "newest_first",
-    timeline_tools_per_reasoning: int = 0,
+    timeline_order: str = "chronological",
+    timeline_tools_per_reasoning: int = 2,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -171,8 +171,8 @@ def render_card_result(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
-    timeline_order: str = "newest_first",
-    timeline_tools_per_reasoning: int = 0,
+    timeline_order: str = "chronological",
+    timeline_tools_per_reasoning: int = 2,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body
@@ -249,8 +249,8 @@ def _render_card_unchecked(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
-    timeline_order: str = "newest_first",
-    timeline_tools_per_reasoning: int = 0,
+    timeline_order: str = "chronological",
+    timeline_tools_per_reasoning: int = 2,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -333,8 +333,21 @@ def _render_card_unchecked(
                 used_roles=used_text_size_roles,
             ),
         )
-    # Keep live progress and pending interaction layouts unchanged. Only the
-    # content tool area is optional; timeline evidence and counts stay intact.
+    # `card.hide_completed_tool_activity` (default true) decides whether a FINISHED turn keeps the
+    # content-area tool rows. While a turn runs they are the live progress line and the 思考过程 panel
+    # below does not exist yet; once it is done they restate entries that panel already holds — the
+    # reader wants the answer, and can open the panel for the process.
+    #
+    # Deliberately NOT applied to a FAILED turn: there the rows carry the 已中断 pill, i.e. WHERE the
+    # run stopped, which is the one thing a reader opens a failed card for. Hiding a stopped run's
+    # last step would delete the diagnostic, not the noise. (Upstream ships the same key hiding
+    # `failed` as well and defaulting to False; keeping the diagnostic and defaulting to True is a
+    # deliberate contract difference in this fork.)
+    # v4.6.6 moved the filtering INTO the renderer, which keeps non-successful rows (中断/失败) and
+    # only drops the successful ones. So the knob can cover completed AND failed without deleting the
+    # diagnostic a reader opens a failed card for — the fork no longer needs its own completed-only
+    # gate, and hiding the successes of a failed run is consistent with the user's call
+    # (「成功完成的的确可以在结束的时候关闭」).
     hide_terminal_tools = (
         hide_completed_tool_activity and session.status in {"completed", "failed"}
     ) or (hide_successful_tool_activity and session.status == "completed")
@@ -349,6 +362,9 @@ def _render_card_unchecked(
             # The content rows get the card's tool-detail budget — the same one the 思考过程 panel
             # uses, so a command reads the same length on both surfaces.
             max_chars=max_tool_result_chars,
+            # The fork's own gate: completed-only (a FAILED turn keeps every row, they carry the
+            # 已中断 pill). Upstream moved the filtering inside the renderer, which now also keeps
+            # interrupted rows on a completed turn — same contract, one fewer place to get it wrong.
             hide_successful=hide_terminal_tools,
         )
     )
@@ -651,11 +667,8 @@ def _render_legacy_callback_card(
             )
             for index, option in enumerate(interaction.options)
         ]
-        if interaction.kind == "approval":
-            elements.extend(_legacy_approval_button_rows(buttons))
-        else:
-            for offset in range(0, len(buttons), 5):
-                elements.append({"tag": "action", "actions": buttons[offset : offset + 5]})
+        for row in _legacy_choice_button_rows(buttons):
+            elements.append(row)
         if interaction.allow_custom_input:
             elements.append(
                 _legacy_form(_render_other_form(interaction, profile_id=profile_id))
@@ -675,27 +688,59 @@ def _render_legacy_callback_card(
 
 
 def _legacy_button(button: Mapping[str, Any]) -> Dict[str, Any]:
+    # ``width`` is KEPT. Dropping it made the client fall back to stretching every option across the
+    # full row, so a four-option approval read as four full-width bars — the user asked for compact
+    # buttons («能否用小按钮而不是长按钮»), and ``width: "default"`` is the documented way to ask for
+    # an auto-width button. ``element_id``/``behaviors`` still go: the first is unused here and the
+    # second is the CardKit v2 client-side callback, which never reaches ``p2.card.action.trigger``
+    # (the button's top-level ``value`` is what carries the click).
     return {
         key: value
         for key, value in button.items()
-        if key not in {"element_id", "size", "width", "behaviors"}
+        if key not in {"element_id", "size", "behaviors"}
     }
 
 
-def _legacy_approval_button_rows(buttons: list[Mapping[str, Any]]) -> list[Dict[str, Any]]:
-    """Compact legacy callbacks; full option explanations remain above the controls."""
-    return [
-        {
-            "tag": "column_set", "flex_mode": "flow",
-            "horizontal_spacing": "8px", "horizontal_align": "left",
-            "columns": [
-                {"tag": "column", "width": "auto", "vertical_align": "top",
-                 "elements": [dict(button, width="default")]}
-                for button in buttons[offset:offset + 4]
-            ],
-        }
-        for offset in range(0, len(buttons), 4)
-    ]
+# How many choice buttons share one row. Four keeps the common approval (允许一次 / 本会话允许 /
+# 始终允许 / 拒绝) on a single line of small buttons on a phone; a longer list wraps.
+_LEGACY_CHOICE_BUTTONS_PER_ROW = 4
+
+
+def _legacy_choice_button_rows(
+    buttons: list[Mapping[str, Any]],
+) -> list[Dict[str, Any]]:
+    """Lay choice buttons out as compact, left-aligned rows.
+
+    The legacy ``action`` container is what made the options look like long bars: on mobile each
+    button in it is stretched across the row. Feishu's own guidance for arranging buttons side by
+    side is a ``column_set`` of auto-width columns — and in card JSON 1.0 a button that is NESTED in
+    another component does not need the ``action`` container at all (only a root-level button does),
+    so the click still arrives through the button's own ``value``.
+
+    ``flex_mode: "flow"`` lets a longer option list wrap instead of being squeezed, and
+    ``horizontal_align: "left"`` keeps auto-width columns from being spread across the card.
+    """
+    rows: list[Dict[str, Any]] = []
+    for offset in range(0, len(buttons), _LEGACY_CHOICE_BUTTONS_PER_ROW):
+        chunk = buttons[offset : offset + _LEGACY_CHOICE_BUTTONS_PER_ROW]
+        rows.append(
+            {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "8px",
+                "horizontal_align": "left",
+                "columns": [
+                    {
+                        "tag": "column",
+                        "width": "auto",
+                        "vertical_align": "top",
+                        "elements": [button],
+                    }
+                    for button in chunk
+                ],
+            }
+        )
+    return rows
 
 
 def _legacy_form(form: Mapping[str, Any]) -> Dict[str, Any]:
@@ -1140,8 +1185,22 @@ def _render_interaction_elements(
     if interaction is None:
         return []
     if session.status in {"completed", "failed"} and has_confirmed_approval_receipt(session):
-        # #337/#339: only remove a duplicate after the complete independent
-        # receipt has been confirmed by Feishu; rendering a callback is no ACK.
+        # Maintainer note (contract change, #337/#339): the decided approval is a WORKING surface,
+        # not a permanent fixture. While the turn runs it is the one place a reader can see what was
+        # approved and what that approval then ran; once the turn is over it is only weight, and on a
+        # long turn it is the bulkiest part of the card — the question, the full (masked) command and
+        # the option list — so it is dropped, exactly as the completed tool rows are.
+        #
+        # The guard is upstream v4.6.6's and the fork takes it: the duplicate may only go once the
+        # INDEPENDENT receipt card has been confirmed delivered by Feishu, because that card is where
+        # the audit record now lives (question + command + 已选择：…, see
+        # ``approval_receipts``/``_settle_approval_displays``). Removing the block before that proof
+        # exists would leave the one surviving record to chance — if the receipt update fails, this
+        # card is all there is, and a reader still needs to see what was approved.
+        #
+        # Why the gate is the TURN's status and not the interaction's: an interaction is "completed"
+        # the moment the user clicks, which is exactly when the block still has to be readable.
+        # Gating on ``interaction.status`` would delete it during execution.
         return []
     if (
         interaction.status == "pending"
@@ -1926,8 +1985,8 @@ def _render_timeline_elements(
     used_text_size_roles: set[str] | None = None,
     reasoning_format: str = "panel",
     live_thinking: str = "",
-    timeline_order: str = "newest_first",
-    tools_per_reasoning: int = 0,
+    timeline_order: str = "chronological",
+    tools_per_reasoning: int = 2,
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
@@ -1963,15 +2022,18 @@ def _render_timeline_elements(
         _limit_tools_per_reasoning(all_entries, tools_per_reasoning, keep_tool_ids=priority_ids),
         max_items=max_items, priority_tool_ids=priority_ids,
     )
+    # Fork contract: the per-block window here is upstream's `_limit_tools_per_reasoning` (it takes
+    # `keep_tool_ids` so live/failed rows survive it). The fork's own
+    # `_keep_recent_tools_after_each_reasoning` stays below, exercised directly by its unit tests,
+    # because it is the shape this fork shipped first and its invariants are worth keeping pinned.
     folded = max(0, len(all_entries) - len(entries))
     panel_elements: list[Dict[str, Any]] = []
     reasoning_elements: list[Dict[str, Any]] = []
-    # NEWEST FIRST — for the PANEL. The user asked for the panel to read in reverse order so the most
-    # recent work is the first thing they see ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). A live
-    # log's useful end is its LAST entry, and this panel is appended to the bottom of a card that is
-    # read downward — so the newest work used to be the furthest thing from the reader's eye.
-    # Only the DISPLAY order flips: _select_timeline_entries still decides which entries fit (it
-    # keeps the newest window and guarantees the latest reasoning is included).
+    # CHRONOLOGICAL — for the PANEL. The order was briefly reversed (newest first, so the latest work
+    # sat nearest the reader's eye); the user then asked for it back the other way
+    # (「Timeline 的工具正序一下」). A panel that reads top-to-bottom as the turn actually happened is
+    # easier to follow than one you scan upward, and it matches the body's reasoning entries, which
+    # are chronological for the same reason (「正文的思考应该正序」).
     #
     # Maintainer note (contract change): the reasoning entries that render into the CARD BODY are the
     # exception, and they keep chronological order. Body thinking is prose the reader follows
@@ -1984,8 +2046,7 @@ def _render_timeline_elements(
         panel_order.reverse()
     if reasoning_format == "code":
         # "code" puts reasoning in the body (see the target_elements split below) and tools in the
-        # panel, so the two orders can differ. Any other format folds reasoning into the panel,
-        # where newest-first applies to everything.
+        # panel. Both surfaces are chronological now, so the two groups keep their original order.
         ordered = [(i, e) for i, e in enumerate(entries) if e.kind == "reasoning"] + [
             (i, e) for i, e in panel_order if e.kind != "reasoning"
         ]
@@ -2336,9 +2397,72 @@ def _quote_markdown(content: str) -> str:
     return "\n".join(f"> {line}" if line else ">" for line in content.splitlines())
 
 
+def _keep_recent_tools_after_each_reasoning(entries: list[Any], *, per_reasoning: int) -> list[Any]:
+    """Keep only the last ``per_reasoning`` tool rows after EACH reasoning block.
+
+    The user's rule, verbatim: 「正文内容中，每一次思考都保留他最后 2 次的工具执行。和正文中内容里面
+    那个工具行的处理方式一样。显示也好 隐藏也好」 — the thinking that led somewhere is read together
+    with the work it led to, so each block keeps its own evidence instead of competing for one global
+    window (a single shared window left the older blocks with no tool rows at all, which is exactly
+    the pairing the reader wants to see).
+
+    Deliberately a no-op when there is no reasoning at all: the window then stays whatever the caller
+    already selected, so a turn that produced no thinking keeps today's behaviour.
+    """
+    if per_reasoning <= 0 or not any(e.kind == "reasoning" for e in entries):
+        return entries
+    keep: set[int] = set()
+    pending: list[int] = []
+
+    def _finished_ok(entry: Any) -> bool:
+        """A tool row that SUCCEEDED. Only these compete for the per-block window."""
+        return str(getattr(entry, "status", "")).strip().lower() in {
+            "completed", "已完成", "完成", "成功",
+        }
+
+    def flush() -> None:
+        if pending:
+            # The window counts SUCCESSES, matching upstream's `_limit_tools_per_reasoning`: a block
+            # that ran eight successful tools keeps its last two. Counting every row instead would let
+            # one long failure streak push the successes out of their own block's window.
+            successes = [index for index in pending if _finished_ok(entries[index])]
+            keep.update(successes[-per_reasoning:])
+            # Everything that did NOT finish successfully is kept outright: a failure is the record of
+            # what went wrong (upstream's rule, and the reason their release note calls them out), and
+            # a running row is not stale work — it IS the work in progress.
+            keep.update(index for index in pending if not _finished_ok(entries[index]))
+            # Pin the row right BEFORE a running one. The user asked for exactly this
+            # (「我的意思是说 保留执行中和执行中前面的一条」): the row that led into the live step is what
+            # the reader is looking at. It matters when that predecessor is an old success, which the
+            # per-block window would otherwise drop — e.g. #25 执行中 with #24 as its predecessor.
+            for position, index in enumerate(pending):
+                if str(getattr(entries[index], "status", "")).strip().lower() == "running" and position > 0:
+                    keep.add(pending[position - 1])
+            del pending[:]
+
+    for index, entry in enumerate(entries):
+        if entry.kind == "reasoning":
+            flush()
+            keep.add(index)
+        elif entry.kind == "tool":
+            pending.append(index)
+        else:
+            # Subagents and notices are their own record, not a tool step of the block above them.
+            keep.add(index)
+    flush()
+    return [entry for index, entry in enumerate(entries) if index in keep]
+
+
 def _limit_tools_per_reasoning(entries: list[Any], limit: int, *, keep_tool_ids: tuple[str, ...] = ()) -> list[Any]:
     """Opt-in display pruning; keep failures/running work and all stored history."""
     if type(limit) is not int or limit <= 0:
+        return entries
+    # Fork contract: with NO reasoning at all there is no block for the window to belong to, so the
+    # caller's own selection stands. Upstream never hits this (its default is 0 = off), but this fork
+    # ships the window ON by default, and there a thinking-free turn must keep its rows rather than
+    # lose every row but the last two: the user's rule is per THINKING BLOCK
+    # (「每一次思考都保留他最后 2 次的工具执行」), not a global trim.
+    if not any(entry.kind == "reasoning" for entry in entries):
         return entries
     omitted = set()
     group = []
@@ -2376,11 +2500,19 @@ def _select_timeline_entries(entries: list[Any], *, max_items: int, priority_too
         chosen = chosen[:max_items]
         # Newer owners first: if a tiny budget cannot fit every heading, the
         # remaining older unheaded tools precede all selected reasoning groups.
+        #
+        # Fork contract: an owner heading is added even when it takes the panel one past `max_items`.
+        # A retained tool row whose thinking was dropped reads as an orphan — work with no reason
+        # shown for it — and keeping the pair together is what the user asked for
+        # (「每一次思考都保留他最后 2 次的工具执行」). Their standing call for this panel is that
+        # content wins over the cap (「是不是突破13条，这样就能解决前面的问题」), so the overshoot is
+        # accepted: it is bounded (at most one extra heading per retained tool) and it only ever
+        # happens when the cap is too small to hold the evidence.
         for index in sorted({owners[i] for i in chosen if i in owners}, reverse=True):
-            if len(chosen) < max_items and index not in chosen:
+            if index not in chosen:
                 chosen.append(index)
         latest_reasoning = next((i for i in range(len(entries)-1, -1, -1)
-                                 if entries[i].kind == "reasoning"), None)
+                                 if entries[i].kind == 'reasoning'), None)
         if len(chosen) < max_items and latest_reasoning is not None and latest_reasoning not in chosen:
             chosen.append(latest_reasoning)
         for index in range(len(entries)-1, -1, -1):
@@ -2394,24 +2526,61 @@ def _select_timeline_entries(entries: list[Any], *, max_items: int, priority_too
         return [entries[i] for i in sorted(chosen)]
 
     selected_indexes = list(range(len(entries) - max_items, len(entries)))
-    if max_items <= 1:
-        return [entries[index] for index in selected_indexes]
-    if any(entries[index].kind == "reasoning" for index in selected_indexes):
-        return [entries[index] for index in selected_indexes]
+    if max_items > 1 and not any(
+        entries[index].kind == "reasoning" for index in selected_indexes
+    ):
+        latest_reasoning_index = next(
+            (
+                index
+                for index in range(len(entries) - 1, -1, -1)
+                if entries[index].kind == "reasoning"
+            ),
+            None,
+        )
+        if latest_reasoning_index is not None:
+            selected_indexes = [latest_reasoning_index] + selected_indexes[1:]
+    # Fork contract: with no explicit priority list, pin each running row and the row right before
+    # it (the user's rule 「保留执行中和执行中前面的一条」). Upstream's new caller passes
+    # `priority_tool_ids` and takes the branch above; this keeps the same guarantee for every other
+    # caller — the panel's own helper is not the only way in.
+    pinned: set[int] = set()
+    for index, entry in enumerate(entries):
+        if str(getattr(entry, "status", "")).strip().lower() == "running":
+            pinned.add(index)
+            if index > 0:
+                pinned.add(index - 1)
+    if pinned:
+        # Union AFTER the swap: the swap drops the oldest slot, which is exactly where a pinned
+        # running row can sit (the first assertion in
+        # test_the_panel_keeps_a_running_row_even_outside_the_size_window caught this).
+        selected_indexes = sorted(set(selected_indexes) | pinned)
 
-    latest_reasoning_index = next(
-        (
-            index
-            for index in range(len(entries) - 1, -1, -1)
-            if entries[index].kind == "reasoning"
-        ),
-        None,
-    )
-    if latest_reasoning_index is None:
-        return [entries[index] for index in selected_indexes]
+    # No tool row may float without the thinking it belongs to. The window is taken by POSITION, so
+    # when a block's tool count differs from its neighbours the oldest slot can land in the MIDDLE of
+    # a block — keeping its tool rows while dropping the reasoning above them. Extend BACKWARDS by the
+    # owning reasoning instead of trimming the tools, and accept the overshoot (12 → 13).
+    #
+    # The user picked this direction explicitly (「是不是突破13条，这样就能解决前面的问题」) and it is
+    # the right trade here: they have twice reported tool rows MISSING from the panel
+    # (「看不到『执行中』或『执行中』前面的内容，像这里看不到 24，25」), so dropping a row to hit a
+    # round number is the wrong fix. Overshoot is bounded: only the one block straddling the window's
+    # start can need an owner.
+    selected_set = set(selected_indexes)
+    owners_needed: set[int] = set()
+    nearest_reasoning: int | None = None
+    for index, entry in enumerate(entries):
+        if entry.kind == "reasoning":
+            nearest_reasoning = index
+        elif (
+            entry.kind == "tool"
+            and index in selected_set
+            and nearest_reasoning is not None
+            and nearest_reasoning not in selected_set
+        ):
+            owners_needed.add(nearest_reasoning)
+    if owners_needed:
+        selected_indexes = sorted(selected_set | owners_needed)
 
-    selected_indexes = [latest_reasoning_index] + selected_indexes[1:]
-    selected_indexes = sorted(dict.fromkeys(selected_indexes))
     return [entries[index] for index in selected_indexes]
 
 

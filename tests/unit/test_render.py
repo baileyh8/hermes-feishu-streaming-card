@@ -12,6 +12,33 @@ import pytest
 import time
 
 
+def interaction_buttons(card):
+    """Every clickable option button on an interaction card, whatever container holds it.
+
+    Found by what the button DOES (the top-level ``value`` the click carries), never by the
+    container it sits in. The options moved from a legacy ``action`` container to a
+    ``column_set`` of auto-width columns so they render compact instead of as full-width bars
+    («能否用小按钮而不是长按钮»), and a container-shaped lookup reports that as a regression.
+    """
+    found = []
+
+    def walk(elements):
+        for element in elements or ():
+            if not isinstance(element, dict):
+                continue
+            if element.get("tag") == "button":
+                found.append(element)
+            for action in element.get("actions") or ():
+                if isinstance(action, dict) and action.get("tag") == "button":
+                    found.append(action)
+            for column in element.get("columns") or ():
+                if isinstance(column, dict):
+                    walk(column.get("elements"))
+
+    walk(card.get("elements") or card.get("body", {}).get("elements"))
+    return found
+
+
 def test_render_thinking_card_keeps_runtime_status_only_in_footer():
     from hermes_feishu_card.events import SidecarEvent
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
@@ -919,12 +946,7 @@ def test_render_pending_interaction_as_buttons():
     assert "schema" not in card
     assert "body" not in card
     assert card["config"] == {"wide_screen_mode": True, "update_multi": True}
-    action = next(
-        element
-        for element in card["elements"]
-        if element.get("tag") == "column_set"
-    )
-    buttons = [column["elements"][0] for column in action["columns"]]
+    buttons = interaction_buttons(card)
     assert [item["text"]["content"] for item in buttons] == ["1", "2"]
     assert "behaviors" not in buttons[0]
     assert buttons[0]["value"]["hfc_action"] == "interaction.select"
@@ -1568,14 +1590,15 @@ def test_subscription_usage_alone_keeps_the_footer_line():
     assert "5h 26% · weekly 89%" in footer["content"]
 
 
-def test_body_reasoning_reads_chronologically_while_the_panel_reads_newest_first():
-    """正文的思考按发生顺序读；折叠面板仍最新在前。
+def test_body_reasoning_and_the_panel_both_read_chronologically():
+    """正文的思考和折叠面板都按发生顺序读。
 
-    Maintainer note (contract change): the newest-first flip was applied to EVERY timeline entry,
-    so the reasoning blocks rendered into the CARD BODY came out bottom-up ("思考 3" above "思考 1")
-    while the panel below them read top-down. The user asked for the body to be chronological
-    ("正文的思考应该正序") and for the panel to stay newest-first ("Timeline 最好倒序一下"). One pass
-    now yields both orders: reasoning keeps its recorded order, panel-only entries are reversed.
+    Two user reports, in order: first the body's reasoning came out bottom-up ("正文的思考应该正序"),
+    then the panel's own order was flipped back too ("Timeline 的工具正序一下"). Both surfaces now
+    read top-to-bottom as the turn happened, which also means they can never disagree — the reader
+    following 思考 1 → 思考 2 sees the tools in the same direction underneath.
+
+    Contract difference from upstream, on purpose: upstream v4.6.4 keeps the panel newest-first.
     """
     from hermes_feishu_card.card_timeline import TimelineEntry
 
@@ -1607,7 +1630,7 @@ def test_body_reasoning_reads_chronologically_while_the_panel_reads_newest_first
     panel = next(item for item in elements if item.get("tag") == "collapsible_panel")
     panel_text = " ".join(item.get("content", "") for item in panel["elements"])
     assert "第1段" not in panel_text  # body thinking stays out of the collapsed panel
-    assert panel_text.index("web_search") < panel_text.index("terminal")
+    assert panel_text.index("terminal") < panel_text.index("web_search")
 
 
 def test_render_completed_card_footer_uses_compact_metrics_format():
@@ -2127,9 +2150,9 @@ def test_render_tool_timeline_uses_compact_semantic_event_rows():
         for item in timeline["elements"]
         if str(item.get("element_id", "")).startswith("auxiliary_timeline_toolentry_")
     ]
-    # Newest first (see test_render_timeline_reads_newest_first): the row for the LAST event leads, so
-    # the unpack order is the reverse of the order the events were applied in.
-    failed, running, completed = (row["content"] for row in rows)
+    # Chronological (see test_render_timeline_reads_chronologically): the rows come out in the order
+    # the events were applied in, so the unpack order matches the sequence numbers.
+    completed, running, failed = (row["content"] for row in rows)
 
     assert completed.startswith('<font color="green">✓ **terminal** · #1 · 250ms</font>')
     assert '<font color="grey">　参数: ' in completed
@@ -2584,14 +2607,16 @@ def test_render_omits_redundant_tool_summary_when_timeline_is_visible():
     assert "思考过程" in str(card)
 
 
-def test_render_timeline_reads_newest_first():
-    """The 思考过程 panel is ordered newest → oldest, so the latest work is read first.
+def test_render_timeline_reads_chronologically():
+    """The 思考过程 panel reads oldest → newest, in the order the turn actually happened.
 
-    Maintainer note (contract change): the panel used to be chronological (oldest first). Because the
-    panel sits at the BOTTOM of a card that is read downward, the entry the reader most wants ("what
-    is happening now?") was the furthest from their eye — the user asked for reverse order
-    ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"). Selection is unchanged: the same entries are
-    shown, only the order they are written in flips.
+    The order was briefly reversed ("Timeline 最好倒序一下 阅读上能够看最近的比较方便"), then the user
+    asked for it back the other way ("Timeline 的工具正序一下"): a panel that reads top-to-bottom as
+    the work happened is easier to follow than one you scan upward, and it matches the body's
+    reasoning entries. Selection is unchanged: the same entries are shown, only the written order
+    differs.
+
+    Contract difference from upstream, on purpose: upstream v4.6.4 keeps it newest-first.
     """
     from hermes_feishu_card.events import SidecarEvent
 
@@ -2621,10 +2646,10 @@ def test_render_timeline_reads_newest_first():
     )
     content = "".join(item["content"] for item in timeline["elements"])
 
-    newest = content.index("step_2")
-    middle = content.index("step_1")
-    oldest = content.index("step_0")
-    assert newest < middle < oldest
+    first = content.index("step_0")
+    second = content.index("step_1")
+    last = content.index("step_2")
+    assert first < second < last
 
 
 def test_render_timeline_folds_old_entries_before_answer():
@@ -2934,3 +2959,166 @@ def test_requester_mentions_preserve_existing_at_markup_and_plain_urls():
     session = CardSession('c', 'm', 'oc', sender_open_id='ou_requester', sender_name='牟勇')
     original = '<at id="ou_requester">@牟勇</at> https://example.com/@牟勇 `@牟勇'
     assert _render_known_requester_mentions(original, session) == original
+
+
+def _approval_session(options):
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    session.active_interaction = InteractionState(
+        interaction_id="approval-1",
+        kind="approval",
+        prompt="需要授权后继续执行",
+        description="**完整命令**\nrm -rf /tmp/demo",
+        allow_custom_input=False,
+        status="pending",
+        timeout_seconds=300.0,
+        options=[
+            InteractionOption(label=label, value=value) for label, value in options
+        ],
+    )
+    return session
+
+
+def test_pending_options_render_as_compact_button_columns():
+    """Options must be small buttons, not bars that each take a whole row.
+
+    The user's ask («能否用小按钮而不是长按钮»). The legacy ``action`` container stretched every option
+    across the row on mobile, so a four-option approval read as four full-width bars. The options
+    now sit in a ``column_set`` of auto-width columns — Feishu's documented way to lay buttons out
+    side by side — and each button asks for ``width: "default"`` (auto width), which the legacy
+    adapter used to strip before the card was sent.
+    """
+    session = _approval_session(
+        [("允许一次", "once"), ("本会话允许", "session"), ("始终允许", "always"), ("拒绝", "deny")]
+    )
+    card = render_legacy_interaction_callback_card(session)
+
+    assert not [
+        element for element in card["elements"] if element.get("tag") == "action"
+    ], "the stretching container must be gone"
+    rows = [element for element in card["elements"] if element.get("tag") == "column_set"]
+    assert len(rows) == 1, "four options share one row"
+    row = rows[0]
+    assert row["flex_mode"] == "flow"
+    assert row["horizontal_align"] == "left"
+    assert [column["width"] for column in row["columns"]] == ["auto"] * 4
+    buttons = [column["elements"][0] for column in row["columns"]]
+    assert [button["width"] for button in buttons] == ["default"] * 4
+    assert [button["text"]["content"] for button in buttons] == ["1", "2", "3", "4"]
+    # Nesting does not change the click: it still rides the button's own top-level ``value``, which
+    # is what the Feishu p2.card.action.trigger handler reads (a CardKit ``behaviors`` entry is the
+    # client-side callback and never reaches it).
+    assert [button["value"]["choice"] for button in buttons] == [
+        "once",
+        "session",
+        "always",
+        "deny",
+    ]
+    assert all(button["value"]["hfc_action"] == "interaction.select" for button in buttons)
+    assert all("behaviors" not in button for button in buttons)
+
+
+def test_a_longer_option_list_wraps_into_more_compact_rows():
+    """A list longer than one row wraps instead of being squeezed or stretched."""
+    session = _approval_session(
+        [(f"选项{index}", f"v{index}") for index in range(1, 7)]
+    )
+    card = render_legacy_interaction_callback_card(session)
+
+    rows = [element for element in card["elements"] if element.get("tag") == "column_set"]
+    assert [len(row["columns"]) for row in rows] == [4, 2]
+    assert len(interaction_buttons(card)) == 6
+
+
+def _timeline_entry(kind, *, status="completed", tool_id="", title=""):
+    from hermes_feishu_card.card_timeline import TimelineEntry
+
+    return TimelineEntry(
+        kind=kind, title=title or kind, status=status, tool_id=tool_id
+    )
+
+
+def test_a_running_tool_row_survives_the_per_reasoning_window():
+    """A tool that is STILL EXECUTING is never dropped by the per-block window.
+
+    Reproduces the panel the user was looking at: #25 was still 执行中 while the panel had already
+    scrolled past it — 「在下方的思考过程的工具里面，看不到『执行中』或『执行中』前面的内容，像这里
+    看不到 24，25」. The per-block window keeps a block's last two tools; the running row and the row
+    right before it must be pinned on top of that, because the reader scans for exactly that row.
+    """
+    from hermes_feishu_card.render import _keep_recent_tools_after_each_reasoning
+
+    entries = [_timeline_entry("reasoning")]
+    entries.append(_timeline_entry("tool", tool_id="#24"))
+    entries.append(_timeline_entry("tool", tool_id="#25", status="running"))
+    for number in range(26, 31):  # five more completed rows: the window alone would keep only #29/#30
+        entries.append(_timeline_entry("tool", tool_id=f"#{number}"))
+
+    kept = _keep_recent_tools_after_each_reasoning(entries, per_reasoning=2)
+    ids = [entry.tool_id for entry in kept if entry.kind == "tool"]
+
+    assert "#25" in ids, ids  # the running row must not be windowed away
+    assert "#24" in ids, ids  # nor the row immediately before it
+    assert "#29" in ids and "#30" in ids, ids  # the normal window still applies
+
+
+def test_the_panel_keeps_a_running_row_even_outside_the_size_window():
+    """The panel's size window also pins running rows (and the row before each)."""
+    from hermes_feishu_card.render import _select_timeline_entries
+
+    entries = [_timeline_entry("reasoning")]
+    entries.append(_timeline_entry("tool", tool_id="#24"))
+    entries.append(_timeline_entry("tool", tool_id="#25", status="running"))
+    for number in range(26, 46):  # 20 more rows: a 12-item window no longer reaches #25
+        entries.append(_timeline_entry("tool", tool_id=f"#{number}"))
+
+    kept = _select_timeline_entries(entries, max_items=12)
+    ids = [entry.tool_id for entry in kept if entry.kind == "tool"]
+
+    assert "#25" in ids, ids
+    assert "#24" in ids, ids
+    assert "#45" in ids, ids  # the newest rows are still there
+
+
+def test_the_panel_overshoots_the_cap_rather_than_orphan_a_tool_row():
+    """A block whose tool count differs from its neighbours must not lose its thinking.
+
+    The size window is taken by POSITION, so with uneven blocks the oldest slot lands in the MIDDLE
+    of one block: its tool rows survive while the reasoning above them is dropped. The user chose to
+    let the panel exceed its cap rather than delete evidence
+    (「是不是突破13条，这样就能解决前面的问题」), and that is the right trade here — they have twice
+    reported tool rows MISSING from the panel. Overshoot is bounded by the single block straddling
+    the window's start, so exactly one row over the cap.
+    """
+    from hermes_feishu_card.render import (
+        _keep_recent_tools_after_each_reasoning,
+        _select_timeline_entries,
+    )
+
+    # Uneven blocks: 3,1,3,1,... — a plain position window slices the oldest one mid-block.
+    entries = []
+    block_of = {}
+    tool_no = 0
+    for block, count in enumerate([3, 1, 3, 1, 3, 1, 3, 1, 3], start=1):
+        entries.append(_timeline_entry("reasoning", title=f"思考{block}"))
+        block_of[len(entries) - 1] = block
+        for _ in range(count):
+            tool_no += 1
+            entries.append(_timeline_entry("tool", tool_id=f"#{tool_no}"))
+            block_of[len(entries) - 1] = block
+
+    windowed = _keep_recent_tools_after_each_reasoning(entries, per_reasoning=2)
+    kept = _select_timeline_entries(windowed, max_items=12)
+    kept_ids = {id(entry) for entry in kept}
+
+    orphaned_tools = [
+        block_of[index]
+        for index, entry in enumerate(entries)
+        if id(entry) in kept_ids
+        and entry.kind == "tool"
+        and block_of[index]
+        not in {block_of[i] for i, e in enumerate(entries) if id(e) in kept_ids and e.kind == "reasoning"}
+    ]
+
+    assert orphaned_tools == [], f"tool rows floating without their thinking: block(s) {orphaned_tools}"
+    assert len(kept) == 13, [e.title for e in kept]  # bounded overshoot: cap 12 → 13
+    assert len(kept) <= 12 + 1

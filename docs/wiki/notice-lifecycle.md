@@ -8,8 +8,22 @@ V4.6.6 继续适配 [PR #338](https://github.com/baileyh8/hermes-feishu-streamin
 - Home 使用自己的期限，其他话题活动不触发 Home 提前清理。重启/排队独立 notice 卡不算工作恢复，不触发提前清理。
 - 原生后台成功一行提示使用 15 秒计时。原生审批已过期的“命令未执行”纠正记录、失败信息、带输出结果、完整审批决定及所有正式结果卡保持留存。原生 callback 可能已显示 Approved，不能把唯一纠正记录当临时提示删除。
 - requester 的原生重启完成提示使用彩色 ♻️。普通回答即使逐字引用相同文本也不会因此改写或撤回。
-- Working 心跳由 Hermes 原地更新并负责终轮清理，HFC 不再安排 15 秒撤回，避免删除更新目标后每轮重新发送。一次性的压缩、等待审批、重试提示仍使用原有 15 秒策略。
-- Redirect、Interrupt、Steer 使用原有策略。未知模板、未知签名、无法验证的 adapter 或 profile 保留原始行为。
+- 未知模板、未知签名、无法验证的 adapter 或 profile 保留原始行为。
+- **本 fork 的差异（重要，别照上游改回去）**：
+  - `⏳ Working — N min` **心跳不撤回**。它是 core 唯一会**就地编辑**的 `⏳` 行
+    （`HERMES_AGENT_NOTIFY_INTERVAL`，默认 180 秒），撤回它会让下一次编辑找不到消息而改发新行 ——
+    一次心跳就变成「新消息 + 撤回」，反而把话题刷满。不撤它就是一条安静的就地更新。
+    上游在这一条上只说「既有 Working … 使用原有策略」，本 fork 明确为**不撤**。
+  - Redirect、Interrupt、Steer 临时提示，以及一次性的 `⏳` 状态行（Compressing context、
+    Waiting for approval、Retrying in、loading … into memory、waiting on）继续使用原有 15 秒策略。
+  - HFC 专用通知生成路径发送的 `♻️ Gateway online — Hermes is back and ready.`，
+    在成功投递并带有显式生成来源时，可以登记为临时重启通知。泛化 `adapter.send`、
+    原生 home/重启/关机文本无法证明生成来源时继续保留；即使普通答案逐字等于这条模板，
+    也不能仅凭内容授权撤回。
+  - 同一 profile、bot、chat、thread 后续成功发送或更新普通卡片、命令卡或交互卡，
+    或成功发送已启用的独立完成提醒后，可以撤回登记在这次投递开始前的重启提示。
+  - 重启/排队独立 notice 卡不代表已经恢复工作，不触发这类撤回。
+  - 最终答案、失败解释、后台任务结果、审批决定与过期回执保持留存。
 
 ## 身份、期限和失败边界
 

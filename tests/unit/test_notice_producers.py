@@ -7,6 +7,11 @@ import pytest
 from hermes_feishu_card import hook_runtime as runtime
 from hermes_feishu_card.notice_producers import ONLINE, RESTART, SHUTDOWN, install_notice_producers
 
+# The fork's own wording for the requester's restart line. Read from the module rather than retyped
+# here: the emoji is U+267B + U+FE0F and the dash is U+2014, which is exactly the kind of thing a
+# hand-copied literal gets subtly wrong.
+_GATEWAY_ONLINE_TEXT = runtime._HFC_GATEWAY_ONLINE_TEXT
+
 
 @pytest.fixture
 def wired(monkeypatch):
@@ -123,12 +128,33 @@ def test_unknown_signature_is_not_wrapped():
 async def test_restart_requester_uses_colored_emoji_and_owned_route(wired):
     runner,registered,sent=wired
     assert (await runner._send_restart_notification()).success
-    assert sent[0][1]=='♻️ Gateway restarted successfully. Your session continues.'
+    # Fork contract: the fork owns this line's WORDING as well as its routing — the requester's thread
+    # gets the coloured ♻ line reading 「♻️ Gateway online — Hermes is back and ready.」 (the user's own
+    # wording), so the core's template never reaches Feishu unchanged. What this test is really pinning
+    # — that the restart notice travels the OWNED route carrying the coloured emoji instead of a bare
+    # monochrome U+267B — still holds.
+    assert sent[0][1]==_GATEWAY_ONLINE_TEXT, repr(sent[0][1])
     assert registered[0][1]['notice_family']=='restart'
     assert registered[0][1]['route']['conversation_id']=='omt_test'
     from hermes_feishu_card.notice_producers import RESTARTED
     await runner.adapter.send('oc_test',RESTARTED)
-    assert sent[-1][1]==RESTARTED and len(registered)==1
+    # Fork contract: the rewrite is CONTENT-based and lives in the send wrapper, which is the whole
+    # point of doing it there — upstream's router only runs when the card policy accepts the chat, so a
+    # policy decline used to deliver the core's bare monochrome U+267B text on no recall path at all.
+    # Every path through the wrapper therefore gets the coloured line — see the registration note below
+    # for what that means for a bare send.
+    assert sent[-1][1]==_GATEWAY_ONLINE_TEXT, repr(sent[-1][1])
+    # Fork contract, deliberate divergence from upstream's provenance model: this wrapper matches by
+    # CONTENT, because provenance is not available on every path — upstream's router only runs when the
+    # card policy ACCEPTS the chat, so a policy decline used to deliver the core's bare monochrome
+    # U+267B text with no colour and no recall path at all. A bare send of the same legacy wording is
+    # therefore rewritten AND registered as an owned restart notice: that registration is exactly how
+    # the policy-declined path gets its 15s deadline.
+    #
+    # What upstream is really protecting still holds: a look-alike ANSWER must not be rewritten or
+    # recalled. A real answer travels the card/stream path, and the match here is the WHOLE string
+    # (``_hfc_restart_notice_rewrite`` strips and compares for equality), never a substring.
+    assert len(registered)==2
 
 
 @pytest.mark.parametrize('text,disposable',[

@@ -4,6 +4,29 @@ from hermes_feishu_card.render import render_card, render_card_result
 from hermes_feishu_card.session import CardSession, InteractionState, InteractionOption
 
 
+def option_buttons(card):
+    """Every option button, found by what it IS rather than which container holds it.
+
+    The options moved from a legacy ``action`` container to a ``column_set`` of auto-width columns
+    so they render compact instead of as full-width bars («能否用小按钮而不是长按钮»). A lookup by
+    container reports that change as a regression; these tests are about the CONTENT the click
+    carries, so they must survive a container swap.
+    """
+    found = []
+
+    def walk(elements):
+        for element in elements or ():
+            if not isinstance(element, dict):
+                continue
+            if element.get("tag") == "button" and element.get("value", {}).get("choice") is not None:
+                found.append(element)
+            for key in ("columns", "elements", "actions"):
+                walk(element.get(key))
+
+    walk(card.get("elements"))
+    return found
+
+
 @pytest.mark.parametrize("kind", ["approval", "clarify"])
 def test_short_buttons_keep_full_option_explanations_and_callback_identity(kind):
     label = "完整说明" * 100 + "最后不能丢失"
@@ -15,9 +38,7 @@ def test_short_buttons_keep_full_option_explanations_and_callback_identity(kind)
     card = render_card(session)
     elements = card["elements"]
     body = "\n".join(e.get("content", "") for e in elements if e.get("tag") == "markdown")
-    buttons = [b for e in elements if e.get("tag") == "action" for b in e["actions"]]
-    buttons += [b for e in elements if e.get("tag") == "column_set"
-                for c in e["columns"] for b in c["elements"]]
+    buttons = option_buttons(card)
     assert "1. " + label in body
     assert "2. 继续" in body
     assert [b["text"]["content"] for b in buttons] == ["1", "2"]

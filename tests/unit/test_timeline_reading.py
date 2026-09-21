@@ -29,7 +29,14 @@ def test_optional_panel_order_keeps_default_and_chronological_body():
     session = timeline_session()
     default = panel_text(render_card(session, max_timeline_items=30))
     chronological = panel_text(render_card(session, max_timeline_items=30, timeline_order="chronological"))
-    assert default.index("reasoning-2") < default.index("reasoning-1")
+    # Fork contract: the fork's DEFAULT is chronological, not upstream's newest_first. Upstream ships
+    # the knob defaulting to the old order and asks the reader to opt in; the user's call is that the
+    # convenient order has to be what you get with no configuration (「要争默认值。使用者便利第一位。
+    # 不应该给使用者增加麻烦」), and the panel reading top-to-bottom in the order the turn happened is
+    # the behaviour this fork requested first (「正文的思考应该正序」/「Timeline 的工具正序一下」).
+    assert default.index("reasoning-1") < default.index("reasoning-2")
+    newest_first = panel_text(render_card(session, max_timeline_items=30, timeline_order="newest_first"))
+    assert newest_first.index("reasoning-2") < newest_first.index("reasoning-1")
     assert chronological.index("reasoning-1") < chronological.index("reasoning-2")
     for order in ("chronological", "newest_first"):
         card = render_card(session, max_timeline_items=30, timeline_order=order, reasoning_format="code")

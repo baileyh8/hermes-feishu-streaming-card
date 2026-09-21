@@ -51,13 +51,15 @@ card:
   # Does not change final/failed content, archived reasoning_format or whole-card limits.
   stream_thinking_to_body: true
   # Hide content-area tool rows after completed/failed; timeline and counts stay visible.
-  hide_completed_tool_activity: false
+  # FORK DEFAULT true (upstream ships false): a finished card should read as answer + footer.
+  hide_completed_tool_activity: true
   timeline_expanded: false
-  # Opt-in chronological panel order; card-body reasoning remains chronological.
-  timeline_order: newest_first
-  # 0 keeps all tools. 2 keeps the last two successes per reasoning block;
-  # failures/running tools remain eligible for the global max_timeline_items window.
-  timeline_tools_per_reasoning: 0
+  # FORK DEFAULT chronological (upstream ships newest_first and asks you to opt in).
+  # Card-body reasoning is chronological either way.
+  timeline_order: chronological
+  # FORK DEFAULT 2 (upstream ships 0 = no per-block window). 2 keeps the last two successes per
+  # reasoning block; failures/running tools remain eligible for the global max_timeline_items window.
+  timeline_tools_per_reasoning: 2
   max_reasoning_chars: 1200
   max_wait_ms: 800
   max_chars: 240
