@@ -1,5 +1,12 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.6.8：macOS 安装提示
+
+- [x] 吸收 #347 的 macOS 平台提示，保留未知 owner 分支、Linux 提示和进程归属校验。
+- [x] 同步中英文安装说明，区分一次性登录启动与外部托管进程，保留原贡献者署名。
+- 发布门禁：CLI 平台分支、普通安装包、完整测试、精确合并 CI、发布资产与公开安装；最终结果登记于 [v4.6.8 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.8)。
+- 生产上线与项目反馈回复独立回读；本版未新增 launchd 管理、卡片行为或手机验收结论。
+
 ## V4.6.7
 
 - [x] Working heartbeat retention and compact approval controls (#345).

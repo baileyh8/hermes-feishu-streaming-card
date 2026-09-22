@@ -413,6 +413,11 @@ def _configured_manager(config: Mapping[str, object]) -> object:
 
 
 def _availability_error(*, require_linger: bool = True) -> str:
+    if sys.platform == "darwin":
+        return (
+            "failed: persistent service requires Linux systemd; macOS autostart "
+            "is not managed by this project (see docs/installer-safety.md)"
+        )
     if not sys.platform.startswith("linux"):
         return "failed: persistent service requires Linux systemd"
     if shutil.which("systemctl") is None:

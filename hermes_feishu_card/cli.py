@@ -649,11 +649,22 @@ def _run_setup(args: argparse.Namespace) -> int:
                 "reboot",
                 file=sys.stderr,
             )
-            print(
-                "next: satisfy the persistence requirement, then run "
-                + shlex.join(enable_command),
-                file=sys.stderr,
-            )
+            if sys.platform == "darwin":
+                print(
+                    "note: on macOS this project does not manage autostart; "
+                    "for startup at user login, use your own launchd LaunchAgent "
+                    "with RunAtLoad=true to run `hermes-feishu-card start` once "
+                    "with the same config/env paths; do not set KeepAlive=true "
+                    "because start detaches the sidecar and exits "
+                    "(see docs/installer-safety.md)",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "next: satisfy the persistence requirement, then run "
+                    + shlex.join(enable_command),
+                    file=sys.stderr,
+                )
         try:
             start_result = start_sidecar(config_path, config, **start_kwargs)
         except Exception as exc:
@@ -2757,11 +2768,25 @@ def _print_sidecar_start_failure(result: str) -> None:
             "verified pidfile",
             file=sys.stderr,
         )
-        print(
-            "next: stop the old sidecar service manually, then rerun the "
-            f"official installer: {OFFICIAL_INSTALLER_COMMAND}",
-            file=sys.stderr,
-        )
+        if sys.platform == "darwin":
+            print(
+                "next: confirm who owns the existing sidecar before stopping it. "
+                "If your own launchd LaunchAgent directly runs the sidecar runner, "
+                "confirm its label and stop that job with "
+                "`launchctl bootout gui/$(id -u)/<label>` "
+                "(or `launchctl unload /path/to/confirmed.plist`). "
+                "Otherwise identify and stop the old sidecar service manually; "
+                "a missing pidfile does not prove launchd ownership. "
+                "Then rerun the official installer: "
+                f"{OFFICIAL_INSTALLER_COMMAND}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "next: stop the old sidecar service manually, then rerun the "
+                f"official installer: {OFFICIAL_INSTALLER_COMMAND}",
+                file=sys.stderr,
+            )
         return
     print(f"error: {result}", file=sys.stderr)
 

@@ -1125,6 +1125,10 @@ def test_setup_warns_and_starts_transient_when_persistence_is_unavailable(
     config_path = tmp_path / "generated" / "feishu-card.yaml"
     monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
     monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+    # Pin Linux: the enable rerun hint is the Linux persistence path; macOS has
+    # its own dead-hint-free branch covered by
+    # test_setup_macos_transient_skips_dead_enable_hint.
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(
         cli,
         "persistent_sidecar_setup_blocker",
@@ -1160,6 +1164,102 @@ def test_setup_warns_and_starts_transient_when_persistence_is_unavailable(
     assert "loginctl enable-linger" in captured.err
     assert "hermes-feishu-card enable" in captured.err
     assert "persistence: transient" in captured.out
+
+
+def test_setup_macos_transient_skips_dead_enable_hint(
+    tmp_path, monkeypatch, capsys
+):
+    """On macOS the enable suggestion is a dead end: enable is systemd-only.
+
+    Guided setup must not print the `next: ... enable ...` hint there and must
+    point at the supported self-managed LaunchAgent path instead.
+    """
+    hermes_dir = copy_hermes(tmp_path)
+    stub_setup_runtime(monkeypatch, hermes_dir)
+    config_path = tmp_path / "generated" / "feishu-card.yaml"
+    monkeypatch.setenv("FEISHU_APP_ID", "cli_setup_test")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "setup-secret")
+    monkeypatch.setattr(
+        cli,
+        "persistent_sidecar_setup_blocker",
+        lambda _config: (
+            "persistent service requires Linux systemd; macOS autostart "
+            "is not managed by this project (see docs/installer-safety.md)"
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(cli, "start_sidecar", lambda *_args, **_kwargs: "started")
+    monkeypatch.setattr(
+        cli,
+        "status_sidecar",
+        lambda _config: {
+            "running": True,
+            "pid": 12345,
+            "manager": "detached",
+        },
+    )
+
+    exit_code = cli.main(
+        [
+            "setup",
+            "--hermes-dir",
+            str(hermes_dir),
+            "--config",
+            str(config_path),
+            "--yes",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "warning: persistent sidecar unavailable" in captured.err
+    assert "will not survive a host reboot" in captured.err
+    assert "hermes-feishu-card enable" not in captured.err
+    assert "next: satisfy the persistence requirement" not in captured.err
+    assert "launchd LaunchAgent" in captured.err
+    assert "startup at user login" in captured.err
+    assert "RunAtLoad=true" in captured.err
+    assert "do not set KeepAlive=true" in captured.err
+    assert "same config/env paths" in captured.err
+    assert "persistence: transient" in captured.out
+    monkeypatch.undo()
+
+
+def test_sidecar_start_failure_pidfile_hint_offers_launchctl_on_macos(
+    monkeypatch, capsys
+):
+    """macOS pidfile hint must explain the launchd-managed case and bootout."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    cli._print_sidecar_start_failure(
+        "failed: running sidecar has no verified pidfile; manager transition "
+        "refused"
+    )
+    captured = capsys.readouterr()
+    assert "cannot be managed safely without a verified pidfile" in captured.err
+    assert "confirm who owns the existing sidecar" in captured.err
+    assert "If your own launchd LaunchAgent directly runs" in captured.err
+    assert "confirm its label" in captured.err
+    assert "missing pidfile does not prove launchd ownership" in captured.err
+    assert "stop the old sidecar service manually" in captured.err
+    assert "launchctl bootout" in captured.err
+    assert "install.sh" in captured.err
+    monkeypatch.undo()
+
+
+def test_sidecar_start_failure_pidfile_hint_linux_keeps_rerun_hint(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(sys, "platform", "linux")
+    cli._print_sidecar_start_failure(
+        "failed: running sidecar has no verified pidfile; manager transition "
+        "refused"
+    )
+    captured = capsys.readouterr()
+    assert "next: stop the old sidecar service manually" in captured.err
+    assert "install.sh" in captured.err
+    assert "launchctl" not in captured.err
+    monkeypatch.undo()
 
 
 def test_setup_transient_flag_explicitly_skips_persistent_probe(
