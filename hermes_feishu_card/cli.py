@@ -652,8 +652,11 @@ def _run_setup(args: argparse.Namespace) -> int:
             if sys.platform == "darwin":
                 print(
                     "note: on macOS this project does not manage autostart; "
-                    "keep the sidecar alive with your own launchd LaunchAgent "
-                    "running `hermes-feishu-card start` (see docs/installer-safety.md)",
+                    "for startup at user login, use your own launchd LaunchAgent "
+                    "with RunAtLoad=true to run `hermes-feishu-card start` once "
+                    "with the same config/env paths; do not set KeepAlive=true "
+                    "because start detaches the sidecar and exits "
+                    "(see docs/installer-safety.md)",
                     file=sys.stderr,
                 )
             else:
@@ -2767,10 +2770,14 @@ def _print_sidecar_start_failure(result: str) -> None:
         )
         if sys.platform == "darwin":
             print(
-                "note: a launchd-managed sidecar is intentional on macOS and is "
-                "not managed by this project; to let the installer take over, "
-                "stop it first with `launchctl bootout gui/$(id -u)/<label>` "
-                "(or `unload`), then rerun the official installer: "
+                "next: confirm who owns the existing sidecar before stopping it. "
+                "If your own launchd LaunchAgent directly runs the sidecar runner, "
+                "confirm its label and stop that job with "
+                "`launchctl bootout gui/$(id -u)/<label>` "
+                "(or `launchctl unload /path/to/confirmed.plist`). "
+                "Otherwise identify and stop the old sidecar service manually; "
+                "a missing pidfile does not prove launchd ownership. "
+                "Then rerun the official installer: "
                 f"{OFFICIAL_INSTALLER_COMMAND}",
                 file=sys.stderr,
             )

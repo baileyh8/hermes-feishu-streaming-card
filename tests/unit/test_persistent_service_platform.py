@@ -9,8 +9,6 @@ without systemd. The darwin branch makes the platform constraint explicit.
 
 from __future__ import annotations
 
-import pytest
-
 from hermes_feishu_card import persistent_service
 
 

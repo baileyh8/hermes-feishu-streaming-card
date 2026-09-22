@@ -18,18 +18,11 @@
 
 ## macOS 行为（transient sidecar 属预期）
 
-重启持久化（`enable` / 持久 user service）依赖 systemd，仅限 Linux；macOS 不在本项目
-自启动管理范围内（决策见 issue #183）。因此 macOS 上 `setup` / `install.sh` 会：
+`enable` / 持久 user service 依赖 Linux systemd；本项目不代管 macOS LaunchAgent（见 [#183](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/183)）。macOS 上 `setup` / `install.sh` 默认启动 detached sidecar，显示持久化不可用提示，并不再建议运行必然失败的 `enable`。
 
-1. 以 transient 方式启动 sidecar（`manager: detached`），并输出
-   `warning: persistent sidecar unavailable: persistent service requires Linux systemd`；
-2. 不给出 `enable` 建议（该命令在 macOS 上必然失败）。
+如需用户登录后自启动，可自行配置用户级 LaunchAgent：使用 `RunAtLoad=true` 一次执行 `hermes-feishu-card start`，**不要设置 `KeepAlive=true`**。`start` 会分离 sidecar 子进程、写入 HFC 受管 pidfile 后退出；持续重启这个短命启动命令会造成反复拉起。LaunchAgent 的 executable、`--config`、`--hermes-dir` 及需要的 `--env-file` 均使用已确认的绝对路径。此方案不提供登录前的开机启动或崩溃后自动拉起。
 
-如需登录/开机自启动，自行配置用户级 `launchd` LaunchAgent，让它执行
-`hermes-feishu-card start`。注意：由 launchd 直接托管的 runner 不写 HFC 受管 pidfile，
-此时重跑 `setup` / `install.sh` 可能报
-`a running sidecar cannot be managed safely without a verified pidfile`——按提示先用
-`launchctl bootout gui/$(id -u)/<label>`（或 `unload`）停掉 LaunchAgent 托管的实例再重跑。
+这与自建 LaunchAgent **直接运行 runner** 不同：后者没有 HFC 受管 pidfile。若安装器报告 `a running sidecar cannot be managed safely without a verified pidfile`，先确认现有进程的实际管理者；缺少 pidfile 本身不能证明是 launchd。如果确认由自建 LaunchAgent 直接托管，核对 label 后使用 `launchctl bootout gui/$(id -u)/<label>`（或对已确认 plist 执行 `launchctl unload /absolute/path/to/job.plist`）停止该实例，再重跑官方安装器。若归属不同或未知，先识别并手动停止对应服务，安装器不会猜测或强杀未知进程。
 
 安装前可先运行只读诊断：
 

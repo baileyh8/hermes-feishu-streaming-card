@@ -16,6 +16,14 @@ Before installation, the installer verifies:
 
 If a check fails, Hermes files are not modified.
 
+## macOS: a transient sidecar is expected
+
+`enable` / persistent user services require Linux systemd. This project does not manage macOS LaunchAgents (see [#183](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/183)). On macOS, `setup` / `install.sh` normally start a detached sidecar, explain the persistence limitation, and no longer suggest the unsupported `enable` command.
+
+For startup after user login, configure your own user LaunchAgent with `RunAtLoad=true` to run `hermes-feishu-card start` once. **Do not set `KeepAlive=true`**: `start` detaches the sidecar child, writes its HFC-managed pidfile, and exits; repeatedly restarting this short-lived launcher causes a relaunch loop. Use verified absolute paths for the executable, `--config`, `--hermes-dir`, and any `--env-file`. This arrangement does not provide pre-login boot startup or automatic crash recovery.
+
+This differs from a custom LaunchAgent that **runs the runner directly**, which has no HFC-managed pidfile. If the installer reports `a running sidecar cannot be managed safely without a verified pidfile`, identify the actual process owner first; a missing pidfile alone does not prove launchd ownership. For a confirmed direct-runner LaunchAgent, verify its label, stop that job with `launchctl bootout gui/$(id -u)/<label>` (or `launchctl unload /absolute/path/to/job.plist` for the confirmed plist), then rerun the official installer. Otherwise identify and stop the owning service manually. The installer does not guess ownership or kill an unknown process.
+
 Run a read-only diagnostic first:
 
 ```bash

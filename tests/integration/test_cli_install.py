@@ -1218,6 +1218,10 @@ def test_setup_macos_transient_skips_dead_enable_hint(
     assert "hermes-feishu-card enable" not in captured.err
     assert "next: satisfy the persistence requirement" not in captured.err
     assert "launchd LaunchAgent" in captured.err
+    assert "startup at user login" in captured.err
+    assert "RunAtLoad=true" in captured.err
+    assert "do not set KeepAlive=true" in captured.err
+    assert "same config/env paths" in captured.err
     assert "persistence: transient" in captured.out
     monkeypatch.undo()
 
@@ -1233,7 +1237,11 @@ def test_sidecar_start_failure_pidfile_hint_offers_launchctl_on_macos(
     )
     captured = capsys.readouterr()
     assert "cannot be managed safely without a verified pidfile" in captured.err
-    assert "launchd-managed sidecar is intentional" in captured.err
+    assert "confirm who owns the existing sidecar" in captured.err
+    assert "If your own launchd LaunchAgent directly runs" in captured.err
+    assert "confirm its label" in captured.err
+    assert "missing pidfile does not prove launchd ownership" in captured.err
+    assert "stop the old sidecar service manually" in captured.err
     assert "launchctl bootout" in captured.err
     assert "install.sh" in captured.err
     monkeypatch.undo()

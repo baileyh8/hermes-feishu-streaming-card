@@ -6,6 +6,12 @@ This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
 hook, start the sidecar, and print the health-check command.
 
+V4.6.8 clarifies macOS setup and recovery guidance: `enable` requires Linux systemd,
+and a missing verified pidfile does not establish launchd ownership. Self-managed
+login-time startup uses a one-shot `RunAtLoad` invocation of `start`, without
+`KeepAlive`; the project does not manage launchd services. See
+[installer safety](docs/installer-safety.en.md) and [release notes](docs/release-notes-v4.6.8.en.md).
+
 From V3.6.2, setup also checks the Python interpreter used by Hermes Gateway
 itself. When `HERMES_DIR/venv/bin/python`, `HERMES_DIR/.venv/bin/python`, or the
 Windows equivalent exists, the same package release is installed into that
@@ -341,7 +347,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.7
+export HFC_VERSION=v4.6.8
 bash install-docker.sh
 ```
 

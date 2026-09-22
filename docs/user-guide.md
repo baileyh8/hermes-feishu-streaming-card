@@ -586,7 +586,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.6.7`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.6.8`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -594,7 +594,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.7
+export HFC_VERSION=v4.6.8
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -1039,3 +1039,7 @@ MIT License，详见 [LICENSE](../LICENSE)。
 ## V4.6.7：心跳与审批布局
 
 Working 心跳保留原地编辑，不再由 HFC 定时撤回。审批按钮改用紧凑自动宽度列，完整正文与回调身份保留。
+
+## V4.6.8：macOS 安装提示
+
+macOS 的持久服务提示明确 Linux systemd 限制；缺少可验证 pidfile 不代表 launchd 托管。一次性登录启动、外部托管和停止边界见[安装安全说明](installer-safety.md)与[发布说明](release-notes-v4.6.8.md)。本版不管理 launchd 或改变卡片行为。

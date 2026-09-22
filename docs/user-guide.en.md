@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.7`.
+The Compose example defaults `HFC_VERSION` to `v4.6.8`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.7
+export HFC_VERSION=v4.6.8
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -965,3 +965,7 @@ Completed approvals lose duplicated review blocks only after a separate full rec
 ## V4.6.7: Heartbeat and approval layout
 
 Working heartbeats remain editable; approval buttons use compact auto-width columns. Full scope and callback identity are retained.
+
+## V4.6.8: macOS installation guidance
+
+macOS persistence guidance explains the Linux systemd requirement; a missing verified pidfile does not establish launchd ownership. See [installer safety](installer-safety.en.md) and [release notes](release-notes-v4.6.8.en.md) for one-shot login startup, external supervision and stop boundaries. This release does not manage launchd or change card behavior.
