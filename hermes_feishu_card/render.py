@@ -651,11 +651,7 @@ def _render_legacy_callback_card(
             )
             for index, option in enumerate(interaction.options)
         ]
-        if interaction.kind == "approval":
-            elements.extend(_legacy_approval_button_rows(buttons))
-        else:
-            for offset in range(0, len(buttons), 5):
-                elements.append({"tag": "action", "actions": buttons[offset : offset + 5]})
+        elements.extend(_legacy_choice_button_rows(buttons))
         if interaction.allow_custom_input:
             elements.append(
                 _legacy_form(_render_other_form(interaction, profile_id=profile_id))
@@ -682,8 +678,15 @@ def _legacy_button(button: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _legacy_approval_button_rows(buttons: list[Mapping[str, Any]]) -> list[Dict[str, Any]]:
-    """Compact legacy callbacks; full option explanations remain above the controls."""
+def _legacy_choice_button_rows(buttons: list[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+    """Compact legacy callbacks; full option explanations remain above the controls.
+
+    Used for every single-select choice, not only approvals. The legacy ``action``
+    container stretches each button across the row on mobile, which is what made
+    non-approval choices (clarify and friends) read as long bars. A ``column_set``
+    of auto-width columns keeps four small buttons on one line and wraps a longer
+    option list instead of squeezing it.
+    """
     return [
         {
             "tag": "column_set", "flex_mode": "flow",
