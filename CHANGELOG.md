@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+- Add opt-in `card.width_mode` (`default`, `compact`, `fill`) for JSON 2.0 cards with global/profile/bot inheritance and explicit default reset; preserve existing default layout and JSON 1.0 behavior.
+
 ## [4.6.8] - 2026-09-22
 
 - Make macOS setup and persistent-service errors platform-specific instead of suggesting the Linux-systemd-only `enable` command; preserve Linux guidance.

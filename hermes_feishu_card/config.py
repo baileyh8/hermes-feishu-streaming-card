@@ -146,6 +146,18 @@ def normalize_table_overflow_mode(
     return normalized
 
 
+def normalize_width_mode(value: object, *, path: str = "card.width_mode") -> str:
+    if not isinstance(value, str) or value.strip().lower() not in {"default", "compact", "fill"}:
+        raise ValueError(f"{path} must be default, compact or fill")
+    return value.strip().lower()
+
+
+def card_width_config(width_mode: str = "default") -> dict[str, str]:
+    """JSON 2.0 width settings; default preserves the client's existing layout."""
+    mode = normalize_width_mode(width_mode)
+    return {} if mode == "default" else {"width_mode": mode}
+
+
 def merge_card_config(
     base: Mapping[str, Any] | None,
     override: Mapping[str, Any] | None,
@@ -436,6 +448,10 @@ def _normalize_card_config(value: object, *, path: str) -> None:
     if "reading_preset" in value:
         value["reading_preset"] = normalize_reading_preset(
             value["reading_preset"], path=f"{path}.reading_preset"
+        )
+    if "width_mode" in value:
+        value["width_mode"] = normalize_width_mode(
+            value["width_mode"], path=f"{path}.width_mode"
         )
     if "text_sizes" in value:
         value["text_sizes"] = normalize_text_sizes(

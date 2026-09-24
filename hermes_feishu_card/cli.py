@@ -3666,6 +3666,7 @@ async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
             footer_fields=footer_fields,
             title=title,
             text_sizes=text_sizes,
+            width_mode=card_config.get("width_mode", "default"),
         ),
     )
 
@@ -3692,6 +3693,7 @@ async def _smoke_feishu_card(config: dict, chat_id: str) -> str:
             footer_fields=footer_fields,
             title=title,
             text_sizes=text_sizes,
+            width_mode=card_config.get("width_mode", "default"),
         ),
     )
     return message_id

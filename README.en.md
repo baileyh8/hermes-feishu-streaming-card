@@ -97,6 +97,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   table_overflow_mode: compact
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 bindings:
@@ -109,7 +110,9 @@ service:
 
 `native_chats` uses exact matching only; in multi-profile setups place it under the matching `profiles.<id>.bindings`. Existing configs without an `integrity` section load as `notify` and do not silently enable automatic repair. See [V4.1 safety controls and troubleshooting](docs/wiki/v4.1-safety-controls.md) for the complete boundary.
 
-To show remaining Codex subscription quota, add `subscription_usage` to `footer_fields`. The plugin calls Hermes native `fetch_account_usage("openai-codex")` only when explicitly enabled; older Hermes versions, missing login, or network failures silently omit the field without affecting card completion. `card.text_sizes` can configure `body`, `reasoning`, `tool`, `notice`, and `footer`, including `default` / `pc` / `mobile` device mappings; physical card width/height remain controlled by the Feishu/Lark client.
+To show remaining Codex subscription quota, add `subscription_usage` to `footer_fields`. The plugin calls Hermes native `fetch_account_usage("openai-codex")` only when explicitly enabled; older Hermes versions, missing login, or network failures silently omit the field without affecting card completion. `card.text_sizes` can configure `body`, `reasoning`, `tool`, `notice`, and `footer`, including `default` / `pc` / `mobile` device mappings.
+
+`card.width_mode` supports `default` (existing layout), `compact`, and `fill` (adaptive chat-window width) for JSON 2.0 cards only. Precedence is global < profile < bot; omission inherits, while explicit `default` resets an inherited mode and omits the width field. `fill` is never enabled by default. JSON 1.0 approval/legacy cards retain `wide_screen_mode`. Feishu/Lark controls the final layout; this cannot set a fixed pixel height or bypass client limits. See [card width configuration](docs/user-guide.en.md#card-width).
 
 Feishu credentials can also live in a `.env` next to the config:
 

@@ -13,6 +13,7 @@ from typing import Any, Dict, Literal, Optional
 from .card_limits import CardLimitInspection, inspect_card_limits
 from .card_timeline import TERMINAL_TOOL_STATUSES
 from .approval_receipts import has_confirmed_approval_receipt
+from .config import card_width_config
 from .session import (
     CardSession,
     ToolState,
@@ -125,6 +126,7 @@ def render_card(
     hide_successful_tool_activity: bool = False,
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
+    width_mode: str = "default",
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -148,6 +150,7 @@ def render_card(
         hide_successful_tool_activity=hide_successful_tool_activity,
         timeline_order=timeline_order,
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
+        width_mode=width_mode,
     ).card
 
 
@@ -173,6 +176,7 @@ def render_card_result(
     hide_successful_tool_activity: bool = False,
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
+    width_mode: str = "default",
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body
@@ -203,6 +207,7 @@ def render_card_result(
         hide_successful_tool_activity=hide_successful_tool_activity,
         timeline_order=timeline_order,
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
+        width_mode=width_mode,
     )
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -221,6 +226,7 @@ def render_card_result(
         card=_render_limit_handoff_card(
             title=title,
             terminal=terminal,
+            width_mode=width_mode,
         ),
         disposition=disposition,
         inspection=inspection,
@@ -251,6 +257,7 @@ def _render_card_unchecked(
     hide_successful_tool_activity: bool = False,
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
+    width_mode: str = "default",
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -442,6 +449,7 @@ def _render_card_unchecked(
     card = {
         "schema": "2.0",
         "config": {
+            **card_width_config(width_mode),
             "update_multi": True,
             "summary": {
                 "content": _card_quote_summary(
@@ -763,7 +771,9 @@ def _primary_text_for_session(
     return _spinner_text("正在加载上下文…")
 
 
-def _render_limit_handoff_card(*, title: str, terminal: bool) -> Dict[str, Any]:
+def _render_limit_handoff_card(
+    *, title: str, terminal: bool, width_mode: str = "default"
+) -> Dict[str, Any]:
     configured_title = (
         title.strip()
         if isinstance(title, str) and title.strip()
@@ -784,6 +794,7 @@ def _render_limit_handoff_card(*, title: str, terminal: bool) -> Dict[str, Any]:
     return {
         "schema": "2.0",
         "config": {
+            **card_width_config(width_mode),
             "update_multi": True,
             "summary": {"content": summary},
         },
@@ -808,10 +819,11 @@ def _render_limit_handoff_card(*, title: str, terminal: bool) -> Dict[str, Any]:
 
 def render_terminal_limit_handoff_card(
     title: str = DEFAULT_TITLE,
+    *, width_mode: str = "default",
 ) -> Dict[str, Any]:
     """Render the fixed, answer-free terminal handoff used for repair retries."""
 
-    return _render_limit_handoff_card(title=title, terminal=True)
+    return _render_limit_handoff_card(title=title, terminal=True, width_mode=width_mode)
 
 
 def _render_status(

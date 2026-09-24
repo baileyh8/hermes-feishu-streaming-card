@@ -87,6 +87,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   table_overflow_mode: compact
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 bindings:
@@ -99,7 +100,9 @@ service:
 
 `native_chats` 只做精确匹配；多 profile 时放在对应 `profiles.<id>.bindings` 下。现有配置缺少 `integrity` 段时按 `notify` 加载，不会静默启用自动修复。完整配置、迁移和排障见 [V4.1 安全控制与排障](docs/wiki/v4.1-safety-controls.md)。
 
-需要显示 Codex 订阅剩余额度时，把 `subscription_usage` 加入 `footer_fields`。插件仅在显式启用后，通过 Hermes 原生 `fetch_account_usage("openai-codex")` 查询；旧 Hermes、未登录或网络失败时静默隐藏，不影响卡片完成。`card.text_sizes` 可分别设置 `body`、`reasoning`、`tool`、`notice`、`footer`，也可用 `default` / `pc` / `mobile` 做设备映射；卡片物理 width/height 由 Feishu/Lark 客户端控制。
+需要显示 Codex 订阅剩余额度时，把 `subscription_usage` 加入 `footer_fields`。插件仅在显式启用后，通过 Hermes 原生 `fetch_account_usage("openai-codex")` 查询；旧 Hermes、未登录或网络失败时静默隐藏，不影响卡片完成。`card.text_sizes` 可分别设置 `body`、`reasoning`、`tool`、`notice`、`footer`，也可用 `default` / `pc` / `mobile` 做设备映射。
+
+`card.width_mode` 支持 `default`（保持现有布局）、`compact`（紧凑）和 `fill`（自适应聊天窗口宽度），仅作用于 JSON 2.0 卡片。全局 < profile < bot；省略时继承，显式 `default` 重置继承值且不输出宽度字段，不会默认启用 `fill`。JSON 1.0 审批/旧版卡片仍保留 `wide_screen_mode`。最终布局由 Feishu/Lark 客户端决定，不能设置固定像素高度或绕过客户端限制；详见[卡片宽度配置](docs/user-guide.md#卡片宽度)。
 
 飞书凭据也可以放在配置同目录 `.env`：
 

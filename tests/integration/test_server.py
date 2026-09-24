@@ -12339,6 +12339,89 @@ async def test_started_card_title_uses_bot_over_profile_and_global():
     assert sent_card["header"]["title"]["content"] == "⏳ 执行中 · Sales Bot"
 
 
+@pytest.mark.parametrize("command", ["status", "doctor", "update"])
+async def test_width_mode_command_cards_keep_bot_scope(command, monkeypatch):
+    factory = FakeFeishuClientFactory(
+        cards={"sales": {"width_mode": "fill"}}, profile_card={"width_mode": "default"},
+    )
+    app = create_app(
+        factory, card_config={"width_mode": "compact"},
+        bot_router=lambda event: RouteResult("sales", "bindings.chats"),
+    )
+    monkeypatch.setattr(
+        sidecar_server, "_build_operations_report_sync",
+        lambda *args, **kwargs: (operations_report(), SimpleNamespace(root=Path("/test/hermes"))),
+    )
+
+    async def unavailable_update(app):
+        return sidecar_server._unavailable_update_inspection(app, "maintenance_runtime_unavailable")
+
+    monkeypatch.setattr(sidecar_server, "_inspect_update_for_app", unavailable_update)
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        response = await test_client.post("/commands", json=signed_operations_command({
+            "command": command, "chat_id": "oc_sales", "message_id": "command-width",
+            "chat_type": "private",
+            "operator": {"open_id": "ou_owner"},
+        }))
+        assert response.status == 200
+        await wait_for_condition(lambda: bool(factory.clients["sales"].sent))
+        card = factory.clients["sales"].sent[-1][1]
+        assert card["config"]["width_mode"] == "fill"
+        assert factory.clients["default"].sent == []
+    finally:
+        await test_client.close()
+
+
+@pytest.mark.parametrize("bot_card, expected", [({}, "compact"), ({"width_mode": "fill"}, "fill"), ({"width_mode": "default"}, None)])
+async def test_width_mode_is_scoped_and_preserved_from_stream_to_final(bot_card, expected):
+    factory = FakeFeishuClientFactory(
+        cards={"sales": bot_card}, profile_card={"width_mode": "compact"},
+    )
+    app = create_app(
+        factory, card_config={"width_mode": "fill", "streaming_mode": True},
+        bot_router=lambda event: RouteResult("sales", "bindings.chats"),
+    )
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        started = await test_client.post("/events", json=event_payload("message.started", 0))
+        assert started.status == 200
+        first = factory.clients["sales"].sent[0][1]
+        assert first["config"].get("width_mode") == expected
+        assert first["config"]["streaming_mode"] is True
+        completed = await test_client.post("/events", json=event_payload(
+            "message.completed", 1, {"answer": "Complete answer"},
+        ))
+        assert completed.status == 200
+        await wait_for_condition(lambda: bool(factory.clients["sales"].updated))
+        final = factory.clients["sales"].updated[-1][1]
+        assert final["config"].get("width_mode") == expected
+        assert final["config"]["streaming_mode"] is False
+        assert "Complete answer" in json.dumps(final)
+        assert factory.clients["default"].sent == []
+    finally:
+        await test_client.close()
+
+
+async def test_width_mode_handoff_repair_uses_original_session_not_global(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    app = create_app(feishu_client, card_config={"width_mode": "compact"})
+    monkeypatch.setattr(sidecar_server, "_commit_native_handoff", lambda *args: None)
+    config = {"width_mode": "fill", "title": "Original owner"}
+    task = sidecar_server._schedule_pending_native_handoff_repair(
+        app, "owner", SimpleNamespace(card_state="pending"),
+        feishu_message_id="original-card", card_config=config,
+    )
+    config["width_mode"] = "default"
+    assert await task is True
+    message_id, card = feishu_client.updated[-1]
+    assert message_id == "original-card"
+    assert card["config"]["width_mode"] == "fill"
+    assert card["header"]["title"]["content"] == "Original owner"
+
+
 async def test_session_card_config_preserves_base_text_size_roles_on_profile_override():
     feishu_client = FakeFeishuClient()
     app = create_app(
