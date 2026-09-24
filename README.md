@@ -78,7 +78,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.8
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.9
 bash install-docker.sh
 ```
 
@@ -192,6 +192,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v4.6.9](docs/release-notes-v4.6.9.md) | 群聊并发卡片隔离、紧凑单选按钮与新手 README |
 | [v4.6.8](docs/release-notes-v4.6.8.md) | macOS 安装与恢复提示，明确自主管理登录启动和未知进程归属 |
 | [v4.6.7](docs/release-notes-v4.6.7.md) | 保留可编辑心跳，紧凑审批按钮与完整正文 |
 | [v4.6.6](docs/release-notes-v4.6.6.md) | 审批回执确认后精简重复、运行工具可见与原生通知自动收尾 |
@@ -210,6 +211,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 <details>
 <summary>展开全部贡献记录</summary>
+
+- V4.6.9: 感谢 [cainiaozp](https://github.com/cainiaozp) 在 [#348](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/348) 提供群聊并发复现与根因线索；感谢 [mouyong](https://github.com/mouyong) 在 [PR #349](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/349)提供紧凑单选布局实现与测试，保留原始代码作者。
 
 - V4.6.8：感谢 [coder-zhw](https://github.com/coder-zhw) 的 [PR #347](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/347)，提供 macOS 安装、未知 pidfile 与登录启动提示的现场分析、实现和回归测试。
 - V4.6.6: 感谢 [mouyong](https://github.com/mouyong) 在 [PR #338](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/338) / [PR #339](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/339) 的通知、阅读与审批方案，以及 [#337](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/337) / [#340](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/340)的现场证据；本版以投递确认、有界清理和保留默认的方式适配，保留真实代码署名。 同时感谢 [tidytorch](https://github.com/tidytorch) 的 [PR #342](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/342) 延迟交互确认修复；保留原作者提交，并补强总等待预算与真实 HTTP 丢响应回归。

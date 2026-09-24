@@ -84,7 +84,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.8
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.9
 bash install-docker.sh
 ```
 
@@ -198,6 +198,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v4.6.9](docs/release-notes-v4.6.9.en.md) | Independent concurrent group cards, compact single-select choices and clearer onboarding |
 | [v4.6.8](docs/release-notes-v4.6.8.en.md) | macOS setup and recovery guidance with explicit startup and ownership boundaries |
 | [v4.6.7](docs/release-notes-v4.6.7.en.md) | Preserve editable heartbeats and compact approval buttons |
 | [v4.6.6](docs/release-notes-v4.6.6.en.md) | Verified approval-receipt compaction, visible active tools and native notice expiry |
@@ -216,6 +217,8 @@ Thank you to everyone contributing code, proposals, reproductions and real-envir
 
 <details>
 <summary>Show all contribution records</summary>
+
+- V4.6.9: Thanks to [cainiaozp](https://github.com/cainiaozp) for the concurrent-group reproduction and root-cause evidence in [#348](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/348) and [mouyong](https://github.com/mouyong) for the compact single-select implementation and tests in [PR #349](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/349). The original code author is preserved.
 
 - V4.6.8: Thanks to [coder-zhw](https://github.com/coder-zhw) for the macOS installation, unknown-pidfile and login-startup investigation, implementation and regressions in [PR #347](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/347).
 - V4.6.6: Thanks to [mouyong](https://github.com/mouyong) for the notice/reading and approval proposals in [PR #338](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/338) / [PR #339](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/339) and concrete evidence in [#337](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/337) / [#340](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/340). Adapted with delivery proof, bounded cleanup and preserved defaults; original code authorship remains credited. Thanks also to [tidytorch](https://github.com/tidytorch) for [PR #342](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/342): the original authored commit is retained, with a bounded lookup budget and a real lost-response HTTP regression.

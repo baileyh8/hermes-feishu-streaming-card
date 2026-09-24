@@ -1,5 +1,11 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.6.9：并发隔离与上手体验
+
+- [x] 修复 #348 的群聊清理范围，覆盖 legacy/native、首事件 fallback、redirect 和终态边界。
+- [x] 合入 #349 紧凑单选布局并保留作者；重写中英文 README，保留安装、配置、历史署名及更新索引。
+- 发布证据与真实平台边界见 [v4.6.9 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.9)；#344 保持开放。
+
 ## V4.6.8：macOS 安装提示
 
 - [x] 吸收 #347 的 macOS 平台提示，保留未知 owner 分支、Linux 提示和进程归属校验。

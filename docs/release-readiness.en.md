@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release version: `4.6.8`. Scope: macOS setup/recovery guidance, unknown process ownership and self-managed login-time startup. Validation targets CLI platform branches and ordinary packages; no launchd management or card behavior is added.
+Current release version: `4.6.9`. Scope: concurrent group-card isolation, compact single-select layout and clearer onboarding.
 
-Full tests, exact-merge CI, assets/checksums and public-tag ordinary installation remain release gates. [V4.6.8 notes](release-notes-v4.6.8.en.md) define this release scope; production deployment is recorded separately. Guidance tests do not establish real launchd operations or mobile acceptance. Historical card evidence remains in the [V4.6.6 acceptance checklist](wiki/feishu-acceptance-v4.6.6.md).
+Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v4.6.9.en.md); platform API smoke, real Gateway execution and mobile visual acceptance are recorded separately.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.

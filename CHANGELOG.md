@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+## [4.6.9] - 2026-09-24
+
+- Isolate concurrent group cards by requester or native Gateway execution scope; restrict redirects to the explicit source turn. Preserve independent final answers and terminal failure protection (#348, reported by [cainiaozp](https://github.com/cainiaozp)).
+- Merge [mouyong](https://github.com/mouyong)'s [PR #349](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/349), using compact rows for all single-select choices while preserving callback values and forms.
+- Rewrite Chinese/English onboarding; preserve contributor history, installation/configuration and recent releases, with a linked historical release index.
+- See [Chinese notes](docs/release-notes-v4.6.9.md) and [English notes](docs/release-notes-v4.6.9.en.md) for validation scope and remaining real-client boundaries.
+
 ## [4.6.8] - 2026-09-22
 
 - Make macOS setup and persistent-service errors platform-specific instead of suggesting the Linux-systemd-only `enable` command; preserve Linux guidance.
