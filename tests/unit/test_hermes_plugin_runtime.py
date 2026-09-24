@@ -793,6 +793,7 @@ def test_task4_real_pre_llm_kwargs_without_generation_build_honest_started_paylo
                 "profile_id": "default",
                 "profile_source": "fallback_default",
                 "reply_to_message_id": "om_parent",
+                "execution_scope": sha256(b"gateway-session-1").hexdigest(),
             },
         }
     ]

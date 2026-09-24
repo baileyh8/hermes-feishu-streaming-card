@@ -191,6 +191,8 @@ class CardSession:
     delivery_kind: str = "chat"
     reply_to_message_id: str = ""
     reply_in_thread: bool = False
+    execution_scope: str = ""
+    chat_type: str = ""
     sender_open_id: str = ""
     sender_name: str = ""
     completion_notify_state: str = "idle"
@@ -263,6 +265,21 @@ class CardSession:
             return False
         if self.status in {"completed", "failed"}:
             return False
+        execution_scope = event.data.get("execution_scope")
+        if type(execution_scope) is str and re.fullmatch(r"[0-9a-f]{64}", execution_scope):
+            self.execution_scope = execution_scope
+        chat_type = event.data.get("chat_type")
+        if isinstance(chat_type, str) and chat_type.strip().lower() in {"group", "dm", "p2p", "private"}:
+            self.chat_type = chat_type.strip().lower()
+        sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
+        if sender_open_id:
+            if self.sender_open_id != sender_open_id:
+                self.sender_name = ""
+            self.sender_open_id = sender_open_id
+            sender_name = event.data.get("sender_name")
+            if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                    and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+                self.sender_name = sender_name
         # Card-action callbacks are authenticated out-of-band transitions. They
         # may complete an interaction while Hermes is already preparing the next
         # batch clarify request, so they must not consume the transport sequence
@@ -437,15 +454,6 @@ class CardSession:
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()
-            sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
-            if sender_open_id:
-                if self.sender_open_id != sender_open_id:
-                    self.sender_name = ""
-                self.sender_open_id = sender_open_id
-                sender_name = event.data.get("sender_name")
-                if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
-                        and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
-                    self.sender_name = sender_name
             reply_to_message_id = event.data.get("reply_to_message_id")
             if isinstance(reply_to_message_id, str):
                 self.reply_to_message_id = reply_to_message_id
@@ -513,15 +521,6 @@ class CardSession:
             self.latest_tool_preview = ""
             if completed_answer.strip():
                 self.answer_text = completed_answer
-            sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
-            if sender_open_id:
-                if self.sender_open_id != sender_open_id:
-                    self.sender_name = ""
-                self.sender_open_id = sender_open_id
-                sender_name = event.data.get("sender_name")
-                if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
-                        and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
-                    self.sender_name = sender_name
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()
