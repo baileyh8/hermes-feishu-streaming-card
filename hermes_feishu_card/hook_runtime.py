@@ -10627,6 +10627,21 @@ def _event_data(
         "profile_id": profile_id,
         "profile_source": profile_source,
     }
+    # Any event can open a session when message.started is unavailable.
+    # Preserve requester identity on those fallback paths as well.
+    sender_open_id = _message_sender_open_id(
+        local_vars, source_obj, local_vars.get("event")
+    )
+    if sender_open_id:
+        data["sender_open_id"] = sender_open_id
+        sender_name = getattr(source_obj, "user_name", None)
+        if (getattr(source_obj, "user_id", None) == sender_open_id
+                and isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+            data["sender_name"] = sender_name
+    chat_type = _command_chat_type(local_vars, source_obj, local_vars.get("event"))
+    if chat_type:
+        data["chat_type"] = chat_type.strip().lower()
     native_handoff = _native_handoff_event_metadata(event_name, local_vars)
     if native_handoff is not None:
         data["native_handoff"] = native_handoff
@@ -10793,16 +10808,6 @@ def _event_data(
             "tokens": _completion_tokens(local_vars, answer),
             "context": _completion_context(local_vars),
         })
-        sender_open_id = _message_sender_open_id(
-            local_vars, source_obj, local_vars.get("event")
-        )
-        if sender_open_id:
-            data["sender_open_id"] = sender_open_id
-            sender_name = getattr(source_obj, "user_name", None)
-            if (getattr(source_obj, "user_id", None) == sender_open_id
-                    and isinstance(sender_name, str) and 0 < len(sender_name) <= 80
-                    and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
-                data["sender_name"] = sender_name
         delivery_kind = _first_string(local_vars, ("delivery_kind",))
         if delivery_kind:
             data["delivery_kind"] = delivery_kind
@@ -10820,18 +10825,7 @@ def _event_data(
         })
         return data
     if event_name == "message.started":
-        sender_open_id = _message_sender_open_id(
-            local_vars, source_obj, local_vars.get("event")
-        )
-        if sender_open_id:
-            data["sender_open_id"] = sender_open_id
-            sender_name = getattr(source_obj, "user_name", None)
-            if (getattr(source_obj, "user_id", None) == sender_open_id
-                    and isinstance(sender_name, str) and 0 < len(sender_name) <= 80
-                    and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
-                data["sender_name"] = sender_name
         for source_key, data_key in (
-            ("chat_type", "chat_type"),
             ("tenant_key", "tenant_key"),
             ("agent_id", "agent_id"),
         ):

@@ -13902,3 +13902,116 @@ async def test_stream_thinking_to_body_opt_out_reaches_http_renderer(setting, st
         assert 'HTTP reasoning marker' not in str(client.updated[-1][1])
     finally:
         await http.close()
+
+
+@pytest.mark.parametrize("first_event", ["message.started", "answer.delta", "tool.updated"])
+@pytest.mark.parametrize("senders", [("ou_alice", "ou_bob"), ("ou_alice", ""), ("", "ou_bob"), ("", ""), ("ou_alice", "invalid")])
+async def test_group_concurrent_requesters_keep_own_final_cards(client, first_event, senders):
+    test_client, feishu_client = client
+    for index, sender in enumerate(senders):
+        response = await test_client.post("/events", json=event_payload(
+            first_event, 0,
+            {"chat_type": "group", "sender_open_id": sender, "text": "partial",
+             "tool_id": "tool", "name": "search", "status": "running"},
+            conversation_id="oc_abc", message_id=f"om_group_{index}",
+        ))
+        assert (await response.json())["applied"] is True
+    sessions = test_client.server.app[SESSIONS_KEY]
+    assert all(session.status not in {"completed", "failed"} for session in sessions.values())
+    for index in (1, 0):
+        payload = event_payload("message.completed", 1, {"answer": f"FINAL USER {index}"},
+                                conversation_id="oc_abc", message_id=f"om_group_{index}")
+        response = await test_client.post("/events", json=payload)
+        assert (await response.json())["applied"] is True
+        await wait_for_card_update(feishu_client, f"FINAL USER {index}")
+        updates = [card for mid, card in feishu_client.updated if mid == f"feishu-message-{index + 1}"]
+        assert f"FINAL USER {index}" in str(updates[-1])
+        assert "本轮已被新对话替代" not in str(updates[-1])
+        before = len(feishu_client.updated)
+        await test_client.post("/events", json=payload)
+        assert len(feishu_client.updated) == before
+    assert len(feishu_client.sent) == 2
+
+
+@pytest.mark.parametrize("first_event", ["message.started", "answer.delta", "tool.updated"])
+async def test_group_same_requester_still_retires_interrupted_card(client, first_event):
+    test_client, feishu_client = client
+    for index in range(2):
+        await test_client.post("/events", json=event_payload(
+            first_event, 0, {"chat_type": "group", "sender_open_id": "ou_alice",
+                             "text": "partial", "tool_id": "tool", "name": "search"},
+            conversation_id="oc_abc", message_id=f"om_same_{index}",
+        ))
+    await wait_for_card_update(feishu_client, "本轮已被新对话替代")
+    assert test_client.server.app[SESSIONS_KEY]["om_same_0"].status == "failed"
+    assert test_client.server.app[SESSIONS_KEY]["om_same_1"].status != "failed"
+
+
+@pytest.mark.parametrize("source", ["om_alice", ""])
+async def test_group_redirect_only_retires_explicit_source(client, source):
+    test_client, feishu_client = client
+    for sender in ("alice", "bob"):
+        await test_client.post("/events", json=event_payload(
+            "message.started", 0, {"chat_type": "group", "sender_open_id": f"ou_{sender}"},
+            message_id=f"om_{sender}", turn_id=f"om_{sender}",
+        ))
+    await test_client.post("/events", json=event_payload(
+        "message.started", 0, {"chat_type": "group", "sender_open_id": "ou_alice",
+                               "redirect_followup": True, "redirect_from_turn_id": source},
+        message_id="om_redirect", turn_id="om_redirect",
+    ))
+    sessions = test_client.app[SESSIONS_KEY]
+    assert sessions["om_bob"].status == "thinking"
+    assert sessions["om_alice"].status == ("failed" if source else "thinking")
+    await test_client.post("/events", json=event_payload(
+        "message.completed", 1, {"answer": "BOB FINAL"}, message_id="om_bob", turn_id="om_bob",
+    ))
+    mid, card = await wait_for_card_update(feishu_client, "BOB FINAL")
+    assert mid == "feishu-message-2"
+
+
+async def test_group_failed_turn_does_not_affect_other_requester_or_revive(client):
+    test_client, feishu_client = client
+    for sender in ("alice", "bob", "carol"):
+        await test_client.post("/events", json=event_payload(
+            "message.started", 0, {"chat_type": "group", "sender_open_id": f"ou_{sender}"},
+            message_id=f"om_{sender}",
+        ))
+    await test_client.post("/events", json=event_payload(
+        "message.failed", 1, {"error": "provider unavailable"}, message_id="om_bob",
+    ))
+    await test_client.post("/events", json=event_payload(
+        "message.completed", 2, {"answer": "LATE BOB"}, message_id="om_bob",
+    ))
+    for sender, card_id in (("alice", "feishu-message-1"), ("carol", "feishu-message-3")):
+        await test_client.post("/events", json=event_payload(
+            "message.completed", 1, {"answer": f"FINAL {sender}"}, message_id=f"om_{sender}",
+        ))
+        mid, card = await wait_for_card_update(feishu_client, f"FINAL {sender}")
+        assert mid == card_id
+    assert test_client.app[SESSIONS_KEY]["om_bob"].status == "failed"
+    assert "LATE BOB" not in str(feishu_client.updated)
+    assert len(feishu_client.sent) == 3
+
+
+@pytest.mark.parametrize("same_scope", [True, False])
+async def test_native_group_turns_use_gateway_execution_scope(client, same_scope):
+    test_client, feishu_client = client
+    for index in range(2):
+        payload = event_payload("message.started", 0, {
+            "execution_scope": hashlib.sha256(("gateway-alice" if index == 0 or same_scope else "gateway-bob").encode()).hexdigest(),
+        }, message_id=f"om_native_{index}", turn_id=f"om_native_{index}")
+        payload = identified(payload, f"turn:om_native_{index}:started")
+        response = await test_client.post("/events", json=payload)
+        assert response.status == 200, await response.text()
+        assert (await response.json())["applied"] is True
+    sessions = test_client.app[SESSIONS_KEY]
+    assert sessions["om_native_0"].status == ("failed" if same_scope else "thinking")
+    if not same_scope:
+        for index in (1, 0):
+            await test_client.post("/events", json=event_payload(
+                "message.completed", 1, {"answer": f"NATIVE FINAL {index}"},
+                message_id=f"om_native_{index}", turn_id=f"om_native_{index}",
+            ))
+            mid, card = await wait_for_card_update(feishu_client, f"NATIVE FINAL {index}")
+            assert mid == f"feishu-message-{index + 1}"

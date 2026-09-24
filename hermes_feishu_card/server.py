@@ -8188,7 +8188,9 @@ async def _abandon_stale_sessions_for_chat(
 
     Only abandons sessions that share the same chat_id AND conversation_id AND
     profile_id prefix (to avoid cross-profile or cross-thread interference),
-    and skips the new session itself.
+    and skips the new session itself. In a group, matching verified requesters
+    are also required: conversation membership does not prove interruption.
+    Explicit redirect handoffs affect only their named source turn.
     """
     sessions: Dict[str, CardSession] = app[SESSIONS_KEY]
     feishu_message_ids: Dict[str, str] = app[FEISHU_MESSAGE_IDS_KEY]
@@ -8213,6 +8215,14 @@ async def _abandon_stale_sessions_for_chat(
                     redirect_source_key, redirect_source_key
                 )
 
+    data = event.data if isinstance(event.data, dict) else {}
+    sender = data.get("sender_open_id")
+    new_sender = sender if isinstance(sender, str) and re.fullmatch(r"ou_[A-Za-z0-9_-]{1,128}", sender) else ""
+    scope = data.get("execution_scope")
+    new_scope = scope if type(scope) is str and re.fullmatch(r"[0-9a-f]{64}", scope) else ""
+    chat_type = data.get("chat_type")
+    new_is_group = isinstance(chat_type, str) and chat_type.strip().lower() == "group"
+
     stale_keys = []
     for key, sess in sessions.items():
         if key == new_session_key:
@@ -8229,6 +8239,18 @@ async def _abandon_stale_sessions_for_chat(
         key_profile = key.split(":", 1)[0] if ":" in key else ""
         if key_profile != new_profile:
             continue
+        if alias_to_session_key:
+            if key != redirect_source_key:
+                continue
+        elif new_scope or sess.execution_scope or event.producer == "plugin":
+            if not new_scope or new_scope != sess.execution_scope:
+                continue
+        elif new_is_group or sess.chat_type == "group" or new_sender or sess.sender_open_id:
+            # Missing identity is not evidence that two group turns share an
+            # owner. Also isolate known distinct senders in older envelopes
+            # that did not carry chat_type.
+            if not new_sender or not sess.sender_open_id or new_sender != sess.sender_open_id:
+                continue
         stale_keys.append(key)
 
     for key in stale_keys:

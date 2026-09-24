@@ -1543,6 +1543,11 @@ class PluginRuntime:
                 "profile_id": turn.ingress.profile_id,
                 "profile_source": turn.ingress.profile_source,
                 "reply_to_message_id": turn.ingress.reply_to_message_id,
+                # Gateway admission owns interruption scope. Never send the raw
+                # session key (which may include user/chat identifiers).
+                "execution_scope": sha256(
+                    turn.ingress.gateway_session_key.encode("utf-8")
+                ).hexdigest(),
             },
         )
         with started_transport.gate:
