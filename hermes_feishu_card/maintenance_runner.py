@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 from typing import Any, Mapping
 
-from .config import load_config
+from .config import load_config, merge_card_config
 from .maintenance_card import FeishuJobPublisher
 from .maintenance_store import (
     MaintenancePaths,
@@ -123,7 +123,10 @@ def main(argv: list[str] | None = None) -> int:
                         raise MaintenanceRefused(
                             "Feishu credentials are unavailable"
                         )
-                    publisher = FeishuJobPublisher(client)
+                    publisher = FeishuJobPublisher(
+                        client,
+                        width_mode=profile_config.get("card", {}).get("width_mode", "default"),
+                    )
                 except (MaintenanceRefused, OSError, ValueError):
                     result = _terminalize_owned_runner_failure(
                         paths,
@@ -176,6 +179,9 @@ def _profile_config(
         raise MaintenanceRefused("maintenance profile is unavailable")
     merged = dict(config)
     for section, value in profile.items():
+        if section == "card":
+            merged[section] = merge_card_config(merged.get(section), value)
+            continue
         if isinstance(value, dict) and isinstance(merged.get(section), dict):
             merged[section] = {**merged[section], **value}
         else:
@@ -205,6 +211,7 @@ def _bot_profile_config(
         if key in bot:
             feishu[key] = bot[key]
     merged["feishu"] = feishu
+    merged["card"] = merge_card_config(config.get("card"), bot.get("card"))
     return merged
 
 

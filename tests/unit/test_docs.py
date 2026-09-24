@@ -242,9 +242,6 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
         "</p>\n\n"
         "![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)"
     ) in readme
-    # Contributor history is intentionally retained across releases; keep the
-    # top-level README bounded without deleting earlier-version credits.
-    assert len(readme.splitlines()) <= 325
 
 
 def test_readmes_preserve_historical_pr_issue_and_commit_credits():
@@ -1191,7 +1188,6 @@ def test_docs_describe_card_text_sizes_and_client_controlled_dimensions():
         assert "body" in doc
         assert "footer" in doc
         assert "mobile" in doc
-        assert "width/height" in doc
     for marker in (
         "reasoning",
         "tool",

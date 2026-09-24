@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+- Add opt-in `card.width_mode` (`default`, `compact`, `fill`) for JSON 2.0 cards with global/profile/bot inheritance and explicit default reset; preserve existing default layout and JSON 1.0 behavior.
+
 ## [4.6.9] - 2026-09-24
 
 - Isolate concurrent group cards by requester or native Gateway execution scope; restrict redirects to the explicit source turn. Preserve independent final answers and terminal failure protection (#348, reported by [cainiaozp](https://github.com/cainiaozp)).

@@ -701,6 +701,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 ```
 
@@ -778,6 +779,36 @@ card:
 
 多 Profile 模式下，`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不会覆盖 profile 内的 `feishu` 配置。`footer_fields` 支持 `duration`、`model`、`input_tokens`、`output_tokens`、`context`、`subscription_usage`。其中 `subscription_usage` 默认关闭；显式加入后，完成态会通过 Hermes runtime 的 `fetch_account_usage("openai-codex")` 显示 `5h 26% · weekly 89%` 风格的剩余额度。旧 Hermes、未登录、网络错误或超时会静默跳过。
 
+### 卡片宽度
+
+`card.width_mode` 使用飞书原生 [Card JSON 2.0 宽度模式](https://open.feishu.cn/document/feishu-cards/card-json-v2-structure)：
+
+- `default`（默认）：保持现有布局，不在发送的 JSON 中写入 `config.width_mode`；不会自动启用 `fill`。
+- `compact`：输出 `config.width_mode: compact`，请求紧凑宽度（官方标称 400px）。
+- `fill`：输出 `config.width_mode: fill`，请求自适应聊天窗口宽度。
+
+优先级为全局 `card.width_mode` < `profiles.<id>.card.width_mode` < 所选 bot 的 `card.width_mode`。单 profile 的 bot 位于 `bots.items.<id>`，多 profile 的 bot 位于 `profiles.<id>.bots.items.<id>`。省略字段时继承上一级；显式 `default` 可重置继承的 `compact` / `fill`。值会去除首尾空白并转为小写；空串、`null` 或其他值会报配置错误。
+
+以下是合并到现有配置的宽度片段（保留已有凭据、bot 与路由配置）：
+
+```yaml
+card:
+  width_mode: default
+profiles:
+  engineering:
+    card:
+      width_mode: fill
+    bots:
+      items:
+        default:
+          card:
+            width_mode: compact  # 优先于 profile；改为 default 可重置为默认布局
+```
+
+该设置适用于 HFC 的 JSON 2.0 发卡路径，包括回复流式/终态、超长内容交接与修复卡片。JSON 1.0 审批/旧版卡片不支持此字段，仍使用原有 `wide_screen_mode`，不会被转换成 JSON 2.0。宽度模式不是固定像素尺寸控制；不能设置固定像素高度，也不能绕过 Feishu/Lark 客户端的窗口、设备和布局限制，最终显示由客户端决定。
+
+### 卡片字号
+
 `card.text_sizes` 可配置 `body`、`reasoning`、`tool`、`notice`、`footer`。base、profile、bot 按角色合并，bot 优先级最高：
 
 ```yaml
@@ -791,7 +822,7 @@ card:
       mobile: notation
 ```
 
-映射字段只允许 `default`、`pc`、`mobile`。字号只允许 `heading-0`、`heading-1`、`heading-2`、`heading-3`、`heading-4`、`heading`、`normal`、`notation`、`xxxx-large`、`xxx-large`、`xx-large`、`x-large`、`large`、`medium`、`small`、`x-small`；`normal_v2` 是平台示例里的自定义 alias，不接受。未配置时保持原 Card JSON。卡片物理 width/height 由 Feishu/Lark 客户端控制。
+映射字段只允许 `default`、`pc`、`mobile`。字号只允许 `heading-0`、`heading-1`、`heading-2`、`heading-3`、`heading-4`、`heading`、`normal`、`notation`、`xxxx-large`、`xxx-large`、`xx-large`、`x-large`、`large`、`medium`、`small`、`x-small`；`normal_v2` 是平台示例里的自定义 alias，不接受。未配置字号时保持原有字号 JSON；宽度模式见上节，最终布局仍由 Feishu/Lark 客户端控制。
 
 ## 飞书应用配置
 

@@ -113,6 +113,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   table_overflow_mode: compact
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 bindings:
@@ -122,6 +123,8 @@ integrity:
 service:
   manager: auto
 ```
+
+`card.width_mode` 支持 `default`、`compact`、`fill`（自适应聊天窗口宽度），仅作用于 JSON 2.0 卡片；默认保持原布局，支持 profile/bot 覆盖，显式 `default` 可重置继承值。JSON 1.0 审批卡不变，最终尺寸仍由客户端决定。详见[卡片宽度配置](docs/user-guide.md#卡片宽度)。
 
 配置同目录的 `.env`：
 

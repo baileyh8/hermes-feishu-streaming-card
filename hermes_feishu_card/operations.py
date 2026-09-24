@@ -10,6 +10,7 @@ import threading
 import time
 from typing import Callable
 
+from .config import card_width_config
 from .diagnostics import DiagnosticReport
 from .maintenance_update import UpdateInspection
 
@@ -998,6 +999,7 @@ def render_operations_card(
     footer: str,
     *,
     store: OperationStore | None = None,
+    width_mode: str = "default",
 ) -> dict[str, object]:
     safe = report.to_dict(card_safe=True)
     status = str(safe.get("status") or "warning")
@@ -1028,6 +1030,7 @@ def render_operations_card(
     return {
         "schema": "2.0",
         "config": {
+            **card_width_config(width_mode),
             "update_multi": True,
             "summary": {"content": "运行诊断"},
         },

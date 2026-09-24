@@ -30,6 +30,47 @@ def clear_config_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+def test_width_mode_resolves_each_scope_and_explicit_default_resets_parent(tmp_path):
+    from hermes_feishu_card.bots import resolve_card_config
+    from hermes_feishu_card.render import render_card
+    from hermes_feishu_card.session import CardSession
+
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({
+        "card": {"width_mode": " FILL "},
+        "profiles": {"work": {
+            "card": {"width_mode": "COMPACT"},
+            "bots": {"items": {"sales": {"card": {"width_mode": " Default "}}}},
+        }},
+    }), encoding="utf-8")
+    config = load_config(path)
+    profile = config["profiles"]["work"]
+    session = CardSession("c", "m", "c")
+    inherited = resolve_card_config(config["card"], {}, {})
+    scoped = resolve_card_config(config["card"], profile["card"], {})
+    reset = resolve_card_config(config["card"], profile["card"], profile["bots"]["items"]["sales"]["card"])
+    assert render_card(session, width_mode=inherited["width_mode"])["config"]["width_mode"] == "fill"
+    assert render_card(session, width_mode=scoped["width_mode"])["config"]["width_mode"] == "compact"
+    assert "width_mode" not in render_card(session, width_mode=reset["width_mode"])["config"]
+
+
+@pytest.mark.parametrize("value", [None, "", "wide", True, 400])
+@pytest.mark.parametrize("scope", ["global", "profile", "bot", "profile_bot"])
+def test_width_mode_rejects_invalid_values_at_every_scope(tmp_path, value, scope):
+    card = {"width_mode": value}
+    configs = {
+        "global": ({"card": card}, "card.width_mode"),
+        "profile": ({"profiles": {"work": {"card": card}}}, "profiles.work.card.width_mode"),
+        "bot": ({"bots": {"items": {"sales": {"card": card}}}}, "bots.items.sales.card.width_mode"),
+        "profile_bot": ({"profiles": {"work": {"bots": {"items": {"sales": {"card": card}}}}}}, "profiles.work.bots.items.sales.card.width_mode"),
+    }
+    config, expected_path = configs[scope]
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    with pytest.raises(ValueError, match=expected_path):
+        load_config(path)
+
+
 def test_load_config_missing_file_returns_defaults(tmp_path):
     config = load_config(tmp_path / "missing.yaml")
 

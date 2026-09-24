@@ -200,6 +200,33 @@ class FakeClient:
         self.updated.append((message_id, card))
 
 
+def test_width_mode_survives_update_confirmation_and_job_publication(inspection, job):
+    from hermes_feishu_card.maintenance_card import render_update_operation_card
+    from hermes_feishu_card.maintenance_runner import _bot_profile_config, _profile_config
+
+    config = {
+        "card": {"width_mode": "compact"},
+        "profiles": {"work": {
+            "card": {"width_mode": "default"},
+            "bots": {"items": {"sales": {
+                "app_id": "test", "app_secret": "test", "card": {"width_mode": "fill"},
+            }}},
+        }},
+    }
+    resolved = _bot_profile_config(_profile_config(config, "work"), "sales")
+    mode = resolved["card"]["width_mode"]
+    confirmation = render_update_inspection_card(inspection, {}, {}, width_mode=mode)
+    assert confirmation["config"]["width_mode"] == "fill"
+    for state in ("locking", "cancelled"):
+        assert render_update_operation_card(inspection, state, width_mode=mode)["config"]["width_mode"] == "fill"
+    client = FakeClient()
+    publisher = FeishuJobPublisher(client, width_mode=mode)
+    assert asyncio.run(publisher.publish(job)) is True
+    assert client.updated[-1][0] == job.card_message_id
+    assert client.updated[-1][1]["config"]["width_mode"] == "fill"
+    assert "width_mode" not in render_update_job_card(job)["config"]
+
+
 def test_publisher_updates_exact_original_message(job):
     client = FakeClient()
     publisher = FeishuJobPublisher(client=client)

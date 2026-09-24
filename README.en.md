@@ -119,6 +119,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   table_overflow_mode: compact
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 bindings:
@@ -128,6 +129,8 @@ integrity:
 service:
   manager: auto
 ```
+
+`card.width_mode` supports `default`, `compact`, and `fill` (adaptive chat-window width) for JSON 2.0 cards. The default preserves existing layout; profile/bot overrides are supported, and explicit `default` resets an inherited mode. JSON 1.0 approval cards are unchanged; clients control final dimensions. See [card width configuration](docs/user-guide.en.md#card-width).
 
 Place `.env` beside the config:
 

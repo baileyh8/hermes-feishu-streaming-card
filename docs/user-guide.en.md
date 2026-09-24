@@ -649,6 +649,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 ```
 
@@ -726,6 +727,36 @@ card:
 
 In multi-profile mode, `FEISHU_APP_ID`/`FEISHU_APP_SECRET` env vars are ignored. `footer_fields` accepts: `duration`, `model`, `input_tokens`, `output_tokens`, `context`, `subscription_usage`. `subscription_usage` is disabled by default; when explicitly included, completed cards use Hermes runtime `fetch_account_usage("openai-codex")` and render remaining quota in the `5h 26% · weekly 89%` style. Older Hermes versions, missing login, network errors, and timeouts silently omit it.
 
+### Card width
+
+`card.width_mode` uses the native Feishu [Card JSON 2.0 width modes](https://open.feishu.cn/document/feishu-cards/card-json-v2-structure):
+
+- `default` (the default): preserves the existing layout by omitting `config.width_mode` from the outgoing JSON; it does not enable `fill`.
+- `compact`: emits `config.width_mode: compact`, requesting compact width (documented as 400px).
+- `fill`: emits `config.width_mode: fill`, requesting adaptive chat-window width.
+
+Precedence is global `card.width_mode` < `profiles.<id>.card.width_mode` < the selected bot's `card.width_mode`. Bots live under `bots.items.<id>` in single-profile mode or `profiles.<id>.bots.items.<id>` in multi-profile mode. Omission inherits the parent setting; explicit `default` resets an inherited `compact` / `fill`. Values are trimmed and lowercased; an empty string, `null`, or any other value is a configuration error.
+
+Merge this width-only fragment into your existing configuration, retaining its credentials, bots, and routing:
+
+```yaml
+card:
+  width_mode: default
+profiles:
+  engineering:
+    card:
+      width_mode: fill
+    bots:
+      items:
+        default:
+          card:
+            width_mode: compact  # Overrides the profile; use default to reset the layout
+```
+
+This setting applies to HFC's JSON 2.0 delivery paths, including streaming/final replies, oversized-content handoff, and repair cards. JSON 1.0 approval/legacy cards do not support this field: they keep their existing `wide_screen_mode` and are not converted to JSON 2.0. A width mode is not a fixed-pixel sizing control; it cannot set a fixed pixel height or bypass Feishu/Lark window, device, or layout constraints. The client determines the final display.
+
+### Card text sizes
+
 `card.text_sizes` configures `body`, `reasoning`, `tool`, `notice`, and `footer`. Base, profile, and bot settings merge by role, with bot settings taking precedence:
 
 ```yaml
@@ -739,7 +770,7 @@ card:
       mobile: notation
 ```
 
-Mappings accept only `default`, `pc`, and `mobile`. Allowed sizes are `heading-0`, `heading-1`, `heading-2`, `heading-3`, `heading-4`, `heading`, `normal`, `notation`, `xxxx-large`, `xxx-large`, `xx-large`, `x-large`, `large`, `medium`, `small`, and `x-small`; `normal_v2` is a custom alias in platform examples and is rejected. With no setting, the existing Card JSON is unchanged. Physical card width/height are controlled by the Feishu/Lark client.
+Mappings accept only `default`, `pc`, and `mobile`. Allowed sizes are `heading-0`, `heading-1`, `heading-2`, `heading-3`, `heading-4`, `heading`, `normal`, `notation`, `xxxx-large`, `xxx-large`, `xx-large`, `x-large`, `large`, `medium`, `small`, and `x-small`; `normal_v2` is a custom alias in platform examples and is rejected. With no text-size setting, the existing text-size JSON is unchanged. See above for width modes; Feishu/Lark still controls the final layout.
 
 ## Feishu App Setup
 
