@@ -197,9 +197,11 @@ def test_tool_ordinal_counts_each_call_and_survives_status_updates():
     # Numbered by CALL, not by row position or by update count.
     assert session.tools["t1"].ordinal == 1
     assert session.tools["t2"].ordinal == 2
-    # t1 has finished, so the live row is t2 — and it keeps its call number.
-    row = _elements(render_card(session), "tool_activity_0")[0]
-    assert "#2" in row["content"]
+    # Both steps remain visible in start order; status updates do not renumber them.
+    rows = _elements(render_card(session), "tool_activity_")
+    assert len(rows) == 2
+    assert "#1" in rows[0]["content"] and "已完成" in rows[0]["content"]
+    assert "#2" in rows[1]["content"] and "执行中" in rows[1]["content"]
 
 
 def test_finished_card_keeps_one_tool_row_as_evidence_of_what_ran():

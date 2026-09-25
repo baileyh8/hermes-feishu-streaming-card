@@ -1,3 +1,5 @@
+import logging
+import re
 import sys
 
 import pytest
@@ -13,6 +15,40 @@ from hermes_feishu_card.runner import (
     build_feishu_client,
     main,
 )
+
+
+def test_configure_logging_stamps_every_sidecar_line(monkeypatch):
+    """The sidecar log must carry a timestamp instead of falling through to ``logging.lastResort``.
+
+    Maintainer note (contract): with no root handler the process used lastResort — WARNING and above
+    only, bare message, no timestamp. A live investigation then could not place 50 ``recall failed``
+    lines in time or tie them to a run, and every INFO/DEBUG breadcrumb was dropped entirely.
+    """
+    monkeypatch.setattr(logging.root, "handlers", [])
+    monkeypatch.setattr(logging.root, "level", logging.WARNING)
+    monkeypatch.setattr(logging.getLogger("hermes_feishu_card"), "level", logging.WARNING)
+
+    runner._configure_logging()
+
+    # HTTP request paths can contain identifiers or tokens. Only package INFO
+    # logs are enabled by default, never third-party HTTP access logs.
+    assert not logging.getLogger("aiohttp.access").isEnabledFor(logging.INFO)
+    assert logging.getLogger("hermes_feishu_card").isEnabledFor(logging.INFO)
+    handler = logging.root.handlers[0]
+    assert handler.formatter is not None
+    line = handler.formatter.format(
+        logging.LogRecord(
+            "hermes_feishu_card.server",
+            logging.WARNING,
+            __file__,
+            1,
+            "Feishu card recall failed: FeishuAPIError",
+            None,
+            None,
+        )
+    )
+    assert "Feishu card recall failed: FeishuAPIError" in line
+    assert re.match(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ", line), line
 
 
 def test_build_feishu_client_uses_noop_when_credentials_missing():

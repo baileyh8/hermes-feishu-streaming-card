@@ -63,6 +63,7 @@
 
 - 重定向必须从已校验的 agent turn binding 取回原 conversation ID，不能退化为 source.thread_id；server 的 conversation/profile/chat 边界保持不变。
 - 显式 `turn_id` 必须作为 canonical turn hard fence，直接决定 session ownership、ordering 和 native handoff，绝不查 reply alias；只有缺少 `turn_id` 的 legacy topic 后续事件使用不同内部 `message_id` 时，才查 `reply_to_message_id` anchor。
+- 群聊新轮清理必须同时匹配可验证的 `sender_open_id`；缺少发送者时保留旧卡。hook 的首事件 fallback 也必须携带发送者和 `chat_type`。原生插件通道使用 Gateway session key 的哈希 `execution_scope` 隔离；缺少可匹配范围时不猜测接管。redirect 只清理明确指定的来源 turn，不能结束同群其他成员的卡片。参见 Issue #348。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
 - legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
@@ -75,10 +76,11 @@
 - 真实 Card JSON 上限由共享 serializer 最终裁决：5 张 table、200 tagged element、28,000 UTF-8 byte。terminal native handoff 必须幂等，不能发送半截卡后再重复原生答案。
 - pending interaction 期间，非 interaction lifecycle 的 card PATCH 与动画必须冻结，避免全量替换清空用户尚未提交的多选和输入。
 - form submit 不接受 interaction ID 或空 token 作为凭据，也不接受缺失或不匹配的 callback chat。
-- `interaction.requested` 在已有 session card 时会发送新的当前状态卡并迁移后续 message id；必须使用 interaction-specific delivery key，发送失败恢复 session，动画任务也必须从旧 message id 切到新卡。
+- `interaction.requested` 的 legacy callback 卡不直接替代已有 schema 2.0 stream owner。选择后仅记录显示边界；实际后续输出才以稳定 continuation key 新建同路由 schema 2.0 卡，确认送达后切换 owner。失败/不确定时保留旧 owner 和内容；首张仅有 legacy 卡时，回退、终局与展示恢复继续同方言并保留无 token 回执。见[交互续答](interaction-continuation.md)。
 - interaction deadline 由 sidecar 接收时刻与 `timeout_seconds` 计算为绝对截止时间 `expires_at`；action、result poll 与周期清理都在现有 session lock 下先做幂等过期转换。未声明暂停能力的过期状态为 failed；声明 pause_on_timeout 且没有 native runtime admission 的同步 Gateway 审批可转 paused，并撤销旧 token。晚到按钮/form 均不能批准过期操作。恢复按钮要求 Gateway 在最近 15 秒内仍轮询，旋转 token 并重新展示完整范围，只恢复审阅窗口；后续明确选择才解析原 request_id。不得延长 native admission 证明或把重启后旧执行当作仍在等待。
 - card action 是认证的 out-of-band 回调：它生成的内部 `interaction.completed` 可以执行 identity/stale 校验，但不得推进 Hermes `/events` transport 的 `last_sequence`。batch 下一条 `interaction.requested` 必须仍按严格单调序列接受；callback 响应卡要在同一 session lock 内快照，不能混入随后到达的下一题。
 - cleanup 只把尚未到期的 pending interaction 视为活跃；周期循环先转换/刷新过期 interaction，再执行普通 retention cleanup，避免永久保留或删掉仍显示可点击按钮的旧卡。
+- 重启临时文本的撤回遵循 [通知生命周期](notice-lifecycle.md)：精确 profile/bot/chat/thread、发送前登记代次快照、成功投递后调度、DELETE 成功后释放记录。不能用空 thread 通配其他话题、话题活动清 home、或静默替换失败的待撤回项。新增发卡入口必须传入当前 profile，更新入口通过真实消息 owner 取身份。
 
 ### `hermes_feishu_card/install/patcher.py`
 
@@ -130,6 +132,7 @@
 - runner 必须真正读取 `setup` / `start` 显式传入的 `--env-file`。配置优先级保持 YAML < 同目录 `.env` < 显式 env file < process env；禁止为了修复 systemd 环境而隐式读取全局 `~/.hermes/.env`。
 - 升级迁移只能停止 PID/token/health 三者一致的旧进程，未知进程保持 fail-closed。
 - `auto` 不得探测 system bus、调用 sudo/pkexec、写 `/etc` 或静默 fallback 到 system manager；`systemd-system` 只能显式使用 transient unit。
+- macOS `enable` 不可用时只提供平台解释。自建登录 LaunchAgent 可用 `RunAtLoad=true` 一次运行会分离子进程的 `start`，不可推荐 `KeepAlive=true`。无 verified pidfile 必须先确认进程归属；只有证实自建 LaunchAgent 直接运行 runner 才提供对应 `launchctl` 停止路径，不据 pidfile 缺失推断 launchd。
 - guided `setup` 在 `service.manager=auto|systemd-user`、user manager 可用且 `loginctl ... Linger=yes` 时默认进入 persistent systemd user 路径；不可用时必须显式警告重启风险并给出精确 `enable` 命令，`--transient` 是显式 opt-out。不得自动 enable linger、调用 sudo 或进入 system manager。随后以 exact Hermes venv Python、absolute config/env/Hermes root 渲染 unit；unit 与 `persistent-service.json` 都必须为 owner-only regular file，并以 `unit_sha256` 互证。
 - persistent enable 前先用现有 token/pidfile owner 安全停止 transient/detached sidecar；无 ownership 的同名 active unit、停服失败、manifest/unit 不完整或 drift 均拒绝。enable/health 失败后只有 `disable --now` 成功才可删除 ownership evidence。
 - `start` 对 exact active persistent unit 只返回 already running；`stop` 不绕过 persistent owner，必须走 `disable`。独立 `start` 仍为 transient，安装器不自动执行 `loginctl enable-linger`。
@@ -218,3 +221,43 @@ CardKit 创建和所有更新必须经过同一短 ID 映射：字符串不同�
 ## 统一稳定性修复
 
 临时提示撤回需携带 profile/chat 路由，在 sidecar 按当前 bot binding 解析；多 profile 不猜默认机器人。结构化 reasoning 使用单一、逐轮绑定的 callback，不从答案正文推断，不同时注册第二条 observer。卡片重启检查点与原执行分离，终局重试的总预算包含锁等待和请求；记录与重试日志必须脱敏。
+
+## V4.6.1 回调与通知边界
+
+工具 hook 必须位于同一回调方法的必经赋值之后，不能选后置静默分支或嵌套函数；未知条件控制流不作为成功安装证据。实际执行普通与静默分支验证工具事件，而非仅检查 marker。
+
+原生状态撤回保留 task-local profile/chat/thread；跨聊天或无效身份拒绝。仅命中已知临时模板才撤回，“⏳”本身不代表可以删除，答案、队列确认与失败解释必须保留。独立审批卡去重只影响会话展示，不移除专用回调卡的操作和决定结果。
+
+撤回日志仅允许已验证的状态/错误码和哈希标识，不能写入原始异常正文。默认 INFO 限于插件命名空间，不开启第三方 HTTP access 日志；已有宿主日志配置优先。中断及引导当前任务确认使用真实 event 路由，不能依赖 adapter 上残留的 profile。
+
+## V4.6.2 共享维护证明
+
+native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependent`：它观察 Gateway 接纳的轮次，上报自己的活动计数，不独立声明 Gateway 准入与 HOME 身份。只有同一 worker 中有效的 Gateway 聚合 owner 存在时，才借用该 owner 的 drain/home 证明。native 活动、计数不完整、未知 owner、Gateway 释放、HOME 不符及 epoch 变化仍保守拒绝停服。不得用常量 true 或忽略所有缺失 provider 解除门禁。
+
+终态工具区使用 `card.hide_completed_tool_activity`，默认 false 保持旧行为；true 仅在 completed/failed 隐藏正文工具行及旧摘要回退，不改变折叠记录、计数、正文或审批布局。
+
+## V4.6.3 正文思考与测量边界
+
+`stream_thinking_to_body` 默认 true。false 仅关闭运行态正文对原始 thinking 的回退，render-only 预览遵循 show_reasoning/max_reasoning_chars 且始终进入面板，不改持久timeline、终态内容保留与审批。容量检查与实际渲染必须使用同一配置；大面板与大答案仍走共享serializer门禁。
+
+工具按ordinal排序，运行工具及各自前驱可见，终态duration_ms保存在ToolState并兼容旧检查点。failure只接收有效测量，不能用Unknown、零占位、非有限数覆盖已知值；生成的排队接续hook实际执行须保留旧turn及新turn身份。通知撤回不在本版，#331调用方仍需完整传递bot/profile。
+
+## V4.6.4 交互、阅读与通知边界
+
+- 真实生成的嵌套 clarify/approval callback 可能只有 `ctx`，不得假定 `locals()` 包含 `self`。从绑定 TurnRunner 或已记忆 Gateway 恢复时，验证 ctx/source、profile resolver 与同一 live adapter；未知归属 fail-open。只在当前 WS loop 更新原 processor callback，重连不能复用过期刷新标记。
+- 交互后按需创建续答；分段只改变显示投影，不能清空 canonical 历史、工具、附件和统计。独立检查 legacy-only owner 的失败、终局、容量回退和重启，检查点不能含 callback token 或恢复旧授权。
+- 阅读预设可选，未设置保持旧默认；全局/profile/bot 每层先预设后显式字段。`hide_completed_tool_activity` 显式 true/false 语义不变，`card-config` 仅说明配置而非证明进程已加载。
+- 重启通知只登记有来源证明的 exact profile/bot/chat/thread。后续成功投递/更新只清理之前快照，删除失败保留记录；空 thread 不通配。答案、交互回执和来源不明的原生 home 通知不清理。
+- 提交前使用[preflight](../testing.md)核对环境和所选差异基线；实施状态及真实验收分别见[实施状态](../superpowers/plans/2026-09-20-v4.6.x-experience.md)和[V4.6.4验收](feishu-acceptance-v4.6.4.md)。
+
+## V4.6.5 故障、通知和升级边界
+
+模型重试耗尽的同步状态 callback 只能在另一个仍运行的 Gateway loop 上等待有界 HTTP 明确 ACK；空/旧/拒绝响应不抑制原生提示，同 loop 不阻塞。未知文案不通过宽泛关键词接管。通知持久化和已知 native producer 的归属见[通知归属](notice-ownership.md)。
+
+工具去重必须使用明确 call_id，不能把重复工具名猜成同一次调用。默认时间线行为不变，分组裁剪只改变显示。带 call_id 的新展示检查点回退旧版可能被跳过，不得因此恢复执行。
+
+`stale_reapplied` 只允许显式接受上游升级：旧 backup 必须匹配 manifest，严格移除已知模板后逐字等于当前 Git blob，检查 resolved HEAD 与事务 fingerprint；中途漂移、未知 marker 和无 Git 证明拒绝。保留 staged index 与无关定制，不手改 installed gateway 或伪造 manifest。
+
+## V4.6.6 收尾回归
+
+审批精简必须有独立完整回执的显式平台 PATCH 确认；不得仅以 callback 返回体作为投递证明。展示指纹、旧段清理队列均不入检查点。通知计时提前唤醒不得取消 in-flight DELETE；原生来源只存在于精确 producer 或同一 Base delivery invocation。总条目窗口优先保留运行工具、前一步和失败条目，仍需遵守卡片预算。

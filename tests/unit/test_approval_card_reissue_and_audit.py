@@ -237,5 +237,5 @@ def test_mobile_approval_explains_expand_before_full_scope_and_consent():
     assert '展开仅查看内容，不会提交授权' in card['elements'][0]['content']
     assert 'echo review-scope' in str(card)
     scope_index = next(i for i,e in enumerate(card['elements']) if 'echo review-scope' in str(e))
-    action_index = next(i for i,e in enumerate(card['elements']) if e['tag'] == 'action')
+    action_index = next(i for i,e in enumerate(card['elements']) if e['tag'] == 'column_set')
     assert scope_index < action_index

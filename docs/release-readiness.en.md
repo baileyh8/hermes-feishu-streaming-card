@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.8`. Covers #319/#320/#323 and PR #310: structured reasoning, profile-aware recall, bounded terminal retries, private card checkpoints and startup policy readiness. Full regression, exact-commit CI and public installation remain required gates.
+Current release version: `1.0.0`. Scope: concurrent group-card isolation, compact single-select layout and clearer onboarding.
 
-This candidate fixes CardKit IDs, topic routing and approval lifecycle. Real unsent entities passed; full tests, exact merge CI and public installation must pass before release. Mobile field acceptance remains open.
+Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v4.6.9.en.md); platform API smoke, real Gateway execution and mobile visual acceptance are recorded separately.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.

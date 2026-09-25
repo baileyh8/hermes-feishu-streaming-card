@@ -793,6 +793,7 @@ def test_task4_real_pre_llm_kwargs_without_generation_build_honest_started_paylo
                 "profile_id": "default",
                 "profile_source": "fallback_default",
                 "reply_to_message_id": "om_parent",
+                "execution_scope": sha256(b"gateway-session-1").hexdigest(),
             },
         }
     ]
@@ -978,9 +979,10 @@ def test_task4_official_tool_kwargs_drop_every_raw_canary_and_map_statuses():
     runtime.drain_observers(1.0)
 
     assert [payload["data"] for payload in posted] == [
-        {"tool_id": "call-1", "name": "shell", "status": "pending"},
+        {"tool_id": "call-1", "call_id": "call-1", "name": "shell", "status": "pending"},
         {
             "tool_id": "call-1",
+            "call_id": "call-1",
             "name": "shell",
             "status": "failed",
             "duration_ms": 9,

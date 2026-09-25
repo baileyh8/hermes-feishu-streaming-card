@@ -16,6 +16,8 @@ def test_short_buttons_keep_full_option_explanations_and_callback_identity(kind)
     elements = card["elements"]
     body = "\n".join(e.get("content", "") for e in elements if e.get("tag") == "markdown")
     buttons = [b for e in elements if e.get("tag") == "action" for b in e["actions"]]
+    buttons += [b for e in elements if e.get("tag") == "column_set"
+                for c in e["columns"] for b in c["elements"]]
     assert "1. " + label in body
     assert "2. 继续" in body
     assert [b["text"]["content"] for b in buttons] == ["1", "2"]
@@ -23,6 +25,61 @@ def test_short_buttons_keep_full_option_explanations_and_callback_identity(kind)
     assert buttons[0]["value"]["choice"] == "original-value"
     assert buttons[0]["value"]["choice_label"] == label
     assert buttons[0]["value"]["token"] == "secret-test-token"
+
+
+@pytest.mark.parametrize("count", [2, 4, 5, 8])
+def test_non_approval_choices_use_compact_rows_and_wrap_in_fours(count):
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc_test")
+    session.active_interaction = InteractionState(
+        interaction_id="i", kind="clarify", prompt="选择", callback_token="secret-test-token",
+        options=[InteractionOption(f"选项{n + 1}", f"value-{n + 1}") for n in range(count)],
+    )
+    elements = render_card(session, interaction_mode="callback")["elements"]
+
+    # No legacy `action` container: on mobile it stretches every button across the row.
+    assert not any(element.get("tag") == "action" for element in elements)
+    rows = [element for element in elements if element.get("tag") == "column_set"]
+    assert rows, "choices must render a compact button row"
+
+    buttons = [column["elements"][0] for row in rows for column in row["columns"]]
+    # Order, callback value and the auto width are what the click depends on.
+    assert [button["text"]["content"] for button in buttons] == [
+        str(n + 1) for n in range(count)
+    ]
+    assert [button["value"]["choice"] for button in buttons] == [
+        f"value-{n + 1}" for n in range(count)
+    ]
+    assert all(button["value"]["token"] == "secret-test-token" for button in buttons)
+    assert all(button.get("width") == "default" for button in buttons)
+    assert all(row.get("flex_mode") == "flow" for row in rows)
+    # Four per line, longer lists wrap instead of being squeezed.
+    assert [len(row["columns"]) for row in rows] == [
+        min(4, count - offset) for offset in range(0, count, 4)
+    ]
+
+
+def test_compact_rows_keep_custom_input_and_long_chinese_labels_in_the_body():
+    label = "这是一个非常长的中文选项标签" * 20 + "最后不能丢失"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc_test")
+    session.active_interaction = InteractionState(
+        interaction_id="i", kind="clarify", prompt="选择", allow_custom_input=True,
+        options=[InteractionOption(label, "value-long"), InteractionOption("继续", "next")],
+    )
+    card = render_card(session)
+    elements = card["elements"]
+    body = "\n".join(e.get("content", "") for e in elements if e.get("tag") == "markdown")
+
+    # The button stays a sequence number; the label lives in the body where it can wrap.
+    assert "1. " + label in body
+    assert "2. 继续" in body
+    buttons = [
+        column["elements"][0]
+        for element in elements if element.get("tag") == "column_set"
+        for column in element["columns"]
+    ]
+    assert [button["text"]["content"] for button in buttons] == ["1", "2"]
+    # A custom answer still has an input of its own next to the compact buttons.
+    assert any(element.get("tag") == "form" for element in elements)
 
 
 @pytest.mark.parametrize("status", ["failed", "timeout"])

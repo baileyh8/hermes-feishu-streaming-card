@@ -198,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return _run_doctor(args)
+    if args.command == "card-config":
+        return _run_card_config(args)
     if args.command == "setup":
         return _run_setup(args)
     if args.command == "start":
@@ -248,6 +250,14 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor_output = doctor.add_mutually_exclusive_group()
     doctor_output.add_argument("--json", action="store_true", dest="json_output")
     doctor_output.add_argument("--explain", action="store_true")
+
+    card_config = subparsers.add_parser(
+        "card-config", help="explain effective reading options without changing configuration",
+    )
+    card_config.add_argument("--config", required=True)
+    card_config.add_argument("--profile-id")
+    card_config.add_argument("--bot-id")
+    card_config.add_argument("--json", action="store_true", dest="json_output")
 
     setup = subparsers.add_parser(
         "setup",
@@ -639,11 +649,22 @@ def _run_setup(args: argparse.Namespace) -> int:
                 "reboot",
                 file=sys.stderr,
             )
-            print(
-                "next: satisfy the persistence requirement, then run "
-                + shlex.join(enable_command),
-                file=sys.stderr,
-            )
+            if sys.platform == "darwin":
+                print(
+                    "note: on macOS this project does not manage autostart; "
+                    "for startup at user login, use your own launchd LaunchAgent "
+                    "with RunAtLoad=true to run `hermes-feishu-card start` once "
+                    "with the same config/env paths; do not set KeepAlive=true "
+                    "because start detaches the sidecar and exits "
+                    "(see docs/installer-safety.md)",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "next: satisfy the persistence requirement, then run "
+                    + shlex.join(enable_command),
+                    file=sys.stderr,
+                )
         try:
             start_result = start_sidecar(config_path, config, **start_kwargs)
         except Exception as exc:
@@ -879,6 +900,35 @@ card:
     - output_tokens
     - context
 """
+
+
+def _run_card_config(args: argparse.Namespace) -> int:
+    from .reading import explain_reading_config
+
+    try:
+        path = Path(args.config).expanduser()
+        # Validate using the runtime loader; read raw scopes to distinguish
+        # explicit YAML values from the defaults injected by that loader.
+        load_config(path)
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError, yaml.YAMLError):
+        print("Unable to read valid card configuration.", file=sys.stderr)
+        return 2
+    try:
+        report = explain_reading_config(
+            raw, profile_id=args.profile_id, bot_id=args.bot_id,
+        )
+    except ValueError as exc:
+        # Selection errors contain fixed messages, never YAML values.
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.json_output:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        for key, value in report["values"].items():
+            print(f"{key}: {json.dumps(value, ensure_ascii=False)}  [{report['sources'][key]}]")
+        print(report["note"])
+    return 0
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
@@ -2077,15 +2127,15 @@ def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
         plan = decomposed.plan(detection)
         report = {"checked": True, "status": plan.state,
                 "manifest_exists": (detection.root / MANIFEST_NAME).exists(),
-                "manual_action_required": plan.state in {"refused", "stale_unpatched"},
+                "manual_action_required": plan.state in {"refused", *decomposed.EXPLICIT_UPGRADE_STATES},
                 "automatic_repair_available": plan.executable,
                 "message": "Decomposed ownership: " + plan.state}
-        if plan.state == "stale_unpatched":
+        if plan.state in decomposed.EXPLICIT_UPGRADE_STATES:
             accepted = decomposed.plan(detection, accept_hermes_upgrade=True)
             if accepted.executable:
                 report["message"] = (
                     "Hermes source changed and HFC hooks need reinstalling; an updater/autostash "
-                    "may have removed them. Review the upgrade, run the explicit repair command, "
+                    "may have removed or reapplied them. Review the upgrade, run the explicit repair command, "
                     "then restart Gateway.")
                 report["repair_command"] = shlex.join([
                     "hermes-feishu-card", "install", "--hermes-dir", str(detection.root),
@@ -2655,7 +2705,7 @@ def _lifecycle_hook_check(args: argparse.Namespace) -> dict[str, object] | None:
         return {"status": "installed", "blocking": False, "root": verified_root}
     if plan.state == "clean":
         return {"status": "not_installed", "blocking": False, "root": verified_root}
-    if plan.state == "stale_unpatched":
+    if plan.state in {"stale_unpatched", "stale_reapplied"}:
         accepted = plan_recovery(detection, accept_hermes_upgrade=True)
         if accepted.executable:
             return {
@@ -2718,11 +2768,25 @@ def _print_sidecar_start_failure(result: str) -> None:
             "verified pidfile",
             file=sys.stderr,
         )
-        print(
-            "next: stop the old sidecar service manually, then rerun the "
-            f"official installer: {OFFICIAL_INSTALLER_COMMAND}",
-            file=sys.stderr,
-        )
+        if sys.platform == "darwin":
+            print(
+                "next: confirm who owns the existing sidecar before stopping it. "
+                "If your own launchd LaunchAgent directly runs the sidecar runner, "
+                "confirm its label and stop that job with "
+                "`launchctl bootout gui/$(id -u)/<label>` "
+                "(or `launchctl unload /path/to/confirmed.plist`). "
+                "Otherwise identify and stop the old sidecar service manually; "
+                "a missing pidfile does not prove launchd ownership. "
+                "Then rerun the official installer: "
+                f"{OFFICIAL_INSTALLER_COMMAND}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "next: stop the old sidecar service manually, then rerun the "
+                f"official installer: {OFFICIAL_INSTALLER_COMMAND}",
+                file=sys.stderr,
+            )
         return
     print(f"error: {result}", file=sys.stderr)
 
@@ -4233,7 +4297,7 @@ def _recovery_refusal_message(
     hermes_root: Path | None = None,
 ) -> str:
     message = _first_refusal(plan)
-    if plan.state == "stale_unpatched" and not accept_hermes_upgrade:
+    if plan.state in {"stale_unpatched", "stale_reapplied"} and not accept_hermes_upgrade:
         if hermes_root is None:
             command = "--accept-hermes-upgrade --yes"
         else:

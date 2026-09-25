@@ -4,6 +4,11 @@ from dataclasses import dataclass, field
 
 TERMINAL_TOOL_STATUSES = {
     "completed",
+    "success",
+    "succeeded",
+    "ok",
+    "error",
+    "interrupted",
     "failed",
     "cancelled",
     "canceled",
@@ -100,7 +105,7 @@ class CardTimeline:
     def record_answer_started(self) -> None:
         self._finish_open_reasoning()
 
-    def record_tool(self, tool_id: str, name: str, status: str, detail: str = "") -> None:
+    def record_tool(self, tool_id: str, name: str, status: str, detail: str = "", *, replace_terminal: bool = False) -> None:
         if not tool_id:
             return
         self._finish_open_reasoning()
@@ -108,7 +113,7 @@ class CardTimeline:
         normalized_status = status or "running"
         if tool_id in self._tool_entry_by_id:
             entry = self._entries[self._tool_entry_by_id[tool_id]]
-            if str(entry.status or "").lower() not in TERMINAL_TOOL_STATUSES:
+            if replace_terminal or str(entry.status or "").lower() not in TERMINAL_TOOL_STATUSES:
                 entry.title = title
                 entry.status = normalized_status
                 entry.detail = detail or entry.detail

@@ -14,7 +14,7 @@
 
 ![Hermes Feishu Streaming Card cover](assets/readme-cover.png)
 
-Hermes Feishu Streaming Card turns Hermes Agent Gateway replies in Feishu/Lark into one continuously updated interactive card. Reasoning, tool calls, final answers, approvals, choices, and runtime stats stay in one readable card instead of spilling into scattered native text messages.
+Hermes Feishu Streaming Card turns Hermes Agent Gateway replies in Feishu/Lark into continuously updated interactive cards. Ordinary replies retain one card; approvals and clarification can open a continuation after the user chooses. Reasoning, tool calls, final answers, choices, and runtime stats remain readable instead of spilling into scattered native text messages.
 
 It targets the real pain points of using Hermes inside Feishu: missing or out-of-order streaming text, long tables/code blocks rendered as raw Markdown, invisible tool progress, manual approval replies, sidecar troubleshooting, multi-bot/profile routing, and uncertain hook compatibility after Hermes upgrades.
 
@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.8`.
+The Compose example defaults `HFC_VERSION` to `v1.0.0`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.8
+export HFC_VERSION=v1.0.0
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -948,3 +948,24 @@ Windows non-loopback startup is rejected when state-directory ACL privacy cannot
 ## Installer version resolution
 
 `latest` resolves once to the exact `vX.Y.Z` tag of the latest stable GitHub Release and installs that pinned ref. Lookup, JSON parsing, or tag validation failure stops before credential prompting, pip, doctor, setup, and Docker state writes. Explicit release tags bypass the Release API; only explicit `--version main` selects the moving development branch.
+
+## Terminal tool rows
+
+Set `card.hide_completed_tool_activity: true` to hide successful content-area tool rows after completed/failed turns; failed, cancelled and interrupted work remains visible. The default is `false`, preserving existing cards. Live progress, approval layout, timeline and footer counts are unchanged. Restart the sidecar after editing configuration.
+
+## V4.6.3: Live thinking body switch
+
+Set `card.stream_thinking_to_body: false` to keep waiting/tool activity in the body until an answer arrives, with live thinking in a bounded panel preview. The default `true` preserves existing behavior. `show_reasoning` and `max_reasoning_chars` control the render-only preview. Completed/failed content, approval and archived `reasoning_format` behavior are unchanged. Large custom panels and answers remain subject to whole-card limits. Restart the sidecar after editing configuration.
+
+## V4.6.6: Approval, tool visibility and notice cleanup
+
+Completed approvals lose duplicated review blocks only after a separate full receipt is confirmed delivered. A long-running tool and its immediate predecessor remain eligible for the bounded process panel, matching their body ordinals. Known native restart notices expire after 15 seconds or earlier after a confirmed same-route delivery; one-line successful background notices also expire. Native expired-approval corrections, failures, output-bearing results and complete approval receipts remain. See [release notes](release-notes-v4.6.6.en.md), [reading presets](wiki/reading-presets.md) and [acceptance evidence](wiki/feishu-acceptance-v4.6.6.md).
+
+
+## V4.6.7: Heartbeat and approval layout
+
+Working heartbeats remain editable; approval buttons use compact auto-width columns. Full scope and callback identity are retained.
+
+## V4.6.8: macOS installation guidance
+
+macOS persistence guidance explains the Linux systemd requirement; a missing verified pidfile does not establish launchd ownership. See [installer safety](installer-safety.en.md) and [release notes](release-notes-v4.6.8.en.md) for one-shot login startup, external supervision and stop boundaries. This release does not manage launchd or change card behavior.

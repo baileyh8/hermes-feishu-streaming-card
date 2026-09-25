@@ -5,13 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
-## [4.6.8] - 2026-09-25
+## [1.0.0] - 2026-09-26
+
 
 - CardKit entity restart recovery: after a sidecar restart the in-memory entity map is lost, so `update` fell back to a plain-JSON PATCH that Feishu rejects for CardKit cards (400/230011). The entity is now rebuilt from the card reference in the message body, gated on `schema == "2.0"` so legacy plain-JSON cards pay no extra lookup.
 - 230011 "The message was withdrawn" failure-loop termination: a recalled message can never be updated again, so the retry loop stops immediately instead of burning the update budget; callers clean up session state.
 - Patcher tolerates the extra `_release_turn_marker` if-block added by Hermes 0.21.x (idempotent, does not disturb the ledger contract), so the AST check no longer rejects upgrades onto that source.
-- All version markers aligned to 4.6.8.
-- See [Chinese notes](docs/release-notes-v4.6.8.md) and [English notes](docs/release-notes-v4.6.8.en.md).
+- All version markers aligned to 4.7.0.
+- See [Chinese notes](docs/release-notes-v1.0.0.md) and [English notes](docs/release-notes-v1.0.0.en.md).
+
+## [Unreleased]
+
+ - 2026-09-24
+
+- Isolate concurrent group cards by requester or native Gateway execution scope; restrict redirects to the explicit source turn. Preserve independent final answers and terminal failure protection (#348, reported by [cainiaozp](https://github.com/cainiaozp)).
+- Merge [mouyong](https://github.com/mouyong)'s [PR #349](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/349), using compact rows for all single-select choices while preserving callback values and forms.
+- Rewrite Chinese/English onboarding; preserve contributor history, installation/configuration and recent releases, with a linked historical release index.
+- See [Chinese notes](docs/release-notes-v4.6.9.md) and [English notes](docs/release-notes-v4.6.9.en.md) for validation scope and remaining real-client boundaries.
+
+## [4.6.8] - 2026-09-22
+
+- Make macOS setup and persistent-service errors platform-specific instead of suggesting the Linux-systemd-only `enable` command; preserve Linux guidance.
+- Keep the unknown-owner branch when a running sidecar has no verified pidfile. Suggest launchd stop steps only after the actual owner and label are confirmed; retain all existing process ownership checks.
+- Document one-shot login-time `RunAtLoad` use of `start`, without `KeepAlive`, and distinguish the detached sidecar from externally managed runner processes. Synchronize both installer-safety languages and retain the README size limit.
+- Credit [coder-zhw](https://github.com/coder-zhw) for [PR #347](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/347), preserving the original contribution. No launchd management or card behavior change is introduced.
+- Validation scope: CLI platform branches and ordinary package installation. Exact release, public installation and deployment evidence are recorded separately; no new mobile acceptance is claimed. See [Chinese notes](docs/release-notes-v4.6.8.md) and [English notes](docs/release-notes-v4.6.8.en.md).
 
 ## [4.6.7] - 2026-09-21
 

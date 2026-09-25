@@ -9,11 +9,21 @@ def read_doc(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def read_release_overview(english: bool = False) -> str:
+    """Historical releases remain reachable from the concise project homepage."""
+    readme = read_doc("README.en.md" if english else "README.md")
+    history = "docs/release-history.en.md" if english else "docs/release-history.md"
+    assert f"]({history})" in readme
+    # Resolve the index's relative release-note links to repository paths.
+    index = read_doc(history).replace("(release-notes-", "(docs/release-notes-")
+    return readme + "\n" + index
+
+
 def test_v441_release_notes_and_contributor_attribution():
     notes = read_doc("docs/release-notes-v4.4.1.md")
     notes_en = read_doc("docs/release-notes-v4.4.1.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     for text in (notes, notes_en, readme, readme_en):
         for author in ("liooil", "Clarence-G", "mouyong", "Boer2333", "sp960817", "Kevin32623", "shichenshuo-star", "hnzwx", "leavrcn", "micah928"):
             assert f"https://github.com/{author}" in text
@@ -42,13 +52,13 @@ def test_current_markers_and_v437_delivery_filter_release_contract():
     todo = read_doc("TODO.md")
     maintenance = read_doc("docs/wiki/maintenance-guide.md")
 
-    assert 'version = "4.6.8"' in pyproject
-    assert '__version__ = "4.6.8"' in package
-    assert config.startswith("# Hermes Feishu Streaming Card V4.6.8")
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
-    assert "HFC_VERSION: v4.6.8" in workflow
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert 'version = "1.0.0"' in pyproject
+    assert '__version__ = "1.0.0"' in package
+    assert config.startswith("# Hermes CardKit V1.0.0")
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
+    assert "HFC_VERSION: v1.0.0" in workflow
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     for text in (notes_v435, notes_v435_en):
         assert "PR #235" in text
         assert "metadata" in text
@@ -78,8 +88,8 @@ def test_current_markers_and_v437_delivery_filter_release_contract():
 
 def test_v438_setup_sequence_and_proxy_release_contract():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -119,8 +129,8 @@ def test_v438_setup_sequence_and_proxy_release_contract():
 
 def test_v440_current_hermes_capability_center_release_contract():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
     notes = read_doc("docs/release-notes-v4.4.0.md")
@@ -193,11 +203,11 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     readme_en = read_doc("README.en.md")
     guide = read_doc("docs/user-guide.md")
 
-    assert readme.startswith("# Hermes 飞书流式卡片插件\n")
+    assert readme.startswith("# Hermes CardKit 插件\n")
     assert "[English](README.en.md)" in readme
-    assert "img.shields.io/github/stars/baileyh8/hermes-feishu-streaming-card" in readme
-    assert "img.shields.io/github/v/release/baileyh8/hermes-feishu-streaming-card" in readme
-    assert "img.shields.io/github/actions/workflow/status/baileyh8/hermes-feishu-streaming-card/tests.yml" in readme
+    assert "img.shields.io/github/stars/feng84/hermes-cardkit" in readme
+    assert "img.shields.io/github/v/release/feng84/hermes-cardkit" in readme
+    assert "img.shields.io/github/actions/workflow/status/feng84/hermes-cardkit/tests.yml" in readme
     assert "img.shields.io/badge/Python-3.9%2B" in readme
     assert "img.shields.io/badge/Feishu%20%2F%20Lark-Streaming%20Cards" in readme
     assert "img.shields.io/badge/Runtime-Sidecar--only" in readme
@@ -213,27 +223,28 @@ def test_readme_documents_sidecar_only_and_supported_hermes_version():
     assert "PR #77" in readme
     assert "colinaaa" in readme
     assert "zayn-0101" in readme
-    assert "你能看到什么" in readme
-    assert "适用场景" in readme
-    assert "Hermes Agent Gateway 的飞书/Lark 回复变成一张持续更新的交互式卡片" in readme
+    assert "为什么使用 HFC" in readme
+    assert "配置方法" in readme
+    assert "Hermes Agent Gateway 的飞书/Lark 回复变成持续更新的交互式卡片" in readme
+    assert "普通问答保持原卡" in readme
     assert "/hfc status" in readme
-    assert "HERMES_FEISHU_CARD_DELTA_COALESCE_MS" in readme
+    assert "HERMES_FEISHU_CARD_DELTA_COALESCE_MS" in guide
     assert "sidecar-only" in readme.lower()
     assert "setup --hermes-dir" in readme
     assert "整合安装器" in readme
     assert "streaming.enabled" in readme
     assert "display.platforms.feishu.streaming" in readme
     assert "不要把 `display.show_reasoning`" in readme
-    assert "thinking.delta" in readme
-    assert "v2026.4.23" in readme
-    assert "Git tag `v2026.4.23+`" in readme
+    assert "thinking.delta" in guide
+    assert "v2026.4.23" in guide
+    assert "Git tag `v2026.4.23+`" in guide
     assert (
         "</p>\n\n"
         "![Hermes Feishu Streaming Card 封面](docs/assets/readme-cover.png)"
     ) in readme
     # Contributor history is intentionally retained across releases; keep the
     # top-level README bounded without deleting earlier-version credits.
-    assert len(readme.splitlines()) <= 320
+    assert len(readme.splitlines()) <= 325
 
 
 def test_readmes_preserve_historical_pr_issue_and_commit_credits():
@@ -242,7 +253,7 @@ def test_readmes_preserve_historical_pr_issue_and_commit_credits():
     guide = read_doc("docs/user-guide.md")
     agents = read_doc("AGENTS.md")
 
-    graph = "https://github.com/baileyh8/hermes-feishu-streaming-card/graphs/contributors"
+    graph = "https://github.com/feng84/hermes-cardkit/graphs/contributors"
     assert graph in readme
     assert graph in readme_en
     for handle in (
@@ -305,7 +316,7 @@ def test_readmes_preserve_historical_pr_issue_and_commit_credits():
     assert "V3.2" in guide
     assert "多 bot" in readme
     assert "群聊" in readme
-    assert "bindings.chats" in readme
+    assert "bindings.chats" in guide
     assert "group_rules" in guide
 
 
@@ -388,28 +399,28 @@ def test_readme_documents_one_line_install_and_release_packages():
     install_doc = read_doc("README-install.md")
     workflow = read_doc(".github/workflows/release-assets.yml")
 
-    assert "curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.sh | bash" in readme
-    assert "irm https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/main/install.ps1 | iex" in readme
+    assert "curl -fsSL https://raw.githubusercontent.com/feng84/hermes-cardkit/main/install.sh | bash" in readme
+    assert "irm https://raw.githubusercontent.com/feng84/hermes-cardkit/main/install.ps1 | iex" in readme
     assert "README-install.md" in readme
     assert "install-docker.sh" in readme
     assert "docker-compose.example.yml" in readme
     assert "Docker" in install_doc
     assert "v3.8.5" not in install_doc
     assert "version_source: gateway anchors" in install_doc
-    assert "docs/release-notes-v3.8.17.md" in readme
-    assert "docs/release-notes-v3.8.18.md" in readme
-    assert "docs/release-notes-v3.8.16.md" in readme
-    assert "docs/release-notes-v3.8.15.md" in readme
-    assert "docs/release-notes-v3.8.14.md" in readme
-    assert "docs/release-notes-v3.8.13.md" in readme
-    assert "docs/release-notes-v3.8.12.md" in readme
-    assert "docs/release-notes-v3.8.11.md" in readme
-    assert "docs/release-notes-v3.8.10.md" in readme
-    assert "docs/release-notes-v3.8.9.md" in readme
-    assert "docs/release-notes-v3.8.8.md" in readme
-    assert "docs/release-notes-v3.8.7.md" in readme
-    assert "docs/release-notes-v3.8.6.md" in readme
-    assert "docs/release-notes-v3.8.5.md" in readme
+    assert "docs/release-notes-v3.8.17.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.18.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.16.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.15.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.14.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.13.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.12.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.11.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.10.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.9.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.8.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.7.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.6.md" in read_release_overview()
+    assert "docs/release-notes-v3.8.5.md" in read_release_overview()
     assert "release-notes-v3.8.4.md" in guide
     assert "release-notes-v3.8.3.md" in guide
     assert "release-notes-v3.8.2.md" in guide
@@ -428,7 +439,7 @@ def test_readme_documents_one_line_install_and_release_packages():
     assert "hermes-feishu-card-<version>-linux.tar.gz" in guide
     assert "hermes-feishu-card-<version>-windows.zip" in guide
 
-    assert "Quick Install" in english_readme
+    assert "Quick install" in english_readme
     assert "README-install.md" in english_readme
     assert "bash install.sh" in install_doc
     assert "install.ps1" in install_doc
@@ -711,13 +722,13 @@ def test_english_readme_and_docs_are_linked():
     ]
 
     assert "[中文](README.md)" in english_readme
-    assert english_readme.startswith("# Hermes Feishu Streaming Card Plugin\n")
-    assert "Hermes Feishu Streaming Card turns Hermes Agent Gateway replies" in english_readme
+    assert english_readme.startswith("# Hermes CardKit Plugin\n")
+    assert "HFC turns Hermes Agent Gateway replies" in english_readme
     assert "/hfc status" in english_readme
-    assert "HERMES_FEISHU_CARD_DELTA_COALESCE_MS" in english_readme
-    assert "What You Get" in english_readme
-    assert "Problems Solved" in english_readme
-    assert "img.shields.io/github/stars/baileyh8/hermes-feishu-streaming-card" in english_readme
+    assert "HERMES_FEISHU_CARD_DELTA_COALESCE_MS" in read_doc("docs/user-guide.en.md")
+    assert "Why HFC" in english_readme
+    assert "Configuration" in english_readme
+    assert "img.shields.io/github/stars/feng84/hermes-cardkit" in english_readme
     assert "docs/assets/readme-cover.png" in english_readme
     assert "docs/assets/feishu-card-showcase-v385.png" in english_readme
     assert "PR #76" in english_readme
@@ -728,13 +739,13 @@ def test_english_readme_and_docs_are_linked():
     assert "colinaaa" in english_readme
     assert "zayn-0101" in english_readme
     assert "setup --hermes-dir" in english_readme
-    assert "Hermes Streaming Config" in english_readme
+    assert "Enable Hermes streaming" in english_readme
     assert "streaming.enabled" in english_readme
     assert "display.platforms.feishu.streaming" in english_readme
-    assert "Do not treat `display.show_reasoning`" in english_readme
-    assert "thinking.delta" in english_readme
-    assert "Multi-bot" in english_readme
-    assert "group chat" in english_readme
+    assert "`display.show_reasoning` is not required" in english_readme
+    assert "thinking.delta" in read_doc("docs/user-guide.en.md")
+    assert "Multiple bots" in english_readme
+    assert "groups" in english_readme
     assert "pytest" in read_doc("docs/testing.en.md")
     assert "425 passed" not in readme
     assert "398 passed" not in readme
@@ -830,17 +841,17 @@ def test_docs_describe_secure_event_transport_and_current_feishu_state():
 
     assert "真实飞书应用联调仍未完成" not in architecture
     assert "真实飞书应用联调仍是后续阶段" not in architecture
-    for doc in (readme, guide, architecture):
+    for doc in (guide, architecture):
         assert "本机进程互信" in doc
         assert "allow_non_loopback" in doc
         assert "事件鉴权" in doc
-    for doc in (english_readme, english_guide, english_architecture):
+    for doc in (english_guide, english_architecture):
         assert "local-process trust" in doc
         assert "allow_non_loopback" in doc
         assert "event authentication" in doc
         assert "Windows non-loopback" in doc
         assert "ACL privacy" in doc
-    for doc in (readme, guide, architecture):
+    for doc in (guide, architecture):
         assert "Windows non-loopback" in doc
         assert "ACL 私有性" in doc
     assert "allow_non_loopback: false" in config
@@ -888,7 +899,7 @@ def test_docs_describe_sidecar_process_management_scope():
     assert "PID/token" in docs
     assert "process_pid/process_token_hash" in docs
     assert "POSIX" in docs
-    assert "no-op client" in docs
+    assert "no-op client" in read_doc("docs/user-guide.md")
     assert "- [x] 将 sidecar 进程管理从占位 `status` 扩展为可启动、可停止、可探活。" in docs
 
 
@@ -1175,7 +1186,7 @@ def test_docs_describe_card_text_sizes_and_client_controlled_dimensions():
     for example in (config, setup_template):
         for marker in ("text_sizes:", "body: normal", "footer:", "mobile: notation"):
             assert marker in example
-    for doc in (readme, readme_en, install):
+    for doc in (read_doc("docs/user-guide.md"), read_doc("docs/user-guide.en.md"), install):
         assert "card.text_sizes" in doc
         assert "body" in doc
         assert "footer" in doc
@@ -1356,8 +1367,8 @@ def test_docs_describe_release_readiness_boundaries():
 
 
 def test_v390_documents_operations_reliability_release_gate():
-    readme = read_doc("README.md")
-    english_readme = read_doc("README.en.md")
+    readme = read_release_overview()
+    english_readme = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     compose = read_doc("docker-compose.example.yml")
     changelog = read_doc("CHANGELOG.md")
@@ -1459,8 +1470,8 @@ def test_v390_documents_operations_reliability_release_gate():
 
 
 def test_v391_documents_reliability_hotfix_and_contributors():
-    readme = read_doc("README.md")
-    english_readme = read_doc("README.en.md")
+    readme = read_release_overview()
+    english_readme = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     compose = read_doc("docker-compose.example.yml")
     changelog = read_doc("CHANGELOG.md")
@@ -1500,8 +1511,8 @@ def test_v391_documents_reliability_hotfix_and_contributors():
 
 
 def test_v310_documents_resume_picker_footer_polish_and_contributors():
-    readme = read_doc("README.md")
-    english_readme = read_doc("README.en.md")
+    readme = read_release_overview()
+    english_readme = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     compose = read_doc("docker-compose.example.yml")
     changelog = read_doc("CHANGELOG.md")
@@ -1550,8 +1561,8 @@ def test_v400_release_docs_cover_live_runtime_cards():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.0.md")
     notes_en = read_doc("docs/release-notes-v4.0.0.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -1564,10 +1575,10 @@ def test_v400_release_docs_cover_live_runtime_cards():
     assert "thinking.delta" in notes
     assert "tool.updated.detail" in notes_en
     assert "thinking.delta" in notes_en
-    assert "运行态 Header" in readme
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert "运行态 Header" in notes
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     for event_name in (
         "progress_callback.preview",
         "tool.updated.detail",
@@ -1584,8 +1595,8 @@ def test_v401_release_docs_cover_issue_106_media_text_deduplication():
     notes = read_doc("docs/release-notes-v4.0.1.md")
     notes_en = read_doc("docs/release-notes-v4.0.1.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
 
     assert "## V4.0.1 — 2026-07-12" in changelog
     assert "issue #106" in changelog
@@ -1612,8 +1623,8 @@ def test_v402_release_docs_cover_verified_owned_hook_upgrade():
     notes = read_doc("docs/release-notes-v4.0.2.md")
     notes_en = read_doc("docs/release-notes-v4.0.2.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     config_example = read_doc("config.yaml.example")
 
     assert "## V4.0.2 — 2026-07-12" in changelog
@@ -1645,8 +1656,8 @@ def test_v403_release_docs_cover_stale_hook_media_text_deduplication():
     notes = read_doc("docs/release-notes-v4.0.3.md")
     notes_en = read_doc("docs/release-notes-v4.0.3.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
 
     assert "## V4.0.3 — 2026-07-13" in changelog
     assert "stale-hook" in changelog
@@ -1673,8 +1684,8 @@ def test_v404_release_docs_cover_media_literals_and_bound_callbacks():
     notes = read_doc("docs/release-notes-v4.0.4.md")
     notes_en = read_doc("docs/release-notes-v4.0.4.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
 
     assert "## V4.0.4 — 2026-07-13" in changelog
     assert "V4.0.4" in todo
@@ -1704,8 +1715,8 @@ def test_v405_release_docs_cover_gateway_runtime_version_sync():
     notes = read_doc("docs/release-notes-v4.0.5.md")
     notes_en = read_doc("docs/release-notes-v4.0.5.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
 
     assert "## V4.0.5 — 2026-07-13" in changelog
     assert "V4.0.5" in todo
@@ -1732,8 +1743,8 @@ def test_v406_release_docs_cover_completion_background_and_upgrade_recovery():
     notes = read_doc("docs/release-notes-v4.0.6.md")
     notes_en = read_doc("docs/release-notes-v4.0.6.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     acceptance = read_doc("docs/wiki/feishu-acceptance.md")
 
     assert "## V4.0.6 — 2026-07-15" in changelog
@@ -1768,8 +1779,8 @@ def test_v407_release_docs_cover_systemd_lifecycle_and_notice_isolation():
     notes = read_doc("docs/release-notes-v4.0.7.md")
     notes_en = read_doc("docs/release-notes-v4.0.7.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
 
     assert "## V4.0.7 — 2026-07-16" in changelog
     assert "[docs/release-notes-v4.0.7.md](docs/release-notes-v4.0.7.md)" in changelog
@@ -1803,8 +1814,8 @@ def test_v408_release_docs_cover_issue_127_cron_native_attachments():
     notes = read_doc("docs/release-notes-v4.0.8.md")
     notes_en = read_doc("docs/release-notes-v4.0.8.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
     event_flow = read_doc("docs/wiki/event-flow.md")
@@ -1839,8 +1850,8 @@ def test_v409_release_docs_cover_issue_130_websocket_handler_stability():
     notes = read_doc("docs/release-notes-v4.0.9.md")
     notes_en = read_doc("docs/release-notes-v4.0.9.en.md")
     todo = read_doc("TODO.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
     event_flow = read_doc("docs/wiki/event-flow.md")
@@ -1879,8 +1890,8 @@ def test_v4010_release_candidate_documents_event_transport_security():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.10.md")
     notes_en = read_doc("docs/release-notes-v4.0.10.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     todo = read_doc("TODO.md")
 
     assert "## V4.0.10 — 2026-07-17" in changelog
@@ -1898,8 +1909,8 @@ def test_v4011_release_docs_cover_reliable_notice_delivery():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.11.md")
     notes_en = read_doc("docs/release-notes-v4.0.11.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     todo = read_doc("TODO.md")
 
     assert "## V4.0.11 — 2026-07-18" in changelog
@@ -1930,8 +1941,8 @@ def test_v4012_release_docs_cover_compaction_text_sizes_and_noop_credentials():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.12.md")
     notes_en = read_doc("docs/release-notes-v4.0.12.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -1961,9 +1972,9 @@ def test_v4012_release_docs_cover_compaction_text_sizes_and_noop_credentials():
             assert asset in text
     assert "docs/release-notes-v4.0.12.md" in readme
     assert "docs/release-notes-v4.0.12.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.12" in todo
 
 
@@ -1971,8 +1982,8 @@ def test_v4013_release_docs_cover_all_command_feedback_cards():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.13.md")
     notes_en = read_doc("docs/release-notes-v4.0.13.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2004,9 +2015,9 @@ def test_v4013_release_docs_cover_all_command_feedback_cards():
             assert asset in text
     assert "docs/release-notes-v4.0.13.md" in readme
     assert "docs/release-notes-v4.0.13.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.13" in todo
     assert "V4.0.13 发布门禁" in readiness
     assert "V4.0.13 Release Gates" in readiness_en
@@ -2016,8 +2027,8 @@ def test_v4014_release_docs_cover_long_running_heartbeat_fix():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.14.md")
     notes_en = read_doc("docs/release-notes-v4.0.14.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2049,9 +2060,9 @@ def test_v4014_release_docs_cover_long_running_heartbeat_fix():
             assert asset in text
     assert "docs/release-notes-v4.0.14.md" in readme
     assert "docs/release-notes-v4.0.14.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.14" in todo
     assert "V4.0.14 发布门禁" in readiness
     assert "V4.0.14 Release Gates" in readiness_en
@@ -2063,8 +2074,8 @@ def test_v4015_release_docs_cover_tool_timeline_and_upgrade_guard():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.15.md")
     notes_en = read_doc("docs/release-notes-v4.0.15.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2095,9 +2106,9 @@ def test_v4015_release_docs_cover_tool_timeline_and_upgrade_guard():
             assert asset in text
     assert "docs/release-notes-v4.0.15.md" in readme
     assert "docs/release-notes-v4.0.15.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.15" in todo
     assert "V4.0.15 发布门禁" in readiness
     assert "V4.0.15 Release Gates" in readiness_en
@@ -2109,8 +2120,8 @@ def test_v4016_release_docs_cover_loading_dedup_and_real_tool_duration():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.16.md")
     notes_en = read_doc("docs/release-notes-v4.0.16.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2139,9 +2150,9 @@ def test_v4016_release_docs_cover_loading_dedup_and_real_tool_duration():
             assert asset in text
     assert "docs/release-notes-v4.0.16.md" in readme
     assert "docs/release-notes-v4.0.16.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.16" in todo
     assert "V4.0.16 发布门禁" in readiness
     assert "V4.0.16 Release Gates" in readiness_en
@@ -2152,8 +2163,8 @@ def test_v4017_release_docs_cover_parallel_tool_correlation():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.17.md")
     notes_en = read_doc("docs/release-notes-v4.0.17.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2182,9 +2193,9 @@ def test_v4017_release_docs_cover_parallel_tool_correlation():
             assert asset in text
     assert "docs/release-notes-v4.0.17.md" in readme
     assert "docs/release-notes-v4.0.17.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.17" in todo
     assert "V4.0.17 发布门禁" in readiness
     assert "V4.0.17 Release Gates" in readiness_en
@@ -2195,8 +2206,8 @@ def test_v4018_release_docs_cover_feishu_sdk_capability_guard():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.18.md")
     notes_en = read_doc("docs/release-notes-v4.0.18.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2225,9 +2236,9 @@ def test_v4018_release_docs_cover_feishu_sdk_capability_guard():
             assert asset in text
     assert "docs/release-notes-v4.0.18.md" in readme
     assert "docs/release-notes-v4.0.18.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.18" in todo
     assert "V4.0.18 发布门禁" in readiness
     assert "V4.0.18 Release Gates" in readiness_en
@@ -2238,8 +2249,8 @@ def test_v4019_release_docs_cover_venv_pip_install_guard():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.19.md")
     notes_en = read_doc("docs/release-notes-v4.0.19.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2262,9 +2273,9 @@ def test_v4019_release_docs_cover_venv_pip_install_guard():
             assert asset in text
     assert "docs/release-notes-v4.0.19.md" in readme
     assert "docs/release-notes-v4.0.19.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.19" in todo
     assert "V4.0.19 发布门禁" in readiness
     assert "V4.0.19 Release Gates" in readiness_en
@@ -2274,8 +2285,8 @@ def test_v4020_release_docs_cover_notice_accepted_ack_and_observability():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.20.md")
     notes_en = read_doc("docs/release-notes-v4.0.20.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2306,9 +2317,9 @@ def test_v4020_release_docs_cover_notice_accepted_ack_and_observability():
             assert asset in text
     assert "docs/release-notes-v4.0.20.md" in readme
     assert "docs/release-notes-v4.0.20.en.md" in readme_en
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     assert "V4.0.20" in todo
     assert "V4.0.20 发布门禁" in readiness
     assert "V4.0.20 Release Gates" in readiness_en
@@ -2319,8 +2330,8 @@ def test_v4021_release_docs_record_content_integrity_and_real_feishu_acceptance(
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.0.21.md")
     notes_en = read_doc("docs/release-notes-v4.0.21.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     testing = read_doc("docs/testing.md")
     testing_en = read_doc("docs/testing.en.md")
     acceptance = read_doc("docs/wiki/feishu-acceptance.md")
@@ -2373,11 +2384,11 @@ def test_v4021_release_docs_record_content_integrity_and_real_feishu_acceptance(
     assert "site-packages 中的候选 runtime 为 4.0.21" in acceptance
     assert "不宣称截图或桌面/移动端视觉 QA" in acceptance
 
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
-    assert "`v4.6.8`（Compose 示例）" in guide
-    assert "The Compose example defaults `HFC_VERSION` to `v4.6.8`." in guide_en
+        assert "HFC_VERSION=v1.0.0" in doc
+    assert "`v1.0.0`（Compose 示例）" in guide
+    assert "The Compose example defaults `HFC_VERSION` to `v1.0.0`." in guide_en
     for doc in (guide, guide_en):
         assert re.search(
             r"(?:Compose|Compose 示例).*v4\.0\.(?:0|[1-9]|1[0-9]|20)(?!\d)"
@@ -2387,8 +2398,8 @@ def test_v4021_release_docs_record_content_integrity_and_real_feishu_acceptance(
         ) is None
     assert "| [v4.0.21](release-notes-v4.0.21.md) | 2026-07-28 |" in guide
     assert "| [v4.0.21](release-notes-v4.0.21.en.md) | 2026-07-28 |" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.0.21 发布门禁" in readiness
     assert "## V4.0.21 Release Gates" in readiness_en
     assert "真实飞书图片验收：**已通过（2026-07-28）**" in readiness
@@ -2486,8 +2497,8 @@ def test_v410_release_docs_cover_native_policy_limits_integrity_and_services():
     changelog = read_doc("CHANGELOG.md")
     notes = read_doc("docs/release-notes-v4.1.0.md")
     notes_en = read_doc("docs/release-notes-v4.1.0.en.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -2571,9 +2582,9 @@ def test_v410_release_docs_cover_native_policy_limits_integrity_and_services():
     assert "table_overflow_mode: compact" in config
     assert "mode: safe" in config
     assert "manager: auto" in config
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     for doc in (readme, readme_en, install_doc, guide, guide_en):
-        assert "HFC_VERSION=v4.6.8" in doc
+        assert "HFC_VERSION=v1.0.0" in doc
     for doc in (notes, notes_en):
         assert "HFC_VERSION=v4.1.0" in doc
 
@@ -2607,8 +2618,8 @@ def test_v410_release_docs_cover_native_policy_limits_integrity_and_services():
 
 def test_v411_release_docs_define_upgrade_recovery_safety_contract():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     notes = read_doc("docs/release-notes-v4.1.1.md")
     notes_en = read_doc("docs/release-notes-v4.1.1.en.md")
     controls = read_doc("docs/wiki/v4.1-safety-controls.md")
@@ -2621,7 +2632,7 @@ def test_v411_release_docs_define_upgrade_recovery_safety_contract():
     assert "docs/release-notes-v4.1.1.md" in changelog
     assert "docs/release-notes-v4.1.1.md" in readme
     assert "docs/release-notes-v4.1.1.en.md" in readme_en
-    assert "HFC_VERSION: v4.6.8" in workflow
+    assert "HFC_VERSION: v1.0.0" in workflow
     assert "### V4.1.1：升级恢复安全热修（已发布）" in todo
     assert "### V4.1.0：投递策略与运行安全（已发布）" in todo
 
@@ -2687,8 +2698,8 @@ def test_release_playbook_documents_exact_tag_commit_gate():
 
 def test_v412_release_docs_define_gateway_restart_race_contract():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     notes = read_doc("docs/release-notes-v4.1.2.md")
     notes_en = read_doc("docs/release-notes-v4.1.2.en.md")
     migration = read_doc("docs/migration.md")
@@ -2705,10 +2716,10 @@ def test_v412_release_docs_define_gateway_restart_race_contract():
     assert "docs/release-notes-v4.1.2.md" in changelog
     assert "docs/release-notes-v4.1.2.md" in readme
     assert "docs/release-notes-v4.1.2.en.md" in readme_en
-    assert "HFC_VERSION: v4.6.8" in workflow
+    assert "HFC_VERSION: v1.0.0" in workflow
     assert "### V4.1.2：Gateway 重启竞态热修（已发布）" in todo
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
 
     for text in (notes, notes_en, controls, event_flow, acceptance):
         assert "runtime_heartbeat_stale" in text or "heartbeat stale" in text
@@ -2740,8 +2751,8 @@ def test_v412_release_docs_define_gateway_restart_race_contract():
 
 def test_v414_release_docs_define_manifestless_legacy_migration_candidate():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     notes = read_doc("docs/release-notes-v4.1.4.md")
     notes_en = read_doc("docs/release-notes-v4.1.4.en.md")
@@ -2758,12 +2769,12 @@ def test_v414_release_docs_define_manifestless_legacy_migration_candidate():
     assert "docs/release-notes-v4.1.4.md" in changelog
     assert "docs/release-notes-v4.1.4.md" in readme
     assert "docs/release-notes-v4.1.4.en.md" in readme_en
-    assert "HFC_VERSION=v4.6.8" in install_doc
-    assert "HFC_VERSION: v4.6.8" in workflow
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert "HFC_VERSION=v1.0.0" in install_doc
+    assert "HFC_VERSION: v1.0.0" in workflow
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
     assert "### V4.1.4：Windows 旧版 manifest 迁移热修（已发布）" in todo
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.1.4 发布门禁" in readiness
     assert "## V4.1.4 Release Gates" in readiness_en
     assert "从 V4.1.3 升级到 V4.1.4" in migration
@@ -2799,8 +2810,8 @@ def test_v414_release_docs_define_manifestless_legacy_migration_candidate():
 
 def test_v413_release_docs_define_combined_upgrade_compatibility_candidate():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     notes = read_doc("docs/release-notes-v4.1.3.md")
     notes_en = read_doc("docs/release-notes-v4.1.3.en.md")
@@ -2816,11 +2827,11 @@ def test_v413_release_docs_define_combined_upgrade_compatibility_candidate():
     assert "docs/release-notes-v4.1.3.md" in changelog
     assert "docs/release-notes-v4.1.3.md" in readme
     assert "docs/release-notes-v4.1.3.en.md" in readme_en
-    assert "HFC_VERSION=v4.6.8" in install_doc
-    assert "HFC_VERSION: v4.6.8" in workflow
+    assert "HFC_VERSION=v1.0.0" in install_doc
+    assert "HFC_VERSION: v1.0.0" in workflow
     assert "### V4.1.3：升级恢复与 TurnRunner 兼容性热修（已发布）" in todo
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.1.3 发布门禁" in readiness
     assert "## V4.1.3 Release Gates" in readiness_en
 
@@ -2896,8 +2907,8 @@ def test_v410_release_docs_define_ack_multibot_and_compose_boundaries():
 
 def test_v410_docs_close_release_ux_review_drift():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     testing = read_doc("docs/testing.md")
     testing_en = read_doc("docs/testing.en.md")
@@ -2922,13 +2933,13 @@ def test_v410_docs_close_release_ux_review_drift():
     assert "优先避免丢失答案" in event_flow
     assert "不承诺永久 exactly-once" in event_flow
 
-    for text in (readme, testing):
+    for text in (testing,):
         assert "Hermes 0.19.0" in text
         assert "v2026.7.20" in text
         assert "自动化 strategy detection" in text
         assert "本机真实源码" in text
     assert "`0.18.x` / `0.19.0` / `v2026.5.16+`" in testing
-    for text in (readme_en, testing_en, install_doc):
+    for text in (testing_en, install_doc):
         assert "Hermes 0.19.0" in text
         assert "v2026.7.20" in text
         assert "automated strategy detection" in text.lower()
@@ -3013,8 +3024,8 @@ def test_v400_docs_use_native_reply_as_the_only_completed_header():
 
 
 def test_v400_model_picker_matches_hermes_cli_hierarchy():
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
     notes = read_doc("docs/release-notes-v4.0.0.md")
@@ -3074,8 +3085,8 @@ def test_all_command_feedback_card_lifecycle_is_documented():
 
 def test_v420_docs_define_private_update_maintenance_release():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3095,12 +3106,12 @@ def test_v420_docs_define_private_update_maintenance_release():
     assert "From V4.2.0" in install_doc
     assert "## V4.2.0 飞书私聊安全升级" in guide
     assert "## V4.2.0 Safe Private-Chat Updates" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.0 发布门禁" in readiness
     assert "## V4.2.0 Release Gates" in readiness_en
     assert "### V4.2.0：飞书私聊安全升级（已发布）" in todo
-    assert "HFC_VERSION: v4.6.8" in workflow
+    assert "HFC_VERSION: v1.0.0" in workflow
 
     for text in (install_doc, guide, guide_en, readiness, readiness_en, notes, notes_en):
         assert "maintenance status" in text
@@ -3140,8 +3151,8 @@ def test_v420_docs_define_private_update_maintenance_release():
 
 def test_v428_docs_cover_credential_persistence_release_contracts():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3153,8 +3164,8 @@ def test_v428_docs_cover_credential_persistence_release_contracts():
 
     for text in (changelog, readme, readme_en, install_doc, guide, guide_en, todo):
         assert "V4.2.8" in text or "v4.2.8" in text
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.8 发布门禁" in readiness
     assert "## V4.2.8 Release Gates" in readiness_en
 
@@ -3187,8 +3198,8 @@ def test_v428_docs_cover_credential_persistence_release_contracts():
 
 def test_v429_docs_cover_interaction_and_quote_release_contracts():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3202,8 +3213,8 @@ def test_v429_docs_cover_interaction_and_quote_release_contracts():
 
     for text in (changelog, readme, readme_en, install_doc, guide, guide_en, todo):
         assert "V4.2.9" in text or "v4.2.9" in text
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.9 发布门禁" in readiness
     assert "## V4.2.9 Release Gates" in readiness_en
 
@@ -3236,8 +3247,8 @@ def test_v429_docs_cover_interaction_and_quote_release_contracts():
 
 def test_v421_docs_define_first_gateway_heartbeat_hotfix():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3255,8 +3266,8 @@ def test_v421_docs_define_first_gateway_heartbeat_hotfix():
     assert "V4.2.1 registers the live Gateway runner" in install_doc
     assert "第一条私聊裸 `/update`" in guide
     assert "first bare private-chat `/update`" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.1 发布门禁" in readiness
     assert "## V4.2.1 Release Gates" in readiness_en
     assert "### V4.2.1：Gateway 首个 heartbeat 任务计数热修（已发布）" in todo
@@ -3279,8 +3290,8 @@ def test_v421_docs_define_first_gateway_heartbeat_hotfix():
 
 def test_v422_docs_define_async_update_transition_publish():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3299,13 +3310,13 @@ def test_v422_docs_define_async_update_transition_publish():
     assert "V4.2.2 keeps the native card-action callback fast" in install_doc
     assert "取消进入“已取消更新”终态" in guide
     assert "cancel reaches a terminal state" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.2 发布门禁" in readiness
     assert "## V4.2.2 Release Gates" in readiness_en
     assert "### V4.2.2：更新确认卡终态写回热修（已发布）" in todo
     assert "V4.2.2 要求 native action 快速 ACK" in maintenance_guide
-    assert "HFC_VERSION: v4.6.8" in workflow
+    assert "HFC_VERSION: v1.0.0" in workflow
 
     for text in (notes, notes_en):
         for marker in (
@@ -3331,8 +3342,8 @@ def test_v422_docs_define_async_update_transition_publish():
 
 def test_v423_docs_define_update_evidence_forwarding_hotfix():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3352,14 +3363,14 @@ def test_v423_docs_define_update_evidence_forwarding_hotfix():
     assert "V4.2.3 forwards the update evidence fingerprint" in install_doc
     assert "更新证据指纹" in guide
     assert "update evidence fingerprint" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.3 发布门禁" in readiness
     assert "## V4.2.3 Release Gates" in readiness_en
     assert "### V4.2.3：更新回调证据转发热修（已发布）" in todo
     assert "V4.2.3 要求 WebSocket hook" in maintenance_guide
-    assert "HFC_VERSION: v4.6.8" in workflow
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert "HFC_VERSION: v1.0.0" in workflow
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
 
     for text in (notes, notes_en):
         for marker in (
@@ -3383,8 +3394,8 @@ def test_v423_docs_define_update_evidence_forwarding_hotfix():
 
 def test_v424_docs_define_quoted_reply_card_isolation_hotfix():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3404,14 +3415,14 @@ def test_v424_docs_define_quoted_reply_card_isolation_hotfix():
     assert "V4.2.4 gives every new Feishu/Lark topic reply" in install_doc
     assert "真实入站 message ID" in guide
     assert "real incoming message ID" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.4 发布门禁" in readiness
     assert "## V4.2.4 Release Gates" in readiness_en
     assert "### V4.2.4：话题引用回复独立卡片热修（发布候选）" in todo
     assert "V4.2.4 要求 `message.started`" in maintenance_guide
-    assert "HFC_VERSION: v4.6.8" in workflow
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert "HFC_VERSION: v1.0.0" in workflow
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
 
     for text in (notes, notes_en):
         for marker in (
@@ -3436,8 +3447,8 @@ def test_v424_docs_define_quoted_reply_card_isolation_hotfix():
 
 def test_v425_docs_map_every_audit_fix_and_release_gate():
     changelog = read_doc("CHANGELOG.md")
-    readme = read_doc("README.md")
-    readme_en = read_doc("README.en.md")
+    readme = read_release_overview()
+    readme_en = read_release_overview(english=True)
     install_doc = read_doc("README-install.md")
     guide = read_doc("docs/user-guide.md")
     guide_en = read_doc("docs/user-guide.en.md")
@@ -3456,13 +3467,13 @@ def test_v425_docs_map_every_audit_fix_and_release_gate():
     assert "V4.2.5 hardens quoted-turn identity" in install_doc
     assert "canonical `turn_id`" in guide
     assert "canonical `turn_id`" in guide_en
-    assert "当前发布候选为 `4.6.8`" in readiness
-    assert "Current release candidate: `4.6.8`" in readiness_en
+    assert "当前发布版本为 `1.0.0`" in readiness
+    assert "Current release version: `1.0.0`" in readiness_en
     assert "## V4.2.5 发布门禁" in readiness
     assert "## V4.2.5 Release Gates" in readiness_en
     assert "### V4.2.5：审查安全热修（已发布）" in todo
-    assert "HFC_VERSION: v4.6.8" in workflow
-    assert 'HFC_VERSION: "${HFC_VERSION:-v4.6.8}"' in compose
+    assert "HFC_VERSION: v1.0.0" in workflow
+    assert 'HFC_VERSION: "${HFC_VERSION:-v1.0.0}"' in compose
 
     audit_ids = [f"HFC-REV-20260801-{index:02d}" for index in range(1, 10)]
     for text in (notes, notes_en):
@@ -3498,3 +3509,25 @@ def test_v425_docs_map_every_audit_fix_and_release_gate():
     for text in (notes, notes_en):
         for asset in assets:
             assert asset in text
+
+
+
+def test_readmes_keep_onboarding_concise_and_references_reachable():
+    for name, headings, history in (
+        ("README.md", ("## 为什么使用 HFC", "## 快速安装", "## 配置方法", "## 近期更新", "## 贡献者"), "docs/release-history.md"),
+        ("README.en.md", ("## Why HFC", "## Quick install", "## Configuration", "## Recent releases", "## Contributors"), "docs/release-history.en.md"),
+    ):
+        text = read_doc(name)
+        assert [text.index(h) for h in headings] == sorted(text.index(h) for h in headings)
+        overview = text[:text.index(headings[1])]
+        assert "V4.1" not in overview
+        assert "reading_preset: focused" in text
+        assert f"]({history})" in text
+        recent = text.split(headings[3], 1)[1].split(headings[4], 1)[0]
+        assert len(re.findall(r"^\| \[v[0-9]", recent, re.M)) <= 10
+        assert text.count("<details>") == text.count("</details>")
+        for document in (name, history):
+            for target in re.findall(r"\]\(([^)]+)\)", read_doc(document)):
+                if "://" in target or target.startswith("#"):
+                    continue
+                assert (ROOT / document).parent.joinpath(target.split("#", 1)[0]).is_file(), (document, target)

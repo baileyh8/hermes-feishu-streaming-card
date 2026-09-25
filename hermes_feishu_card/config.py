@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from .delivery_policy import normalize_native_chats
+from .reading import expand_reading_preset, normalize_reading_preset
 
 
 DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
@@ -39,8 +40,12 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "interaction_mode": "auto",
         "streaming_mode": False,
         "show_reasoning": True,
+        "stream_thinking_to_body": True,
+        "hide_completed_tool_activity": False,
         "reasoning_format": "panel",
         "timeline_expanded": False,
+        "timeline_order": "newest_first",
+        "timeline_tools_per_reasoning": 0,
         "max_timeline_items": 12,
         "max_reasoning_chars": 1200,
         "max_tool_result_chars": 600,
@@ -146,7 +151,7 @@ def merge_card_config(
     override: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     resolved = copy.deepcopy(dict(base or {}))
-    incoming = copy.deepcopy(dict(override or {}))
+    incoming = expand_reading_preset(override)
     has_incoming_sizes = "text_sizes" in incoming
     incoming_sizes = incoming.pop("text_sizes", None)
     resolved.update(incoming)
@@ -428,6 +433,10 @@ def _normalize_bot_card_configs(value: object, *, path: str) -> None:
 def _normalize_card_config(value: object, *, path: str) -> None:
     if not isinstance(value, dict):
         return
+    if "reading_preset" in value:
+        value["reading_preset"] = normalize_reading_preset(
+            value["reading_preset"], path=f"{path}.reading_preset"
+        )
     if "text_sizes" in value:
         value["text_sizes"] = normalize_text_sizes(
             value["text_sizes"], path=f"{path}.text_sizes"
@@ -445,6 +454,15 @@ def _normalize_card_config(value: object, *, path: str) -> None:
         if not isinstance(raw_format, str) or raw_format.strip().lower() not in {"panel", "code"}:
             raise ValueError(f"{path}.reasoning_format must be panel or code")
         value["reasoning_format"] = raw_format.strip().lower()
+    if "timeline_order" in value:
+        raw_order = value["timeline_order"]
+        if not isinstance(raw_order, str) or raw_order.strip().lower() not in {"newest_first", "chronological"}:
+            raise ValueError(f"{path}.timeline_order must be newest_first or chronological")
+        value["timeline_order"] = raw_order.strip().lower()
+    if "timeline_tools_per_reasoning" in value:
+        limit = value["timeline_tools_per_reasoning"]
+        if type(limit) is not int or not 0 <= limit <= 100:
+            raise ValueError(f"{path}.timeline_tools_per_reasoning must be an integer from 0 to 100")
     if "mentions_in_cards" in value and value["mentions_in_cards"] is not None:
         value["mentions_in_cards"] = _normalize_boolean(
             value["mentions_in_cards"], f"{path}.mentions_in_cards"
@@ -475,7 +493,9 @@ def _merge_sections(config: dict[str, dict[str, Any]], loaded: dict[str, Any]) -
         if section in KNOWN_SECTIONS and not isinstance(value, dict):
             raise ValueError(f"Config section {section} must be a mapping")
 
-        if isinstance(value, dict) and isinstance(config.get(section), dict):
+        if section == "card" and isinstance(value, dict):
+            config[section] = merge_card_config(config.get(section), value)
+        elif isinstance(value, dict) and isinstance(config.get(section), dict):
             config[section].update(value)
         else:
             config[section] = value

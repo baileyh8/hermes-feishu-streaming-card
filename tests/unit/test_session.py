@@ -1126,6 +1126,35 @@ def test_repeated_running_updates_do_not_inflate_tool_count():
     assert len(session.tools) == 1
 
 
+def test_explicit_tool_call_identity_deduplicates_terminal_and_late_start():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    data = {"tool_id": "terminal", "call_id": "call_a", "name": "terminal"}
+    assert session.apply(event("tool.updated", 1, dict(data, status="running"), created_at=100))
+    assert session.apply(event("tool.updated", 2, dict(data, status="completed", detail="done"), created_at=102))
+    assert session.apply(event("tool.updated", 3, dict(data, status="completed", detail="done"), created_at=150))
+    assert session.apply(event("tool.updated", 4, dict(data, status="running", detail="late"), created_at=100))
+    assert session.tool_count == 1
+    assert session.tools["call_a"].status == "completed"
+    assert session.tools["call_a"].ordinal == 1
+    assert session.tools["call_a"].duration_ms == 2000
+    assert "late" not in session.latest_tool_preview
+    rows = [row for row in session.timeline.snapshot() if row.kind == "tool"]
+    assert len(rows) == 1 and rows[0].status == "completed"
+    assert "2s" in rows[0].detail
+
+
+def test_distinct_calls_reusing_tool_name_do_not_merge_or_steal_late_results():
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    for seq, call, status in ((1,"a","running"),(2,"a","completed"),(3,"b","running"),
+                              (4,"a","completed"),(5,"b","completed")):
+        assert session.apply(event("tool.updated", seq, {
+            "tool_id":"terminal", "call_id":call, "name":"terminal", "status":status,
+        }))
+    assert session.tool_count == 2
+    assert session.tools["a"].ordinal == 1 and session.tools["b"].ordinal == 2
+    assert len([row for row in session.timeline.snapshot() if row.kind == "tool"]) == 2
+
+
 def test_parallel_same_name_tools_keep_details_and_durations_separate():
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
 

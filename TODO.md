@@ -1,6 +1,44 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.6.9：并发隔离与上手体验
+
+- [x] 修复 #348 的群聊清理范围，覆盖 legacy/native、首事件 fallback、redirect 和终态边界。
+- [x] 合入 #349 紧凑单选布局并保留作者；重写中英文 README，保留安装、配置、历史署名及更新索引。
+- 发布证据与真实平台边界见 [v4.6.9 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.9)；#344 保持开放。
+
+## V4.6.8：macOS 安装提示
+
+- [x] 吸收 #347 的 macOS 平台提示，保留未知 owner 分支、Linux 提示和进程归属校验。
+- [x] 同步中英文安装说明，区分一次性登录启动与外部托管进程，保留原贡献者署名。
+- 发布门禁：CLI 平台分支、普通安装包、完整测试、精确合并 CI、发布资产与公开安装；最终结果登记于 [v4.6.8 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.8)。
+- 生产上线与项目反馈回复独立回读；本版未新增 launchd 管理、卡片行为或手机验收结论。
+
+## V4.6.7
+
+- [x] Working heartbeat retention and compact approval controls (#345).
+- [ ] Exact release, installation, desktop acceptance and replies; see GitHub Release for final delivery evidence.
+- [ ] Reporter version/reproduction for #344; mobile visual acceptance remains separate.
+
+## V4.6.6 consolidation
+
+- [x] Approval receipt proof before duplicate cleanup (#337/#339).
+- [x] Active tool/predecessor visibility and terminal status consistency (#340).
+- [x] Known native notice expiry, persistent restart deadlines and unsuccessful-tool retention (#338).
+- [ ] Exact candidate/full CI, real Feishu acceptance, merged release, public install, production upgrade and community replies.
+
+
 当前 active runtime 是 `hermes_feishu_card/`。legacy adapter、dual mode、旧 `sidecar/`、旧 `patch/` 和 `installer_v2.py` 不是 active runtime，仅保留作历史参考。
+
+## 当前交付状态（2026-09-20）
+
+- [x] V4.6.4 已发布：PR #336，精确合并 `457f0d00ddedc0e4dc6a507cf79c4ddfc6aaa17e`；4055 passed、12 skipped，CI、annotated tag、资产与公开安装已验证。
+- [x] 本机生产升级到普通 site-packages 的 4.6.4，保留 staged index 与 AMD 定制；Gateway/sidecar readiness 已验证。
+- [x] V4.6.5 实现：持久通知归属、已知 native home/startup/shutdown 来源、明确 call_id 去重、可选时间线顺序和分组条数、重复故障提示、旧段中性收尾及严格升级迁移。
+- [ ] V4.6.5 完整发布门禁：全量回归、PR CI、精确合并、tag、资产和公开安装，以 Release 交付记录为准。
+- [x] 4.6.4 真实桌面 clarify 选择 A 与回执下方续答；旧卡执行中残留已复现并纳入 4.6.5。
+- [ ] 4.6.5 升级后的真实交互、严格首击时序、approval 和手机视觉。
+
+以下为历史版本实施快照，未勾选项不自动代表当前版本仍未交付；当前计划见 [V4.6.x](docs/superpowers/plans/2026-09-20-v4.6.x-experience.md)。
 
 ## V3.8 / V3.9 / V3.10 / V4 系列路线：V3.8.0 / V3.8.1 / V3.8.2 / V3.8.3 / V3.8.4 / V3.8.5 / V3.8.6 / V3.8.7 / V3.8.8 / V3.8.9 / V3.8.10 / V3.8.11 / V3.8.12 / V3.8.13 / V3.8.14 / V3.8.15 / V3.8.16 / V3.8.17 / V3.8.18 / V3.9.0 / V3.9.1 / V3.10.0 / V4.0.0 / V4.0.1 / V4.0.2 / V4.0.3 / V4.0.4 / V4.0.5 / V4.0.6 / V4.0.7 / V4.0.8 / V4.0.9 / V4.0.10 / V4.0.11 / V4.0.12 / V4.0.13 / V4.0.14 / V4.0.15 / V4.0.16 / V4.0.17 / V4.0.18 / V4.0.19 / V4.0.20 / V4.0.21 / V4.1.0 / V4.1.1 / V4.1.2 / V4.1.3 / V4.1.4 / V4.2.0 / V4.2.1 / V4.2.2 / V4.2.3 / V4.2.4 / V4.2.5 / V4.2.6 / V4.2.7 / V4.2.8 / V4.2.9 / V4.2.10 / V4.2.11 / V4.2.12 / V4.3.0 / V4.3.1 / V4.3.2 / V4.3.3 / V4.3.4 / V4.3.5 / V4.3.6 / V4.3.7 / V4.3.8 / V4.4.0 / V4.4.1 / V4.4.2 / V4.4.3 / V4.4.4
 
@@ -790,3 +828,33 @@
 - [x] #320 私有展示检查点、原卡终局、授权失效与启动等待。
 - [ ] 完整候选、精确 merge/tag CI、资产和公开安装验证。
 - [ ] 真实移动端视觉验收（不计入已通过自动化）。
+
+## V4.6.1 Hermes 0.21.3 兼容
+
+- [x] #326 回调普通/静默分支实际执行复现与修复。
+- [x] #325 通知、审批和展示修复，补齐路由与撤回内容边界。
+- [ ] 完整精确提交 CI、公开 tag/资产/安装核验后发布并回复。
+
+## V4.6.2 余项处理
+
+- [x] 原生插件与 Gateway 的维护证明共享及保守失败边界。
+- [x] #328 独立终态工具区配置；#331 仅适配该部分，通知撤回等改动待独立验证。
+- [ ] 精确合并、公开安装与本机部署验收（证据在发布时补充）。
+
+## V4.6.3 正文控制与工具状态
+
+- [x] #333 兼容开关、实时折叠预览与长思考边界。
+- [x] #331 独立工具排序、耗时、中断指标适配，保留v4.6.2配置语义。
+- [ ] #331 通知撤回路由隔离；未整包合并。
+- [ ] 精确合并、公开安装、资产验证和手机端验收分别报告。
+
+
+## V4.6.4 首次交互与阅读体验
+
+- [x] 首轮和首次交互接线，覆盖真实生成闭包并保留 SDK dispatcher。
+- [x] clarify/approval 按需顺序续答，保留问题和决定、历史统计及 legacy 方言回退。
+- [x] 可选阅读预设与只读配置解释；缺省与显式开关语义保持兼容。
+- [x] 有来源证明的同作用域通知清理及隔离的贡献者 preflight。
+- [x] 代码完整回归 4049 passed / 18 skipped、14 项 PR 检查、普通 wheel 与真实平台 API 投递证据。
+- [ ] 桌面/手机首次点击和视觉验收；原生产实例源码漂移需独立处理。
+- 精确合并、tag、资产和公开安装证据随 [v4.6.4 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.4) 登记。

@@ -16,6 +16,7 @@ from .events import SidecarEvent
 from .native_handoff import NativeHandoffRecord
 from .status import StatusConfig, resolve_display_status
 from .text import StreamingTextNormalizer, normalize_stream_text
+from .display_segments import append_answer, begin_continuation, record_terminal, update_thinking
 
 
 MIN_COMPLETED_SUFFIX_CHARS = 20
@@ -75,6 +76,10 @@ class ToolState:
     # Which tool call this is, 1-based, counted across the session. Rendered as #N so a card
     # showing one row out of many says WHICH call the reader is looking at.
     ordinal: int = 0
+    # Retained after completion and in private display checkpoints.
+    duration_ms: float | None = None
+    # Explicit executor identity; a legacy tool name is not a call identity.
+    call_id: str = ""
 
 
 @dataclass
@@ -114,6 +119,8 @@ class InteractionState:
     # The approval card's own Feishu message id, recorded when the card is delivered. A timed-out
     # approval refreshes THAT card in place instead of sending a second paused card (#314).
     feishu_message_id: str = ""
+    # Set only after an explicit successful PATCH of the complete standalone receipt.
+    receipt_fingerprint: str = ""
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission
@@ -179,9 +186,13 @@ class CardSession:
     subscription_usage_checked: bool = False
     attachments: list[dict[str, str]] = field(default_factory=list)
     active_interaction: InteractionState | None = None
+    # At most 32 bounded static predecessor cards; never persisted or restored.
+    approval_retirements: list[dict[str, Any]] = field(default_factory=list, repr=False)
     delivery_kind: str = "chat"
     reply_to_message_id: str = ""
     reply_in_thread: bool = False
+    execution_scope: str = ""
+    chat_type: str = ""
     sender_open_id: str = ""
     sender_name: str = ""
     completion_notify_state: str = "idle"
@@ -195,11 +206,18 @@ class CardSession:
         default=None,
         repr=False,
     )
+    display_segment: dict[str, Any] = field(default_factory=dict)
+    # Non-empty only when the writable owner is the initial legacy receipt.
+    # Persist rendered static text, never InteractionState or callback tokens.
+    legacy_owner_receipt: dict[str, Any] = field(default_factory=dict)
     _tool_call_count: int = field(default=0)
     _answer_archive_index: int | None = None
     timeline: CardTimeline = field(default_factory=CardTimeline)
     thinking_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
     answer_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
+    # Immutable route provenance, populated by the server from the accepted
+    # event or checkpoint envelope. Logical turn IDs may contain colons.
+    route_profile_id: str | None = None
 
     @property
     def tool_count(self) -> int:
@@ -247,6 +265,21 @@ class CardSession:
             return False
         if self.status in {"completed", "failed"}:
             return False
+        execution_scope = event.data.get("execution_scope")
+        if type(execution_scope) is str and re.fullmatch(r"[0-9a-f]{64}", execution_scope):
+            self.execution_scope = execution_scope
+        chat_type = event.data.get("chat_type")
+        if isinstance(chat_type, str) and chat_type.strip().lower() in {"group", "dm", "p2p", "private"}:
+            self.chat_type = chat_type.strip().lower()
+        sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
+        if sender_open_id:
+            if self.sender_open_id != sender_open_id:
+                self.sender_name = ""
+            self.sender_open_id = sender_open_id
+            sender_name = event.data.get("sender_name")
+            if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
+                    and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
+                self.sender_name = sender_name
         # Card-action callbacks are authenticated out-of-band transitions. They
         # may complete an interaction while Hermes is already preparing the next
         # batch clarify request, so they must not consume the transport sequence
@@ -273,6 +306,7 @@ class CardSession:
             if mode == "replace":
                 normalized = normalize_stream_text(raw_text)
                 self.thinking_text = normalized
+                update_thinking(self, normalized, mode)
             elif mode == "append_block":
                 text = normalize_stream_text(raw_text).strip()
                 if text:
@@ -280,29 +314,29 @@ class CardSession:
                         self.thinking_text = self.thinking_text.rstrip() + "\n\n" + text
                     else:
                         self.thinking_text = text
+                    update_thinking(self, text, mode)
             else:
                 delta = self.thinking_normalizer.feed(raw_text)
                 if delta:
                     self.thinking_text += delta
+                    update_thinking(self, delta, mode)
         elif event.event == "answer.delta":
             delta = self.answer_normalizer.feed(str(event.data.get("text", "")))
             if delta:
                 if self._answer_archive_index is not None:
                     self._archive_current_answer_to_reasoning()
                 self.answer_text += delta
+                append_answer(self, delta)
         elif event.event == "tool.updated":
-            raw_preview = event.data.get("detail")
-            if isinstance(raw_preview, str):
-                normalized_preview = normalize_stream_text(raw_preview).strip()
-                if normalized_preview:
-                    self.latest_tool_preview = _runtime_tool_summary(
-                        event.data.get("name"), normalized_preview
-                    )
             tool_id = event.data.get("tool_id")
             if not isinstance(tool_id, str) or not tool_id:
                 self.updated_at = time.time()
                 self.refresh_display_status_source()
                 return True
+            call_id = event.data.get("call_id")
+            call_id = call_id if isinstance(call_id, str) and 0 < len(call_id) <= 256 else ""
+            if call_id:
+                tool_id = call_id
             if self.answer_text and self._answer_archive_index is None:
                 self._answer_archive_index = self.timeline.entry_count
             name = event.data.get("name")
@@ -316,19 +350,39 @@ class CardSession:
                 previous_tool is not None
                 and previous_tool.status.strip().lower() in TERMINAL_TOOL_STATUSES
             )
+            same_call = bool(call_id and previous_tool is not None and previous_tool.call_id == call_id)
+            if same_call and previous_is_terminal and not is_terminal:
+                # A higher transport sequence can still contain a late start.
+                # Explicit call identity prevents terminal state/count regression.
+                self.updated_at = time.time()
+                self.refresh_display_status_source()
+                return True
+            raw_preview = event.data.get("detail")
+            if isinstance(raw_preview, str):
+                normalized_preview = normalize_stream_text(raw_preview).strip()
+                if normalized_preview:
+                    self.latest_tool_preview = _runtime_tool_summary(
+                        event.data.get("name"), normalized_preview
+                    )
             if previous_tool is None or (previous_is_terminal and not is_terminal):
                 started_at = None if is_terminal else event.created_at
             else:
                 started_at = previous_tool.started_at
             detail_data = event.data
+            resolved_duration_ms = _tool_duration_milliseconds(event.data)
+            if same_call and previous_is_terminal and resolved_duration_ms is None:
+                resolved_duration_ms = previous_tool.duration_ms
+                if resolved_duration_ms is not None:
+                    detail_data = dict(event.data, duration_ms=resolved_duration_ms)
             if (
                 is_terminal
-                and _tool_duration_milliseconds(event.data) is None
+                and resolved_duration_ms is None
                 and started_at is not None
                 and event.created_at >= started_at
             ):
                 detail_data = dict(event.data)
-                detail_data["duration_ms"] = (event.created_at - started_at) * 1000
+                resolved_duration_ms = (event.created_at - started_at) * 1000
+                detail_data["duration_ms"] = resolved_duration_ms
             resolved_detail = _tool_detail_from_event_data(detail_data)
             if (
                 is_terminal
@@ -339,7 +393,7 @@ class CardSession:
                     previous_tool.detail,
                     resolved_detail,
                 )
-            if previous_tool is None or previous_is_terminal:
+            if previous_tool is None or (previous_is_terminal and not same_call):
                 self._tool_call_count += 1
                 call_ordinal = self._tool_call_count
             elif previous_tool.ordinal:
@@ -354,8 +408,11 @@ class CardSession:
                 detail=resolved_detail,
                 started_at=started_at,
                 ordinal=call_ordinal,
+                duration_ms=resolved_duration_ms,
+                call_id=call_id,
             )
-            self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail)
+            self.timeline.record_tool(tool_id, resolved_name, resolved_status, resolved_detail,
+                                      replace_terminal=same_call)
         elif event.event == "subagent.updated":
             child_id = event.data.get("child_id")
             if type(child_id) is str and child_id.strip():
@@ -397,15 +454,6 @@ class CardSession:
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()
-            sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
-            if sender_open_id:
-                if self.sender_open_id != sender_open_id:
-                    self.sender_name = ""
-                self.sender_open_id = sender_open_id
-                sender_name = event.data.get("sender_name")
-                if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
-                        and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
-                    self.sender_name = sender_name
             reply_to_message_id = event.data.get("reply_to_message_id")
             if isinstance(reply_to_message_id, str):
                 self.reply_to_message_id = reply_to_message_id
@@ -473,15 +521,6 @@ class CardSession:
             self.latest_tool_preview = ""
             if completed_answer.strip():
                 self.answer_text = completed_answer
-            sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
-            if sender_open_id:
-                if self.sender_open_id != sender_open_id:
-                    self.sender_name = ""
-                self.sender_open_id = sender_open_id
-                sender_name = event.data.get("sender_name")
-                if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
-                        and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
-                    self.sender_name = sender_name
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
                 self.delivery_kind = delivery_kind.strip()
@@ -521,11 +560,45 @@ class CardSession:
             self.status = "failed"
             error = event.data.get("error")
             error = error if isinstance(error, str) and error.strip() else "消息处理失败"
+            self._adopt_failure_metrics(event.data)
             partial = self._adopt_in_progress_content()
             self.answer_text = partial + "\n\n> " + error if partial else error
+        if event.event in {"message.completed", "message.failed"}:
+            record_terminal(self, event)
+        if self.display_segment and event.event in {"tool.updated", "subagent.updated"}:
+            self.display_segment["has_output"] = bool(
+                self.display_segment["has_output"] or event.data.get("tool_id") or event.data.get("child_id")
+            )
         self.updated_at = time.time()
         self.refresh_display_status_source()
         return True
+
+    def _adopt_failure_metrics(self, data: dict[str, Any]) -> None:
+        """Adopt measured failure fields without erasing known values with placeholders."""
+        model = data.get("model")
+        if isinstance(model, str) and model.strip() and model.strip().lower() != "unknown":
+            self.model = model.strip()
+        for field_name, keys in (
+            ("tokens", ("input_tokens", "output_tokens")),
+            ("context", ("used_tokens", "max_tokens")),
+        ):
+            incoming = data.get(field_name)
+            if not isinstance(incoming, dict):
+                continue
+            current = dict(getattr(self, field_name))
+            for key in keys:
+                value = incoming.get(key)
+                if type(value) is int and value > 0:
+                    current[key] = value
+            setattr(self, field_name, current)
+        value = data.get("duration")
+        if not isinstance(value, bool):
+            try:
+                duration = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return
+            if math.isfinite(duration) and duration > 0:
+                self.duration = duration
 
     def _adopt_in_progress_content(self) -> str:
         """Promote the content the user was reading, so a failure cannot erase it.
@@ -608,6 +681,8 @@ class CardSession:
         ).strip()
         self.active_interaction.user_name = str(data.get("user_name") or "").strip()
         self.active_interaction.runtime_admission = None
+
+        begin_continuation(self)
 
     def _fail_interaction(self, data: dict[str, Any]) -> None:
         interaction_id = str(data.get("interaction_id") or "").strip()
@@ -883,19 +958,25 @@ def _tool_duration_text(data: dict[str, Any]) -> str:
 
 def _tool_duration_milliseconds(data: dict[str, Any]) -> float | None:
     for name in ("duration_ms", "elapsed_ms", "tool_duration_ms"):
+        if isinstance(data.get(name), bool):
+            continue
         try:
             value = float(data.get(name))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if value >= 0:
+        if math.isfinite(value) and value >= 0:
             return value
     for name in ("duration", "elapsed", "tool_duration"):
+        if isinstance(data.get(name), bool):
+            continue
         try:
             value = float(data.get(name))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if value >= 0:
-            return value * 1000
+        if math.isfinite(value) and value >= 0:
+            milliseconds = value * 1000
+            if math.isfinite(milliseconds):
+                return milliseconds
     return None
 
 

@@ -1543,6 +1543,11 @@ class PluginRuntime:
                 "profile_id": turn.ingress.profile_id,
                 "profile_source": turn.ingress.profile_source,
                 "reply_to_message_id": turn.ingress.reply_to_message_id,
+                # Gateway admission owns interruption scope. Never send the raw
+                # session key (which may include user/chat identifiers).
+                "execution_scope": sha256(
+                    turn.ingress.gateway_session_key.encode("utf-8")
+                ).hexdigest(),
             },
         )
         with started_transport.gate:
@@ -2035,6 +2040,7 @@ class PluginRuntime:
         status = "pending" if pending else self._tool_status(kwargs.get("status"))
         data: dict[str, object] = {
             "tool_id": tool_call_id,
+            "call_id": tool_call_id,
             "name": self._preview(tool_name),
             "status": status,
         }
@@ -2855,6 +2861,7 @@ def bootstrap_plugin_runtime(ctx: Any) -> None:
                 event_url=config.event_url,
                 package_version=__version__,
                 active_work_snapshot_provider=_runtime_activity_provider(runtime),
+                gateway_admission_dependent=True,
             )
             candidate_lease = lease
             if lease is None:

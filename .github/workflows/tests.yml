@@ -178,6 +178,8 @@ jobs:
           tests/unit/test_notice_routing_regressions.py
           tests/unit/test_lifecycle.py
           tests/unit/test_render.py
+          tests/unit/test_stream_thinking_to_body.py
+          tests/unit/test_331_adapted.py
           tests/unit/test_runner.py
           tests/unit/test_session.py
           tests/unit/test_status.py
@@ -240,7 +242,7 @@ jobs:
           python -m pip install -e ".[test]"
           python -m pip install "lark-oapi==1.6.8" "websockets==15.0.1"
       - name: Test live handler compatibility
-        run: python -m pytest tests/integration/test_feishu_sdk_compat.py -q
+        run: python -m pytest tests/integration/test_feishu_sdk_compat.py tests/unit/test_cold_start_card_callbacks.py -q
 
   docker-compose-runtime-smoke:
     runs-on: ubuntu-latest
@@ -253,7 +255,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v4.6.8
+          HFC_VERSION: v1.0.0
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-

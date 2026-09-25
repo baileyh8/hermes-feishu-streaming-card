@@ -1,14 +1,13 @@
-# V4.6.8：CardKit 重启恢复与 230011 死循环修复
+# V4.6.8：macOS 安装与恢复提示
 
-- CardKit 实体重启恢复：sidecar 重启后内存中的 entity 映射丢失，update 回退到 plain-JSON PATCH 被飞书拒绝（400/230011 "not a plain JSON card"）。现在从消息体中的 card 引用（`{"type":"card","data":{"card_id":...}}`）重建 entity，仅在 `schema == "2.0"` 的 CardKit 卡上触发，legacy plain-JSON 卡不付出额外 lookup 代价。
-- 230011 死循环终止：飞书返回 230011 "The message was withdrawn" 时目标消息已被撤回，继续重试只会消耗更新预算。现在立即终止重试，调用方按终局失败清理 session 状态。
-- Patcher 容忍 Hermes 0.21.x 新增的 `_release_turn_marker` if 块：该块是幂等的，不打乱 ledger 契约，升级时 AST 校验不再拒绝。
-- 版本标记文件（`pyproject.toml`、`config.yaml.example`、`docker-compose.example.yml`、CI workflow、文档）全部对齐 4.6.8。
+macOS 的 `setup` 在持久服务不可用时明确说明平台限制，不再建议执行仅支持 Linux systemd 的 `enable`。需要登录后启动时，用户可自行配置一次性的 LaunchAgent：使用 `RunAtLoad` 调用 `hermes-feishu-card start`，不要启用 `KeepAlive`，并使用实际的绝对程序、config、env-file 和 Hermes 路径。HFC 不负责安装、卸载或管理 launchd 服务。
 
-## 恢复边界
+缺少可验证 pidfile 时仍拒绝管理已有进程，不能据此推断进程由 launchd 托管。只有确认实际 owner 和 LaunchAgent label 后，才采用相应的手动停止步骤；其他进程由其实际管理者停止。一次性 `start` 会创建 detached 子进程，停止 LaunchAgent 本身不等于已经停止该子进程。中英文安装安全说明同步解释这两种路径。
 
-恢复仅重建 in-memory entity（card_id + 空 card），不恢复流式状态或执行栈。已撤回消息（230011）标记为 unrecoverable，后续 update 跳过 lookup。Entity 上限 128 条不变。
+本版仅调整 CLI 平台分支提示、文档和版本标记，保留 Linux 提示、PID/token/health ownership 校验及现有卡片行为。感谢 [coder-zhw](https://github.com/coder-zhw) 提供 [PR #347](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/347) 的 macOS 现场分析、实现和回归测试。
 
-## 验证
+## 验收范围
 
-4 项回归测试（`test_cardkit`、`test_feishu_client`、`test_package_metadata`、`test_docs`）全部通过；全量 unit suite 无新增失败（60 个预存环境失败与 HEAD 一致，另修复 1 个 `test_persistent_service` 预存失败）。
+新增验收面为 CLI 的 macOS/Linux 平台分支、未知进程 owner 的恢复提示，以及普通安装包中的相同命令路径。完整测试、平台 CI、精确合并提交、发布资产校验和公开 tag 普通安装仍是发版门禁，最终结果按 GitHub Release 的交付记录登记。
+
+本版不以命令提示测试证明真实 LaunchAgent 安装、登录后启动或停服成功，也不新增手机视觉或飞书卡片交互验收结论。生产上线结果与安装包验证分开记录。

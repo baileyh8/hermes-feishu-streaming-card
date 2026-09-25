@@ -60,6 +60,7 @@ from .lifecycle import (
     cleanup_runtime_state,
 )
 from .metrics import SidecarMetrics
+from .notice_lifecycle import NoticeScope, RestartNoticeRegistry
 from .native_handoff import (
     NativeHandoffRecord,
     NativeHandoffStore,
@@ -86,12 +87,17 @@ from .render import (
     CardRenderResult,
     _format_duration,
     _is_initial_loading,
+    _primary_text_for_session,
+    _render_limit_handoff_card,
     render_card_result,
     render_legacy_interaction_callback_card,
     render_terminal_limit_handoff_card,
 )
 from .process import state_dir
 from .session import CardSession
+from .approval_receipts import approval_receipt_fingerprint
+from .display_segments import display_view, needs_continuation
+from .legacy_owner import legacy_owner_body, static_legacy_receipt
 from .status import StatusConfig
 from .subscription_usage import fetch_codex_subscription_usage
 from .install.detect import HermesDetection, detect_hermes
@@ -151,12 +157,18 @@ INTERACTION_RESULT_SESSION_KEYS_KEY = web.AppKey(
 MESSAGE_BOT_IDS_KEY = web.AppKey("message_bot_ids", dict)
 SESSION_CARD_CONFIGS_KEY = web.AppKey("session_card_configs", dict)
 HEARTBEAT_RECALL_TASKS_KEY = web.AppKey("heartbeat_recall_tasks", dict)
-# A heartbeat card is reassurance while the agent works, not a permanent record: the core edits
-# it every agent.gateway_notify_interval, and each update re-arms this deadline. Once the updates
-# stop — the turn ended, or the run died — the card is recalled so the thread keeps only the
-# conversation. It must comfortably exceed the heartbeat interval, or a slow interval would recall
-# the card mid-run and the next tick would post a fresh one (visible as duplicates).
-HEARTBEAT_RECALL_SECONDS = 300.0
+# A heartbeat card is reassurance while the agent works, not a permanent record: every update
+# re-arms this deadline, so the card survives exactly as long as the heartbeats keep coming.
+#
+# Maintainer note (contract change): this was 300s, sized to "comfortably exceed the heartbeat
+# interval" so that a slow interval could not recall the card mid-run. That reasoning only applies
+# while the card is the ONLY status surface — it is not: the turn's own card shows the live tool row
+# throughout. The user asked for the heartbeat to behave like the other transient notices ("文案之前
+# 发出去 15 秒会撤回"), and re-arming makes the shorter window safe anyway: while updates flow the
+# deadline keeps moving, so the card is only withdrawn once they STOP for this long. The 15s matches
+# EPHEMERAL_RECALL_DEFAULT_SECONDS below (the "↪ Redirected" acknowledgement), so both
+# read-once-then-gone surfaces now share one window.
+HEARTBEAT_RECALL_SECONDS = 15.0
 # Acknowledgements that are read once and then only clutter the thread — the core's
 # "↪ Redirected current run …" notice — are withdrawn shortly after they land. The core cannot do
 # it itself (its Feishu adapter has no delete implementation: BasePlatformAdapter.delete_message
@@ -167,6 +179,9 @@ EPHEMERAL_RECALL_DEFAULT_SECONDS = 15.0
 EPHEMERAL_RECALL_MAX_SECONDS = 600.0
 EPHEMERAL_RECALL_MAX_PENDING = 1024
 EPHEMERAL_RECALL_TASKS_KEY = web.AppKey("ephemeral_recall_tasks", dict)
+EPHEMERAL_RECALL_WAKE_KEY = web.AppKey("ephemeral_recall_wake", dict)
+OWNED_NOTICE_TTL_SECONDS = 15.0
+RESTART_NOTICES_KEY = web.AppKey("restart_notices", RestartNoticeRegistry)
 BOT_ROUTER_KEY = web.AppKey("bot_router", Any)
 ROUTING_DIAGNOSTICS_KEY = web.AppKey("routing_diagnostics", dict)
 PROFILE_DIAGNOSTICS_KEY = web.AppKey("profile_diagnostics", dict)
@@ -510,7 +525,7 @@ def create_app(
     if event_auth_required and not valid_transport_root:
         raise ValueError("event authentication requires a private transport root")
     app = web.Application()
-    card_config = card_config or {}
+    card_config = merge_card_config({}, card_config)
     app[FEISHU_CLIENT_KEY] = feishu_client
     app[SESSIONS_KEY] = {}
     app[FEISHU_MESSAGE_IDS_KEY] = {}
@@ -573,6 +588,8 @@ def create_app(
     app[CARD_ANIMATION_TASKS_KEY] = {}
     app[HEARTBEAT_RECALL_TASKS_KEY] = {}
     app[EPHEMERAL_RECALL_TASKS_KEY] = {}
+    app[EPHEMERAL_RECALL_WAKE_KEY] = {}
+    app[RESTART_NOTICES_KEY] = RestartNoticeRegistry()
     app[NATIVE_HANDOFF_STORE_KEY] = (
         native_handoff_store
         if native_handoff_store is not None
@@ -648,6 +665,14 @@ def create_app(
     app.router.add_post("/events", _events)
     app[SESSION_STORE_KEY] = None
     if session_store_directory is not None:
+        app[RESTART_NOTICES_KEY] = RestartNoticeRegistry(
+            directory=session_store_directory,
+            identity_for_scope=lambda scope: _checkpoint_client_identity(app, scope.bot_id or None)
+                if _policy_decision(app, scope.chat_id, profile_id=scope.profile_id).disposition == CARD_DISPOSITION
+                else None,
+            state_changed=lambda state: app[DIAGNOSTICS_KEY].__setitem__("restart_notice_store_state", state),
+        )
+    if session_store_directory is not None:
         from .session_store import SessionStore
         try:
             app[SESSION_STORE_KEY] = SessionStore(session_store_directory)
@@ -655,6 +680,7 @@ def create_app(
         except (OSError, ValueError):
             app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "unavailable"
     app.on_startup.append(_restore_card_checkpoints)
+    app.on_startup.append(_restore_owned_notice_timers)
     app.on_cleanup.append(_stop_card_restore)
     app.on_startup.append(_start_runtime_cleanup)
     app.on_startup.append(_start_runtime_integrity_monitor)
@@ -2049,6 +2075,7 @@ async def _commands(request: web.Request) -> web.Response:
             thread_id=thread_id or None,
             reply_to_message_id=reply_to_message_id or message_id,
             operation_id=operation_id,
+            profile_id=_policy_profile_id(event),
         )
     )
     task.add_done_callback(_log_background_task_failure)
@@ -2067,6 +2094,7 @@ async def _send_command_card(
     thread_id: str | None = None,
     reply_to_message_id: str | None = None,
     operation_id: str = "",
+    profile_id: str | None = None,
 ) -> str | None:
     delivery = await _send_card_for_app(
         app,
@@ -2077,6 +2105,7 @@ async def _send_command_card(
         reply_to_message_id=reply_to_message_id,
         delivery_key=operation_id or reply_to_message_id or "command",
         delivery_kind="command",
+        profile_id=profile_id,
     )
     if not delivery.delivered:
         logger.warning(
@@ -4469,6 +4498,26 @@ def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
     # tool updates) whose Hermes-internal message_id may differ.
     if event.event == "message.started":
         return direct_key
+    if _is_independent_notice_event(event):
+        # An independent notice only joins a session that is ITSELF a notice session — never the
+        # turn's. That distinction is the whole fix, and both halves are load-bearing:
+        #
+        #   * orphaned heartbeat (no turn session for the anchor yet): the notice's own card IS the
+        #     card the turn will complete onto, so the alias MUST keep working — that is
+        #     test_orphaned_heartbeats_update_one_running_notice_card.
+        #   * live turn (a session already owns the anchor): resolving through the alias folds the
+        #     ⏳ Working line into the turn's card, where nothing can ever withdraw it —
+        #     /recall/schedule refuses an owned session card (409) and the card recall path wants
+        #     delivery_kind=="notice". The user reported exactly that ("变成卡片的时候好像不会自动
+        #     撤销了"). The notice takes its own key instead.
+        for alias_key in _session_alias_keys_for_event(event):
+            active_key = _active_session_key(app, alias_key)
+            if active_key is None:
+                continue
+            existing = app[SESSIONS_KEY].get(active_key)
+            if existing is not None and existing.delivery_kind == "notice":
+                return active_key
+        return direct_key
     for alias_key in _session_alias_keys_for_event(event):
         active_key = _active_session_key(app, alias_key)
         if active_key is not None:
@@ -4481,6 +4530,15 @@ def _register_session_aliases(
     event: SidecarEvent,
     canonical_key: str,
 ) -> None:
+    if _is_independent_notice_event(event):
+        # Register the anchor alias ONLY while nothing else owns it. The mirror of
+        # _resolve_session_key's guard, and it exists for the reverse hazard: _active_session_key
+        # consults the alias table, so an alias pointing the TURN's key (reply_to_message_id) at this
+        # notice's session would let the turn's later events drift into the heartbeat's card.
+        # When the anchor is already owned — a live turn — the notice stays separate instead.
+        if any(app[SESSIONS_KEY].get(key) is not None
+               for key in _session_alias_keys_for_event(event)):
+            return
     aliases: Dict[str, str] = app[SESSION_ALIASES_KEY]
     keys = {
         _session_key(event),
@@ -4647,6 +4705,7 @@ async def _restore_card_checkpoints(app):
             continue
         if key != _session_key(probe):
             continue
+        session.route_profile_id = profile or "default"
         app[SESSIONS_KEY][key] = session
         app[FEISHU_MESSAGE_IDS_KEY][key] = record['message_id']
         app[MESSAGE_BOT_IDS_KEY][key] = record['bot_id']
@@ -4668,6 +4727,8 @@ async def _restore_card_checkpoints(app):
                 display.status = 'failed'
                 display.display_status = ''
                 display.answer_text += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
+                if display.display_segment.get("active"):
+                    display.display_segment["answer"] += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
                 display.timeline.complete()
             try:
                 updated = await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
@@ -4690,6 +4751,7 @@ async def _stop_card_restore(app):
 async def _apply_event_locked(request, event, *, advance_sequence=True):
     result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
     key = _resolve_session_key(request.app, event)
+    _remember_legacy_owner_receipt(request.app, key)
     profile = _policy_profile_id(event)
     if profile is not None:
         _checkpoint_session(request.app, key, profile)
@@ -5055,6 +5117,7 @@ async def _apply_event_locked_inner(
             conversation_id=event.conversation_id,
             message_id=event.message_id,
             chat_id=event.chat_id,
+            route_profile_id=_policy_profile_id(event) or "default",
         )
         if preview.apply(event, advance_sequence=advance_sequence):
             preview_result = _render_session_card_result_for_app(
@@ -5089,6 +5152,7 @@ async def _apply_event_locked_inner(
             conversation_id=event.conversation_id,
             message_id=event.message_id,
             chat_id=event.chat_id,
+            route_profile_id=_policy_profile_id(event) or "default",
         )
         sessions[session_key] = session
         applied = session.apply(event)
@@ -5127,6 +5191,7 @@ async def _apply_event_locked_inner(
                 reply_in_thread=_reply_in_thread_for_event(event),
                 delivery_key=session_key,
                 delivery_kind=_delivery_kind(event) or "chat",
+                profile_id=_policy_profile_id(event),
             )
             if not delivery.delivered:
                 _cleanup_failed_session_state(
@@ -5187,6 +5252,7 @@ async def _apply_event_locked_inner(
                 conversation_id=event.conversation_id,
                 message_id=event.message_id,
                 chat_id=event.chat_id,
+                route_profile_id=_policy_profile_id(event) or "default",
             )
             sessions[session_key] = session
             applied = session.apply(event)
@@ -5307,6 +5373,7 @@ async def _apply_event_locked_inner(
                     delivery_key=session_key,
                     delivery_kind=_delivery_kind(event)
                     or ("notice" if event.event == "system.notice" else "chat"),
+                    profile_id=_policy_profile_id(event),
                 )
                 if not delivery.delivered:
                     _cleanup_failed_session_state(
@@ -5330,6 +5397,8 @@ async def _apply_event_locked_inner(
                 message_id = str(delivery.message_id)
                 feishu_message_ids[session_key] = message_id
                 message_bot_ids[session_key] = route.bot_id
+                if render_result.card.get("schema") != "2.0":
+                    session.legacy_owner_receipt = static_legacy_receipt(render_result.card)
                 if _is_heartbeat_notice(event):
                     # A heartbeat is transient by nature: arm the recall deadline now and re-arm it
                     # on every later edit, so it disappears once it stops carrying news.
@@ -5348,6 +5417,8 @@ async def _apply_event_locked_inner(
                     bot_id=route.bot_id,
                 )
                 if event.event == "interaction.requested":
+                    if session.active_interaction is not None:
+                        session.active_interaction.feishu_message_id = message_id
                     _store_interaction_result(request.app, session)
                 if event_is_terminal:
                     _store_card_summary(request.app, event, session, message_id)
@@ -5409,6 +5480,12 @@ async def _apply_event_locked_inner(
             session,
             now=interaction_checked_at,
         )
+    continuation_predecessor = (
+        copy.deepcopy(display_view(session))
+        if session.display_segment.get("pending")
+        and event.event in {"answer.delta", "thinking.delta", "tool.updated", "subagent.updated", "message.completed", "message.failed"}
+        else None
+    )
     applied = session.apply(event, advance_sequence=advance_sequence)
     if applied:
         _refresh_session_display_status(request, session)
@@ -5431,6 +5508,16 @@ async def _apply_event_locked_inner(
     handoff_record: NativeHandoffRecord | None = None
     if applied and not terminal_already_handled:
         render_result = _render_session_card_result_for_app(request.app, session)
+        if needs_continuation(session, event) and render_result.disposition == "card":
+            await _open_display_continuation(
+                request, session_key, session, render_result.card,
+                profile_id=_policy_profile_id(event),
+                predecessor_snapshot=continuation_predecessor,
+            )
+            feishu_message_id = feishu_message_ids.get(session_key)
+            render_result = _render_session_card_result_for_app(request.app, session)
+        if event.event != "interaction.requested":
+            render_result = _existing_owner_render_result(request.app, session, render_result, session_key=session_key)
         if event_is_terminal and render_result.disposition == "native":
             handoff_record, handoff_created = _begin_native_handoff(
                 request.app,
@@ -5566,6 +5653,7 @@ async def _apply_event_locked_inner(
             ),
             delivery_key=f"{session_key}:interaction:{interaction_id}",
             delivery_kind="interaction",
+            profile_id=_policy_profile_id(event),
         )
         delivered_interaction = session.active_interaction
         if delivery.delivered and delivered_interaction is not None:
@@ -5619,6 +5707,39 @@ async def _apply_event_locked_inner(
         ), None
     if applied and event.event.startswith("interaction."):
         _store_interaction_result(request.app, session)
+        # Callback responses replace their own legacy card in Feishu. Gateway
+        # text completions and failure events have no such response: settle the
+        # actual auxiliary message explicitly rather than leaving dead controls.
+        receipt = session.active_interaction
+        if (receipt is not None and receipt.feishu_message_id
+                and receipt.status in {"completed", "failed"}
+                and (event.event == "interaction.failed"
+                     or event.event == "interaction.completed" and advance_sequence)):
+            receipt_snapshot = copy.deepcopy(session)
+            receipt_snapshot.display_segment = {}
+            # This snapshot targets the auxiliary receipt, not the historical
+            # body owner. A restored legacy owner must not change its dialect.
+            receipt_snapshot.legacy_owner_receipt = {}
+            if _interaction_mode_for_session_key(request.app, session_key) == "callback":
+                receipt_card = _render_interaction_callback_card_for_app(
+                    request.app, receipt_snapshot, session_key=session_key
+                )
+            else:
+                receipt_card = _render_static_display_card(
+                    request.app, receipt_snapshot, session_key=session_key,
+                    note="交互结果已记录，后续进展以回复卡为准",
+                    display_state="display_receipt",
+                )
+                if receipt_card is None:
+                    receipt_card = _render_session_card_for_app(
+                        request.app, copy.deepcopy(session), session_key=session_key
+                    )
+            updated = await _update_card_for_app(
+                request.app, receipt.feishu_message_id, receipt_card,
+                message_bot_ids.get(session_key),
+                is_current=lambda: sessions.get(session_key) is session and session.active_interaction is receipt,
+            )
+            request.app[DIAGNOSTICS_KEY]["last_interaction_receipt_update"] = "delivered" if updated else "failed"
     if event_is_terminal:
         request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
             "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -5645,6 +5766,7 @@ async def _apply_event_locked_inner(
         is_terminal = event_is_terminal
         controller = _flush_controller_for_session(request.app, session_key)
         bot_id = message_bot_ids.get(session_key)
+        owner_generation = session.display_segment.get("generation", 0)
         _ensure_card_animation(
             request.app,
             session_key=session_key,
@@ -5658,6 +5780,8 @@ async def _apply_event_locked_inner(
             # Keep recovery content and routing bound to the accepted old turn.
             latest_session = session if is_terminal else sessions.get(session_key)
             if latest_session is None:
+                return False
+            if latest_session is not session or session.display_segment.get("generation", 0) != owner_generation:
                 return False
             # Freeze the card while an interaction is pending: Feishu card
             # updates are full replacements, so any PATCH resets the
@@ -5673,11 +5797,43 @@ async def _apply_event_locked_inner(
             ):
                 return False
             latest_card = render_result.card
+            if (str(event.event).startswith("interaction.")
+                    and interaction is not None
+                    and interaction.feishu_message_id
+                    and interaction.feishu_message_id != feishu_message_id
+                    and (latest_session.legacy_owner_receipt
+                         or _interaction_mode_for_session_key(request.app, session_key) == "text")):
+                # The dedicated receipt was updated above. Do not repaint
+                # an older receipt/owner with this newer question's state.
+                return True
+            if (str(event.event).startswith("interaction.")
+                    and interaction is not None
+                    and interaction.feishu_message_id == feishu_message_id
+                    and _interaction_mode_for_session_key(request.app, session_key) == "callback"):
+                latest_card = _render_interaction_callback_card_for_app(
+                    request.app, latest_session, session_key=session_key
+                )
+            elif (str(event.event).startswith("interaction.")
+                    and interaction is not None
+                    and interaction.status not in {"pending", "paused"}
+                    and interaction.feishu_message_id == feishu_message_id
+                    and _interaction_mode_for_session_key(request.app, session_key) == "text"):
+                latest_card = _render_static_display_card(
+                    request.app, copy.deepcopy(latest_session), session_key=session_key,
+                    note="交互结果已记录，后续进展以回复卡为准",
+                    display_state="display_receipt",
+                ) or latest_card
             if is_terminal and render_result.disposition == "card":
+                try:
+                    await _settle_approval_displays(request.app, session_key, latest_session)
+                except Exception:
+                    # Optional display cleanup must never withhold the final answer.
+                    request.app[DIAGNOSTICS_KEY]['last_approval_display_cleanup'] = 'retained'
                 await _populate_subscription_usage(request.app, latest_session)
                 populated_result = _render_session_card_result_for_app(
                     request.app, latest_session
                 )
+                populated_result = _existing_owner_render_result(request.app, latest_session, populated_result, session_key=session_key)
                 if populated_result.disposition == "card":
                     latest_card = populated_result.card
                 else:
@@ -5688,6 +5844,7 @@ async def _apply_event_locked_inner(
                     bounded_result = _render_session_card_result_for_app(
                         request.app, latest_session
                     )
+                    bounded_result = _existing_owner_render_result(request.app, latest_session, bounded_result, session_key=session_key)
                     if bounded_result.disposition == "card":
                         latest_card = bounded_result.card
             updated = await _update_card_for_app(
@@ -5696,6 +5853,7 @@ async def _apply_event_locked_inner(
                 latest_card,
                 bot_id,
                 notice_update=event.event == "system.notice",
+                is_current=lambda: session.display_segment.get("generation", 0) == owner_generation,
             )
             if not updated and is_terminal:
                 updated = await _retry_terminal_update(
@@ -5814,6 +5972,194 @@ async def _apply_event_locked_inner(
     return web.json_response(response_payload), post_lock_task
 
 
+async def _open_display_continuation(request, session_key, session, card, *, profile_id,
+                                     predecessor_snapshot=None):
+    """Commit a new display owner only after a confirmed, same-route send.
+
+    Called under the turn lock. A failed/uncertain create gets no per-delta
+    retries with fresh identities; the existing owner retains the full content.
+    """
+    app = request.app
+    state = session.display_segment
+    old_animation = app[CARD_ANIMATION_TASKS_KEY].pop(session_key, None)
+    if old_animation is not None:
+        old_animation.cancel()
+        await asyncio.gather(old_animation, return_exceptions=True)
+    profile = profile_id or ""
+    previous_message_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+    # The accepted interaction already checkpointed the boundary. Do not save
+    # a newly applied terminal event before its platform create has a result.
+    delivery = await _send_card_for_app(
+        app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
+        thread_id=state["thread_id"] or None,
+        reply_to_message_id=state["reply_to_message_id"] or session.reply_to_message_id or None,
+        reply_in_thread=state["reply_in_thread"] or session.reply_in_thread,
+        delivery_key=f"{session_key}:continuation:{state['interaction_id']}:{state['boundary_sequence']}",
+        delivery_kind="chat",
+        profile_id=profile_id,
+    )
+    state["pending"] = False
+    if delivery.delivered:
+        state["generation"] += 1
+        state["active"] = True
+        if state["reply_in_thread"] and state["reply_to_message_id"]:
+            session.reply_to_message_id = state["reply_to_message_id"]
+        session.legacy_owner_receipt = {}
+        app[FEISHU_MESSAGE_IDS_KEY][session_key] = delivery.message_id
+        app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = "delivered"
+    else:
+        state["failed"] = True
+        app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = delivery.outcome
+    _checkpoint_session(app, session_key, profile)
+    if delivery.delivered and predecessor_snapshot is not None:
+        await _retire_continuation_predecessor(
+            app, session_key, previous_message_id, predecessor_snapshot,
+            bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
+        )
+
+
+def _render_static_display_card(app, snapshot, *, session_key, note, display_state):
+    """Render a private display copy, without mutating execution or deleting evidence."""
+    try:
+        snapshot.display_segment = {}
+        snapshot.runtime_phase_text = ""
+        snapshot.latest_tool_preview = ""
+        snapshot.display_status = "waiting"
+        snapshot.display_status_source = "explicit"
+        snapshot.timeline.record_answer_started()
+        from .card_timeline import TERMINAL_TOOL_STATUSES, TERMINAL_SUBAGENT_STATUSES
+        for tool in snapshot.tools.values():
+            if tool.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
+                tool.status = display_state
+        for entry in snapshot.timeline.snapshot():
+            if entry.kind == "tool" and entry.status.strip().lower() not in TERMINAL_TOOL_STATUSES:
+                entry.status = display_state
+            elif entry.kind == "subagent" and entry.status.strip().lower() not in TERMINAL_SUBAGENT_STATUSES:
+                entry.status = display_state
+        result = _render_session_card_result_for_app(app, snapshot, session_key=session_key)
+        if result.disposition != "card" or result.card.get("schema") != "2.0":
+            return None  # Do not replace preserved content with a limit placeholder.
+        card = result.card
+        card.setdefault("config", {})["streaming_mode"] = False
+        card["config"].setdefault("summary", {})["content"] = note
+        configured_title = _session_card_render_context(app, snapshot, session_key=session_key)[2]
+        title = {"tag":"plain_text", "content":"↪ " + configured_title}
+        card["header"] = {"template":"blue", "title":title,
+                          "subtitle":{"tag":"plain_text", "content":note}}
+        for element in card.get("body", {}).get("elements", []):
+            if element.get("element_id") == "footer":
+                element["content"] = note
+        if not inspect_card_limits(card).safe:
+            return None
+        return card
+    except Exception:
+        return None
+
+
+async def _retire_continuation_predecessor(app, session_key, message_id, snapshot, *, bot_id):
+    """Freeze a confirmed handoff without claiming that the whole turn succeeded.
+
+    Adapted from PR #339's predecessor-close proposal. Keep the pre-output
+    snapshot and decision receipt; a sole legacy owner already has a static
+    receipt and must never receive a schema-2 PATCH.
+    """
+    if (not message_id or message_id == app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+            or snapshot.legacy_owner_receipt):
+        return False
+    try:
+        card = _render_static_display_card(
+            app, snapshot, session_key=session_key,
+            note="本段已转入续答，后续进展与结果见下方新卡",
+            display_state="display_handoff",
+        )
+        if card is None:
+            return False
+        interaction = snapshot.active_interaction
+        owner = app[SESSIONS_KEY].get(session_key)
+        if (owner is not None and interaction is not None
+                and interaction.kind == "approval" and interaction.status == "completed"
+                and interaction.feishu_message_id and interaction.feishu_message_id != message_id
+                and len(owner.approval_retirements) < 32):
+            clean = copy.deepcopy(card)
+            elements = clean.get("body", {}).get("elements", [])
+            clean["body"]["elements"] = [e for e in elements
+                if not str(e.get("element_id", "")).startswith("interaction_review_")
+                and e.get("element_id") != "interaction_result"]
+            if len(elements) != len(clean["body"]["elements"]):
+                receipt = copy.deepcopy(interaction)
+                receipt.callback_token = ""
+                receipt.runtime_admission = None
+                owner.approval_retirements.append(dict(message_id=message_id,
+                    bot_id=bot_id, card=clean, interaction=receipt,
+                    fingerprint=approval_receipt_fingerprint(owner, receipt)))
+        updated = await _update_card_for_app(app, message_id, card, bot_id)
+        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "retired" if updated else "update_failed"
+        return bool(updated)
+    except Exception:
+        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "update_failed"
+        return False
+
+
+async def _settle_approval_displays(app, session_key, session):
+    """Only compact terminal duplicates after an explicit full-receipt PATCH.
+
+    This runs on the terminal flush, never on the button callback critical path.
+    Evidence stays in memory; restoring a display checkpoint grants no authority.
+    """
+    if session.status not in {"completed", "failed"}:
+        return
+    current = lambda: app[SESSIONS_KEY].get(session_key) is session
+    if not current():
+        return
+    records = list(session.approval_retirements)
+    interactions = [r["interaction"] for r in records]
+    if session.active_interaction is not None:
+        interactions.append(session.active_interaction)
+    confirmed = set()
+    attempted = set()
+    owner_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+    for interaction in interactions:
+        fingerprint = approval_receipt_fingerprint(session, interaction)
+        if (not fingerprint or fingerprint in attempted
+                or interaction.feishu_message_id == owner_id):
+            continue
+        attempted.add(fingerprint)
+        snapshot = copy.copy(session)
+        snapshot.approval_retirements = []
+        snapshot.active_interaction = copy.deepcopy(interaction)
+        snapshot.active_interaction.receipt_fingerprint = ""
+        snapshot.display_segment = {}
+        snapshot.legacy_owner_receipt = {}
+        if _interaction_mode_for_session_key(app, session_key) == "callback":
+            card = _render_interaction_callback_card_for_app(app, snapshot, session_key=session_key)
+        else:
+            card = _render_static_display_card(app, snapshot, session_key=session_key,
+                note="交互结果已记录，后续进展以回复卡为准", display_state="display_receipt")
+        if card is None or not inspect_card_limits(card).safe:
+            continue
+        updated = await _update_card_for_app(app, interaction.feishu_message_id, card,
+            app[MESSAGE_BOT_IDS_KEY].get(session_key), is_current=current)
+        if updated and current() and fingerprint == approval_receipt_fingerprint(session, interaction):
+            confirmed.add(fingerprint)
+    interaction = session.active_interaction
+    fingerprint = approval_receipt_fingerprint(session, interaction)
+    if fingerprint and fingerprint in confirmed:
+        interaction.receipt_fingerprint = fingerprint
+    remaining = []
+    for record in records:
+        if (record["fingerprint"] not in confirmed or not current()
+                or record["message_id"] == owner_id):
+            remaining.append(record)
+            continue
+        updated = await _update_card_for_app(app, record["message_id"], record["card"],
+            record["bot_id"], is_current=current)
+        if not updated:
+            remaining.append(record)
+    session.approval_retirements = remaining
+    app[DIAGNOSTICS_KEY]["last_approval_display_cleanup"] = (
+        "retained" if remaining else "confirmed" if confirmed else "not_applicable")
+
+
 async def _recover_terminal_card(
     app: web.Application,
     session_key: str,
@@ -5839,6 +6185,7 @@ async def _recover_terminal_card(
         reply_in_thread=session.reply_in_thread,
         delivery_key=f"{session_key}:{original_message_id}:{event.sequence}",
         delivery_kind="terminal-recovery",
+        profile_id=_policy_profile_id(event),
     )
     session.terminal_delivery_state = (
         "recovered" if delivery.outcome == "delivered" else delivery.outcome
@@ -5888,7 +6235,8 @@ async def _maybe_send_completion_notify(
     if notify_config.get("placement", "message") == "card":
         session.completion_notify_state = "sent"
         return
-    client = _client_for_bot(app, app[MESSAGE_BOT_IDS_KEY].get(session_key))
+    bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
+    client = _client_for_bot(app, bot_id)
     send_text = getattr(client, "send_text_message", None)
     if not callable(send_text):
         return
@@ -5902,6 +6250,12 @@ async def _maybe_send_completion_notify(
         else ""
     )
     text = f"{mention_prefix}✅ 本轮回复结束{suffix}"
+    notice_scope = _restart_notice_scope(
+        profile_id=_policy_profile_id(event), bot_id=bot_id, chat_id=session.chat_id,
+        thread_id=_thread_id_for_event(event) or (
+            session.reply_to_message_id if session.reply_in_thread else None),
+    )
+    notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     try:
         send_kwargs: dict[str, Any] = {
             "thread_id": _thread_id_for_event(event) or None,
@@ -5909,7 +6263,7 @@ async def _maybe_send_completion_notify(
         }
         if session.reply_in_thread:
             send_kwargs["reply_in_thread"] = True
-        await send_text(session.chat_id, text, **send_kwargs)
+        sent_message_id = await send_text(session.chat_id, text, **send_kwargs)
     except asyncio.CancelledError:
         session.completion_notify_state = "idle"
         raise
@@ -5920,6 +6274,8 @@ async def _maybe_send_completion_notify(
             exc.__class__.__name__,
         )
         return
+    if isinstance(sent_message_id, str) and sent_message_id:
+        _retire_restart_notices(app, notice_scope, notice_snapshot)
     session.completion_notify_state = "sent"
     logger.info(
         "completion notify sent (sender_hash=%s session_hash=%s)",
@@ -5994,6 +6350,24 @@ async def _finalize_interaction_predecessor(
         animation_task.cancel()
         await asyncio.gather(animation_task, return_exceptions=True)
 
+    previous_interaction = predecessor_snapshot.active_interaction
+    if (previous_interaction is not None
+            and previous_interaction.feishu_message_id == predecessor_message_id
+            and previous_interaction.status not in {"pending", "paused"}):
+        if _interaction_mode_for_session_key(app, session_key) == "callback":
+            card = _render_interaction_callback_card_for_app(
+                app, predecessor_snapshot, session_key=session_key
+            )
+        else:
+            card = _render_static_display_card(
+                app, predecessor_snapshot, session_key=session_key,
+                note="交互结果已记录，后续进展以回复卡为准",
+                display_state="display_receipt",
+            )
+        if card is None:
+            return False
+        return await _update_card_for_app(app, predecessor_message_id, card, bot_id)
+
     predecessor_snapshot.active_interaction = None
     predecessor_snapshot.latest_tool_preview = ""
     predecessor_snapshot.runtime_phase_text = ""
@@ -6042,6 +6416,7 @@ async def _complete_runtime_interaction_delivery(
         reply_in_thread=reservation.reply_in_thread,
         delivery_key=reservation.delivery_key,
         delivery_kind="interaction",
+        profile_id=reservation.session.route_profile_id,
     )
     if delivery.delivered:
         # Same reuse contract as the callback-mode card (#314).
@@ -6193,7 +6568,8 @@ def _card_animation_is_current(
     # Freeze loading/tool animations while an interaction is pending —
     # periodic PATCHes would reset the user's in-progress selections/input.
     interaction = session.active_interaction
-    if interaction is not None and interaction.status in {"pending", "paused"}:
+    if (session.display_segment.get("pending")
+            or (interaction is not None and interaction.status in {"pending", "paused"})):
         return False
     return app[SESSIONS_KEY].get(session_key) is session and (
         _is_initial_loading(session) or _has_running_tool(session)
@@ -6361,6 +6737,7 @@ def _schedule_paused_approval_card(app, session_key, session, interaction):
                 reply_in_thread=interaction.reply_in_thread or session.reply_in_thread,
                 delivery_key=f"{session_key}:approval-paused:{interaction.interaction_id}:{generation}",
                 delivery_kind="interaction",
+                profile_id=session.route_profile_id,
             )
         if (result.outcome != "delivered" and session.active_interaction is interaction
                 and interaction.status == "paused" and interaction.pause_generation == generation):
@@ -6788,11 +7165,65 @@ def _render_session_card_for_app(
     *,
     session_key: str | None = None,
 ) -> dict[str, Any]:
-    return _render_session_card_result_for_app(
+    result = _render_session_card_result_for_app(
         app,
         session,
         session_key=session_key,
-    ).card
+    )
+    return _existing_owner_render_result(app, session, result, session_key=session_key).card
+
+
+def _remember_legacy_owner_receipt(app, session_key):
+    session = app[SESSIONS_KEY].get(session_key)
+    if session is None or not session.legacy_owner_receipt:
+        return
+    interaction = session.active_interaction
+    if interaction is None or interaction.feishu_message_id != app[FEISHU_MESSAGE_IDS_KEY].get(session_key):
+        return
+    snapshot = copy.deepcopy(session)
+    if snapshot.active_interaction.status in {"pending", "paused"}:
+        # The live request still uses its original card. This static checkpoint
+        # is only the safe fallback after a restart, where its waiter is gone.
+        snapshot.active_interaction.status = "failed"
+        snapshot.active_interaction.error = "原交互已失效，请重新发起请求。"
+    session.legacy_owner_receipt = static_legacy_receipt(
+        _render_interaction_callback_card_for_app(app, snapshot, session_key=session_key)
+    )
+
+
+def _existing_owner_render_result(app, session, result, *, session_key=None):
+    if not session.legacy_owner_receipt or result.card.get("schema") != "2.0":
+        return result
+    resolved_key = session_key or _session_key_for_session(app, session)
+    interaction = session.active_interaction
+    if (session.status not in {"completed", "failed"}
+            and interaction is not None and interaction.status in {"pending", "paused"}
+            and interaction.feishu_message_id
+            and interaction.feishu_message_id == app[FEISHU_MESSAGE_IDS_KEY].get(resolved_key)):
+        # A live first-message interaction owns this legacy card. Its private
+        # checkpoint is deliberately static, but must never replace live input
+        # controls. Restored sessions have no InteractionState or old token.
+        live_card = _render_interaction_callback_card_for_app(app, session, session_key=resolved_key)
+        inspection = inspect_card_limits(live_card)
+        if inspection.safe:
+            return replace(result, card=live_card, disposition="card", inspection=inspection, limit_reason="")
+    _, config, title, _ = _session_card_render_context(app, session, session_key=session_key)
+    primary = (_primary_text_for_session(display_view(session), stream_thinking_to_body=_safe_bool(
+        config.get("stream_thinking_to_body"), True
+    )) if result.disposition == "card" else None)
+    card = legacy_owner_body(session.legacy_owner_receipt, result.card, primary)
+    inspection = inspect_card_limits(card)
+    if inspection.safe:
+        return replace(result, card=card, inspection=inspection)
+    terminal = session.status in {"completed", "failed"}
+    placeholder = _render_limit_handoff_card(title=title, terminal=terminal)
+    bounded = legacy_owner_body(session.legacy_owner_receipt, placeholder)
+    if not inspect_card_limits(bounded).safe:
+        # The original receipt already passed the shared limit. Preserve it
+        # unchanged instead of trimming the question or accepted decision.
+        bounded = copy.deepcopy(session.legacy_owner_receipt)
+    return replace(result, card=bounded, disposition="native" if terminal else "deferred_native",
+                   inspection=inspection, limit_reason=inspection.primary_reason)
 
 
 def _render_session_card_result_for_app(
@@ -6828,14 +7259,25 @@ def _render_session_card_result_for_app(
     completion_in_card = (isinstance(notify, dict) and notify.get("enabled") is True
                           and notify.get("placement", "message") == "card")
     result = render_card_result(
-        session,
+        display_view(session),
         footer_fields=footer_fields,
         title=title,
         interaction_mode=interaction_mode,
         interaction_profile_id=interaction_profile_id,
         show_reasoning=_safe_bool(card_config.get("show_reasoning"), True),
+        stream_thinking_to_body=_safe_bool(
+            card_config.get("stream_thinking_to_body"), True
+        ),
+        hide_completed_tool_activity=_safe_bool(
+            card_config.get("hide_completed_tool_activity"), False
+        ),
+        hide_successful_tool_activity=_safe_bool(
+            card_config.get("_hide_successful_tool_activity"), False
+        ),
         reasoning_format=card_config.get("reasoning_format", "panel"),
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
+        timeline_order=card_config.get("timeline_order", "newest_first"),
+        timeline_tools_per_reasoning=card_config.get("timeline_tools_per_reasoning", 0),
         max_timeline_items=_safe_positive_int(
             card_config.get("max_timeline_items"), 12
         ),
@@ -7055,6 +7497,7 @@ async def _send_card(
     reply_in_thread: bool = False,
     delivery_key: str = "",
     delivery_kind: str = "chat",
+    profile_id: str | None = None,
 ) -> CardDeliveryResult:
     return await _send_card_for_app(
         request.app,
@@ -7066,6 +7509,7 @@ async def _send_card(
         reply_in_thread=reply_in_thread,
         delivery_key=delivery_key,
         delivery_kind=delivery_kind,
+        profile_id=profile_id,
     )
 
 
@@ -7079,6 +7523,7 @@ async def _send_card_for_app(
     reply_in_thread: bool = False,
     delivery_key: str = "",
     delivery_kind: str = "chat",
+    profile_id: str | None = None,
 ) -> CardDeliveryResult:
     metrics: SidecarMetrics = app[METRICS_KEY]
     metrics.feishu_send_attempts += 1
@@ -7109,6 +7554,14 @@ async def _send_card_for_app(
         delivery_kind=delivery_kind,
     )
     client = _client_for_bot(app, bot_id)
+    notice_scope = _restart_notice_scope(
+        profile_id=profile_id, bot_id=bot_id, chat_id=chat_id,
+        thread_id=thread_id or (reply_to_message_id if reply_in_thread else None),
+    )
+    notice_snapshot = (
+        # A second restart/draining notice is not evidence of resumed activity.
+        _restart_notice_snapshot(app, notice_scope) if delivery_kind != "notice" else ()
+    )
     try:
         send_delivery = getattr(client, "send_card_delivery", None)
         if callable(send_delivery):
@@ -7170,6 +7623,7 @@ async def _send_card_for_app(
         return result
     metrics.feishu_send_retries += retry_count
     metrics.feishu_send_successes += 1
+    _retire_restart_notices(app, notice_scope, notice_snapshot)
     return CardDeliveryResult(
         message_id=message_id,
         outcome="delivered",
@@ -7236,7 +7690,13 @@ async def _delete_card_for_app(
         await _client_for_bot(app, bot_id).delete_message(message_id)
     except Exception as exc:
         app[DIAGNOSTICS_KEY]["last_delete_error"] = exc.__class__.__name__[:200]
-        logger.warning("Feishu card recall failed: %s", exc.__class__.__name__)
+        # Keep useful, validated API codes without exposing exception bodies,
+        # URLs, credentials or raw message/bot identifiers.
+        logger.warning(
+            "Feishu card recall failed: %s message_hash=%s",
+            _safe_update_error_message(bot_id, exc),
+            _diagnostic_id_hash(message_id),
+        )
         return False
     return True
 
@@ -7362,7 +7822,7 @@ async def _recall_schedule(request: web.Request) -> web.Response:
             )
     if not math.isfinite(delay):
         return web.json_response({"ok": False, "error": "delay_seconds must be finite"}, status=400)
-    if message_id in request.app[FEISHU_MESSAGE_IDS_KEY].values():
+    if _is_retained_card_message(request.app, message_id):
         return web.json_response({"ok": False, "error": "owned session card cannot be recalled"}, status=409)
     # Caller owns the delay: only the upper bound is enforced (see EPHEMERAL_RECALL_MAX_SECONDS).
     # No floor, because the sidecar has no way to know what "too soon" means for the caller — the
@@ -7373,31 +7833,74 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     clients = request.app[FEISHU_CLIENT_KEY]
     if route_data is not None and not isinstance(route_data, dict):
         return web.json_response({"ok":False,"error":"invalid recall route"}, status=400)
+    # Family registration is narrower than the historical timer API: always
+    # resolve a complete route, even when the caller also supplies a bot id.
+    family = payload.get("notice_family")
+    if family is not None:
+        if family != "restart" or payload.get("record_only") is not True:
+            return web.json_response({"ok": False, "error": "invalid notice policy"}, status=400)
+        if len(message_id) > 256:
+            return web.json_response({"ok": False, "error": "invalid notice message id"}, status=400)
+        if not isinstance(route_data, dict) or not route_data.get("profile_id"):
+            return web.json_response({"ok": False, "error": "notice route required"}, status=400)
+        if not isinstance(route_data.get("conversation_id", ""), str):
+            return web.json_response({"ok": False, "error": "invalid notice topic"}, status=400)
+        requested_bot_id = bot_id
+        bot_id = None
     if bot_id is None and (route_data is not None or isinstance(clients, dict)):
         route_data = dict(route_data or {})
         profile = route_data.get('profile_id') or 'default'
+        if not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile):
+            return web.json_response({"ok":False,"error":"invalid recall profile"}, status=400)
         if isinstance(clients, dict) and profile not in clients:
+            if family is not None:
+                return web.json_response({"ok": False, "error": "unknown notice profile"}, status=409)
             if profile == 'default' and len(clients) == 1:
                 profile = next(iter(clients))
             else:
                 return web.json_response({"ok":False,"error":"recall route is ambiguous"}, status=409)
-        if not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile):
-            return web.json_response({"ok":False,"error":"invalid recall profile"}, status=400)
         chat = _safe_command_string(route_data.get('chat_id'))
         if not chat:
             return web.json_response({"ok":False,"error":"recall chat is required"}, status=400)
+        route_fields = {'profile_id': profile}
+        if family is not None and route_data.get('bot_id'):
+            route_fields['bot_id'] = _safe_command_string(route_data.get('bot_id'))
         probe = SidecarEvent.from_dict(dict(schema_version='1', event='system.notice',
             conversation_id=_safe_command_string(route_data.get('conversation_id')) or chat,
             message_id=message_id, chat_id=chat, platform='feishu', sequence=0,
-            created_at=time.time(), data={'profile_id':profile}))
+            created_at=time.time(), data=route_fields))
         route = _resolve_route(request, probe)
         if route is None:
             return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
         bot_id = route.bot_id or None
+    if family is not None:
+        if requested_bot_id is not None and requested_bot_id != bot_id:
+            return web.json_response({"ok": False, "error": "notice bot mismatch"}, status=409)
+        scope = _restart_notice_scope(
+            profile_id=profile, bot_id=bot_id, chat_id=chat,
+            thread_id=_safe_command_string(route_data.get("conversation_id")),
+        )
+        if scope is None:
+            return web.json_response({"ok": False, "error": "notice route unavailable"}, status=409)
     try:
-        _client_for_bot(request.app, bot_id)
+        recall_client = _client_for_bot(request.app, bot_id)
     except (RuntimeError, ValueError, KeyError):
         return web.json_response({"ok":False,"error":"recall route unavailable"}, status=409)
+    app_hash = (route_data or {}).get("app_id_hash")
+    if app_hash is not None:
+        app_id = getattr(getattr(recall_client, "config", None), "app_id", None)
+        if (not isinstance(app_hash, str) or not isinstance(app_id, str) or not app_id
+                or hashlib.sha256(app_id.encode()).hexdigest() != app_hash):
+            return web.json_response({"ok":False,"error":"notice application mismatch"}, status=409)
+    if family is not None:
+        if not request.app[RESTART_NOTICES_KEY].register(scope, message_id):
+            return web.json_response({"ok": False, "error": "notice capacity reached"}, status=429)
+        registry = request.app[RESTART_NOTICES_KEY]
+        generation = dict(registry.snapshot(scope))[message_id]
+        _schedule_ephemeral_recall(request.app, message_id=message_id, bot_id=bot_id,
+            delay_seconds=registry.expiry_delay(message_id, OWNED_NOTICE_TTL_SECONDS),
+            notice_owner=(scope, generation))
+        return web.json_response({"ok": True, "message_id": message_id, "record_only": True})
     scheduled = _schedule_ephemeral_recall(
         request.app,
         message_id=message_id,
@@ -7409,17 +7912,103 @@ async def _recall_schedule(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "message_id": message_id, "delay_seconds": delay})
 
 
-def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id) -> bool:
+def _is_retained_card_message(app: web.Application, message_id: str) -> bool:
+    if (message_id in app[FEISHU_MESSAGE_IDS_KEY].values()
+            or message_id in app[CARD_SUMMARIES_KEY]):
+        return True
+    return any(
+        session.active_interaction is not None
+        and session.active_interaction.feishu_message_id == message_id
+        for session in app[SESSIONS_KEY].values()
+    )
+
+
+def _restart_notice_scope(*, profile_id, bot_id, chat_id, thread_id) -> NoticeScope | None:
+    """Keep empty thread and empty bot exact; neither is a wildcard."""
+    bot = str(bot_id or "")
+    bot_profile = bot.split(":", 1)[0] if ":" in bot else ""
+    profile = profile_id or bot_profile or "default"
+    if (not isinstance(profile, str) or not PROFILE_ID_PATTERN.fullmatch(profile)
+            or (bot_profile and bot_profile != profile) or not chat_id
+            or any(len(str(value or "")) > 256 for value in (bot_id, chat_id, thread_id))):
+        return None
+    return NoticeScope(profile, bot, str(chat_id), str(thread_id or ""))
+
+
+def _restart_notice_snapshot(app, scope):
+    return app[RESTART_NOTICES_KEY].snapshot(scope) if scope is not None else ()
+
+
+def _restart_scope_for_message(app, message_id, bot_id) -> NoticeScope | None:
+    """Resolve an edit through actual message ownership, never session-id guessing."""
+    scopes = []
+    for session_key, session in app[SESSIONS_KEY].items():
+        if session.delivery_kind == "notice":
+            continue
+        interaction = session.active_interaction
+        if app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == message_id:
+            thread_id = session.conversation_id
+            if thread_id == session.chat_id or not thread_id.startswith(("om_", "omt_")):
+                thread_id = session.reply_to_message_id if session.reply_in_thread else ""
+        elif interaction is not None and interaction.feishu_message_id == message_id:
+            thread_id = interaction.thread_id or (
+                interaction.reply_to_message_id if interaction.reply_in_thread else "")
+        else:
+            continue
+        if app[MESSAGE_BOT_IDS_KEY].get(session_key) != bot_id:
+            continue
+        scope = _restart_notice_scope(
+            profile_id=session.route_profile_id, bot_id=bot_id,
+            chat_id=session.chat_id, thread_id=thread_id,
+        )
+        if scope is not None:
+            scopes.append(scope)
+    return scopes[0] if scopes and all(scope == scopes[0] for scope in scopes) else None
+
+
+def _retire_restart_notices(app, scope, snapshot) -> None:
+    if scope is None:
+        return
+    registry = app[RESTART_NOTICES_KEY]
+    for message_id, generation in snapshot:
+        if not registry.ready(scope, message_id, generation):
+            continue
+        # Keep ownership until actual deletion succeeds, including task-capacity
+        # rejection. A later successful send can retry the same pending notice.
+        _schedule_ephemeral_recall(
+            app, message_id=message_id, delay_seconds=0, bot_id=scope.bot_id or None,
+            notice_owner=(scope, generation),
+        )
+
+
+async def _restore_owned_notice_timers(app):
+    # Checkpoint owners are loaded synchronously before this startup hook.
+    for scope, mid, generation, delay in app[RESTART_NOTICES_KEY].expiry_schedule(OWNED_NOTICE_TTL_SECONDS):
+        _schedule_ephemeral_recall(app, message_id=mid, delay_seconds=delay,
+            bot_id=scope.bot_id or None, notice_owner=(scope, generation))
+
+
+def _schedule_ephemeral_recall(app, *, message_id, delay_seconds, bot_id, notice_owner=None) -> bool:
     tasks = app[EPHEMERAL_RECALL_TASKS_KEY]
     key = (bot_id or "", message_id)
     if key in tasks:
+        wake = app[EPHEMERAL_RECALL_WAKE_KEY].get(key)
+        if notice_owner is not None and delay_seconds == 0 and wake and wake[0] == notice_owner:
+            wake[1].set()  # Shorten the wait without cancelling an in-flight DELETE.
         return True
     if len(tasks) >= EPHEMERAL_RECALL_MAX_PENDING:
         return False
+    wake = asyncio.Event()
+    app[EPHEMERAL_RECALL_WAKE_KEY][key] = (notice_owner, wake)
     task = asyncio.create_task(_run_ephemeral_recall(
-        app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id))
+        app, message_id=message_id, delay_seconds=delay_seconds, bot_id=bot_id,
+        notice_owner=notice_owner, wake=wake))
     tasks[key] = task
-    task.add_done_callback(lambda done: tasks.pop(key, None) if tasks.get(key) is done else None)
+    def finished(done):
+        if tasks.get(key) is done:
+            tasks.pop(key, None)
+            app[EPHEMERAL_RECALL_WAKE_KEY].pop(key, None)
+    task.add_done_callback(finished)
     app[METRICS_KEY].ephemeral_recalls_scheduled += 1
     return True
 
@@ -7430,21 +8019,55 @@ async def _run_ephemeral_recall(
     message_id: str,
     delay_seconds: float,
     bot_id: str | None,
+    notice_owner: tuple[NoticeScope, int] | None = None,
+    wake: asyncio.Event | None = None,
 ) -> None:
     metrics: SidecarMetrics = app[METRICS_KEY]
     try:
-        await asyncio.sleep(delay_seconds)
-        if message_id in app[FEISHU_MESSAGE_IDS_KEY].values():
+        if wake is None:
+            await asyncio.sleep(delay_seconds)
+        elif delay_seconds > 0:
+            timer = asyncio.get_running_loop().call_later(delay_seconds, wake.set)
+            try:
+                await wake.wait()
+            finally:
+                timer.cancel()
+        if notice_owner is not None:
+            scope, generation = notice_owner
+            if not app[RESTART_NOTICES_KEY].contains(scope, message_id, generation):
+                return
+        if _is_retained_card_message(app, message_id):
+            # Counted as a failure, but leave a trace: this branch used to be completely silent, so a
+            # recall that "failed" because the message had meanwhile become an owned session card was
+            # indistinguishable from one the API refused. Debug, not warning — skipping is correct here.
             metrics.ephemeral_recall_failures += 1
+            if notice_owner is not None:
+                # This message acquired durable content. Retire its disposable
+                # status permanently, before ordinary session retention expires.
+                scope, generation = notice_owner
+                app[RESTART_NOTICES_KEY].discard(scope, message_id, generation)
+            logger.debug(
+                "Ephemeral recall skipped: %s became an owned session card",
+                _diagnostic_id_hash(message_id),
+            )
             return
         if await _delete_card_for_app(app, message_id, bot_id):
             metrics.ephemeral_recalls_completed += 1
+            if notice_owner is not None:
+                scope, generation = notice_owner
+                app[RESTART_NOTICES_KEY].discard(scope, message_id, generation)
         else:
             metrics.ephemeral_recall_failures += 1
+            if notice_owner is not None:
+                scope, generation = notice_owner
+                app[RESTART_NOTICES_KEY].defer(scope, message_id, generation)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         metrics.ephemeral_recall_failures += 1
+        if notice_owner is not None:
+            scope, generation = notice_owner
+            app[RESTART_NOTICES_KEY].defer(scope, message_id, generation)
         logger.debug("Ephemeral recall failed: %s", exc)
 
 
@@ -7452,6 +8075,7 @@ async def _stop_ephemeral_recalls(app: web.Application) -> None:
     tasks = app.get(EPHEMERAL_RECALL_TASKS_KEY, {})
     pending = [task for task in tasks.values() if not task.done()]
     tasks.clear()
+    app[EPHEMERAL_RECALL_WAKE_KEY].clear()
     for task in pending:
         task.cancel()
     if pending:
@@ -7468,6 +8092,8 @@ async def _update_card_for_app(
     notice_update: bool = False,
 ) -> bool:
     metrics: SidecarMetrics = app[METRICS_KEY]
+    notice_scope = _restart_scope_for_message(app, message_id, bot_id)
+    notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     for attempt in range(UPDATE_MAX_ATTEMPTS):
         if is_current is not None and not is_current():
             return False
@@ -7499,6 +8125,7 @@ async def _update_card_for_app(
         metrics.feishu_update_successes += 1
         if is_current is not None and not is_current():
             return False
+        _retire_restart_notices(app, notice_scope, notice_snapshot)
         return True
     if notice_update:
         metrics.notice_update_failures += 1
@@ -7568,7 +8195,9 @@ async def _abandon_stale_sessions_for_chat(
 
     Only abandons sessions that share the same chat_id AND conversation_id AND
     profile_id prefix (to avoid cross-profile or cross-thread interference),
-    and skips the new session itself.
+    and skips the new session itself. In a group, matching verified requesters
+    are also required: conversation membership does not prove interruption.
+    Explicit redirect handoffs affect only their named source turn.
     """
     sessions: Dict[str, CardSession] = app[SESSIONS_KEY]
     feishu_message_ids: Dict[str, str] = app[FEISHU_MESSAGE_IDS_KEY]
@@ -7593,6 +8222,14 @@ async def _abandon_stale_sessions_for_chat(
                     redirect_source_key, redirect_source_key
                 )
 
+    data = event.data if isinstance(event.data, dict) else {}
+    sender = data.get("sender_open_id")
+    new_sender = sender if isinstance(sender, str) and re.fullmatch(r"ou_[A-Za-z0-9_-]{1,128}", sender) else ""
+    scope = data.get("execution_scope")
+    new_scope = scope if type(scope) is str and re.fullmatch(r"[0-9a-f]{64}", scope) else ""
+    chat_type = data.get("chat_type")
+    new_is_group = isinstance(chat_type, str) and chat_type.strip().lower() == "group"
+
     stale_keys = []
     for key, sess in sessions.items():
         if key == new_session_key:
@@ -7609,6 +8246,18 @@ async def _abandon_stale_sessions_for_chat(
         key_profile = key.split(":", 1)[0] if ":" in key else ""
         if key_profile != new_profile:
             continue
+        if alias_to_session_key:
+            if key != redirect_source_key:
+                continue
+        elif new_scope or sess.execution_scope or event.producer == "plugin":
+            if not new_scope or new_scope != sess.execution_scope:
+                continue
+        elif new_is_group or sess.chat_type == "group" or new_sender or sess.sender_open_id:
+            # Missing identity is not evidence that two group turns share an
+            # owner. Also isolate known distinct senders in older envelopes
+            # that did not carry chat_type.
+            if not new_sender or not sess.sender_open_id or new_sender != sess.sender_open_id:
+                continue
         stale_keys.append(key)
 
     for key in stale_keys:
