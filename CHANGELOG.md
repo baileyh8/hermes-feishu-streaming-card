@@ -5,9 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [1.0.0] - 2026-09-26
+
+
+- CardKit entity restart recovery: after a sidecar restart the in-memory entity map is lost, so `update` fell back to a plain-JSON PATCH that Feishu rejects for CardKit cards (400/230011). The entity is now rebuilt from the card reference in the message body, gated on `schema == "2.0"` so legacy plain-JSON cards pay no extra lookup.
+- 230011 "The message was withdrawn" failure-loop termination: a recalled message can never be updated again, so the retry loop stops immediately instead of burning the update budget; callers clean up session state.
+- Patcher tolerates the extra `_release_turn_marker` if-block added by Hermes 0.21.x (idempotent, does not disturb the ledger contract), so the AST check no longer rejects upgrades onto that source.
+- All version markers aligned to 4.7.0.
+- See [Chinese notes](docs/release-notes-v1.0.0.md) and [English notes](docs/release-notes-v1.0.0.en.md).
+
 ## [Unreleased]
 
-## [4.6.9] - 2026-09-24
+ - 2026-09-24
 
 - Isolate concurrent group cards by requester or native Gateway execution scope; restrict redirects to the explicit source turn. Preserve independent final answers and terminal failure protection (#348, reported by [cainiaozp](https://github.com/cainiaozp)).
 - Merge [mouyong](https://github.com/mouyong)'s [PR #349](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/349), using compact rows for all single-select choices while preserving callback values and forms.

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release version: `4.6.9`. Scope: concurrent group-card isolation, compact single-select layout and clearer onboarding.
+Current release version: `1.0.0`. Scope: concurrent group-card isolation, compact single-select layout and clearer onboarding.
 
 Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v4.6.9.en.md); platform API smoke, real Gateway execution and mobile visual acceptance are recorded separately.
 

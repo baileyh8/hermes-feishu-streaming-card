@@ -224,7 +224,9 @@ def test_v4_running_card_uses_state_title_and_public_interim_body():
     )
 
     assert card["header"]["title"]["content"] == "⏳ 执行中 · Hermes Agent"
-    assert "subtitle" not in card["header"]
+    # v1.0.0 restores the v4.5.0 feel: when no phase text is set, the header sub-title
+    # falls back to the latest tool preview (v4.6.5+ had moved it out of the header).
+    assert card["header"].get("subtitle", {}).get("content") == "读取文件：weather_client.py"
     assert not any(
         element.get("element_id") == "runtime_summary"
         for element in card["body"]["elements"]
@@ -654,7 +656,9 @@ def test_v4_failed_retains_preview_and_status_only_footer():
     )
 
     assert card["header"]["title"]["content"] == "⛔ Hermes Agent"
-    assert "subtitle" not in card["header"]
+    # v1.0.0: a failed card still shows the last tool preview in the header sub-title,
+    # so the reader sees WHERE the run stopped (matching the v4.5.0 feel).
+    assert card["header"].get("subtitle", {}).get("content") == "读取文件：演示天气数据"
     # Maintainer note (contract change): this used to assert the footer was ONLY the 已停止 pill
     # ("ctx " explicitly absent). The user asked a stopped card to keep its status information —
     # that is how a reader sees WHERE the run stopped — so the pill now sits on top of the same

@@ -8113,6 +8113,13 @@ async def _update_card_for_app(
             metrics.feishu_update_failures += 1
             if is_current is not None and not is_current():
                 return False
+            # Feishu 230011 "The message was withdrawn": the target message is
+            # recalled/gone, so no retry can ever succeed. Retrying here just
+            # burns the update budget and keeps zombie sessions cycling
+            # ("230011 failure loop"). Stop immediately; callers treat this
+            # like a terminal update failure and clean up session state.
+            if getattr(exc, "api_code", None) == 230011:
+                break
             continue
         metrics.feishu_update_latency_ms = int((time.monotonic() - started_at) * 1000)
         metrics.feishu_update_successes += 1

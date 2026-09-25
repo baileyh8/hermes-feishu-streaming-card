@@ -13,3 +13,6 @@ build/
 .superpowers/
 .worktrees/
 .codegraph/
+
+# stale in-package build/install artifact (nested copy)
+hermes_feishu_card/hermes_feishu_card/
