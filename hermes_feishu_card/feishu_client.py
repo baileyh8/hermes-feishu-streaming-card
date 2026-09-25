@@ -363,6 +363,22 @@ class FeishuClient:
             raise TypeError("card must be a dict")
         if await self.cardkit.update(message_id, card):
             return
+        # CardKit entity lost (sidecar restart / eviction) but the message may
+        # still be a cardkit-backed card. Recover the entity from the message
+        # body ({"type":"card","data":{"card_id":...}}) before falling back to
+        # the plain-JSON PATCH: Feishu rejects that fallback with 400/230011
+        # ("not a plain JSON card") for cardkit cards, so the fallback must be
+        # a last resort, not the default.
+        #
+        # Gate on the cardkit marker (schema 2.0) so legacy plain-JSON cards do
+        # not pay a recovery lookup GET on every update. Validate the payload
+        # size BEFORE the lookup: an oversized card must fail with
+        # CardLimitExceeded before any token fetch or network call, so the
+        # serialize must run here, not after recover_from_message.
+        if (isinstance(card, dict) and card.get("schema") == "2.0"
+                and await self.cardkit.recover_from_message(message_id)):
+            if await self.cardkit.update(message_id, card):
+                return
         content = serialize_card_for_delivery(card)
         token = await self._tenant_token()
         await self._request_json(

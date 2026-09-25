@@ -2501,6 +2501,21 @@ return result, delivery_adapter
             for block in owned_hooks
         ):
             continue
+        # Hermes 0.21.x added an extra _release_turn_marker if-block between
+        # recording the obligation and the retried send; it is idempotent and
+        # does not disturb the ledger contract, so tolerate it.
+        _stmt = node.body[0] if isinstance(node, ast.If) and len(node.body) == 1 else None
+        _call = getattr(getattr(_stmt, "value", None), "value", None)
+        if (
+            len(body) == 2
+            and isinstance(node, ast.If)
+            and _same_expression(node.test, "obligation_id is not None")
+            and isinstance(_stmt, ast.Expr)
+            and isinstance(getattr(_stmt, "value", None), ast.Await)
+            and isinstance(_call, ast.Call)
+            and _call_function(_call) == ("self", "_release_turn_marker")
+        ):
+            continue
         body.append(node)
     args = ledger.args
     if (args.vararg or args.kwarg or args.posonlyargs

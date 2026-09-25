@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release candidate: `4.6.0`. Covers #319/#320/#323 and PR #310: structured reasoning, profile-aware recall, bounded terminal retries, private card checkpoints and startup policy readiness. Full regression, exact-commit CI and public installation remain required gates.
+Current release candidate: `4.6.8`. Covers #319/#320/#323 and PR #310: structured reasoning, profile-aware recall, bounded terminal retries, private card checkpoints and startup policy readiness. Full regression, exact-commit CI and public installation remain required gates.
 
 This candidate fixes CardKit IDs, topic routing and approval lifecycle. Real unsent entities passed; full tests, exact merge CI and public installation must pass before release. Mobile field acceptance remains open.
 

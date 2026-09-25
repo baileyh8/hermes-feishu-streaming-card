@@ -115,6 +115,9 @@ class CardKitTransport:
         self.client = client
         self.entities: dict[str, Entity] = {}
         self.deliveries: dict[str, Entity] = {}
+        # Message ids whose recovery already failed (no card reference in the
+        # message body): skip the lookup GET on every subsequent update.
+        self._unrecoverable: set[str] = set()
         # FeishuClient is also constructed by synchronous CLI/maintenance code.
         # Python 3.9 binds Lock eagerly, so create it only on first async send.
         self.creation_lock: asyncio.Lock | None = None
@@ -125,6 +128,58 @@ class CardKitTransport:
                    if not e.lock.locked() and now - e.touched_at > ENTITY_RETENTION_SECONDS}
         self.deliveries = {k: e for k, e in self.deliveries.items() if id(e) not in expired}
         self.entities = {k: e for k, e in self.entities.items() if id(e) not in expired}
+
+    async def recover_from_message(self, message_id: str) -> bool:
+        """Rebuild the in-memory entity for a cardkit card after a restart.
+
+        ``send`` stores the created card entity keyed by message_id, but that
+        mapping lives only in process memory. After a sidecar restart (or
+        entity eviction) ``update`` misses and the plain-JSON IM PATCH fallback
+        fails with 400/230011 because the message is a cardkit card. The
+        original send delivered the card as a reference
+        ``{"type":"card","data":{"card_id":...}}``, so the card_id can be read
+        back from the message body and the entity rebuilt for future updates.
+        """
+        if message_id in self.entities:
+            return True
+        if message_id in self._unrecoverable:
+            return False
+        if len(self.entities) >= MAX_ENTITIES:
+            return False
+        from .feishu_client import FeishuAPIError
+        try:
+            payload = await self.client._request_json(
+                'GET', f'/im/v1/messages/{quote(message_id, safe="")}',
+                token=await self.client._tenant_token(),
+            )
+        except FeishuAPIError:
+            # Transient failures (network, token) stay retryable; only a
+            # successful lookup without a card reference is permanent.
+            return False
+        items = (payload.get('data') or {}).get('items')
+        body = items[0].get('body', {}).get('content', '') if items else ''
+        try:
+            content = json.loads(body) if isinstance(body, str) else None
+        except (json.JSONDecodeError, TypeError):
+            content = None
+        card_id = None
+        if isinstance(content, dict):
+            data = content.get('data')
+            if content.get('type') == 'card' and isinstance(data, dict):
+                candidate = data.get('card_id')
+                if isinstance(candidate, str) and candidate.strip():
+                    card_id = candidate.strip()
+        if card_id is None:
+            self._unrecoverable.add(message_id)
+            return False
+        entity = Entity(card_id=card_id, card={}, created_at=time.monotonic())
+        entity.streaming = False
+        entity.last_full_update = 0.0
+        self.entities[message_id] = entity
+        self.deliveries[card_id] = entity
+        logger.info('CardKit entity recovered from message: entity_hash=%s',
+                    sha256(card_id.encode()).hexdigest()[:12])
+        return True
 
     async def send(self, chat_id: str, card: dict[str, Any], **kwargs: Any) -> Any:
         from .feishu_client import FeishuAPIError

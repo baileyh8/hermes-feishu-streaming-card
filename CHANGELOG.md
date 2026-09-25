@@ -5,6 +5,72 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [4.6.8] - 2026-09-25
+
+- CardKit entity restart recovery: after a sidecar restart the in-memory entity map is lost, so `update` fell back to a plain-JSON PATCH that Feishu rejects for CardKit cards (400/230011). The entity is now rebuilt from the card reference in the message body, gated on `schema == "2.0"` so legacy plain-JSON cards pay no extra lookup.
+- 230011 "The message was withdrawn" failure-loop termination: a recalled message can never be updated again, so the retry loop stops immediately instead of burning the update budget; callers clean up session state.
+- Patcher tolerates the extra `_release_turn_marker` if-block added by Hermes 0.21.x (idempotent, does not disturb the ledger contract), so the AST check no longer rejects upgrades onto that source.
+- All version markers aligned to 4.6.8.
+- See [Chinese notes](docs/release-notes-v4.6.8.md) and [English notes](docs/release-notes-v4.6.8.en.md).
+
+## [4.6.7] - 2026-09-21
+
+- Preserve Working heartbeat messages so Hermes can edit them in place instead of repeatedly sending after timed recall; one-shot status expiry is unchanged.
+- Render approval choice buttons in compact auto-width columns while retaining full descriptions and legacy callback identity. Clarify layout and reading defaults are unchanged.
+- Selectively adapted from mouyong's PR #345. Keep timeline budgets and producer-based notice ownership; #344 remains unconfirmed on the reporter's version.
+- See [Chinese notes](docs/release-notes-v4.6.7.md) and [English notes](docs/release-notes-v4.6.7.en.md).
+
+## [4.6.6] - 2026-09-21
+
+- Compact duplicated terminal approval review blocks only after an explicit successful PATCH of the separate full question/scope/decision receipt; retain unproven, pending, sole-owner and failed-delivery cases (#337, PR #339).
+- Keep older running tool calls and their immediate predecessors in the bounded timeline window, matching body ordinals; terminal unfinished tools display as interrupted (#340).
+- Add 15-second expiry to owned restart notices, including Home and requester notifications; confirmed same-route delivery can wake an existing timer early. Restore deadlines across sidecar restart and retain failed-delete cooldowns.
+- Recognize exact native background-success and drain producers, preserve failures/output-bearing results, and color the native requester restart icon. Ordinary quoted text grants no recall authority; retain native expired-approval corrections that may be the sole record that no command ran (PR #338).
+- Terminal tool compaction retains unsuccessful tools. Existing reading defaults, timeline ordering and per-reasoning limits remain unchanged. Thanks to [mouyong](https://github.com/mouyong) for proposals, adapted code and #337/#340 evidence; original authorship is retained.
+- Retain tidytorch’s original PR #342 commit for delayed read-only confirmation after an ambiguous interaction POST; cap each lookup to the remaining grace budget and verify a real lost-response HTTP flow never replays the event.
+- See [Chinese notes](docs/release-notes-v4.6.6.md), [English notes](docs/release-notes-v4.6.6.en.md) and [acceptance](docs/wiki/feishu-acceptance-v4.6.6.md). Release and client gates are recorded separately.
+
+## [4.6.5] - 2026-09-20
+
+- Keep text-mode decision receipts static across consecutive questions and preserve interaction-first legacy dialects. Retire the previous schema-2 card after confirmed continuation delivery, preserving its pre-output snapshot and decision receipt. Use a neutral handoff state, preserve legacy dialects, and keep the new owner when the old PATCH fails (adapted from PR #339 after real desktop reproduction).
+
+- Persist bounded restart-notice ownership across sidecar restarts; recognize exact native startup/shutdown producers with profile, adapter, application and topic proof. Preserve unknown messages and failed deletions (continued adaptation of mouyong's PR #331).
+- Use explicit executor `call_id` to deduplicate repeated terminal events and reject late starts without changing legacy name-only counting. Preserve duration, history and ordinals.
+- Add opt-in `timeline_order: chronological` and `timeline_tools_per_reasoning`; defaults remain newest-first and unlimited per block. Keep failures/running work eligible for the existing global display budget.
+- Suppress the duplicate native provider-error warning only after an explicit sidecar acknowledgement; timeout, unknown formats and unavailable routes retain native fallback.
+- Accept exact known hooks reapplied onto verified current Git sources only with explicit upstream-upgrade consent, preserving staged state and unrelated customizations; isolate proxy variables in preflight child processes.
+- See [Chinese notes](docs/release-notes-v4.6.5.md) and [English notes](docs/release-notes-v4.6.5.en.md). A later real desktop clarify selection and chronological continuation passed on 4.6.4 after the initial DeepSeek 503; the old card remaining live was reproduced. Final 4.6.5 client acceptance remains separate.
+
+## [4.6.4] - 2026-09-20
+
+- Wire the first Feishu turn/interaction callback without slash-card warmup, including generated TurnRunner closures; preserve live SDK dispatcher identity and exact profile/adapter ownership (#335, sthnow; patch by babypanda).
+- Open a same-route continuation only after selection and real subsequent output for clarify and approval; keep question/decision receipts, canonical history and turn metrics. Retain the existing owner on failed/uncertain create and preserve a sole legacy owner's dialect through fallback and display recovery (informed by PR #331 and #335).
+- Add optional `classic` / `focused` / `detailed` reading presets and read-only `card-config` explanations. Preserve existing defaults and explicit settings (#328, jackwude; #333, leavrcn).
+- Retire registered transient restart notices only after successful same-scope delivery, with exact profile/bot/chat/thread and generation checks; preserve failed deletion records and native home notices whose provenance is unknown (adapted from mouyong's PR #331).
+- Add isolated contributor preflight checks and explicit focused/full pytest runs with real exit codes, fixture validation, private state and safe summaries (#330, mouyong).
+- Desktop/mobile first-click acceptance and the production upgrade remain unverified; this release does not claim them as passed. See [Chinese notes](docs/release-notes-v4.6.4.md), [English notes](docs/release-notes-v4.6.4.en.md) and the [current acceptance checklist](docs/wiki/feishu-acceptance-v4.6.4.md). PR #331 is absorbed by topic, not merged as a whole.
+
+## [4.6.3] - 2026-09-19
+
+- Add opt-out `card.stream_thinking_to_body` (default `true`) with a bounded live panel preview; preserve terminal content and card-limit fallback (#333, leavrcn).
+- Adapt tool ordering, terminal duration and interrupted-turn metrics from mouyong's #331; preserve measured values and validate actual generated-hook execution.
+- Keep 4.6.2 terminal-tool defaults unchanged. Notice retirement, timeline reordering and ambiguous reused-tool-ID counting from #331 remain separate.
+
+## [4.6.2] - 2026-09-18
+
+- Fix native-plugin/Gateway maintenance proof sharing. Native observers retain their own activity counts but rely on a present Gateway owner for admission/home evidence; missing or unknown owners still refuse automated stop.
+- Add opt-in `card.hide_completed_tool_activity` (default `false`) for completed/failed content tool rows, preserving live progress, timeline, answer and footer. Adapted from mouyong's #331 for jackwude's #328; other #331 changes remain separate.
+- Credit jackwude's #329 evidence for the 4.6.1 independent-notice footer fix.
+
+## V4.6.1 — 2026-09-18
+
+### Fixed
+- Bind lifecycle hooks outside the later muted-notification branch; reject unproven conditional anchors (#326, PR #325).
+- Recall only known transient status templates on their original profile/chat route; preserve answers and queue/error acknowledgements.
+- Keep restart text fallback, auxiliary approval controls, chronological body reasoning and meaningful footer metrics.
+- Keep two recent tool steps, safe timestamped diagnostics and profile-aware interrupt/steer recall; retain onboarding guidance.
+- Retain @mouyong's original commits through `bf7409a`; add maintainer isolation, failure, redaction and control-flow regression checks.
+
 ## V4.6.0 — 2026-09-17
 
 ### Fixed
