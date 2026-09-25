@@ -27,6 +27,10 @@ from .text import (
     transform_table_overflow,
 )
 
+# The default footer keeps the five classic metrics. ``token_rate`` (tok/s) is an
+# OPT-IN field: it is supported by the footer values and by config's footer_fields,
+# but it is not on by default so a bare ``render_card(session)`` (no footer_fields)
+# keeps the classic "duration · model · tokens · ctx" line the tests pin.
 DEFAULT_FOOTER_FIELDS = (
     "duration",
     "model",
@@ -1024,17 +1028,20 @@ def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str
 
 
 def _runtime_header_summary(session: CardSession) -> str:
-    """The sub-title carries the runtime PHASE only.
+    """The sub-title carries the runtime phase, falling back to the latest tool preview.
 
-    It used to fall back to the latest tool preview; that moved to the content area along
-    with the rest of the tool activity, so a phase is all that is left to say here.
+    v4.6.5+ removed the tool-preview fallback to reduce duplication with the content-area
+    timeline. v1.0.0 restores it: the user preferred the v4.5.0 feel — a one-line gray
+    preview in the header keeps the card feeling alive between phase transitions.
     """
     interaction = session.active_interaction
     if interaction is not None and interaction.status == "pending":
         return ""
     if session.status == "completed":
         return ""
-    return _sanitize_runtime_header(session.runtime_phase_text)
+    if session.runtime_phase_text:
+        return _sanitize_runtime_header(session.runtime_phase_text)
+    return _sanitize_runtime_header(session.latest_tool_preview)
 
 
 def _is_initial_loading(session: CardSession) -> bool:
@@ -2551,6 +2558,7 @@ def _render_footer(
         "model": _colored_model_label(model),
         "input_tokens": f"↑{_format_count(input_tokens)}",
         "output_tokens": f"↓{_format_count(output_tokens)}",
+        "token_rate": _format_token_rate(output_tokens, duration),
         "context": (
             f"ctx {_format_count(used_context)}/"
             f"{_format_count(max_context)} {context_percent}%"
@@ -2613,6 +2621,20 @@ def _format_count(value: int) -> str:
     if value >= 1_000:
         return _format_scaled(value, 1_000, "k")
     return str(value)
+
+
+def _format_token_rate(output_tokens: int, duration: float) -> str:
+    """Output-token throughput over the turn's wall-clock duration, e.g. '12.4 t/s'.
+
+    Returns '' when there is nothing meaningful to show (no tokens, or no
+    elapsed time) so a fresh/empty card never reads as a fake '0 t/s'.
+    """
+    if output_tokens <= 0 or duration <= 0:
+        return ""
+    rate = output_tokens / duration
+    if rate >= 100:
+        return f"{int(round(rate))} t/s"
+    return f"{rate:.1f} t/s"
 
 
 def _format_scaled(value: int, factor: int, suffix: str) -> str:
