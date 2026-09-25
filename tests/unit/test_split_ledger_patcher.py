@@ -10,6 +10,47 @@ from hermes_feishu_card.install import patcher
 FIXTURE = Path(__file__).parents[1] / "fixtures/hermes_split_ledger_base.py"
 
 
+RELEASE_GUARD = "            if obligation_id is not None:\n                await self._release_turn_marker(event)\n"
+SEND_ANCHOR = "            result = await delivery_adapter._send_with_retry("
+
+
+def _with_guarded_release(original):
+    assert original.count(SEND_ANCHOR) == 1
+    return original.replace(SEND_ANCHOR, RELEASE_GUARD + SEND_ANCHOR)
+
+
+def test_guarded_release_roundtrip():
+    original = _with_guarded_release(FIXTURE.read_text())
+    installed = patcher.apply_base_patch(original)
+    assert patcher.apply_base_patch(installed) == installed
+    assert patcher.remove_base_patch(installed) == original
+    assert installed.count(RELEASE_GUARD) == 1
+
+
+@pytest.mark.parametrize('mutation', ['guard', 'event', 'duplicate', 'before_record', 'unguarded', 'after_send'])
+def test_guarded_release_rejects_drift(mutation):
+    original = _with_guarded_release(FIXTURE.read_text())
+    if mutation == 'guard':
+        changed = original.replace(RELEASE_GUARD, RELEASE_GUARD.replace('is not None', 'is None'))
+    elif mutation == 'event':
+        changed = original.replace('_release_turn_marker(event)', '_release_turn_marker(other_event)')
+    elif mutation == 'duplicate':
+        changed = original.replace(RELEASE_GUARD, RELEASE_GUARD * 2)
+    elif mutation == 'unguarded':
+        changed = original.replace(RELEASE_GUARD, '            await self._release_turn_marker(event)\n')
+    elif mutation == 'before_record':
+        changed = original.replace(RELEASE_GUARD, '').replace(
+            '            obligation_id = await self._record_delivery_obligation(',
+            RELEASE_GUARD + '            obligation_id = await self._record_delivery_obligation(')
+    else:
+        changed = original.replace(RELEASE_GUARD, '').replace(
+            '            return result, delivery_adapter', RELEASE_GUARD + '            return result, delivery_adapter')
+    assert changed != original
+    compile(changed, 'drifted-ledger', 'exec')
+    with pytest.raises(ValueError, match='safe BasePlatformAdapter contract'):
+        patcher.apply_base_patch(changed)
+
+
 def test_split_ledger_install_is_idempotent_and_reversible() -> None:
     original = FIXTURE.read_text(encoding="utf-8")
     installed = patcher.apply_base_patch(original)
@@ -84,8 +125,9 @@ def test_split_ledger_rejects_delivery_contract_drift(before, after):
 @pytest.mark.parametrize('success', [True, False])
 @pytest.mark.parametrize('obligation_id', ['ledger-test', None])
 @pytest.mark.parametrize('record_delivery', [True, False])
+@pytest.mark.parametrize('guarded_release', [True, False])
 async def test_installed_split_ledger_executes_record_hook_send_finalize(
-    monkeypatch, success, obligation_id, record_delivery,
+    monkeypatch, success, obligation_id, record_delivery, guarded_release,
 ):
     import logging
     from types import SimpleNamespace
@@ -93,6 +135,8 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
 
     namespace = {'logger': logging.getLogger(__name__)}
     original = FIXTURE.read_text()
+    if guarded_release:
+        original = _with_guarded_release(original)
     if record_delivery:
         original = original.replace(ATTACHMENT_KWARG_TAIL, ATTACHMENT_KWARG_TAIL_EXTENDED)
     exec(compile(patcher.apply_base_patch(original), str(FIXTURE), 'exec'), namespace)
@@ -121,6 +165,11 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
         assert args == (obligation_id, result, event, adapter)
         calls.append('finalize')
 
+    async def release(actual_event):
+        assert actual_event is event
+        calls.append('release')
+
+    adapter._release_turn_marker = release
     adapter.name = 'test'
     adapter._final_delivery_adapter = lambda source: adapter
     adapter._record_delivery_obligation = record
@@ -129,7 +178,8 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
     monkeypatch.setattr(hook_runtime, 'prepare_decomposed_base_final_delivery', prepare)
     actual = await adapter.send_final_ledgered(event, 'test-session', 'answer', {'thread_id': 'test-thread'}, reply_to='topic-anchor')
     assert actual == (result, adapter)
-    assert calls == ['record', 'hook', 'send'] + (['finalize'] if obligation_id else [])
+    assert calls == (['record'] + (['release'] if guarded_release and obligation_id else [])
+                     + ['hook', 'send'] + (['finalize'] if obligation_id else []))
 
 
 def test_installed_split_ledger_is_detected_for_staging(monkeypatch):
