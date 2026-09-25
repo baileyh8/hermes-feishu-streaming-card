@@ -10131,6 +10131,22 @@ def _get_json_sync(url: str, timeout: float) -> Any:
     return _open_json_request(req, timeout)
 
 
+def queued_followup_source(source: Any, event: Any) -> Any:
+    """Copy callback ownership; never put an internal identity in reply anchors."""
+    from copy import copy
+    from uuid import uuid4
+
+    copied = copy(source)
+    # Bind ownership before emit: startup/policy can fail before build_event.
+    # An unidentified non-internal turn must not retain copied canonical state.
+    copied._hfc_internal_turn_id = ""
+    copied._hfc_turn_id = str(getattr(event, "message_id", None) or "")
+    if getattr(event, "internal", False) is True and not copied._hfc_turn_id:
+        copied._hfc_internal_turn_id = "hfc-internal:" + uuid4().hex
+        copied._hfc_turn_id = copied._hfc_internal_turn_id
+    return copied
+
+
 def build_event(
     event_name: str, local_vars: dict[str, Any], preview: bool = False
 ) -> dict[str, Any] | None:
@@ -10174,14 +10190,18 @@ def _build_event(
     ) or _first_attr_string(
         gateway_event_obj, ("message_id", "msg_id")
     )
-    message_id = explicit_message_id
+    # Queued internal events have no platform message. Their source-bound
+    # identity is transport-local, not a Feishu message/reply anchor. Do not
+    # borrow the chat-wide fallback slot (another turn may own it).
+    internal_turn_id = _first_attr_string(source_obj, ("_hfc_internal_turn_id",))
+    message_id = internal_turn_id or explicit_message_id
     is_terminal_event = event_name in {"message.completed", "message.failed"}
     active_fallback_cache_key = None
-    if event_name == "message.started" and explicit_message_id is not None:
+    if not internal_turn_id and event_name == "message.started" and explicit_message_id is not None:
         active_fallback_cache_key = _active_fallback_cache_key(
             fallback_key, created_at_lifecycle_token
         )
-    elif event_name != "message.started":
+    elif not internal_turn_id and event_name != "message.started":
         if is_terminal_event:
             active_fallback_cache_key = _terminal_fallback_cache_key(
                 fallback_key, created_at_lifecycle_token
@@ -10241,7 +10261,8 @@ def _build_event(
     if is_terminal_event:
         if not preview:
             if (
-                explicit_message_id is not None
+                not internal_turn_id
+                and explicit_message_id is not None
                 and created_at_lifecycle_token is None
                 and active_fallback_cache_key is None
             ):
