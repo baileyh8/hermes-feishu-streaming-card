@@ -185,6 +185,88 @@ exit 0
     assert not system_marker.exists()
 
 
+def test_install_sh_prefers_pm_managed_runtime_python(tmp_path):
+    """A PM-managed Hermes must install into the venv the Gateway actually boots.
+
+    Hermes 0.21.4+ keeps its dependency environment outside the checkout, so the checkout's
+    own `venv/` is a previous release's and is not on the Gateway's sys.path. Selecting it
+    installs the package where the Gateway never imports from: every hook seam fails on import
+    and the fail-open hook leaves the card degraded with no error anyone can see.
+    """
+    hermes_dir = tmp_path / "hermes-agent"
+    stale_python = hermes_dir / "venv" / "bin" / "python"
+    stale_python.parent.mkdir(parents=True)
+    stale_python.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    stale_python.chmod(stale_python.stat().st_mode | stat.S_IXUSR)
+
+    managed_venv = tmp_path / "installs" / "abc123" / "environments" / "env456" / "venv"
+    managed_python = managed_venv / "bin" / "python"
+    managed_python.parent.mkdir(parents=True)
+    managed_python.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_PYTHON_LOG"
+exit 0
+""",
+        encoding="utf-8",
+    )
+    managed_python.chmod(managed_python.stat().st_mode | stat.S_IXUSR)
+
+    # Stands in for Hermes' pm.environments, which the probe imports in a subprocess.
+    pm_package = hermes_dir / "pm"
+    pm_package.mkdir(parents=True)
+    (pm_package / "__init__.py").write_text("", encoding="utf-8")
+    (pm_package / "environments.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "\n"
+        "def committed_venv(project_root):\n"
+        "    return (Path(project_root).parent / 'installs' / 'abc123'\n"
+        "            / 'environments' / 'env456' / 'venv')\n",
+        encoding="utf-8",
+    )
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "FEISHU_APP_ID=cli_pm\nFEISHU_APP_SECRET=pm_secret\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
+            "HERMES_DIR": str(hermes_dir),
+            "HFC_CONFIG": str(tmp_path / "config.yaml"),
+            "HFC_ENV_FILE": str(env_file),
+            "HFC_NO_PROMPT": "1",
+            "HFC_SKIP_START": "1",
+            "HFC_VERSION": "main",
+            "PYTHON": sys.executable,
+        }
+    )
+    env.pop("HFC_PYTHON", None)
+    env.pop("FEISHU_APP_ID", None)
+    env.pop("FEISHU_APP_SECRET", None)
+
+    result = subprocess.run(
+        ["bash", "install.sh"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    python_log = (tmp_path / "python.log").read_text(encoding="utf-8")
+    assert "hermes_feishu_card.cli setup" in python_log
+    assert "-m pip install --upgrade" in python_log
+    # pip --user writes to the user site, which a venv does not import.
+    assert "--user" not in python_log
+    # The venv-aware branch chose the flag, not just the $HERMES_DIR literals.
+    assert "sys.base_prefix" in python_log
+
+
 def test_install_sh_persists_process_credentials_to_private_env_file(tmp_path):
     env_file = tmp_path / "data" / ".env"
     env_file.parent.mkdir(parents=True)

@@ -218,9 +218,48 @@ prompt_credentials() {
   upsert_env "FEISHU_APP_SECRET" "$FEISHU_APP_SECRET"
 }
 
+pm_managed_runtime_python() {
+  # A PM-managed Hermes (0.21.4+) keeps its dependency environment outside the checkout:
+  # hermes_bootstrap selects pm.environments.committed_venv(root) before any third-party
+  # import, so that venv -- not <root>/venv -- is what the Gateway imports from. Read the
+  # same selection, or the package lands in a venv the Gateway never looks at and every
+  # hook seam fails on import while the card degrades silently.
+  # Probe with the platform's own python3: the module involved is stdlib-only by design
+  # ("environment selection must work before any dependency has been imported"), so any
+  # 3.9+ interpreter can answer it. $PYTHON is only the last resort — it names the install
+  # target, and running it here would be a surprising side effect.
+  local probe_python
+  probe_python="$(command -v python3 2>/dev/null || true)"
+  [ -n "$probe_python" ] || probe_python="${PYTHON:-}"
+  [ -n "$probe_python" ] && [ -x "$probe_python" ] || return 1
+  local selected
+  selected="$("$probe_python" -I -c '
+import sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from pm.environments import committed_venv
+venv = committed_venv(Path(sys.argv[1]))
+print(str(venv) if venv else "")
+' "$HERMES_DIR" 2>/dev/null)" || return 1
+  [ -n "$selected" ] || return 1
+  local candidate
+  for candidate in "$selected/bin/python" "$selected/bin/python3" "$selected/Scripts/python.exe"; do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 detect_python() {
   if [ -n "$PYTHON_BIN" ]; then
     [ -x "$PYTHON_BIN" ] || fail "HFC_PYTHON is not executable: $PYTHON_BIN"
+    return
+  fi
+  local pm_runtime
+  if pm_runtime="$(pm_managed_runtime_python)"; then
+    PYTHON_BIN="$pm_runtime"
     return
   fi
   local candidates=(
@@ -244,6 +283,15 @@ detect_python() {
 configure_pip_user_flag() {
   if [ "${HFC_PIP_USER+x}" = "x" ]; then
     PIP_USER_FLAG="$HFC_PIP_USER"
+    return
+  fi
+  # Never pass --user for an interpreter that already belongs to a virtual environment:
+  # pip --user writes to the user site directory, which the venv does not import, so the
+  # Gateway would still not see the package. This also covers a PM-managed runtime venv,
+  # whose path is outside $HERMES_DIR and so matches none of the literals below.
+  if [ -n "$PYTHON_BIN" ] && \
+    "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)' >/dev/null 2>&1; then
+    PIP_USER_FLAG="0"
     return
   fi
   case "$PYTHON_BIN" in
