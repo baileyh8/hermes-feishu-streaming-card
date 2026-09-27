@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+## [4.6.10] - 2026-09-27
+
+- Support guarded Hermes ledger release and split delivery adapter APIs; pin current stable/main source compatibility tests.
+- Isolate internal follow-ups and reopened create UUIDs so prior answers survive, including failed replacement creates.
+- Install into the PM-selected runtime venv without `--user`. Preserve original PR #355/#358 authorship.
+- See [release notes](docs/release-notes-v4.6.10.md) for contributors and validation boundaries.
+
 ## [4.6.9] - 2026-09-24
 
 - Isolate concurrent group cards by requester or native Gateway execution scope; restrict redirects to the explicit source turn. Preserve independent final answers and terminal failure protection (#348, reported by [cainiaozp](https://github.com/cainiaozp)).

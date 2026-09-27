@@ -162,14 +162,8 @@ def test_reapplied_cli_diagnoses_and_requires_explicit_upgrade(reapplied, monkey
 
 
 def test_remove_previous_release_queued_hook_rejects_modified_body():
-    block = "".join(patcher._render_queued_followup_hook_block("    ", "\n"))
-    legacy = block.replace(
-        "        from hermes_feishu_card.hook_runtime import interrupted_turn_locals as _hfc_interrupted_locals\n", ""
-    ).replace(
-        '_hfc_interrupted_locals(source, _hfc_original_message_id, result)',
-        '{"source": source, "chat_id": getattr(source, "chat_id", None), '
-        '"message_id": _hfc_original_message_id, "error": "用户已打断当前任务"}',
-    )
+    # Build the fixture from the actual historical template, not today's hook.
+    legacy = "".join(patcher._render_v462_queued_followup_hook_block("    ", "\n"))
     source = "async def followup():\n" + legacy + "    return None\n"
     assert patcher.remove_patch(source) == "async def followup():\n    return None\n"
     with pytest.raises(ValueError, match="queued follow-up patch markers"):

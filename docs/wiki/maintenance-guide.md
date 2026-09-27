@@ -261,3 +261,7 @@ native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependen
 ## V4.6.6 收尾回归
 
 审批精简必须有独立完整回执的显式平台 PATCH 确认；不得仅以 callback 返回体作为投递证明。展示指纹、旧段清理队列均不入检查点。通知计时提前唤醒不得取消 in-flight DELETE；原生来源只存在于精确 producer 或同一 Base delivery invocation。总条目窗口优先保留运行工具、前一步和失败条目，仍需遵守卡片预算。
+
+## V4.6.10 Hermes 0.21.x and reopened cards
+
+Use the outbound `_delivery_adapter_for` resolver when present; None/errors are authoritative and must not fall through to another bot. Exact optional guarded marker release is accepted only between ledger recording and sending, once. Queued/idle source identity is independent of platform reply anchors. Same-key terminal reopen requires a fresh create UUID; failed replacement sends retain only terminal display ownership, not old approval/execution state. Verify current stable and main using their hash-bound fixtures, not version-string guesses.

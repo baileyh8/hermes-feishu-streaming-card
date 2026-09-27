@@ -69,10 +69,24 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: 6005aa1fd9aac8b1024ace50fec8cd1c85a04bae
           path: .upstream/extracted
+      - name: Checkout pinned Hermes latest_stable
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: f97608f178d1ffeca59860195ab7da295f7c8e5f
+          path: .upstream/latest_stable
+      - name: Checkout pinned Hermes latest_main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 6f7a7991bb069db07ae74a479823ce8310f8c7e0
+          path: .upstream/latest_main
       - name: Install test dependencies
         run: python -m pip install -e ".[test]"
       - name: Verify source-only install, repeat, diagnosis and exact restore
         env:
+          HFC_UPSTREAM_LATEST_STABLE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
+          HFC_UPSTREAM_LATEST_MAIN_ROOT: ${{ github.workspace }}/.upstream/latest_main
           HFC_UPSTREAM_STABLE_ROOT: ${{ github.workspace }}/.upstream/stable
           HFC_UPSTREAM_MAIN_ROOT: ${{ github.workspace }}/.upstream/main
           HFC_UPSTREAM_PRODUCTION_ROOT: ${{ github.workspace }}/.upstream/production
@@ -255,7 +269,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v4.6.9
+          HFC_VERSION: v4.6.10
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
