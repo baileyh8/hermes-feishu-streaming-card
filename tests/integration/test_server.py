@@ -12221,6 +12221,20 @@ async def test_repeated_failed_messages_do_not_retain_runtime_state(
             )
             assert response.status == 502
 
+        if replacement:
+            # Failed replacement creates retain only the already-published
+            # terminal display, never active approval/execution state.
+            assert len(app[SESSIONS_KEY]) == 12
+            for index in range(12):
+                key = f"om_failed_{index}"
+                retained = app[SESSIONS_KEY][key]
+                assert retained.status == "completed"
+                assert retained.answer_text == f"old answer {index}"
+                assert retained.active_interaction is None
+                assert app[FEISHU_MESSAGE_IDS_KEY][key] == f"om_card_{index}"
+            assert app[INTERACTION_RESULTS_KEY] == {}
+            cleanup_runtime_state(app, time.time() + 3601)
+
         assert app[SESSIONS_KEY] == {}
         assert app[SESSION_ALIASES_KEY] == {}
         assert app[MESSAGE_LOCKS_KEY] == {}

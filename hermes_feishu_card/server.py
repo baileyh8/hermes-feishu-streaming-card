@@ -4749,7 +4749,26 @@ async def _stop_card_restore(app):
 
 
 async def _apply_event_locked(request, event, *, advance_sequence=True):
+    app = request.app
+    key = _resolve_session_key(app, event)
+    prior = app[SESSIONS_KEY].get(key)
+    retained = None
+    if (prior is not None and prior.status in {"completed", "failed"}
+            and not prior.terminal_disposition and app[FEISHU_MESSAGE_IDS_KEY].get(key)):
+        retained = {state_key: app[state_key].get(key) for state_key in
+                    (SESSIONS_KEY, FEISHU_MESSAGE_IDS_KEY, MESSAGE_BOT_IDS_KEY, SESSION_CARD_CONFIGS_KEY)}
     result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
+    # A refused/uncertain replacement create must not erase the previous
+    # completed answer or let a later fallback reuse its original delivery UUID.
+    # Restore display ownership only; no execution or approval is resurrected.
+    if retained is not None and result[0].status >= 400 and key not in app[SESSIONS_KEY]:
+        display = copy.deepcopy(prior)
+        display.active_interaction = None
+        display.approval_retirements = []
+        retained[SESSIONS_KEY] = display
+        for state_key, value in retained.items():
+            if value is not None:
+                app[state_key][key] = value
     key = _resolve_session_key(request.app, event)
     _remember_legacy_owner_receipt(request.app, key)
     profile = _policy_profile_id(event)
@@ -5058,11 +5077,16 @@ async def _apply_event_locked_inner(
                 request.app,
                 handoff_identity,
             )
+    reopen_delivery_key = ""
     if reopens_completed_session:
         # A completed topic session can share the next turn's message id. A
         # stream event is also sufficient evidence of a new turn when Hermes
         # omitted message.started. Policy was checked before mutating handoff
         # state, so a native turn cannot leave an active lifecycle floor.
+        # A new lifecycle must not reuse the IM/CardKit create UUID of the
+        # completed card. Keep one key across all retries of this create.
+        # Random identity also avoids counter reuse after a sidecar restart.
+        reopen_delivery_key = f"{session_key}:reopen:{secrets.token_hex(16)}"
         _reset_session_for_new_turn(request.app, session_key)
         session = None
         event = incoming_event
@@ -5189,7 +5213,7 @@ async def _apply_event_locked_inner(
                 thread_id=_thread_id_for_event(event),
                 reply_to_message_id=_reply_to_message_id_for_event(event),
                 reply_in_thread=_reply_in_thread_for_event(event),
-                delivery_key=session_key,
+                delivery_key=reopen_delivery_key or session_key,
                 delivery_kind=_delivery_kind(event) or "chat",
                 profile_id=_policy_profile_id(event),
             )
@@ -5370,7 +5394,7 @@ async def _apply_event_locked_inner(
                     thread_id=_thread_id_for_event(event),
                     reply_to_message_id=_reply_to_message_id_for_event(event),
                     reply_in_thread=_reply_in_thread_for_event(event),
-                    delivery_key=session_key,
+                    delivery_key=reopen_delivery_key or session_key,
                     delivery_kind=_delivery_kind(event)
                     or ("notice" if event.event == "system.notice" else "chat"),
                     profile_id=_policy_profile_id(event),

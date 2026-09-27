@@ -1168,7 +1168,7 @@ async def maintenance_admission_from_hermes_locals(
             return False
         event = local_vars.get("event")
         source = local_vars.get("source") or getattr(event, "source", None)
-        adapter_for_source = getattr(runner, "_adapter_for_source", None)
+        adapter_for_source = _hfc_delivery_resolver(runner)
         adapter = adapter_for_source(source) if callable(adapter_for_source) else None
         send = getattr(adapter, "send", None)
         chat_id = str(getattr(source, "chat_id", "") or "").strip()
@@ -6703,12 +6703,23 @@ def _hfc_registered_adapter_items(runner: Any) -> list[tuple[Any, Any]]:
     return result
 
 
+def _hfc_delivery_resolver(runner: Any) -> Any:
+    # New Hermes separates intake authorization from outbound delivery. A
+    # callable resolver returning None is an authoritative refusal, not an
+    # invitation to guess another profile's bot.
+    for name in ("_delivery_adapter_for", "_adapter_for_source", "_intake_adapter_for"):
+        resolver = getattr(runner, name, None)
+        if callable(resolver):
+            return resolver
+    return None
+
+
 def _hfc_feishu_adapter_from_runner(runner: Any, source: Any) -> Any:
     if source is None or _platform_name({}, source) != "feishu":
         return None
     # Current Hermes validates retained transport provenance before profile lookup.
     # A shared bot may own a turn routed to another profile; preserve that contract.
-    resolver = getattr(runner, "_adapter_for_source", None)
+    resolver = _hfc_delivery_resolver(runner)
     if callable(resolver):
         try:
             adapter = resolver(source)

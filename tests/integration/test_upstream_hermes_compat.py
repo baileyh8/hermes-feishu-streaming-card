@@ -21,7 +21,7 @@ SOURCES = json.loads(
 )
 
 
-@pytest.mark.parametrize("baseline", ["stable", "main", "production", "historical", "image", "extracted"])
+@pytest.mark.parametrize("baseline", ["stable", "main", "production", "historical", "image", "extracted", "latest_stable", "latest_main"])
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):
     configured = os.environ.get(f"HFC_UPSTREAM_{baseline.upper()}_ROOT")
     if not configured:
@@ -49,7 +49,7 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     detection = detect_hermes(target)
     assert detection.supported, detection.reason
     assert detection.version == expected.get("version", "0.21.0")
-    assert detection.decomposed == (baseline in {"main", "extracted"})
+    assert detection.decomposed == expected.get("decomposed", baseline in {"main", "extracted"})
     assert cli.main(["install", "--hermes-dir", str(target), "--yes"]) == 0
     installed = {name: (target / name).read_bytes() for name in originals}
     assert installed != originals
@@ -153,3 +153,56 @@ async def test_actual_upstream_redirect_keeps_original_callbacks_on_new_card(tmp
         assert any(mid=='om_card_2' and 'complete redirected answer' in str(card) for mid,card in feishu.updated), ([(k, v.status, v.last_sequence, v.answer_text) for k,v in app[server.SESSIONS_KEY].items()], app[server.REDIRECT_SESSION_ALIASES_KEY], delta, terminal, feishu.updated)
         assert original_source._hfc_turn_id == 'om_old'
         assert not hasattr(incoming_source, '_hfc_turn_id')
+
+
+@pytest.mark.parametrize('baseline', ['latest_stable', 'latest_main'])
+@pytest.mark.parametrize('success', [True, False])
+@pytest.mark.parametrize('obligation_id', ['fixture-obligation', None])
+async def test_current_upstream_generated_ledger_executes_in_order(
+    baseline, success, obligation_id, monkeypatch,
+):
+    """Execute the patched method from the pinned upstream, not just its markers."""
+    import ast
+    import logging
+    from types import SimpleNamespace
+    from hermes_feishu_card import hook_runtime
+    from hermes_feishu_card.install import patcher
+    configured = os.environ.get(f'HFC_UPSTREAM_{baseline.upper()}_ROOT')
+    if not configured:
+        pytest.skip(f'exact {baseline} source not supplied')
+    raw = (Path(configured) / 'gateway/platforms/base.py').read_bytes()
+    assert sha256(raw).hexdigest() == SOURCES[baseline]['sha256']['gateway/platforms/base.py']
+    tree = ast.parse(patcher.apply_base_patch(raw.decode()))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'BasePlatformAdapter')
+    method = next(n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'send_final_ledgered')
+    namespace = {'logger':logging.getLogger(__name__)}
+    exec('from __future__ import annotations\n' + ast.unparse(method),namespace)
+    calls=[]
+    adapter=SimpleNamespace(name='fixture')
+    event=SimpleNamespace(source=SimpleNamespace(chat_id='fixture-chat'))
+    outcome=SimpleNamespace(success=success,message_id='fixture-card')
+    async def record(*args):
+        assert args==(event,'fixture-session','FINAL',adapter,False)
+        calls.append('record');return obligation_id
+    async def release(value):
+        assert value is event
+        calls.append('release')
+    async def hook(context):
+        assert context['obligation_id']==obligation_id
+        calls.append('hook')
+        return adapter,context['content'],context['reply_to'],context['metadata']
+    async def send(**kwargs):
+        assert kwargs==dict(chat_id='fixture-chat',content='FINAL',reply_to='fixture-anchor',metadata={'thread_id':'fixture-thread'})
+        calls.append('send');return outcome
+    async def finalize(*args):
+        assert args==(obligation_id,outcome,event,adapter)
+        calls.append('finalize')
+    adapter._final_delivery_adapter=lambda _:adapter
+    adapter._record_delivery_obligation=record
+    adapter._release_turn_marker=release
+    adapter._send_with_retry=send
+    adapter._finalize_delivery_obligation=finalize
+    monkeypatch.setattr(hook_runtime,'prepare_decomposed_base_final_delivery',hook)
+    result=await namespace['send_final_ledgered'](adapter,event,'fixture-session','FINAL',{'thread_id':'fixture-thread'},reply_to='fixture-anchor')
+    assert result==(outcome,adapter)
+    assert calls==['record']+(['release'] if obligation_id else [])+['hook','send']+(['finalize'] if obligation_id else [])

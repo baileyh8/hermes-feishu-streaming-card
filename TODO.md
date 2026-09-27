@@ -858,3 +858,8 @@
 - [x] 代码完整回归 4049 passed / 18 skipped、14 项 PR 检查、普通 wheel 与真实平台 API 投递证据。
 - [ ] 桌面/手机首次点击和视觉验收；原生产实例源码漂移需独立处理。
 - 精确合并、tag、资产和公开安装证据随 [v4.6.4 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.4) 登记。
+
+## V4.6.10 compatibility and follow-up fixes
+
+- Candidate: #352/#353/#354/#359 and PR #355/#358. See [release notes](docs/release-notes-v4.6.10.md).
+- PR #351 width configuration validated separately; PR #357 rebrand and CardKit recovery require separate review. #344 remains unreproduced.
