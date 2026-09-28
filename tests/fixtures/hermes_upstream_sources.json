@@ -98,7 +98,7 @@
     }
   },
   "latest_main": {
-    "commit": "6f7a7991bb069db07ae74a479823ce8310f8c7e0",
+    "commit": "5912ed81ed945a784f67ca13c1096e2c122cd307",
     "source": "https://github.com/NousResearch/hermes-agent",
     "version": "unknown",
     "decomposed": true,

@@ -211,6 +211,7 @@ class CardSession:
     # Persist rendered static text, never InteractionState or callback tokens.
     legacy_owner_receipt: dict[str, Any] = field(default_factory=dict)
     _tool_call_count: int = field(default=0)
+    _process_activity: dict[str, dict] = field(default_factory=dict, repr=False)
     _answer_archive_index: int | None = None
     timeline: CardTimeline = field(default_factory=CardTimeline)
     thinking_normalizer: StreamingTextNormalizer = field(default_factory=StreamingTextNormalizer)
@@ -357,37 +358,42 @@ class CardSession:
                 self.updated_at = time.time()
                 self.refresh_display_status_source()
                 return True
-            raw_preview = event.data.get("detail")
+            from .process_activity import enrich_process_detail
+            tool_data = enrich_process_detail(
+                event.data, self._process_activity,
+                observe=not (same_call and previous_is_terminal and is_terminal),
+            )
+            raw_preview = tool_data.get("detail")
             if isinstance(raw_preview, str):
                 normalized_preview = normalize_stream_text(raw_preview).strip()
                 if normalized_preview:
                     self.latest_tool_preview = _runtime_tool_summary(
-                        event.data.get("name"), normalized_preview
+                        tool_data.get("name"), normalized_preview
                     )
             if previous_tool is None or (previous_is_terminal and not is_terminal):
                 started_at = None if is_terminal else event.created_at
             else:
                 started_at = previous_tool.started_at
-            detail_data = event.data
-            resolved_duration_ms = _tool_duration_milliseconds(event.data)
+            detail_data = tool_data
+            resolved_duration_ms = _tool_duration_milliseconds(tool_data)
             if same_call and previous_is_terminal and resolved_duration_ms is None:
                 resolved_duration_ms = previous_tool.duration_ms
                 if resolved_duration_ms is not None:
-                    detail_data = dict(event.data, duration_ms=resolved_duration_ms)
+                    detail_data = dict(tool_data, duration_ms=resolved_duration_ms)
             if (
                 is_terminal
                 and resolved_duration_ms is None
                 and started_at is not None
                 and event.created_at >= started_at
             ):
-                detail_data = dict(event.data)
+                detail_data = dict(tool_data)
                 resolved_duration_ms = (event.created_at - started_at) * 1000
                 detail_data["duration_ms"] = resolved_duration_ms
             resolved_detail = _tool_detail_from_event_data(detail_data)
             if (
                 is_terminal
                 and previous_tool is not None
-                and not _tool_event_has_primary_detail(event.data)
+                and not _tool_event_has_primary_detail(tool_data)
             ):
                 resolved_detail = _merge_tool_details(
                     previous_tool.detail,

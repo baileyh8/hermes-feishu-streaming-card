@@ -78,7 +78,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.10
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.11
 bash install-docker.sh
 ```
 
@@ -152,6 +152,7 @@ card:
 | 想调整什么 | 配置 / 文档 |
 | --- | --- |
 | 实时思考不进入正文 | `card.stream_thinking_to_body: false` |
+| 正文只看最新思考 | `card.thinking_body_tail_chars: 2400`（默认 `0` 不截断） |
 | 完成后精简成功工具行 | `card.hide_completed_tool_activity: true`，保留异常工具 |
 | 字号、页脚与订阅额度 | `card.text_sizes`、`card.footer_fields`；可选 `subscription_usage` |
 | 指定会话使用原生回复 | `bindings.native_chats` 精确匹配；多 profile 在对应 profile 下配置 |
@@ -192,6 +193,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v4.6.11](docs/release-notes-v4.6.11.md) | 可选思考尾部窗口、后台任务观测信息与 CodeQL 更新 |
 | [v4.6.10](docs/release-notes-v4.6.10.md) | Hermes 0.21.5 适配、PM 运行环境安装与跟进卡片隔离 |
 | [v4.6.9](docs/release-notes-v4.6.9.md) | 群聊并发卡片隔离、紧凑单选按钮与新手 README |
 | [v4.6.8](docs/release-notes-v4.6.8.md) | macOS 安装与恢复提示，明确自主管理登录启动和未知进程归属 |
@@ -201,11 +203,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v4.6.4](docs/release-notes-v4.6.4.md) | 首次按钮接线、顺序续答、可选阅读预设与作用域通知清理 |
 | [v4.6.3](docs/release-notes-v4.6.3.md) | 实时思考正文开关、工具耗时与中断用量 |
 | [v4.6.2](docs/release-notes-v4.6.2.md) | 原生插件共存维护证明与可选终态工具区 |
-| [v4.6.1](docs/release-notes-v4.6.1.md) | Hermes 0.21.3 hook、状态撤回和审批展示修复 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V4.6.11：感谢 [leavrcn](https://github.com/leavrcn) 在 [#362](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/362) 提供长思考复现与尾部窗口补丁方案；感谢 [mouyong](https://github.com/mouyong) 的 [#361](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/361) 后台等待现场证据，以及 [Dependabot](https://github.com/apps/dependabot) 的 [PR #363](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/363)。保留代码作者与全部历史贡献记录。
 
 感谢每一位提供代码、方案、问题复现与现场验证的贡献者。历史署名与关联 PR / Issue 完整保留在下方。
 

@@ -2044,6 +2044,10 @@ class PluginRuntime:
             "name": self._preview(tool_name),
             "status": status,
         }
+        from .process_activity import process_activity
+        observed = process_activity(tool_name, kwargs.get("args"), None if pending else kwargs.get("result"))
+        if observed:
+            data["process_activity"] = observed
         duration = self._safe_duration(kwargs.get("duration_ms"))
         if not pending and duration is not None:
             data["duration_ms"] = duration

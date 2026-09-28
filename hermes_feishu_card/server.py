@@ -7231,10 +7231,8 @@ def _existing_owner_render_result(app, session, result, *, session_key=None):
         inspection = inspect_card_limits(live_card)
         if inspection.safe:
             return replace(result, card=live_card, disposition="card", inspection=inspection, limit_reason="")
-    _, config, title, _ = _session_card_render_context(app, session, session_key=session_key)
-    primary = (_primary_text_for_session(display_view(session), stream_thinking_to_body=_safe_bool(
-        config.get("stream_thinking_to_body"), True
-    )) if result.disposition == "card" else None)
+    _, _, title, _ = _session_card_render_context(app, session, session_key=session_key)
+    primary = result.primary_text if result.disposition == "card" else None
     card = legacy_owner_body(session.legacy_owner_receipt, result.card, primary)
     inspection = inspect_card_limits(card)
     if inspection.safe:
@@ -7302,6 +7300,7 @@ def _render_session_card_result_for_app(
         timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
         timeline_order=card_config.get("timeline_order", "newest_first"),
         timeline_tools_per_reasoning=card_config.get("timeline_tools_per_reasoning", 0),
+        thinking_body_tail_chars=card_config.get("thinking_body_tail_chars", 0),
         max_timeline_items=_safe_positive_int(
             card_config.get("max_timeline_items"), 12
         ),
