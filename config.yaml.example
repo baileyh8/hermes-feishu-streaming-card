@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V4.6.10 sidecar configuration
+# Hermes Feishu Streaming Card V4.6.11 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -50,6 +50,9 @@ card:
   # false keeps live raw thinking in a bounded panel preview instead of main_content.
   # Does not change final/failed content, archived reasoning_format or whole-card limits.
   stream_thinking_to_body: true
+  # Optional live-body tail window (0 = unchanged/unlimited; integer 0..1000000).
+  # Tries a smaller window if needed; answers and timeline budgets are unchanged.
+  thinking_body_tail_chars: 0
   # Hide content-area tool rows after completed/failed; timeline and counts stay visible.
   hide_completed_tool_activity: false
   timeline_expanded: false

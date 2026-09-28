@@ -41,6 +41,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "streaming_mode": False,
         "show_reasoning": True,
         "stream_thinking_to_body": True,
+        "thinking_body_tail_chars": 0,
         "hide_completed_tool_activity": False,
         "reasoning_format": "panel",
         "timeline_expanded": False,
@@ -459,6 +460,10 @@ def _normalize_card_config(value: object, *, path: str) -> None:
         if not isinstance(raw_order, str) or raw_order.strip().lower() not in {"newest_first", "chronological"}:
             raise ValueError(f"{path}.timeline_order must be newest_first or chronological")
         value["timeline_order"] = raw_order.strip().lower()
+    if "thinking_body_tail_chars" in value:
+        limit = value["thinking_body_tail_chars"]
+        if type(limit) is not int or not 0 <= limit <= 1_000_000:
+            raise ValueError(f"{path}.thinking_body_tail_chars must be an integer from 0 to 1000000")
     if "timeline_tools_per_reasoning" in value:
         limit = value["timeline_tools_per_reasoning"]
         if type(limit) is not int or not 0 <= limit <= 100:

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+## [4.6.11] - 2026-09-28
+
+- Add the opt-in `thinking_body_tail_chars` live-body window and verified whole-card budget reduction without truncating answers or timeline content (#362, leavrcn).
+- Display observed background command/output/status for same-turn waits, with bounded nonpersistent process associations and no fabricated ETA (#361, mouyong).
+- Upgrade verified CodeQL pins and synchronize the CI allowlist (PR #363, Dependabot).
+- See [release notes](docs/release-notes-v4.6.11.md) for validation scope and credits.
+
 ## [4.6.10] - 2026-09-27
 
 - Support guarded Hermes ledger release and split delivery adapter APIs; pin current stable/main source compatibility tests.

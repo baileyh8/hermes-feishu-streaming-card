@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.10`.
+The Compose example defaults `HFC_VERSION` to `v4.6.11`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.10
+export HFC_VERSION=v4.6.11
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -969,3 +969,9 @@ Working heartbeats remain editable; approval buttons use compact auto-width colu
 ## V4.6.8: macOS installation guidance
 
 macOS persistence guidance explains the Linux systemd requirement; a missing verified pidfile does not establish launchd ownership. See [installer safety](installer-safety.en.md) and [release notes](release-notes-v4.6.8.en.md) for one-shot login startup, external supervision and stop boundaries. This release does not manage launchd or change card behavior.
+
+## V4.6.11: live thinking and background tasks
+
+- Set `card.thinking_body_tail_chars: 2400` to keep the latest live thinking in the body. It applies only with `stream_thinking_to_body: true`, before any answer and before the turn ends. The default `0` preserves unlimited existing behavior; accepted integers are 0–1000000. The character window may shrink further to fit the complete serialized card. It does not truncate answers, the reasoning timeline or tool sections; unrelated overflows retain the existing native-delivery fallback. Restart the sidecar after editing configuration.
+- Once `terminal` reports a background process ID, or `process` / `process_manage` reports a command and output, subsequent waits in the same turn show that observed context. At most 32 process associations live in one card session's memory; they are not restored after restart.
+- Recent output is the last tool report, not a live log subscription or predicted progress. The requested wait timeout is explicitly not an ETA; Hermes may clamp it further. Missing command context stays unknown. No other turn or profile is queried.

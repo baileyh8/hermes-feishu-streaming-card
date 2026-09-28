@@ -10815,6 +10815,10 @@ def _event_data(
         arguments = _tool_arguments(local_vars)
         if arguments is not None:
             data["arguments"] = arguments
+        from .process_activity import process_activity
+        observed = process_activity(name, arguments, local_vars.get("result"))
+        if observed:
+            data["process_activity"] = observed
         duration_ms = _tool_duration_milliseconds(local_vars)
         if duration_ms is not None:
             data["duration_ms"] = duration_ms

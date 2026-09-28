@@ -265,3 +265,10 @@ native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependen
 ## V4.6.10 Hermes 0.21.x and reopened cards
 
 Use the outbound `_delivery_adapter_for` resolver when present; None/errors are authoritative and must not fall through to another bot. Exact optional guarded marker release is accepted only between ledger recording and sending, once. Queued/idle source identity is independent of platform reply anchors. Same-key terminal reopen requires a fresh create UUID; failed replacement sends retain only terminal display ownership, not old approval/execution state. Verify current stable and main using their hash-bound fixtures, not version-string guesses.
+
+## V4.6.11 显示边界
+
+- `thinking_body_tail_chars` 只限制未结束、无答案时的正文思考；0 保留原行为。每次收缩必须验证完整 Card JSON，不能截断答案/工具/审批范围，也不能承诺任意自定义面板都能容纳。
+- `CardRenderResult.primary_text` 记录实际选中的正文；legacy owner 重组时必须复用该值，不能重新注入未裁剪思考。
+- `process_activity.py` 只提取已回报的 allowlisted 字段，先脱敏再裁剪；不读取进程注册表、不轮询/执行进程、不虚构 ETA。patch/native 共用提取逻辑。
+- 每个 `CardSession` 的 `_process_activity` 至多 32 项，必须列入 checkpoint `_EXCLUDED`，避免改变旧检查点字段契约或恢复进程关联。重复工具终态不得覆盖后续观测到的进程退出状态。

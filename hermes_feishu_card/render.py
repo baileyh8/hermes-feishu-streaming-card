@@ -92,6 +92,7 @@ class CardRenderResult:
     inspection: CardLimitInspection
     table_overflow: TableOverflowResult
     limit_reason: str = ""
+    primary_text: str = ""
 
 
 def _spinner_text(label: str = "生成中") -> str:
@@ -125,6 +126,7 @@ def render_card(
     hide_successful_tool_activity: bool = False,
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
+    thinking_body_tail_chars: int = 0,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -148,6 +150,7 @@ def render_card(
         hide_successful_tool_activity=hide_successful_tool_activity,
         timeline_order=timeline_order,
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
+        thinking_body_tail_chars=thinking_body_tail_chars,
     ).card
 
 
@@ -173,16 +176,17 @@ def render_card_result(
     hide_successful_tool_activity: bool = False,
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
+    thinking_body_tail_chars: int = 0,
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(
-        session, stream_thinking_to_body=stream_thinking_to_body
+        session, stream_thinking_to_body=stream_thinking_to_body,
+        thinking_body_tail_chars=thinking_body_tail_chars,
     )
     table_overflow = transform_table_overflow(
         primary_text,
         mode=table_overflow_mode,
     )
-    card = _render_card_unchecked(
-        session,
+    render_options = dict(
         footer_fields=footer_fields,
         title=title,
         interaction_mode=interaction_mode,
@@ -203,14 +207,43 @@ def render_card_result(
         hide_successful_tool_activity=hide_successful_tool_activity,
         timeline_order=timeline_order,
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
+        thinking_body_tail_chars=thinking_body_tail_chars,
     )
+    card = _render_card_unchecked(session, **render_options)
     inspection = inspect_card_limits(card)
+    # Only opt-in live reasoning is expendable. Never shrink answers or the
+    # auxiliary timeline, and always inspect the complete serialized card.
+    if (not inspection.safe and type(thinking_body_tail_chars) is int
+            and thinking_body_tail_chars > 0 and stream_thinking_to_body
+            and session.status not in {"completed", "failed"}
+            and not session.answer_text and session.thinking_text):
+        low, high = 1, min(thinking_body_tail_chars, len(primary_text)) - 1
+        best = None
+        while low <= high:
+            limit = (low + high) // 2
+            probe_options = dict(render_options, thinking_body_tail_chars=limit)
+            probe = _render_card_unchecked(session, **probe_options)
+            probe_inspection = inspect_card_limits(probe)
+            if probe_inspection.safe:
+                best = (probe, probe_inspection, limit)
+                low = limit + 1
+            else:
+                high = limit - 1
+        # Markdown/table structure need not be monotonic in character count:
+        # retain only a candidate whose complete card was actually verified.
+        if best is not None:
+            card, inspection, limit = best
+            primary_text = _primary_text_for_session(
+                session, stream_thinking_to_body=True, thinking_body_tail_chars=limit
+            )
+            table_overflow = transform_table_overflow(primary_text, mode=table_overflow_mode)
     if inspection.safe:
         return CardRenderResult(
             card=card,
             disposition="card",
             inspection=inspection,
             table_overflow=table_overflow,
+            primary_text=primary_text,
         )
 
     terminal = session.status in {"completed", "failed"}
@@ -251,6 +284,7 @@ def _render_card_unchecked(
     hide_successful_tool_activity: bool = False,
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
+    thinking_body_tail_chars: int = 0,
 ) -> Dict[str, Any]:
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
@@ -263,7 +297,8 @@ def _render_card_unchecked(
         and bool(session.reply_to_message_id)
     )
     primary_text = _primary_text_for_session(
-        session, stream_thinking_to_body=stream_thinking_to_body
+        session, stream_thinking_to_body=stream_thinking_to_body,
+        thinking_body_tail_chars=thinking_body_tail_chars,
     )
     attachment_summary = _render_attachment_summary(session)
     footer = _render_footer(
@@ -750,14 +785,18 @@ def _card_quote_summary(
 
 
 def _primary_text_for_session(
-    session: CardSession, *, stream_thinking_to_body: bool = True
+    session: CardSession, *, stream_thinking_to_body: bool = True,
+    thinking_body_tail_chars: int = 0,
 ) -> str:
     if session.status in {"completed", "failed"}:
         return normalize_stream_text(session.answer_text)
     if session.answer_text:
         return normalize_stream_text(session.answer_text)
     if stream_thinking_to_body and session.thinking_text:
-        return normalize_stream_text(session.thinking_text)
+        text = normalize_stream_text(session.thinking_text)
+        if type(thinking_body_tail_chars) is int and thinking_body_tail_chars > 0:
+            return text[-thinking_body_tail_chars:]
+        return text
     if session.latest_tool_preview or session.tools:
         return ""
     return _spinner_text("正在加载上下文…")

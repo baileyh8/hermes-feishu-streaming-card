@@ -1,5 +1,13 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.6.11：思考窗口与后台任务观测
+
+- [x] #362：可选正文尾部窗口、整卡预算复核和 legacy owner 复用实际正文。
+- [x] #361：同一轮已观测命令/输出/状态与请求等待上限；无 ETA 推测、跨轮查找或执行恢复。
+- [x] #363：核验 CodeQL v4.38.2 与同步 CI SHA 白名单，保留原作者。
+- 最终门禁与发布证据见 [v4.6.11 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.11)。#344/#351/#357 保持独立处理。
+
+
 ## V4.6.9：并发隔离与上手体验
 
 - [x] 修复 #348 的群聊清理范围，覆盖 legacy/native、首事件 fallback、redirect 和终态边界。

@@ -84,7 +84,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.10
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.11
 bash install-docker.sh
 ```
 
@@ -158,6 +158,7 @@ Explicit fields at the same level override presets. Copying all existing display
 | Change | Setting / reference |
 | --- | --- |
 | Keep live thinking out of the answer area | `card.stream_thinking_to_body: false` |
+| Show only the latest live-thinking text | `card.thinking_body_tail_chars: 2400` (default `0`: unlimited) |
 | Reduce successful tool rows after completion | `card.hide_completed_tool_activity: true`, retaining unsuccessful tools |
 | Text sizes, footer and subscription quota | `card.text_sizes`, `card.footer_fields`; optional `subscription_usage` |
 | Native replies in selected chats | Exact matches in `bindings.native_chats`; configure within each profile when using multiple profiles |
@@ -198,6 +199,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v4.6.11](docs/release-notes-v4.6.11.en.md) | Bounded live thinking, observed background-task context and CodeQL update |
 | [v4.6.10](docs/release-notes-v4.6.10.en.md) | Hermes 0.21.5 compatibility, PM runtime installation and independent follow-up cards |
 | [v4.6.9](docs/release-notes-v4.6.9.en.md) | Independent concurrent group cards, compact single-select choices and clearer onboarding |
 | [v4.6.8](docs/release-notes-v4.6.8.en.md) | macOS setup and recovery guidance with explicit startup and ownership boundaries |
@@ -207,11 +209,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v4.6.4](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
 | [v4.6.3](docs/release-notes-v4.6.3.en.md) | Live thinking visibility, tool duration and interrupted-turn metrics |
 | [v4.6.2](docs/release-notes-v4.6.2.en.md) | Shared Gateway drain proof and optional terminal tool rows |
-| [v4.6.1](docs/release-notes-v4.6.1.en.md) | Hermes 0.21.3 hooks, safe status recall and approval display |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V4.6.11: thanks to [leavrcn](https://github.com/leavrcn) for [#362](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/362), the reproduction and tail-window patch proposal; [mouyong](https://github.com/mouyong) for the background-wait evidence in [#361](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/361); and [Dependabot](https://github.com/apps/dependabot) for [PR #363](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/363). Original code authorship and all prior credits are retained.
 
 Thank you to everyone contributing code, proposals, reproductions and real-environment verification. All historical credits and associated PR / Issue links are retained below.
 
