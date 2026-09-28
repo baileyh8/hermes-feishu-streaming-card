@@ -135,3 +135,11 @@ def test_process_lookup_is_not_checkpointed_or_restored(tmp_path):
     record = json.loads(next(store.root.glob('*.json')).read_text())['record']
     assert '_process_activity' not in record['session']
     assert store.load()[0]['session']._process_activity == {}
+
+
+def test_invalid_process_arguments_preserve_the_tool_event_without_false_timing():
+    assert 'process_activity' not in tool(0, 'process', {'action': [], 'session_id': PID}).data
+    for value in (True, -1, float('nan'), float('inf'), 10**400, '900'):
+        data = tool(0, 'process', {'action': 'wait', 'session_id': PID, 'timeout': value}).data
+        assert data['name'] == 'process'
+        assert 'timeout_seconds' not in data['process_activity']

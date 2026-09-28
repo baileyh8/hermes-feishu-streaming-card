@@ -36,7 +36,7 @@ def _text(value: object, limit: int, *, tail: bool = False) -> str:
 
 
 def _seconds(value: object) -> int | float | None:
-    if type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 10**9:
+    if type(value) in (int, float) and 0 <= value <= 10**9 and math.isfinite(value):
         return value
     return None
 
@@ -48,7 +48,7 @@ def process_activity(name: object, arguments: object, result: object = None) -> 
     if name == 'terminal' and response.get('error'):
         return {}
     action = args.get('action') if name != 'terminal' else 'spawn'
-    if action not in _ACTIONS | {'spawn'}:
+    if type(action) is not str or action not in _ACTIONS | {'spawn'}:
         return {}
     requested_id = args.get('session_id')
     returned_id = response.get('session_id')
