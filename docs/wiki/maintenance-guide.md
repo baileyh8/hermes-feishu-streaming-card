@@ -272,3 +272,7 @@ Use the outbound `_delivery_adapter_for` resolver when present; None/errors are 
 - `CardRenderResult.primary_text` 记录实际选中的正文；legacy owner 重组时必须复用该值，不能重新注入未裁剪思考。
 - `process_activity.py` 只提取已回报的 allowlisted 字段，先脱敏再裁剪；不读取进程注册表、不轮询/执行进程、不虚构 ETA。patch/native 共用提取逻辑。
 - 每个 `CardSession` 的 `_process_activity` 至多 32 项，必须列入 checkpoint `_EXCLUDED`，避免改变旧检查点字段契约或恢复进程关联。重复工具终态不得覆盖后续观测到的进程退出状态。
+
+## V4.6.12 卡片宽度
+
+`card.width_mode` 的全局/profile/bot 合并必须保留显式 default 重置。JSON 2.0 的普通卡、预算兜底、修复和维护发布复用同一配置；JSON 1.0 不注入该字段。长思考预算搜索的每个 probe 必须保留 width_mode，legacy owner 继续保留原 JSON 1.0 方言与审批正文。维护子进程按原 profile/bot 重新加载配置；客户端最终控制可见尺寸。

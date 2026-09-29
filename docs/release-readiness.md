@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发布版本为 `4.6.11`；实现范围：可选思考尾部窗口、后台任务观测信息与 CodeQL 更新。正式发布及最终验收结果见 GitHub Release。
+当前发布版本为 `4.6.12`；实现范围：可选分层卡片宽度与最新 Hermes 源码兼容验证。最终验收结果见 GitHub Release。
 
-完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发布说明](release-notes-v4.6.11.md)；平台 API 验收、真实 Gateway 执行与手机视觉验收分别记录。
+完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发布说明](release-notes-v4.6.12.md)；平台 API 验收、真实 Gateway 执行与手机视觉验收分别记录。
 
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。

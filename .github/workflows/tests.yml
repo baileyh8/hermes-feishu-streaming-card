@@ -79,7 +79,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
-          ref: 5912ed81ed945a784f67ca13c1096e2c122cd307
+          ref: ea114c3e98c3339e13004adfc6098cf28ed7d754
           path: .upstream/latest_main
       - name: Install test dependencies
         run: python -m pip install -e ".[test]"
@@ -269,7 +269,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v4.6.11
+          HFC_VERSION: v4.6.12
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-

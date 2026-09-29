@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v4.6.12](release-notes-v4.6.12.md) | 可选卡片宽度与 Hermes 回复计时契约适配 |
 | [v4.6.11](release-notes-v4.6.11.md) | 可选思考尾部窗口、后台任务观测信息与 CodeQL 更新 |
 | [v4.6.10](release-notes-v4.6.10.md) | Hermes 0.21.5 适配、PM 运行环境安装与跟进卡片隔离 |
 | [v4.6.9](release-notes-v4.6.9.md) | 群聊并发卡片隔离、紧凑单选按钮与新手 README |
