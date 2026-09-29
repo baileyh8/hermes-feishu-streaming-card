@@ -56,7 +56,9 @@ def test_body_opt_out_does_not_leak_tail():
 
 
 @pytest.mark.parametrize("width_mode", ["default", "compact", "fill"])
-def test_combined_card_shrinks_body_and_keeps_auxiliary_panel(width_mode):
+def test_combined_card_shrinks_body_and_keeps_auxiliary_panel(width_mode, monkeypatch):
+    # Compare panel content without crossing the running-tool animation clock.
+    monkeypatch.setattr(render, "_spinner_frame", lambda: "⠙")
     s = session()
     r = render.render_card_result(s, thinking_body_tail_chars=20000, max_reasoning_chars=1500, width_mode=width_mode)
     small = render.render_card_result(s, thinking_body_tail_chars=1, max_reasoning_chars=1500, width_mode=width_mode)
