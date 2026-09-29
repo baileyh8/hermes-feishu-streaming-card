@@ -84,7 +84,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.11
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.12
 bash install-docker.sh
 ```
 
@@ -119,6 +119,7 @@ feishu:
   app_secret: ""
 card:
   title: Hermes Agent
+  width_mode: default  # default | compact | fill
   table_overflow_mode: compact
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 bindings:
@@ -128,6 +129,8 @@ integrity:
 service:
   manager: auto
 ```
+
+`card.width_mode` supports `default`, `compact`, and `fill` (adaptive chat-window width) for JSON 2.0 cards. The default preserves existing layout; profile/bot overrides are supported, and explicit `default` resets an inherited mode. JSON 1.0 approval cards are unchanged; clients control final dimensions. See [card width configuration](docs/user-guide.en.md#card-width).
 
 Place `.env` beside the config:
 
@@ -199,6 +202,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v4.6.12](docs/release-notes-v4.6.12.en.md) | Optional card width and Hermes reply-clock compatibility |
 | [v4.6.11](docs/release-notes-v4.6.11.en.md) | Bounded live thinking, observed background-task context and CodeQL update |
 | [v4.6.10](docs/release-notes-v4.6.10.en.md) | Hermes 0.21.5 compatibility, PM runtime installation and independent follow-up cards |
 | [v4.6.9](docs/release-notes-v4.6.9.en.md) | Independent concurrent group cards, compact single-select choices and clearer onboarding |
@@ -208,11 +212,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v4.6.5](docs/release-notes-v4.6.5.en.md) | Persistent notice ownership, explicit tool-call identity, optional timeline controls and provider-error deduplication |
 | [v4.6.4](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
 | [v4.6.3](docs/release-notes-v4.6.3.en.md) | Live thinking visibility, tool duration and interrupted-turn metrics |
-| [v4.6.2](docs/release-notes-v4.6.2.en.md) | Shared Gateway drain proof and optional terminal tool rows |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V4.6.12: Thanks to [cbatbj](https://github.com/cbatbj) / chenbing1 for [PR #351](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/351) contributing scoped card width configuration and regression tests. Original commits and all earlier credits are retained.
 
 - V4.6.11: thanks to [leavrcn](https://github.com/leavrcn) for [#362](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/362), the reproduction and tail-window patch proposal; [mouyong](https://github.com/mouyong) for the background-wait evidence in [#361](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/361); and [Dependabot](https://github.com/apps/dependabot) for [PR #363](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/363). Original code authorship and all prior credits are retained.
 

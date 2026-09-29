@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping
 
+from .config import card_width_config
 from .feishu_client import FeishuAPIError
 from .maintenance_store import UpdateJob
 from .maintenance_update import UpdateInspection
@@ -84,6 +85,7 @@ def render_update_inspection_card(
     cancel_value: Mapping[str, object],
     *,
     title: str = "Hermes Agent",
+    width_mode: str = "default",
 ) -> dict[str, object]:
     if not inspection.ready:
         reason = _INSPECTION_REASON_COPY.get(
@@ -96,7 +98,7 @@ def render_update_inspection_card(
             f"- 本机检查：`{_RECOVERY_COMMAND}`\n"
             "- 未执行 Hermes 更新。"
         )
-        return _base_card(title, "自动更新暂不可用", "red", content)
+        return _base_card(title, "自动更新暂不可用", "red", content, width_mode=width_mode)
 
     drain_line = (
         f"- 当前有 {inspection.active_sessions} 个任务；确认后将等待其安全结束。"
@@ -118,7 +120,7 @@ def render_update_inspection_card(
             "若远端在此期间变化，流程会先恢复服务，再把目标变化明确报告为失败。",
         ]
     )
-    card = _base_card(title, "确认更新 Hermes", "blue", content)
+    card = _base_card(title, "确认更新 Hermes", "blue", content, width_mode=width_mode)
     card["body"]["elements"].append(
         {
             "tag": "column_set",
@@ -138,6 +140,7 @@ def render_update_job_card(
     job: UpdateJob,
     *,
     title: str = "Hermes Agent",
+    width_mode: str = "default",
 ) -> dict[str, object]:
     phase_title, description, template = _PHASE_COPY.get(
         job.phase,
@@ -182,6 +185,7 @@ def render_update_job_card(
         phase_title,
         template,
         "\n".join(lines),
+        width_mode=width_mode,
     )
 
 
@@ -190,6 +194,7 @@ def render_update_operation_card(
     state: str,
     *,
     title: str = "Hermes Agent",
+    width_mode: str = "default",
 ) -> dict[str, object]:
     if state == "cancelled":
         return _base_card(
@@ -197,6 +202,7 @@ def render_update_operation_card(
             "已取消更新",
             "grey",
             "**已取消更新**\n\n未执行 Hermes 更新。",
+            width_mode=width_mode,
         )
     return _base_card(
         title,
@@ -211,18 +217,20 @@ def render_update_operation_card(
                 "- 尚未执行 Hermes 更新。",
             ]
         ),
+        width_mode=width_mode,
     )
 
 
 class FeishuJobPublisher:
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, *, width_mode: str = "default"):
         self._client = client
+        self._width_mode = width_mode
 
     async def publish(self, job: UpdateJob) -> bool:
         try:
             await self._client.update_card_message(
                 job.card_message_id,
-                render_update_job_card(job),
+                render_update_job_card(job, width_mode=self._width_mode),
             )
             return True
         except FeishuAPIError as exc:
@@ -245,11 +253,13 @@ def _base_card(
     status_title: str,
     template: str,
     content: str,
+    *, width_mode: str = "default",
 ) -> dict[str, object]:
     card_title = str(title or "").strip()[:80] or "Hermes Agent"
     return {
         "schema": "2.0",
         "config": {
+            **card_width_config(width_mode),
             "wide_screen_mode": True,
             "update_multi": True,
         },

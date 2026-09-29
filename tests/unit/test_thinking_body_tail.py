@@ -55,11 +55,13 @@ def test_body_opt_out_does_not_leak_tail():
     assert 'NEW_TAIL' not in '\n'.join(x.get('content', '') for x in r.card['body']['elements'])
 
 
-def test_combined_card_shrinks_body_and_keeps_auxiliary_panel():
+@pytest.mark.parametrize("width_mode", ["default", "compact", "fill"])
+def test_combined_card_shrinks_body_and_keeps_auxiliary_panel(width_mode):
     s = session()
-    r = render.render_card_result(s, thinking_body_tail_chars=20000, max_reasoning_chars=1500)
-    small = render.render_card_result(s, thinking_body_tail_chars=1, max_reasoning_chars=1500)
+    r = render.render_card_result(s, thinking_body_tail_chars=20000, max_reasoning_chars=1500, width_mode=width_mode)
+    small = render.render_card_result(s, thinking_body_tail_chars=1, max_reasoning_chars=1500, width_mode=width_mode)
     assert r.disposition == 'card' and inspect_card_limits(r.card).safe
+    assert r.card['config'].get('width_mode') == (None if width_mode == 'default' else width_mode)
     assert 0 < len(main(r.card)) < 20000
     assert s.thinking_text.endswith(main(r.card))
     assert next(x for x in r.card['body']['elements'] if x.get('element_id') == 'auxiliary_timeline') == next(x for x in small.card['body']['elements'] if x.get('element_id') == 'auxiliary_timeline')

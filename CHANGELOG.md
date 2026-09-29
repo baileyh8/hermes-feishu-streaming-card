@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+## [4.6.12] - 2026-09-29
+
+- Add opt-in `card.width_mode` (`default`, `compact`, `fill`) for JSON 2.0 cards with global/profile/bot inheritance and explicit default reset; preserve existing default layout and JSON 1.0 behavior.
+
+- Integrate PR #351 with original authorship; retain thinking-tail budget checks, support the exact post-send reply-clock seam, and pin Hermes main `ea114c3e98c3339e13004adfc6098cf28ed7d754`.
+
 ## [4.6.11] - 2026-09-28
 
 - Add the opt-in `thinking_body_tail_chars` live-body window and verified whole-card budget reduction without truncating answers or timeline content (#362, leavrcn).

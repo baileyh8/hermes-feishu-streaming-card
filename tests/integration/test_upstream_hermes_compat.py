@@ -197,6 +197,10 @@ async def test_current_upstream_generated_ledger_executes_in_order(
     async def finalize(*args):
         assert args==(obligation_id,outcome,event,adapter)
         calls.append('finalize')
+    def stop_clock(actual_adapter, chat, result):
+        assert actual_adapter is adapter and chat == 'fixture-chat' and result is outcome
+        calls.append('clock')
+    namespace['stop_reply_clock'] = stop_clock
     adapter._final_delivery_adapter=lambda _:adapter
     adapter._record_delivery_obligation=record
     adapter._release_turn_marker=release
@@ -205,4 +209,4 @@ async def test_current_upstream_generated_ledger_executes_in_order(
     monkeypatch.setattr(hook_runtime,'prepare_decomposed_base_final_delivery',hook)
     result=await namespace['send_final_ledgered'](adapter,event,'fixture-session','FINAL',{'thread_id':'fixture-thread'},reply_to='fixture-anchor')
     assert result==(outcome,adapter)
-    assert calls==['record']+(['release'] if obligation_id else [])+['hook','send']+(['finalize'] if obligation_id else [])
+    assert calls==['record']+(['release'] if obligation_id else [])+['hook','send']+(['clock'] if baseline == 'latest_main' else [])+(['finalize'] if obligation_id else [])

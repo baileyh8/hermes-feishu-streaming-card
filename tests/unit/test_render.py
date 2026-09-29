@@ -12,6 +12,35 @@ import pytest
 import time
 
 
+@pytest.mark.parametrize("width_mode", ["default", "compact", "fill"])
+def test_width_mode_survives_overflow_and_terminal_handoff(width_mode):
+    from hermes_feishu_card.render import render_terminal_limit_handoff_card
+
+    session = CardSession("c", "m", "c")
+    assert "width_mode" not in render_card(session)["config"]
+    session.answer_text = "long answer " * 10000
+    for status, disposition in [("running", "deferred_native"), ("completed", "native")]:
+        session.status = status
+        result = render_card_result(session, width_mode=width_mode)
+        assert result.disposition == disposition
+        assert result.card["config"].get("width_mode") == (None if width_mode == "default" else width_mode)
+        assert inspect_card_limits(result.card).safe
+    repair = render_terminal_limit_handoff_card(width_mode=width_mode)
+    assert repair["config"].get("width_mode") == (None if width_mode == "default" else width_mode)
+
+
+def test_width_mode_does_not_change_legacy_approval_dialect():
+    session = CardSession("c", "m", "c")
+    session.active_interaction = InteractionState(
+        interaction_id="approval", kind="approval", prompt="Allow operation?",
+        timeout_seconds=120.0, requested_at=time.time(),
+    )
+    card = render_card(session, width_mode="fill", interaction_mode="callback")
+    assert "schema" not in card
+    assert "width_mode" not in card["config"]
+    assert card["config"]["wide_screen_mode"] is True
+
+
 def test_render_thinking_card_keeps_runtime_status_only_in_footer():
     from hermes_feishu_card.events import SidecarEvent
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")

@@ -19,6 +19,44 @@ def _with_guarded_release(original):
     return original.replace(SEND_ANCHOR, RELEASE_GUARD + SEND_ANCHOR)
 
 
+CLOCK_STOP = '            stop_reply_clock(delivery_adapter, event.source.chat_id, result)\n'
+FINALIZE_GUARD = '            if obligation_id is not None:\n\n                await self._finalize_delivery_obligation'
+
+
+def _with_reply_clock(original):
+    assert original.count(FINALIZE_GUARD) == 1
+    return original.replace(FINALIZE_GUARD, CLOCK_STOP + FINALIZE_GUARD)
+
+
+def test_reply_clock_roundtrip():
+    original = _with_reply_clock(_with_guarded_release(FIXTURE.read_text()))
+    installed = patcher.apply_base_patch(original)
+    assert installed.count(CLOCK_STOP) == 1
+    assert patcher.apply_base_patch(installed) == installed
+    assert patcher.remove_base_patch(installed) == original
+
+
+@pytest.mark.parametrize('mutation', ['adapter', 'chat', 'result', 'keyword', 'duplicate', 'before_send', 'after_finalize', 'awaited'])
+def test_reply_clock_rejects_drift(mutation):
+    original = _with_reply_clock(_with_guarded_release(FIXTURE.read_text()))
+    if mutation in {'adapter', 'chat', 'result'}:
+        old, new = {'adapter': ('delivery_adapter,', 'self,'), 'chat': ('event.source.chat_id', 'other_chat'), 'result': (', result)', ', other_result)')}[mutation]
+        changed = original.replace(CLOCK_STOP, CLOCK_STOP.replace(old, new))
+    elif mutation == 'keyword':
+        changed = original.replace(CLOCK_STOP, CLOCK_STOP.replace(', result)', ', result=result)'))
+    elif mutation == 'duplicate':
+        changed = original.replace(CLOCK_STOP, CLOCK_STOP * 2)
+    elif mutation == 'before_send':
+        changed = original.replace(CLOCK_STOP, '').replace(SEND_ANCHOR, CLOCK_STOP + SEND_ANCHOR)
+    elif mutation == 'after_finalize':
+        changed = original.replace(CLOCK_STOP, '').replace('            return result, delivery_adapter', CLOCK_STOP + '            return result, delivery_adapter')
+    else:
+        changed = original.replace(CLOCK_STOP, CLOCK_STOP.replace('stop_reply_clock(', 'await stop_reply_clock('))
+    compile(changed, 'clock-drift', 'exec')
+    with pytest.raises(ValueError, match='safe BasePlatformAdapter contract'):
+        patcher.apply_base_patch(changed)
+
+
 def test_guarded_release_roundtrip():
     original = _with_guarded_release(FIXTURE.read_text())
     installed = patcher.apply_base_patch(original)
@@ -126,8 +164,9 @@ def test_split_ledger_rejects_delivery_contract_drift(before, after):
 @pytest.mark.parametrize('obligation_id', ['ledger-test', None])
 @pytest.mark.parametrize('record_delivery', [True, False])
 @pytest.mark.parametrize('guarded_release', [True, False])
+@pytest.mark.parametrize('reply_clock', [True, False])
 async def test_installed_split_ledger_executes_record_hook_send_finalize(
-    monkeypatch, success, obligation_id, record_delivery, guarded_release,
+    monkeypatch, success, obligation_id, record_delivery, guarded_release, reply_clock,
 ):
     import logging
     from types import SimpleNamespace
@@ -137,6 +176,8 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
     original = FIXTURE.read_text()
     if guarded_release:
         original = _with_guarded_release(original)
+    if reply_clock:
+        original = _with_reply_clock(original)
     if record_delivery:
         original = original.replace(ATTACHMENT_KWARG_TAIL, ATTACHMENT_KWARG_TAIL_EXTENDED)
     exec(compile(patcher.apply_base_patch(original), str(FIXTURE), 'exec'), namespace)
@@ -169,6 +210,10 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
         assert actual_event is event
         calls.append('release')
 
+    def stop_clock(actual_adapter, chat, outcome):
+        assert actual_adapter is adapter and chat == 'test-chat' and outcome is result
+        calls.append('clock')
+    namespace['stop_reply_clock'] = stop_clock
     adapter._release_turn_marker = release
     adapter.name = 'test'
     adapter._final_delivery_adapter = lambda source: adapter
@@ -179,7 +224,7 @@ async def test_installed_split_ledger_executes_record_hook_send_finalize(
     actual = await adapter.send_final_ledgered(event, 'test-session', 'answer', {'thread_id': 'test-thread'}, reply_to='topic-anchor')
     assert actual == (result, adapter)
     assert calls == (['record'] + (['release'] if guarded_release and obligation_id else [])
-                     + ['hook', 'send'] + (['finalize'] if obligation_id else []))
+                     + ['hook', 'send'] + (['clock'] if reply_clock else []) + (['finalize'] if obligation_id else []))
 
 
 def test_installed_split_ledger_is_detected_for_staging(monkeypatch):

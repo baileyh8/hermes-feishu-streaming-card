@@ -2525,7 +2525,14 @@ return result, delivery_adapter
     # sending. Keep it in generated source; never weaken the delivery bracket.
     release_guard = ast.parse("if obligation_id is not None:\n    await self._release_turn_marker(event)").body[0]
     release_seen = False
+    # Hermes records reply latency after the actual send and before finalizing
+    # the obligation. Preserve exactly this optional synchronous call, once.
+    clock_stop = ast.parse("stop_reply_clock(delivery_adapter, event.source.chat_id, result)").body[0]
+    clock_seen = False
     for index, node in enumerate(ledger.body):
+        if len(body) == 3 and not clock_seen and ast.dump(node) == ast.dump(clock_stop):
+            clock_seen = True
+            continue
         if len(body) == 2 and not release_seen and ast.dump(node) == ast.dump(release_guard):
             release_seen = True
             continue

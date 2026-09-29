@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V4.6.11 sidecar configuration
+# Hermes Feishu Streaming Card V4.6.12 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -36,6 +36,12 @@ card:
   # Global fallback title. profiles.<id>.card.title and bots.items.<id>.card.title
   # can override it; bot title wins over profile title.
   title: Hermes Agent
+  # JSON 2.0 width: default | compact | fill. default preserves existing layout
+  # by omitting width_mode from the payload; fill adapts to the chat window.
+  # Global < profile < bot; omitted overrides inherit, explicit default resets.
+  # JSON 1.0 approval/legacy cards retain wide_screen_mode instead.
+  # Final dimensions remain client-controlled; this does not set pixel height.
+  width_mode: default
   # auto: use Feishu CardKit buttons through the native WebSocket card-action path.
   # callback: explicitly keep native CardKit callback buttons.
   # text: explicitly render numbered text choices and let Hermes handle the reply.
@@ -91,7 +97,7 @@ card:
   #   approval: true
   # Optional role-based CardKit text sizes. Roles: body, reasoning, tool,
   # notice, footer. Values may be scalar or default/pc/mobile mappings.
-  # card width/height are controlled by the Feishu/Lark client.
+  # Width mode is configured above; final layout is controlled by Feishu/Lark.
   # text_sizes:
   #   body: normal
   #   footer:
@@ -176,6 +182,8 @@ bindings:
 # bot registry, and chat bindings.
 # Each profile may set card.title for its default title; each bot may set
 # card.title for per-bot branding. Bot title has the highest priority.
+# card.width_mode follows the same global < profile < bot precedence.
+# Omit it to inherit, or use default to reset an inherited compact/fill mode.
 #
 # FEISHU_APP_ID and FEISHU_APP_SECRET environment variables are also
 # ignored in multi-profile mode.
@@ -214,9 +222,11 @@ bindings:
 #           app_secret: ""
 #           card:
 #             title: Work Bot
+#             width_mode: default  # Reset the profile's fill mode for this bot.
 #     bindings:
 #       fallback_bot: default
 #       chats: {}
 #       native_chats: []
 #     card:
 #       title: Work Profile
+#       width_mode: fill
