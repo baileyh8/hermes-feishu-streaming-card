@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v4.6.13](release-notes-v4.6.13.en.md) | Private control-token transport and current Hermes source verification |
 | [v4.6.12](release-notes-v4.6.12.en.md) | Optional card width and Hermes reply-clock compatibility |
 | [v4.6.11](release-notes-v4.6.11.en.md) | Bounded live thinking, observed background-task context and CodeQL update |
 | [v4.6.10](release-notes-v4.6.10.en.md) | Hermes 0.21.5 compatibility, PM runtime installation and independent follow-up cards |

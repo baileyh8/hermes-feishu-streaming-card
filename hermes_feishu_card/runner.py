@@ -21,7 +21,7 @@ from .operations_transport import (
     ensure_transport_root_secret,
     transport_root_privacy_verified,
 )
-from .process import local_control_host, state_dir, wait_for_managed_pidfile
+from .process import local_control_host, read_control_token_file, state_dir, wait_for_managed_pidfile
 
 
 logger = logging.getLogger(__name__)
@@ -232,9 +232,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="config.yaml.example")
     parser.add_argument("--env-file")
     parser.add_argument("--hermes-dir")
-    parser.add_argument("--token", default="")
+    credentials = parser.add_mutually_exclusive_group()
+    credentials.add_argument("--token", default="", help="Legacy direct token; prefer --token-file")
+    credentials.add_argument("--token-file")
     parser.add_argument("--managed-pidfile", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.token_file is not None:
+        try:
+            args.token = read_control_token_file(args.token_file)
+        except (OSError, ValueError):
+            logger.error("Private control token file could not be read safely.")
+            return 1
 
     if args.managed_pidfile and not wait_for_managed_pidfile(
         os.getpid(), args.token

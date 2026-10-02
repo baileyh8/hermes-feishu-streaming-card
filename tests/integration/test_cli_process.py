@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import socket
 import subprocess
@@ -207,8 +208,27 @@ def test_start_status_and_stop_manage_sidecar_process(tmp_path):
         assert health["status"] == "degraded"
         assert health["noop_mode"] is True
         assert health["delivery"] == {"mode": "noop"}
-        assert health["process_token_hash"]
+        record = json.loads(pidfile_path(tmp_path).read_text())
+        token_file = pidfile_path(tmp_path).parent / "sidecar-control.token"
+        assert token_file.read_text().strip() == record["token"]
+        assert health["process_token_hash"] == hashlib.sha256(record["token"].encode()).hexdigest()
         assert "process_token" not in health
+        if sys.platform.startswith("linux"):
+            command_line = Path(f"/proc/{health['process_pid']}/cmdline").read_bytes().replace(b"\0", b" ").decode()
+        elif sys.platform == "darwin":
+            command_line = subprocess.check_output(["ps", "-p", str(health["process_pid"]), "-o", "command="], text=True)
+        else:
+            command_line = None
+        if command_line is not None:
+            assert "--token-file" in command_line
+            assert record["token"] not in command_line
+            assert "--token " not in command_line
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/control/shutdown", data=b"{}", headers={"X-HFC-Process-Token": "wrong-token"}, method="POST")
+        try:
+            urllib.request.urlopen(request, timeout=2)
+            assert False, "wrong control token accepted"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 403
         assert post_started_event(port) == (
             502,
             {

@@ -98,21 +98,21 @@
     }
   },
   "latest_main": {
-    "commit": "ea114c3e98c3339e13004adfc6098cf28ed7d754",
+    "commit": "7817bf522af3caf54b30ae59f16157469d7638fc",
     "source": "https://github.com/NousResearch/hermes-agent",
     "version": "unknown",
     "decomposed": true,
     "sha256": {
-      "gateway/run.py": "c1184c3dd38d42a08cfec0a29538382ab33fe03d948faa02d607d17148aa601a",
-      "gateway/run_turn.py": "13cc2c6723cd1a7c6702abd03982b102ba60b48576ce2ebc55d7b0e123ce5ff8",
-      "gateway/run_turn_runner.py": "b03cf6e8a9cb40b5f1caee5cad5d6a38e28a1aea8151b27f913274e04e2a2773",
-      "gateway/run_inbound.py": "8d84927a0fcdabd1865a0cbf69f79f7c49609713991743c0c84d5d8c2f247036",
+      "gateway/run.py": "d0ea287688b45a6e0b67e0bbb0487cd44dff2f434aab628b7e087c951bbb9a54",
+      "gateway/run_turn.py": "4584f9db04476b8a8a4eedca3d8884d5c3cb5ff63290198139f839ed28bcb284",
+      "gateway/run_turn_runner.py": "3a346c287ad8e4f43bad18fca35be7a63fd6f14169128c35ed1e6b907bf887b6",
+      "gateway/run_inbound.py": "ee46ef0dbb9689b5d8cf214423aa706e3fa8207233d808cf17a03ef34e91d562",
       "gateway/run_busy.py": "e4baf0d89c3d035660be743543fc0504348619d17d7df2ddb28dfe066b666ddb",
       "gateway/run_startup.py": "c6f959d546fa2b3b8d6b8b395d076905772e8d23f4248f856d4bdbb3ddc639d3",
       "gateway/run_notifications.py": "6581f0ef8797260dd898a204ddd912e03ed6af5aba3734868026e8655286909e",
-      "cron/scheduler.py": "301df4139a6886e1e5d5f3647d14b96c73d8414e141312c1f4ba1a7c842e7a1f",
+      "cron/scheduler.py": "fa45ccb3bdda3b0302be4038eff5becd5a3b805a8968054ea3c320fbf152c124",
       "cron/scheduler_delivery.py": "dce87383cc0fc91f31702a0a466017aff1977ad4e81e62e56528791464a9f59f",
-      "gateway/platforms/base.py": "48425a540a7b07bae75fdae2c27051f0485a2154b33efc4d492f2660a0344929",
+      "gateway/platforms/base.py": "fc98bcca00c3f7cad3705e687848c6abaff7cf87e451910e8cf9e30323cc9169",
       "hermes_cli/__init__.py": "6a4ab05b8621ec1cd66a5abbe30fa32ed5bddddea95903036da01f0af1af94ce",
       "gateway/authz_mixin.py": "2f5b9507cd7fc3d5d559c005ec32317ec6f4aec5479cf89108c7c9d4ca5cd884"
     }

@@ -202,10 +202,14 @@ def start_sidecar(
             clear_pid()
 
     token = secrets.token_hex(16)
+    try:
+        token_file = write_control_token_file(token)
+    except (OSError, ValueError):
+        return "failed: private control token file could not be prepared"
     command = _sidecar_command(
         config_path,
         env_file=env_file,
-        token=token,
+        token_file=token_file,
         hermes_dir=hermes_dir,
         managed_pidfile=selected_manager == "detached",
         python_executable=python_executable,
@@ -627,11 +631,75 @@ def write_pid_record(
         temporary.unlink(missing_ok=True)
 
 
+def _valid_control_token(token: str) -> bool:
+    return 0 < len(token) <= 256 and all(33 <= ord(char) <= 126 for char in token)
+
+
+def write_control_token_file(token: str) -> Path:
+    """Persist restartable control credentials without exposing them in argv."""
+    if not _valid_control_token(token) or _prepare_private_state_dir():
+        raise ValueError("private control token file unavailable")
+    path = state_dir().expanduser().absolute() / "sidecar-control.token"
+    if path.is_symlink():
+        raise ValueError("control token file must not be a symbolic link")
+    descriptor, name = tempfile.mkstemp(prefix=".sidecar-control.", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
+    try:
+        try:
+            if callable(getattr(os, "fchmod", None)):
+                os.fchmod(descriptor, 0o600)
+            handle = os.fdopen(descriptor, "w", encoding="ascii")
+        except Exception:
+            os.close(descriptor)
+            raise
+        with handle:
+            handle.write(token + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.is_symlink():
+            raise ValueError("control token file must not be a symbolic link")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
+def read_control_token_file(path: str | Path) -> str:
+    """Read bounded credentials from an owned regular file, never a link/FIFO."""
+    path = Path(path).expanduser()
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise ValueError("invalid control token file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not _same_pidfile_snapshot(before, opened):
+            raise ValueError("control token file changed")
+        if _supports_posix_state_permissions():
+            getuid = getattr(os, "getuid", None)
+            if (callable(getuid) and opened.st_uid != getuid()) or stat.S_IMODE(opened.st_mode) != 0o600:
+                raise ValueError("control token file must be private and owned")
+        raw = os.read(descriptor, 259)
+        after = os.fstat(descriptor)
+        if not _same_pidfile_snapshot(opened, after):
+            raise ValueError("control token file changed")
+    finally:
+        os.close(descriptor)
+    try:
+        token = raw.decode("ascii").strip()
+    except UnicodeError:
+        raise ValueError("invalid control token file") from None
+    if len(raw) > 258 or not _valid_control_token(token):
+        raise ValueError("invalid control token file")
+    return token
+
+
 def _sidecar_command(
     config_path: str | Path,
     *,
     env_file: str | Path | None,
-    token: str,
+    token_file: str | Path,
     hermes_dir: str | Path | None = None,
     managed_pidfile: bool = False,
     python_executable: str | Path | None = None,
@@ -658,7 +726,7 @@ def _sidecar_command(
         command.extend(("--hermes-dir", str(resolved_hermes_dir)))
     if managed_pidfile:
         command.append("--managed-pidfile")
-    command.extend(("--token", token))
+    command.extend(("--token-file", str(Path(token_file).expanduser().absolute())))
     return command
 
 

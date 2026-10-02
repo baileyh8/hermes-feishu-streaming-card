@@ -586,7 +586,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.6.12`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.6.13`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -594,7 +594,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.12
+export HFC_VERSION=v4.6.13
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -1080,3 +1080,8 @@ macOS 的持久服务提示明确 Linux systemd 限制；缺少可验证 pidfile
 - 希望正文持续显示最新思考但不刷满整卡时，设置 `card.thinking_body_tail_chars: 2400`。仅在 `stream_thinking_to_body: true`、未有答案且本轮未结束时生效。默认 `0` 保留旧行为；整数范围为 0–1000000。窗口按字符保留尾部，并在整卡预算不足时尝试进一步缩小；思考时间线、工具区和完整答案不裁剪。其他区域仍超限时沿用原有原生投递兜底。修改后重启 sidecar。
 - `terminal` 返回后台进程标识后，或 `process` / `process_manage` 返回明确命令与输出后，同一轮后续 `wait` 会展示已观测命令、最近回报及状态。进程关联最多保留 32 项，限制在当前卡片会话内存中，重启不会恢复该关联。
 - “最近输出”是工具上次回报，不是实时日志订阅；进程没有新事件时不推测百分比。`timeout` 显示为“请求等待上限（非预计完成时间）”，Hermes 还可能按自身配置缩短实际等待。没有观测到命令时明确显示未知，不跨轮或跨 profile 查询其他进程。
+
+
+## 控制凭据文件（V4.6.13）
+
+受管启动只把 `--token-file` 路径传给 runner，token 存在私有 state 目录的 `sidecar-control.token`（POSIX 0600）。文件需保留供 systemd 自动重启；不可安全读写时必须失败，不回退 argv。升级后通过原服务管理入口重启 sidecar；不要手工删除仍被服务使用的文件。同用户访问与 Windows ACL 边界见 [发布说明](release-notes-v4.6.13.md)。

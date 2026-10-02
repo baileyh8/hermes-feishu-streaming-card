@@ -84,7 +84,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.12
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.13
 bash install-docker.sh
 ```
 
@@ -202,6 +202,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v4.6.13](docs/release-notes-v4.6.13.en.md) | Private control-token transport and current Hermes source verification |
 | [v4.6.12](docs/release-notes-v4.6.12.en.md) | Optional card width and Hermes reply-clock compatibility |
 | [v4.6.11](docs/release-notes-v4.6.11.en.md) | Bounded live thinking, observed background-task context and CodeQL update |
 | [v4.6.10](docs/release-notes-v4.6.10.en.md) | Hermes 0.21.5 compatibility, PM runtime installation and independent follow-up cards |
@@ -211,11 +212,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v4.6.6](docs/release-notes-v4.6.6.en.md) | Verified approval-receipt compaction, visible active tools and native notice expiry |
 | [v4.6.5](docs/release-notes-v4.6.5.en.md) | Persistent notice ownership, explicit tool-call identity, optional timeline controls and provider-error deduplication |
 | [v4.6.4](docs/release-notes-v4.6.4.en.md) | First-click callbacks, chronological continuation, optional reading presets and scoped notices |
-| [v4.6.3](docs/release-notes-v4.6.3.en.md) | Live thinking visibility, tool duration and interrupted-turn metrics |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V4.6.13: Thanks to [ffdxdynotable](https://github.com/ffdxdynotable) for [#367](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/367), reporting control-token exposure with Termux evidence and a private-file proposal.
 
 - V4.6.12: Thanks to [cbatbj](https://github.com/cbatbj) / chenbing1 for [PR #351](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/351) contributing scoped card width configuration and regression tests. Original commits and all earlier credits are retained.
 

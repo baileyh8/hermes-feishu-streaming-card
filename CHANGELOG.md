@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+## [4.6.13] - 2026-10-02
+
+- Move managed sidecar control tokens from argv to private files; retain ownership handshake, authenticated stop and restart behavior, with no insecure fallback (#367, ffdxdynotable).
+- Stabilize live-spinner panel comparison (PR #366) and verify the 2026-10-02 Hermes main source snapshot.
+- See [release notes](docs/release-notes-v4.6.13.md) for upgrade and local-trust boundaries.
+
 ## [4.6.12] - 2026-09-29
 
 - Add opt-in `card.width_mode` (`default`, `compact`, `fill`) for JSON 2.0 cards with global/profile/bot inheritance and explicit default reset; preserve existing default layout and JSON 1.0 behavior.
