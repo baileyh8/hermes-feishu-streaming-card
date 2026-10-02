@@ -334,7 +334,7 @@ def test_start_sidecar_passes_selected_env_file_to_runner(monkeypatch, tmp_path)
                 "--env-file",
                 str(env_path),
                 "--managed-pidfile",
-                "--token",
+                "--token-file",
             commands[0][-1],
         ]
     ]
@@ -578,7 +578,7 @@ def test_sidecar_command_uses_absolute_config_and_env_paths(monkeypatch, tmp_pat
     command = process._sidecar_command(
         "config.yaml",
         env_file="CUSTOM.env",
-        token="sidecar-token",
+        token_file="sidecar-control.token",
         hermes_dir="verified-hermes",
         managed_pidfile=True,
     )
@@ -788,8 +788,8 @@ def test_start_sidecar_uses_restartable_systemd_user_unit(monkeypatch, tmp_path)
             str(config_path),
             "--env-file",
             str(env_path),
-            "--token",
-            token,
+            "--token-file",
+            str(tmp_path / "sidecar-control.token"),
         ]
     ]
     assert pid_records == [(4321, token, "systemd-user", process.SYSTEMD_UNIT_NAME)]
@@ -974,8 +974,8 @@ def test_start_sidecar_uses_explicit_transient_system_unit(monkeypatch, tmp_path
             str(config_path),
             "--env-file",
             str(env_path),
-            "--token",
-            token,
+            "--token-file",
+            str(state_root / "sidecar-control.token"),
         ]
     ]
     flattened = " ".join(commands[0])

@@ -276,3 +276,8 @@ Use the outbound `_delivery_adapter_for` resolver when present; None/errors are 
 ## V4.6.12 卡片宽度
 
 `card.width_mode` 的全局/profile/bot 合并必须保留显式 default 重置。JSON 2.0 的普通卡、预算兜底、修复和维护发布复用同一配置；JSON 1.0 不注入该字段。长思考预算搜索的每个 probe 必须保留 width_mode，legacy owner 继续保留原 JSON 1.0 方言与审批正文。维护子进程按原 profile/bot 重新加载配置；客户端最终控制可见尺寸。
+
+
+## 控制凭据文件（V4.6.13）
+
+受管启动只把 `--token-file` 路径传给 runner，token 存在私有 state 目录的 `sidecar-control.token`（POSIX 0600）。文件需保留供 systemd 自动重启；不可安全读写时必须失败，不回退 argv。升级后通过原服务管理入口重启 sidecar；不要手工删除仍被服务使用的文件。同用户访问与 Windows ACL 边界见 [发布说明](../release-notes-v4.6.13.md)。

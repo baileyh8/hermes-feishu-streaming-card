@@ -557,14 +557,14 @@ Use `install-docker.sh` inside an existing Hermes container. It defaults to
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.6.12`.
+The Compose example defaults `HFC_VERSION` to `v4.6.13`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.12
+export HFC_VERSION=v4.6.13
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -1006,3 +1006,8 @@ macOS persistence guidance explains the Linux systemd requirement; a missing ver
 - Set `card.thinking_body_tail_chars: 2400` to keep the latest live thinking in the body. It applies only with `stream_thinking_to_body: true`, before any answer and before the turn ends. The default `0` preserves unlimited existing behavior; accepted integers are 0–1000000. The character window may shrink further to fit the complete serialized card. It does not truncate answers, the reasoning timeline or tool sections; unrelated overflows retain the existing native-delivery fallback. Restart the sidecar after editing configuration.
 - Once `terminal` reports a background process ID, or `process` / `process_manage` reports a command and output, subsequent waits in the same turn show that observed context. At most 32 process associations live in one card session's memory; they are not restored after restart.
 - Recent output is the last tool report, not a live log subscription or predicted progress. The requested wait timeout is explicitly not an ETA; Hermes may clamp it further. Missing command context stays unknown. No other turn or profile is queried.
+
+
+## Control credential file (V4.6.13)
+
+Managed launches pass only `--token-file`; the private state directory contains `sidecar-control.token` (POSIX 0600). Keep it for systemd restarts. Unsafe reads/writes fail without argv fallback. Restart through the existing service manager after upgrading. See [release notes](release-notes-v4.6.13.en.md) for same-user trust and Windows ACL limits.

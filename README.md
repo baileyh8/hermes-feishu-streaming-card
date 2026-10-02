@@ -78,7 +78,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.12
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.6.13
 bash install-docker.sh
 ```
 
@@ -196,6 +196,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v4.6.13](docs/release-notes-v4.6.13.md) | 控制凭据移出命令行与最新 Hermes 源码验证 |
 | [v4.6.12](docs/release-notes-v4.6.12.md) | 可选卡片宽度与 Hermes 回复计时契约适配 |
 | [v4.6.11](docs/release-notes-v4.6.11.md) | 可选思考尾部窗口、后台任务观测信息与 CodeQL 更新 |
 | [v4.6.10](docs/release-notes-v4.6.10.md) | Hermes 0.21.5 适配、PM 运行环境安装与跟进卡片隔离 |
@@ -205,11 +206,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v4.6.6](docs/release-notes-v4.6.6.md) | 审批回执确认后精简重复、运行工具可见与原生通知自动收尾 |
 | [v4.6.5](docs/release-notes-v4.6.5.md) | 重启通知持久归属、工具调用去重、可选时间线显示与模型报错去重 |
 | [v4.6.4](docs/release-notes-v4.6.4.md) | 首次按钮接线、顺序续答、可选阅读预设与作用域通知清理 |
-| [v4.6.3](docs/release-notes-v4.6.3.md) | 实时思考正文开关、工具耗时与中断用量 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V4.6.13: 感谢 [ffdxdynotable](https://github.com/ffdxdynotable) 在 [#367](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/367) 报告控制 token 的命令行暴露，提供 Termux 现场证据与私有文件方案。
 
 - V4.6.12: 感谢 [cbatbj](https://github.com/cbatbj) / chenbing1 通过 [PR #351](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/351) 贡献分层卡片宽度配置与回归测试，保留原始提交和全部历史贡献。
 
