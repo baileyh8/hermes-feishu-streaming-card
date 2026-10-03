@@ -28,6 +28,7 @@ def test_task_state_separates_silence_from_execution_failure():
     value = session(updated_at=100)
     result = task_presentation(value, now=225)
     assert result.label == "等待新进展"
+    assert result.color == "grey"
     assert "2 分钟未收到新事件" in result.observation
     assert "尚待确认" in result.observation
     assert value.status == "thinking"
@@ -129,6 +130,7 @@ def test_task_silent_tool_is_last_observed_action_not_live_claim():
     value.updated_at = time.time() - 130
     card = render_card(value, presentation="task")
     assert "等待新进展" in card["header"]["title"]["content"]
+    assert card["header"]["template"] == "grey"
     activity = next(e["content"] for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_"))
     assert "上次动作" in activity and "执行中" not in activity
     assert "10s" not in activity
@@ -213,6 +215,50 @@ def test_task_approval_keeps_full_prompt_scope_and_callback_values():
     assert inspect_card_limits(task).safe
 
 
+@pytest.mark.parametrize("multi_select", [False, True])
+def test_task_clarify_controls_name_choices_without_changing_values(multi_select):
+    value = session()
+    value.active_interaction = InteractionState(
+        interaction_id="fixture-clarify", kind="clarify", prompt="请选择保留的内容",
+        multi_select=multi_select,
+        options=[InteractionOption("完整答案", "answer"), InteractionOption("完整长选项 " * 30, "long")],
+    )
+    before = snapshot(value)
+    card = render_card(value, presentation="task")
+    assert "等待选择…" not in str(card)
+    assert card["elements"][-1].get("tag") != "hr"
+    assert value.active_interaction.options[1].label.strip() in str(card)
+    def controls(node):
+        if isinstance(node, dict):
+            if node.get("tag") == "button" and isinstance(node.get("value"), dict) and "choice" in node["value"]:
+                yield node["text"]["content"], node["value"]["choice"]
+            if node.get("tag") == "multi_select_static":
+                yield from ((o["text"]["content"], o["value"]) for o in node["options"])
+            for child in node.values():
+                yield from controls(child)
+        elif isinstance(node, list):
+            for child in node:
+                yield from controls(child)
+    choices = list(controls(card))
+    assert "完整答案" in choices[0][0]
+    assert [value for _, value in choices] == ["answer", "long"]
+    if multi_select:
+        assert "完整长选项" in choices[1][0] and len(choices[1][0]) <= 50
+    assert snapshot(value) == before
+
+
+@pytest.mark.parametrize("status,color", [("completed", "green"), ("failed", "red")])
+def test_task_interaction_receipt_color_matches_its_own_state(status, color):
+    from hermes_feishu_card.render import render_legacy_interaction_callback_card
+    value = session(status="tool_running")
+    value.active_interaction = InteractionState(
+        interaction_id="fixture", kind="clarify", prompt="请选择", status=status,
+        options=[InteractionOption("继续", "yes")],
+    )
+    card = render_legacy_interaction_callback_card(value, presentation="task")
+    assert card["header"]["template"] == color
+
+
 def test_task_style_never_evades_final_card_capacity_gate():
     value = session(status="completed", answer_text="完整答案" * 12000)
     result = render_card_result(value, presentation="task")
@@ -237,7 +283,9 @@ def test_near_capacity_callback_preserves_scope_using_safe_original_layout(statu
     original = render_legacy_interaction_callback_card(value)
     assert inspect_card_limits(original).safe
     assert inspect_card_limits(original).json_bytes >= SAFE_CARD_JSON_BYTES - 3
-    task = render_legacy_interaction_callback_card(value, presentation="task")
+    # A long configured title must still trigger the original-layout fallback,
+    # even when removing a redundant pending footer frees a few bytes.
+    task = render_legacy_interaction_callback_card(value, title="验收任务 " * 30, presentation="task")
     assert inspect_card_limits(task).safe
     assert task == original
     assert value.active_interaction.description.strip() in str(task)

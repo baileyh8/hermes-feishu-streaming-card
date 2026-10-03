@@ -279,6 +279,47 @@ async def test_confirmed_handoff_freezes_old_card_without_claiming_turn_success(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("show_reasoning", [True, False])
+async def test_task_handoff_has_one_honest_note_and_retains_tool_details(show_reasoning):
+    client = Client()
+    app = create_app(client, card_config={
+        "flush_interval_ms": 0, "reading_preset": "task", "show_reasoning": show_reasoning,
+    })
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "tool.updated", 1, {
+            "tool_id": "live", "name": "terminal", "status": "running",
+            "detail": 'fixture.py\n参数: {"command": "fixture.py", "timeout": 120}',
+        })
+        await post(http, "interaction.requested", 2, {
+            "interaction_id": "question_one", "kind": "clarify", "prompt": "Choose fixture",
+            "options": [{"label": "Continue", "value": "once"}],
+        })
+        old_id = client.sent[0][0]
+        retired = next(card for mid, card in reversed(client.updated) if mid == old_id)
+        assert retired["header"]["template"] == "grey"
+        assert "已转入交互卡片" in str(retired["header"])
+        assert "执行中" not in str(retired) and "已中断" not in str(retired)
+        assert "fixture.py" in str(retired) and "120" in str(retired)
+        assert not any(e.get("element_id") in {"footer", "task_observation", "main_divider"}
+                       for e in retired["body"]["elements"])
+        if show_reasoning:
+            assert not any(e.get("element_id", "").startswith("tool_activity_")
+                           for e in retired["body"]["elements"])
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        assert session.tools["live"].status == "running"
+        assert session.active_interaction.status == "pending"
+        await post(http, "interaction.completed", 3, {"interaction_id": "question_one", "choice": "once"})
+        await post(http, "answer.delta", 4, {"text": "NEW_RESULT"})
+        await asyncio.sleep(.03)
+        retired = next(card for mid, card in reversed(client.updated) if mid == old_id)
+        assert "本段已转入续答" in str(retired["header"])
+        assert str(retired["body"]).count("本段已转入续答") == 0
+        assert "执行中" not in str(retired) and "已中断" not in str(retired)
+        assert session.tools["live"].status == "running"
+
+
+@pytest.mark.asyncio
 async def test_failed_predecessor_patch_keeps_new_owner_and_terminal_delivery():
     from hermes_feishu_card.server import DIAGNOSTICS_KEY
     class FailingOldUpdate(Client):

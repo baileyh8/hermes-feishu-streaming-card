@@ -1774,6 +1774,12 @@ def _render_tool_activity_elements(
         selected = sorted((tool for tool in session.tools.values()
                            if str(tool.status).strip().lower() not in _SUCCESS_TOOL_STATUSES),
                           key=lambda tool: tool.ordinal)[-_TOOL_ACTIVITY_WINDOW:]
+    if task_layout:
+        # Frozen display copies have no current action. Keep their details in
+        # the actual process panel, or retain the body row when no panel fits.
+        selected = [tool for tool in selected
+                    if str(tool.status).strip().lower() not in {"display_handoff", "display_receipt"}
+                    or tool.tool_id not in (details_in_timeline or set())]
     now = _time.time()
     text_size = _role_text_size(
         text_sizes,

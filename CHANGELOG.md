@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+- Keep unknown/waiting and transferred task displays neutral; freeze predecessor tools without claiming execution or interruption, remove duplicate transfer/pending footers, and give short choices and multi-select options readable labels while preserving callback values and full scope.
 - Remove repeated task state/action across the header, activity area and footer after real-client review; move parameters only when that tool is present in the rendered process panel, retain one completion marker, and keep task metrics neutral. Make layout, hierarchy, typography, color, spacing, density and real-client evidence explicit visual release gates.
 - Add opt-in `reading_preset: task`: state-led headings, clearer type roles, complete interaction prompts, compact attributed metrics, and one bounded same-card silence observation without refreshing pending input or terminal cards.
 - Extend `card-config` with appearance values and per-role sources, explicit next-load semantics, and credential-free offline HTML/Card JSON previews for nine scenarios; preserve existing files on output collisions.

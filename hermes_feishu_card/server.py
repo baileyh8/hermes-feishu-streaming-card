@@ -6105,13 +6105,19 @@ def _render_static_display_card(app, snapshot, *, session_key, note, display_sta
         card = result.card
         card.setdefault("config", {})["streaming_mode"] = False
         card["config"].setdefault("summary", {})["content"] = note
-        configured_title = _session_card_render_context(app, snapshot, session_key=session_key)[2]
+        _, card_config, configured_title, _ = _session_card_render_context(app, snapshot, session_key=session_key)
         title = {"tag":"plain_text", "content":"↪ " + configured_title}
         card["header"] = {"template":"blue", "title":title,
                           "subtitle":{"tag":"plain_text", "content":note}}
         for element in card.get("body", {}).get("elements", []):
             if element.get("element_id") == "footer":
                 element["content"] = note
+        if card_config.get("_presentation_mode") == "task":
+            card["header"]["template"] = "grey"
+            # The static header owns this display-transfer note. A stale
+            # observation/action or repeated footer would imply live execution.
+            card["body"]["elements"] = [e for e in card["body"]["elements"]
+                if e.get("element_id") not in {"footer", "main_divider", "task_observation", "task_action"}]
         if not inspect_card_limits(card).safe:
             return None
         return card
@@ -6432,6 +6438,17 @@ async def _finalize_interaction_predecessor(
         return await _update_card_for_app(app, predecessor_message_id, card, bot_id)
 
     predecessor_snapshot.active_interaction = None
+    _, card_config, _, _ = _session_card_render_context(
+        app, predecessor_snapshot, session_key=session_key
+    )
+    if card_config.get("_presentation_mode") == "task":
+        card = _render_static_display_card(
+            app, predecessor_snapshot, session_key=session_key,
+            note="已转入交互卡片，请在下方完成选择", display_state="display_receipt",
+        )
+        if card is None:
+            return False
+        return await _update_card_for_app(app, predecessor_message_id, card, bot_id)
     predecessor_snapshot.latest_tool_preview = ""
     predecessor_snapshot.runtime_phase_text = ""
     predecessor_snapshot.display_status = "completed"

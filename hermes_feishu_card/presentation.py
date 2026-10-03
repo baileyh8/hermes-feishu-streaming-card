@@ -61,7 +61,7 @@ def task_presentation(session: Any, *, now: float | None = None) -> TaskPresenta
         if age >= TASK_OBSERVATION_SECONDS:
             observation = f"最近 {age // 60} 分钟未收到新事件；任务是否仍在执行尚待确认。"
     label = "等待新进展" if observation else "执行中" if session.tools or session.answer_text else "思考中"
-    return TaskPresentation(label, "blue", observation)
+    return TaskPresentation(label, "grey" if observation else "blue", observation)
 
 
 def apply_task_presentation(
@@ -94,13 +94,15 @@ def apply_task_presentation(
                 elements.insert(0, {"tag": "markdown", "content": prompt})
             if interaction.status == "completed":
                 result["header"]["title"]["content"] = f"{title} · 选择已记录"
+                result["header"]["template"] = "green"
                 receipt = {"tag": "markdown", "content": "后续结果会继续显示在回复卡中。"}
                 if receipt not in elements:
                     elements.append(receipt)
             elif interaction.status == "failed":
                 result["header"]["title"]["content"] = f"{title} · 此次选择已失效"
-            if interaction.kind == "approval" and interaction.status == "pending":
-                # Short approval choices can name their action on the button.
+                result["header"]["template"] = "red"
+            if interaction.kind in {"approval", "clarify"} and interaction.status == "pending":
+                # Short choices can name their action on the button.
                 # Long choices keep the established numbered layout and full list.
                 labels = {option.value: normalize_stream_text(option.label).strip()
                           for option in interaction.options}
@@ -114,12 +116,27 @@ def apply_task_presentation(
                             label = labels.get(value.get("choice"), "")
                             if 0 < len(label) <= 16 and "\n" not in label:
                                 text["content"] = label
+                        if node.get("tag") == "multi_select_static":
+                            for option in node.get("options", []):
+                                label = labels.get(option.get("value"), "")
+                                text = option.get("text", {})
+                                number = str(text.get("content", ""))
+                                if label and number.isdigit():
+                                    preview = " ".join(label.split())
+                                    if len(preview) > 44:
+                                        preview = preview[:43].rstrip() + "…"
+                                    text["content"] = f"{number}. {preview}"
                         for child in node.values():
                             label_buttons(child)
                     elif isinstance(node, list):
                         for child in node:
                             label_buttons(child)
                 label_buttons(elements)
+                # The header owns pending state. Remove only the renderer's
+                # known trailing hint, never a matching question/body string.
+                if (len(elements) >= 2 and elements[-2] == {"tag": "hr"}
+                        and elements[-1] == {"tag": "markdown", "content": "等待选择…"}):
+                    del elements[-2:]
         # Legacy callback cards intentionally receive no schema-2 size/element IDs.
         # The callback response also uses this path directly, outside
         # render_card_result. Never let decoration make an accepted scope exceed
