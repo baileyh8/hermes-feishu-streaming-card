@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 import math
-import re
 import time
 from typing import Any
 
@@ -80,15 +79,9 @@ def apply_task_presentation(
 
     if "header" in result:
         label = f"{title} · {view.label}"
-        if session.tool_count and not (interaction and interaction.status in {"pending", "paused"}):
-            label += f" · 工具 #{session.tool_count}"
         result["header"]["template"] = view.color
         result["header"]["title"] = {"tag": "plain_text", "content": label}
         result["header"].pop("subtitle", None)
-        if action and session.status not in {"completed", "failed"} and not is_legacy:
-            result["header"]["subtitle"] = {
-                "tag": "plain_text", "content": f"上次动作：{action}" if view.observation else action,
-            }
 
     if is_legacy:
         # A compact title must never hide a short question previously shown only
@@ -137,6 +130,16 @@ def apply_task_presentation(
     if not has_primary_content and not (interaction and interaction.status in {"pending", "paused"}):
         elements[:] = [item for item in elements
                        if not str(item.get("element_id", "")).startswith("main_content")]
+    # The body owns the current action. Non-tool phases (for example context
+    # compression) still need a visible home after removing the header subtitle.
+    if (action and session.status not in {"completed", "failed"}
+            and not (interaction and interaction.status in {"pending", "paused"})
+            and not any(str(item.get("element_id", "")).startswith("tool_activity_") for item in elements)):
+        elements.insert(0, {
+            "tag": "markdown", "element_id": "task_action",
+            "content": f"上次动作：{action}" if view.observation else action,
+            "text_size": "small",
+        })
     if view.observation:
         elements[:] = [item for item in elements if item.get("element_id") != "task_observation"]
         elements.insert(0, {
@@ -144,14 +147,6 @@ def apply_task_presentation(
             "content": view.observation, "text_size": "small",
         })
     for item in elements:
-        if view.observation and item.get("element_id") == "footer":
-            # Preserve turn statistics, but remove an animated or failed-state
-            # claim that contradicts an explicitly unknown execution state.
-            item["content"] = re.sub(
-                r"^.*?<text_tag color='[^']+'>[^<]*</text_tag>",
-                f"<text_tag color='{'neutral' if view.color == 'grey' else view.color}'>{view.label}</text_tag>",
-                item.get("content", ""), count=1,
-            )
         if item.get("element_id") == "auxiliary_timeline":
             header = item.get("header", {})
             heading = header.get("title")
@@ -159,7 +154,9 @@ def apply_task_presentation(
                 heading["content"] = heading["content"].replace("思考过程", "执行过程")
     # Only a meaningful footer needs a divider. This also keeps empty/loading
     # cards compact without dropping any answer or interactive component.
-    if len(elements) >= 2 and elements[-2].get("element_id") == "main_divider":
-        if len(elements) == 2:
-            del elements[-2]
+    elements[:] = [item for item in elements if item.get("element_id") != "footer" or item.get("content")]
+    if elements and elements[-1].get("element_id") == "main_divider":
+        elements.pop()
+    elif len(elements) == 2 and elements[0].get("element_id") == "main_divider":
+        del elements[0]
     return result

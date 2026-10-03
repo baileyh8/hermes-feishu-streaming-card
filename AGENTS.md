@@ -104,6 +104,13 @@ Visual quality is a core deliverable: compare the same content across states and
 clients, preserve readable hierarchy and stable streaming layout, and validate
 supported card components. Present visual options for Bailey's direction approval
 before a card redesign; a rules/specification task does not authorize UI implementation.
+Treat [card visual guidelines](docs/wiki/card-visual-guidelines.md) as a release gate.
+Review layout logic, hierarchy, typography, color, spacing, visual cleanliness and
+information density together. Repeated turn state/action, poor primary-content
+placement, clipping or input instability block release. A prettier screenshot,
+valid JSON or passing tests cannot substitute for real-client visual and interaction
+evidence; missing required client coverage is unverified until supplied or Bailey
+explicitly narrows the release scope.
 
 ## Validation: isolate first, then scale to risk
 

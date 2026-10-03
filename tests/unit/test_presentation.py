@@ -8,6 +8,8 @@ from hermes_feishu_card.card_limits import inspect_card_limits
 from hermes_feishu_card.presentation import task_presentation
 from hermes_feishu_card.render import render_card, render_card_result
 from hermes_feishu_card.session import CardSession, InteractionState, InteractionOption
+from hermes_feishu_card.session import ToolState
+from hermes_feishu_card.card_timeline import CardTimeline
 
 
 def session(**values):
@@ -46,9 +48,9 @@ def test_reconnecting_presentation_does_not_claim_resumed_execution():
     assert view.label == "等待状态同步"
     assert "原授权不会恢复" in view.observation
     card = render_card(value, presentation="task")
-    footer = next(e["content"] for e in card["body"]["elements"] if e.get("element_id") == "footer")
-    assert "color='neutral'" in footer
-    assert "已停止" not in footer
+    assert card["header"]["template"] == "grey"
+    assert card["header"]["title"]["content"].endswith("等待状态同步")
+    assert not any(e.get("element_id") == "footer" for e in card["body"]["elements"])
 
 
 def test_task_layout_preserves_complete_answer_and_does_not_mutate_session():
@@ -81,6 +83,82 @@ def test_task_layout_empty_loading_and_long_wait_have_useful_content():
     assert elements[0]["element_id"] == "task_observation"
     assert "尚待确认" in elements[0]["content"]
     assert not any(item.get("element_id") == "main_content" for item in elements)
+
+
+def running_tool_session():
+    now = time.time()
+    value = session(status="tool_running", created_at=now - 20, updated_at=now)
+    detail = 'python3 acceptance.py\n参数: {"command": "python3 acceptance.py", "timeout": 120}'
+    value.tools["fixture-tool"] = ToolState("fixture-tool", "terminal", "running", detail, now - 10, 1)
+    value.timeline.record_tool("fixture-tool", "terminal", "running", detail)
+    return value
+
+
+def test_task_running_card_has_one_state_and_one_visible_action():
+    value = running_tool_session()
+    before = snapshot(value)
+    card = render_card(value, presentation="task", stream_thinking_to_body=False)
+    elements = card["body"]["elements"]
+    visible = json.dumps({"header": card["header"], "elements": [e for e in elements if e.get("tag") != "collapsible_panel"]}, ensure_ascii=False)
+    assert visible.count("执行中") == 1
+    assert visible.count("执行命令：python3 acceptance.py") == 1
+    assert "subtitle" not in card["header"]
+    assert "工具 #" not in card["header"]["title"]["content"]
+    activity = next(e["content"] for e in elements if e.get("element_id", "").startswith("tool_activity_"))
+    assert "参数:" not in activity
+    panel = next(e for e in elements if e.get("element_id") == "auxiliary_timeline")
+    assert 'timeout' in str(panel) and '120' in str(panel)
+    footer = next(e["content"] for e in elements if e.get("element_id") == "footer")
+    assert "20s" in footer
+    assert "执行" not in footer and "工具 #" not in footer
+    assert snapshot(value) == before
+
+
+@pytest.mark.parametrize("show_reasoning,has_timeline", [(False, True), (True, False)])
+def test_task_does_not_hide_parameters_when_no_detail_panel_exists(show_reasoning, has_timeline):
+    value = running_tool_session()
+    if not has_timeline:
+        value.timeline = CardTimeline()
+    card = render_card(value, presentation="task", show_reasoning=show_reasoning)
+    activity = next(e["content"] for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_"))
+    assert "timeout=120" in activity
+
+
+def test_task_silent_tool_is_last_observed_action_not_live_claim():
+    value = running_tool_session()
+    value.updated_at = time.time() - 130
+    card = render_card(value, presentation="task")
+    assert "等待新进展" in card["header"]["title"]["content"]
+    activity = next(e["content"] for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_"))
+    assert "上次动作" in activity and "执行中" not in activity
+    assert "10s" not in activity
+
+
+@pytest.mark.parametrize("reply_anchor", ["", "fixture-reply"])
+def test_task_completion_retains_exactly_one_completion_marker(reply_anchor):
+    value = session(status="completed", answer_text="验收结果", duration=12, reply_to_message_id=reply_anchor, model="deepseek/model")
+    card = render_card(value, presentation="task")
+    assert json.dumps(card, ensure_ascii=False).count("已完成") == 1
+    assert "12s" in str(card) and "deepseek/model" in str(card)
+
+
+def test_task_phase_without_tool_stays_visible_in_body():
+    value = session(runtime_phase_text="正在压缩上下文", updated_at=time.time())
+    card = render_card(value, presentation="task", stream_thinking_to_body=False)
+    assert "subtitle" not in card["header"]
+    assert any(e.get("element_id") == "task_action" and e["content"] == "正在压缩上下文" for e in card["body"]["elements"])
+
+
+def test_task_parallel_tools_only_move_parameters_that_are_in_the_rendered_panel():
+    value = running_tool_session()
+    value.tools["parallel"] = ToolState("parallel", "file_read", "running", 'example.txt\n参数: {"path": "example.txt", "limit": 50}', time.time(), 2)
+    value.timeline.record_tool("parallel", "file_read", "running", value.tools["parallel"].detail)
+    card = render_card(value, presentation="task", max_timeline_items=1)
+    rows = [e["content"] for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_")]
+    assert len(rows) == 2
+    assert sum("参数:" in row for row in rows) == 1
+    panel = next(e for e in card["body"]["elements"] if e.get("element_id") == "auxiliary_timeline")
+    assert "timeout" in str(rows) + str(panel) and "limit" in str(rows) + str(panel)
 
 
 def test_task_approval_keeps_full_prompt_scope_and_callback_values():

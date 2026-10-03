@@ -22,7 +22,7 @@ from .session import (
 )
 from .status import StatusConfig, resolve_display_status
 from .subscription_usage import uses_codex_subscription
-from .presentation import apply_task_presentation, TASK_TEXT_SIZE_DEFAULTS
+from .presentation import apply_task_presentation, task_presentation, TASK_TEXT_SIZE_DEFAULTS
 from .text import (
     TableOverflowResult,
     normalize_stream_text,
@@ -322,6 +322,7 @@ def _render_card_unchecked(
         footer_fields,
         display_status=display_status,
         compact=presentation == "task",
+        include_status=presentation != "task" or native_reply_completed,
         # Maintainer note (contract change): the footer no longer repeats "本轮回复结束" at all.
         # The user asked for it to go from the footer ("footer 区域不显示本轮回复结束"), and only
         # the native-reply rail ever had it there — that rail drops the whole header
@@ -390,22 +391,8 @@ def _render_card_unchecked(
     hide_terminal_tools = (
         hide_completed_tool_activity and session.status in {"completed", "failed"}
     ) or (hide_successful_tool_activity and session.status == "completed")
-    tool_activity_elements = (
-        []
-        if pending_approval
-        else _render_tool_activity_elements(
-            session,
-            text_sizes=text_sizes,
-            used_text_size_roles=used_text_size_roles,
-            display_status=display_status,
-            # The content rows get the card's tool-detail budget — the same one the 思考过程 panel
-            # uses, so a command reads the same length on both surfaces.
-            max_chars=max_tool_result_chars,
-            hide_successful=hide_terminal_tools,
-        )
-    )
-    elements.extend(tool_activity_elements)
     timeline_elements: list[Dict[str, Any]] = []
+    rendered_tool_ids: set[str] = set()
     if show_reasoning and not pending_approval:
         timeline_elements = _render_timeline_elements(
             session,
@@ -418,13 +405,30 @@ def _render_card_unchecked(
             text_sizes=text_sizes,
             used_text_size_roles=used_text_size_roles,
             reasoning_format=reasoning_format,
+            rendered_tool_ids=rendered_tool_ids,
             live_thinking=(
                 session.thinking_text
                 if not stream_thinking_to_body and session.status not in {"completed", "failed"}
                 else ""
             ),
         )
-        elements.extend(timeline_elements)
+    tool_activity_elements = (
+        []
+        if pending_approval
+        else _render_tool_activity_elements(
+            session,
+            text_sizes=text_sizes,
+            used_text_size_roles=used_text_size_roles,
+            display_status=display_status,
+            max_chars=max_tool_result_chars,
+            hide_successful=hide_terminal_tools,
+            task_layout=presentation == "task",
+            details_in_timeline=rendered_tool_ids,
+            observation_only=presentation == "task" and bool(task_presentation(session).observation),
+        )
+    )
+    elements.extend(tool_activity_elements)
+    elements.extend(timeline_elements)
     elements.extend(
         _render_interaction_elements(
             session,
@@ -1744,6 +1748,9 @@ def _render_tool_activity_elements(
     display_status: str = "",
     max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
     hide_successful: bool = False,
+    task_layout: bool = False,
+    details_in_timeline: set[str] | None = None,
+    observation_only: bool = False,
 ) -> list[Dict[str, Any]]:
     """Show what the agent is doing RIGHT NOW, right under the answer.
 
@@ -1783,6 +1790,9 @@ def _render_tool_activity_elements(
             running=turn_is_live and _tool_is_running(tool),
             turn_over=not turn_is_live,
             max_chars=max_chars,
+            task_layout=task_layout,
+            include_params=not (task_layout and tool.tool_id in (details_in_timeline or set())),
+            observation_only=observation_only,
         )
         for index, tool in enumerate(selected)
     ]
@@ -1916,6 +1926,9 @@ def _tool_activity_row(
     running: bool | None = None,
     turn_over: bool = False,
     max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
+    task_layout: bool = False,
+    include_params: bool = True,
+    observation_only: bool = False,
 ) -> Dict[str, Any]:
     if running is None:
         running = _tool_is_running(tool)
@@ -1927,7 +1940,12 @@ def _tool_activity_row(
         label, color = _INTERRUPTED_TOOL_PILL
     else:
         label, color = _tool_terminal_pill(tool)
-    parts = [_status_tag(label, color)]
+    # The task header owns the turn state. A live tool row names the action;
+    # terminal tool outcomes remain visible because they describe that call.
+    if task_layout and running:
+        parts = ["上次动作"] if observation_only else []
+    else:
+        parts = [_status_tag(label, color)]
     if tool.name:
         parts.append(_name_tag(tool.name))
     # Maintainer note (contract change): the numbers now precede the phrase. The row used to end
@@ -1942,7 +1960,7 @@ def _tool_activity_row(
         parts.append(f"#{tool.ordinal}")
     # Running rows count up; terminal rows retain their measured duration.
     elapsed: float | None = None
-    if running and tool.started_at:
+    if running and tool.started_at and not observation_only:
         elapsed = max(0.0, now - float(tool.started_at))
     elif tool.duration_ms is not None:
         try:
@@ -1961,7 +1979,7 @@ def _tool_activity_row(
     if action:
         lines.append(action)
     params = _tool_activity_params(tool, max_chars=max_chars)
-    if params:
+    if params and include_params:
         lines.append(params)
     element: Dict[str, Any] = {
         "tag": "markdown",
@@ -2000,6 +2018,7 @@ def _render_timeline_elements(
     live_thinking: str = "",
     timeline_order: str = "newest_first",
     tools_per_reasoning: int = 0,
+    rendered_tool_ids: set[str] | None = None,
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
@@ -2096,6 +2115,8 @@ def _render_timeline_elements(
                 )
             )
         elif item.kind == "tool":
+            if rendered_tool_ids is not None and item.tool_id:
+                rendered_tool_ids.add(item.tool_id)
             detail, duration = _split_tool_timeline_detail(
                 _redact_tool_detail(item.detail)
             )
@@ -2517,6 +2538,7 @@ def _render_footer(
     *,
     display_status: str = "",
     compact: bool = False,
+    include_status: bool = True,
 ) -> str:
     # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
     # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
@@ -2539,7 +2561,7 @@ def _render_footer(
         # mid-turn: the core only sends tokens with turn.completed, so an approval that fires
         # during the run legitimately shows no counts rather than a fake ↑0 ↓0).
         waiting: list[str] = []
-        if session.tool_count:
+        if session.tool_count and not compact:
             waiting.append(f"工具 #{session.tool_count}")
         if session.created_at:
             # Only once there is a second to show: a freshly-armed approval would otherwise read
@@ -2547,7 +2569,8 @@ def _render_footer(
             elapsed = max(0.0, _time.time() - float(session.created_at))
             if elapsed >= 1.0:
                 waiting.append(_format_duration(elapsed))
-        waiting.append("等待选择")
+        if include_status:
+            waiting.append("等待选择")
         waiting.append(f"⏳ {minutes} 分钟后过期")
         tokens = session.tokens if isinstance(session.tokens, dict) else {}
         input_tokens = _safe_int(tokens.get("input_tokens"))
@@ -2563,8 +2586,8 @@ def _render_footer(
         # Maintainer note (contract change): the tool count now leads the elapsed time, matching
         # the title — the user asked for "工具 N · <time>" order in both places (it used to be
         # time then count here).
-        running = [f"{_spinner_frame()} {_status_tag('执行中', 'blue')}"]
-        if session.tool_count:
+        running = [f"{_spinner_frame()} {_status_tag('执行中', 'blue')}"] if include_status else []
+        if session.tool_count and not compact:
             # Maintainer note (contract change): hash before the count, matching the title.
             running.append(f"工具 #{session.tool_count}")
         running.append(_format_duration(max(0.0, _time.time() - float(session.created_at))))
@@ -2572,7 +2595,7 @@ def _render_footer(
         # ("正在读取文件") so the state line reads the same wherever the eye lands — the user
         # asked for it explicitly.
         phrase = _latest_running_action_phrase(session)
-        if phrase:
+        if phrase and not compact:
             running.append(phrase)
         return " · ".join(running)
     tokens = session.tokens if isinstance(session.tokens, dict) else {}
@@ -2592,7 +2615,7 @@ def _render_footer(
     used_context = _safe_int(context.get("used_tokens"))
     max_context = _safe_int(context.get("max_tokens"))
     context_percent = round(used_context / max_context * 100) if max_context > 0 else 0
-    pill = _status_tag("已停止", "red") if failed else _status_tag("已完成", "green")
+    pill = (_status_tag("已停止", "red") if failed else _status_tag("已完成", "green")) if include_status else ""
     # Maintainer note (contract change): a card that received NO metric now shows the state pill
     # alone — the metrics row is not rendered at all.
     #
@@ -2622,7 +2645,7 @@ def _render_footer(
         return pill
     values = {
         "duration": _format_duration(duration),
-        "model": _colored_model_label(model),
+        "model": html.escape(model, quote=True) if compact else _colored_model_label(model),
         "input_tokens": f"↑{_format_count(input_tokens)}",
         "output_tokens": f"↓{_format_count(output_tokens)}",
         "context": (
@@ -2632,7 +2655,7 @@ def _render_footer(
         "subscription_usage": subscription_usage,
     }
     selected = []
-    if session.tool_count:
+    if session.tool_count and not compact:
         # Maintainer note (contract change): the count leads the other metrics, matching the title
         # (it used to be appended last, after ctx); it carries a hash, per the user's request.
         selected.append(f"工具 #{session.tool_count}")
@@ -2657,7 +2680,7 @@ def _render_footer(
     # but the metrics. The "本轮回复结束" note that used to sit here (first ahead of the pill, then
     # behind it) is gone — the user asked for it to leave the footer, and the completed state plus
     # the header sub-title / native completion line already carry it.
-    return f"{pill} · {detail}"
+    return f"{pill} · {detail}" if pill else detail
 
 
 def _colored_model_label(model: str) -> str:
