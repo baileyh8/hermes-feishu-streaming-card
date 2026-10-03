@@ -27,6 +27,8 @@ approval queue or execution-recovery engine here.
 4. Use [development rules](docs/wiki/development-rules.md) for dependencies,
    modules and validation; use [feature rules](docs/wiki/feature-rules.md) for
    user-facing changes. Read only the pages relevant to this change.
+   Card layout, typography, color and motion follow
+   [card visual guidelines](docs/wiki/card-visual-guidelines.md).
 5. [Architecture](docs/architecture.md), [event flow](docs/wiki/event-flow.md),
    [stability policy](docs/wiki/stability-test-policy.md) and
    [release playbook](docs/wiki/release-playbook.md) are the detailed references.
@@ -95,6 +97,10 @@ current owner and authorization path. Desktop, Android and iOS visual acceptance
 are separate evidence. See [feature rules](docs/wiki/feature-rules.md).
 Quota, usage and cost must be attributed to the actual turn/model/provider;
 an available account does not justify displaying its allowance on unrelated turns.
+Visual quality is a core deliverable: compare the same content across states and
+clients, preserve readable hierarchy and stable streaming layout, and validate
+supported card components. Present visual options for Bailey's direction approval
+before a card redesign; a rules/specification task does not authorize UI implementation.
 
 ## Validation: isolate first, then scale to risk
 

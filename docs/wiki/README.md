@@ -8,7 +8,7 @@
 
 ## 开发入口与项目方向
 
-[开发规则与技术栈](development-rules.md) · [功能准入与体验规则](feature-rules.md) · [2026-10-03 代码审查](../reviews/2026-10-03-project-review.md) · [V5 功能与体验建议](../roadmap-v5.md)。审查和路线建议不代表功能已经实现；当前发行版本以根目录 README 和 CHANGELOG 为准。
+[开发规则与技术栈](development-rules.md) · [功能准入与体验规则](feature-rules.md) · [卡片视觉体验规范](card-visual-guidelines.md) · [2026-10-03 代码审查](../reviews/2026-10-03-project-review.md) · [V5 功能与体验建议](../roadmap-v5.md)。审查和路线建议不代表功能已经实现；当前发行版本以根目录 README 和 CHANGELOG 为准。
 
 ## V4.6.4 历史版本资料
 
