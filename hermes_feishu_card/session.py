@@ -176,9 +176,9 @@ class CardSession:
     last_sequence: int = -1
     thinking_text: str = ""
     answer_text: str = ""
-    # Set only when a terminal event promotes reasoning in the absence of an
-    # answer. Task presentation can separate that reasoning without guessing
-    # from the text or changing the canonical/classic failure content.
+    # Event-sourced terminal notice when no real answer has arrived. Reasoning
+    # may be promoted for canonical/classic compatibility. Keep this field name
+    # for existing display checkpoints; never infer provenance from body text.
     terminal_reasoning_notice: str = ""
     latest_tool_preview: str = ""
     runtime_phase_text: str = ""
@@ -631,9 +631,10 @@ class CardSession:
         appended below it as a quote.
         """
         self.terminal_reasoning_notice = ""
-        if not self.answer_text.strip() and self.thinking_text.strip():
-            self.answer_text = self.thinking_text.strip()
+        if not self.answer_text.strip():
             self.terminal_reasoning_notice = terminal_notice
+            if self.thinking_text.strip():
+                self.answer_text = self.thinking_text.strip()
         return self.answer_text.rstrip()
 
     def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:

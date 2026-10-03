@@ -41,6 +41,8 @@ hermes-feishu-card card-config --config <配置路径> --preview-dir ./card-prev
 
 最终 SHA 的完整回归与跨平台 CI、全部相关真实流程、视觉门槛、精确合并、annotated tag、资产/checksums 和公开安装来源仍需完成。Android/iOS、窄聊天区、深色和放大字号分别记录，缺失证据保持“未验证”。不会用自动化通过替代客户端结论。
 
+`7a432fd` 本地完整回归为 **4,717 passed、22 skipped**，真实暂停审批后停止已收尾。该画面仍暴露纯审批无思考时的通用中断正文重复；后续来源字段修复通过 **439** 项相关测试，需新包复拍。浅色原生代码配色的对比度仍待核验，手机与窄聊天区域未通过，保持发布候选状态。
+
 ## 贡献记录
 
 本轮代码提交作者为 [baileyh8](https://github.com/baileyh8)。阅读体验继续回应 [jackwude](https://github.com/jackwude) 的 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 和 [leavrcn](https://github.com/leavrcn) 的 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333)；这些署名对应需求与现场证据。保留全部历史代码作者、方案和问题报告记录，不把未合并的其他 PR 计入本版。

@@ -41,6 +41,8 @@ On `b57e84a`, the real multi-select card submitted two choices plus custom text,
 
 Final-commit regression and cross-platform CI, relevant real flows, visual gates, exact merge provenance, an annotated tag, assets/checksums and public-install provenance remain required. Android/iOS, narrow chat areas, dark theme and enlarged type are separate evidence; missing coverage stays unverified. Automated results do not substitute for client acceptance.
 
+Local full regression for `7a432fd` recorded **4,717 passed and 22 skipped**, and stopping a real paused approval finalized its original owner. That view still repeated the generic interruption notice when no thinking existed. A subsequent provenance-field repair passed **439** relevant tests and requires a new-wheel visual retest. Light-theme native code contrast remains unverified, as do mobile and narrow-chat coverage; this remains a release candidate.
+
 ## Credits
 
 Commits in this release are authored by [baileyh8](https://github.com/baileyh8). Reading improvements continue the requests from [jackwude](https://github.com/jackwude) in [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn) in [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333); those credits identify requests and field evidence. All earlier code authors, proposals and reports remain credited. Unmerged unrelated PRs are not represented as part of this release.

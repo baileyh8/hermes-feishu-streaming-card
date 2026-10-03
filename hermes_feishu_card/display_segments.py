@@ -73,7 +73,7 @@ def record_terminal(session, event) -> None:
     elif event.event == "message.failed":
         error = event.data.get("error")
         error = error if isinstance(error, str) and error.strip() else "消息处理失败"
-        if not state["answer"].strip() and state["thinking"].strip():
+        if not state["answer"].strip():
             state["terminal_reasoning_notice"] = error
         partial = state["answer"].rstrip() or state["thinking"].rstrip()
         state["answer"] = partial + "\n\n> " + error if partial else error
