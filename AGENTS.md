@@ -1,104 +1,151 @@
 # AGENTS.md — hermes-feishu-streaming-card
 
-## Project
+## Scope and authority
 
-Sidecar-only plugin for Hermes Agent Gateway Feishu/Lark streaming cards.
+HFC is the Feishu/Lark presentation and delivery sidecar for Hermes Agent.
+Hermes owns task execution, model calls, conversation ownership and permission
+resolution. HFC owns card presentation, bounded display state, delivery,
+diagnostics and its reversible installation. Do not build a second agent loop,
+approval queue or execution-recovery engine here.
 
-- Active source: `hermes_feishu_card/`
-- Tests: `tests/`
-- Public maintainer wiki: `docs/wiki/`
-- V2 archive: `legacy/` — do not edit unless explicitly asked.
+- Active code: `hermes_feishu_card/`; tests: `tests/`; maintainer docs: `docs/wiki/`.
+- `legacy/` is archived, not active runtime. Do not edit it without explicit scope.
+- Talk to Bailey in Chinese; keep code identifiers and protocol names unchanged.
+- An audit or roadmap request authorizes the requested documentation, not the
+  proposed runtime features, a production upgrade or a release. Existing explicit
+  authorization remains valid within its scope; do not ask for it repeatedly.
+- Keep unrelated working changes. Verify checkout, branch, base and package
+  origin before editing; verify host/service/config before touching a live system.
 
-The Hermes process should keep only minimal hook logic. Feishu/Lark delivery,
-card state, rendering, diagnostics, installer behavior, and release assets live
-in this repository.
+## Start with the smallest useful context
 
-## Hard Rules
+1. Read `pyproject.toml`, the relevant implementation/tests and `git status`.
+2. Run `python tools/preflight.py --check-only` with the intended Python.
+   `ready` is environment readiness; `pytest.status=not_run` is not a test pass.
+3. Read [maintenance routing](docs/wiki/maintenance-guide.md) before changing
+   runtime, server, patcher, process/service, installer or release code.
+4. Use [development rules](docs/wiki/development-rules.md) for dependencies,
+   modules and validation; use [feature rules](docs/wiki/feature-rules.md) for
+   user-facing changes. Read only the pages relevant to this change.
+5. [Architecture](docs/architecture.md), [event flow](docs/wiki/event-flow.md),
+   [stability policy](docs/wiki/stability-test-policy.md) and
+   [release playbook](docs/wiki/release-playbook.md) are the detailed references.
+   Dated reviews and roadmaps are evidence/proposals, not implementation status.
 
-- Do not edit an installed Hermes `gateway/run.py` by hand. Only
-  `hermes_feishu_card/install/patcher.py` may patch Hermes.
-- Do not commit secrets: Feishu App Secret, tenant token, real chat id, local
-  `.env`, or screenshots with private/unredacted content.
-- Keep hook behavior fail-open for unknown/unsupported paths, but suppress
-  duplicate Feishu native gray text after this plugin has accepted a card path.
-- `legacy/` is not active runtime.
-- User-facing conversation with Bailey is Chinese. Code identifiers, filenames,
-  tool names, and protocol names stay in English.
+## Stack and ownership
 
-## Commands
+The current stack is Python + asyncio/aiohttp, PyYAML, dataclasses/manual boundary
+validation, setuptools and pytest. Read the supported Python floor and package
+version from `pyproject.toml`; do not implement a proposed V5 floor implicitly.
+Hermes supplies the Feishu SDK environment. There is no configured formatter,
+linter or typechecker; do not claim their checks ran or mass-format existing code.
+
+| Concern | Primary code |
+| --- | --- |
+| Hermes capability/plugin/legacy adapters | `hermes_plugin*`, `hook_runtime.py`, `install/native_hooks.py` |
+| Event and interaction contracts | `events.py`, `session.py`, `runtime_interaction_transport.py` |
+| Orchestration, identity and delivery ownership | `server.py`, `native_handoff.py`, `delivery_policy.py` |
+| Presentation and payload budgets | `render.py`, `reading.py`, `card_limits.py`, `text.py` |
+| Feishu I/O and CardKit sequencing | `feishu_client.py`, `cardkit.py` |
+| Config, installation and safe recovery | `config.py`, `cli.py`, `install/` |
+| Process credentials and service ownership | `process.py`, `runner.py`, `persistent_service.py` |
+| Bounded display/notice persistence | `session_store.py`, `notice_lifecycle.py` |
+
+Keep event normalization, state decisions, rendering and external I/O separable.
+New substantial behavior belongs in a focused module with a tested boundary,
+not another unrelated branch in the largest coordinator. Extract incrementally;
+do not combine rebranding, broad rewrites and behavior fixes in one PR.
+
+## Non-negotiable runtime boundaries
+
+- Do not hand-edit installed Hermes source. Only
+  `hermes_feishu_card/install/patcher.py` may patch managed Hermes targets.
+- Prefer verified native extension points. A version string or documentation
+  example is not capability proof: retain source hashes, exact call-site checks,
+  drift rejection, idempotence and byte-for-byte restore tests.
+- Unknown/unsupported delivery paths remain fail-open to Hermes. Once HFC has
+  accepted a card path, preserve its ownership and suppress duplicate native gray
+  text. Installation, authorization and uncertain filesystem mutation fail closed.
+- Preserve profile/bot/chat/thread/sender/turn boundaries. A reply alias is not a
+  new turn identity, and group membership does not authorize replacing another
+  sender's card. Test terminal, duplicate, late and reordered events.
+- Resolve interactions through the original Hermes handle exactly once. Never
+  revive expired approvals or infer successful completion from missing events.
+- Display checkpoints restore presentation, not execution or old authorization.
+  Keep state, caches, replay windows and retries bounded; define failure behavior.
+- Use the shared serializer and `card_limits.py` for every final combined payload.
+  Do not truncate final answers or permission scope merely to fit a card.
+- Keep slow external I/O outside session/message locks where the contract permits;
+  preserve the documented post-lock work and terminal ordering when extracting.
+- Never commit credentials, control/interaction tokens, raw chat/user identifiers,
+  local `.env`, private checkpoints or unredacted screenshots. Managed launchers
+  use private token files, with no insecure argv fallback. Keep health/logs redacted.
+
+## Feature and configuration rules
+
+Every substantive feature must name a user problem, authoritative data source,
+current behavior, intended behavior, failure/unknown behavior and acceptance test.
+Reuse existing capabilities before proposing a new one. Review new settings for
+scope, default, precedence, validation, restart needs, migration and rollback.
+Global -> profile -> bot precedence and explicit user values must remain clear.
+
+Preserve existing defaults unless an explicitly approved migration says otherwise.
+Progress is observed state, not invented percent/ETA. UI actions need a valid
+current owner and authorization path. Desktop, Android and iOS visual acceptance
+are separate evidence. See [feature rules](docs/wiki/feature-rules.md).
+Quota, usage and cost must be attributed to the actual turn/model/provider;
+an available account does not justify displaying its allowance on unrelated turns.
+
+## Validation: isolate first, then scale to risk
+
+Run from the checkout root using its compatible environment. Prefer the existing
+preflight tool so tests use private HOME/state and do not inspect production by
+accident. Never repair production or install global dependencies to make tests pass.
 
 ```bash
-python -m pytest -q
-python -m pytest tests/unit/test_docs.py -q
-python -m pytest tests/unit/test_package_metadata.py -q
-python -m hermes_feishu_card.cli doctor --config config.yaml.example --hermes-dir ~/.hermes/hermes-agent --explain
+python tools/preflight.py --check-only
+python tools/preflight.py --suite focused --module docs
+python tools/preflight.py --suite focused --module runtime --module render
+python tools/preflight.py --suite focused --module install
+python tools/preflight.py --suite focused --module process
+python tools/preflight.py --suite full
+git diff --check
 ```
 
-No formatter, linter, or typechecker is configured. CI is pytest-based.
+Choose only the relevant commands, not every group for every change. `AGENTS.md`
+and some modules are not auto-mapped: select groups explicitly and add focused
+tests from the maintenance matrix. Pure docs/rules changes need docs/metadata and
+link/contract checks; they do not require a new product release or a redundant
+local full run. Runtime/stability changes need meaningful failing reproduction,
+normal/failure/duplicate/late-event assertions and the affected integration paths.
+Run full regression before release, broad runtime claims or substantial refactors.
 
-## Change Routing
+Full runs require `HFC_FIXED_TAG_SOURCE_ROOT` pointing to the verified clean Git
+fixture described in `docs/testing.md`; never substitute production or an archive
+without Git identity. Missing fixtures/skips must be reported. The current
+preflight sanitizes `HFC_UPSTREAM_*`; latest stable/main compatibility therefore
+needs the separate pinned matrix in `.github/workflows/tests.yml` (or a documented
+isolated equivalent). Do not claim those checks from a preflight full pass alone.
 
-Read `docs/wiki/maintenance-guide.md` before touching these hot areas:
+Installed-runtime changes also require ordinary non-editable wheel provenance and
+real child-process checks. UI changes need relevant real-client checks. Distinguish
+source tests, mock/local HTTP, public installation, real platform API, visual QA
+and actual Gateway/model execution. Preserve failures before a justified rerun.
 
-- `hermes_feishu_card/hook_runtime.py`
-- `hermes_feishu_card/server.py`
-- `hermes_feishu_card/install/patcher.py`
-- installer scripts, Docker install, release workflow
+## Delivery and release
 
-Use these wiki pages for context:
-
-- `docs/wiki/README.md` — maintainer wiki entry
-- `docs/wiki/maintenance-guide.md` — hot files, risk boundaries, test matrix
-- `docs/wiki/event-flow.md` — Hermes event to Feishu card lifecycle
-- `docs/wiki/feishu-acceptance.md` — real Feishu/Lark smoke checklist
-- `docs/wiki/release-playbook.md` — release checklist
-
-## Testing Expectations
-
-Run focused tests while developing, then full suite before release or broad
-claims.
-
-- Runtime/topic/notice changes:
-  `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_server.py -q`
-- Patcher/install changes:
-  `python -m pytest tests/unit/test_patcher.py tests/integration/test_cli_install.py -q`
-- Docs/version changes:
-  `python -m pytest tests/unit/test_docs.py tests/unit/test_package_metadata.py -q`
-- Release gate:
-  `python -m pytest -q && git diff --check`
-
-## Release Checklist
-
-1. Bump `pyproject.toml` and `hermes_feishu_card/__init__.py`.
-2. Update `CHANGELOG.md`, `docs/release-notes-vX.Y.Z.md`, README files, and
-   affected docs/wiki pages.
-3. Audit every merged/absorbed PR and issue since the previous tag. Credit the
-   relevant GitHub users, with links and accurate contribution descriptions,
-   in both README languages and the release notes; do not omit issue reporters
-   whose evidence materially shaped a fix.
-   Before publishing, also compare the README contributor sections against the
-   repository's full tag/release history, merged or materially absorbed PRs,
-   accepted issue evidence, commit authors, and `Co-authored-by` trailers. A
-   new release must preserve and, when needed, restore credits from earlier
-   versions rather than replacing them with only the latest cycle's names.
-4. Preserve real code authorship when merging, cherry-picking, squashing, or
-   reimplementing a PR. Keep the original author where Git permits, or add an
-   accurate `Co-authored-by` trailer, so code contributors are represented in
-   Git history and GitHub's commit-based Contributors graph. Never fabricate a
-   commit or authorship merely to change that graph. Issue-only contributors
-   may not appear in the graph and must still be acknowledged in README and
-   release notes.
-5. Run full tests and `git diff --check`.
-6. Commit, create annotated tag, push branch and tag.
-7. Ensure GitHub Release exists and release-assets workflow uploaded packages.
-
-## Obsidian / LLM Wiki
-
-Project-public knowledge belongs in `docs/wiki/`.
-
-When adding durable project knowledge, update both the repo wiki and Bailey's
-Obsidian LLM Wiki mirror if it should be reusable across future Codex sessions.
-
-## Stability regression requirements
-
-Follow `docs/wiki/stability-test-policy.md` for stability fixes. Each bug needs a failing reproduction where feasible and assertions on user-visible results, including failure and late/duplicate events. Patcher compatibility must test rejection of contract drift and execute the patched delivery bracket, not only match markers. Report missing fixtures, failed checks and unrun real-client acceptance explicitly. Test totals alone do not establish release readiness.
+- PRs state the user-visible problem, final change, affected boundary, tests and
+  remaining uncertainty. Keep runtime fixes and unrelated cleanup separate.
+- Report what changed, what passed and what remains unverified. Test totals are
+  not branch coverage, service readiness or proof of production acceptance.
+- Follow `docs/wiki/release-playbook.md` for an authorized release: version/docs,
+  full checks, exact merge/tree, annotated tag, CI, assets/checksums and isolated
+  public install. Do not move a published tag to hide a failure.
+- Preserve full tag/release history, merged or materially absorbed PRs,
+  accepted issue evidence, commit authors and accurate `Co-authored-by` trailers.
+  Never fabricate authorship. Credit relevant contributors in both READMEs and
+  release notes; retain earlier credits. Issue evidence is distinct from code authorship.
+  Audit both the release interval and historical credits before publishing.
+- Public project knowledge belongs in repository docs. Synchronize personal/global
+  memory or an external wiki only when explicitly requested; do not make that a
+  hidden prerequisite for completing repository work.

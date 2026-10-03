@@ -8,7 +8,7 @@
 - Feishu/Lark 卡片 API 与 WebSocket 交互路径有多条 fallback。
 - sidecar 执行与授权状态仍是进程内内存；卡片展示可以从有界私有检查点恢复，不能据此恢复执行或旧审批。详见 [卡片重启恢复](card-restart-recovery.md)。
 
-小文档改动可以直接做；涉及 `hook_runtime.py`、`server.py`、`patcher.py`、安装器或 release 流程时，先读 `AGENTS.md` 的 hot files 和测试矩阵。
+小文档改动可以直接做；涉及 `hook_runtime.py`、`server.py`、`patcher.py`、安装器或 release 流程时，先读根目录 [AGENTS.md](../../AGENTS.md) 的边界与验证要求。技术栈、模块拆分和测试环境见[开发规则](development-rules.md)；新增功能、配置和交互设计见[功能准入规则](feature-rules.md)。
 
 ## Hot files
 
@@ -68,7 +68,7 @@
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
 - legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
-- 初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；不重试 `/events`，也不把这套策略套到 PATCH。
+- 普通卡片初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；这不是通用 `/events` 重放或 PATCH 策略。terminal 事件另有保留原事件身份、包含锁等待的 75 秒传输预算；HTTP 4xx 不重试。`interaction.requested` 仍只 POST 一次。见[卡片连接恢复](card-restart-recovery.md)。
 - `feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings`、`notice_update_failures`、`last_send_error` 与 `last_update_error` 必须保持脱敏；更新失败只可附加白名单校验后的 `status_code` / `api_code`，不得记录 UUID、响应正文、URL 或原始标识符。
 - 无凭据的 Noop 模式必须在 `/health` 中标记 `degraded` / `noop_mode`，发送计入 `feishu_noop_attempts` 和 failure；不得生成假 message id 或计入 success。
 - 首轮加载和运行中工具动画必须复用 session 的 `FlushController` 更新同一卡，并保持有界；正文/工具终态到达、更新失败、session reset 或应用清理时必须停止，不能与 terminal drain 竞争或制造独立消息。
