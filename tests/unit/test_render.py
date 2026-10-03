@@ -1447,6 +1447,119 @@ def test_render_long_code_block_chunks_remain_fenced():
     assert all(item["content"].rstrip().endswith("```") for item in main_elements)
 
 
+@pytest.mark.parametrize("status,closing", [("streaming", ""), ("completed", "\n```")])
+def test_task_code_projection_is_shared_by_body_and_primary_text_without_mutating_answer(status, closing):
+    import copy
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = status
+    source = '```python\n\tprint("中文 <tag> `tick`")  ' + closing
+    session.answer_text = source
+    before = copy.deepcopy(vars(session))
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == "card"
+    expected = "语言：python\n\n" + source.replace("```python", "```plain_text", 1)
+    assert result.primary_text == expected
+    body = [e["content"] for e in result.card["body"]["elements"]
+            if e.get("element_id", "").startswith("main_content")]
+    assert body == [expected]
+    assert session.answer_text == source
+    for key in before:
+        if key not in {"answer_normalizer", "thinking_normalizer"}:
+            assert vars(session)[key] == before[key]
+    classic = render_card_result(session, presentation="classic")
+    assert classic.primary_text == source
+    assert next(e for e in classic.card["body"]["elements"]
+                if e.get("element_id") == "main_content")["content"] == source
+
+
+@pytest.mark.parametrize("source_kind", ["thinking", "notice", "terminal_notice", "approval"])
+def test_task_code_projection_never_changes_non_answer_content(source_kind):
+    from hermes_feishu_card.session import InteractionState, InteractionOption
+    source = "```python\nSCOPE_OR_NOTICE_MUST_STAY_ORIGINAL\n```"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = "streaming"
+    if source_kind == "thinking":
+        session.thinking_text = source
+    elif source_kind == "notice":
+        session.delivery_kind = "notice"
+        session.answer_text = source
+    elif source_kind == "terminal_notice":
+        session.status = "failed"
+        session.answer_text = source
+        session.terminal_reasoning_notice = source
+    else:
+        session.active_interaction = InteractionState(
+            interaction_id="approval", kind="approval", prompt=source,
+            options=[InteractionOption(label="允许", value="allow")])
+    result = render_card_result(session, presentation="task")
+    assert source in str(result.card).replace("\\n", "\n")
+    assert "```plain_text" not in str(result.card)
+    assert "语言：" not in str(result.card)
+
+
+def test_task_code_projection_long_chunks_reassemble_exact_code_body():
+    from hermes_feishu_card.text import scan_markdown_blocks
+    body = "".join(f"\tprint({i})  # 中文 {'x' * 70}  \n" for i in range(85))
+    source = "```python\n" + body + "```"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.answer_text = source
+    session.status = "completed"
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == "card" and inspect_card_limits(result.card).safe
+    chunks = [e["content"] for e in result.card["body"]["elements"]
+              if e.get("element_id", "").startswith("main_content")]
+    assert len(chunks) > 2
+    assert all(len(chunk) <= 2400 for chunk in chunks)
+    blocks = [block.text for chunk in chunks for block in scan_markdown_blocks(chunk) if block.kind == "fence"]
+    assert all(block.startswith("```plain_text\n") for block in blocks)
+    assert "".join("".join(block.splitlines(keepends=True)[1:-1]) for block in blocks) == body
+    assert session.answer_text == source
+
+
+@pytest.mark.parametrize("marker", ["```", "````", "~~~", "~~~~"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("length", [2399, 2400])
+def test_task_code_projection_does_not_newly_split_a_single_code_line(marker, newline, closed, length):
+    opening = marker + "python" + newline
+    closing = marker if closed else ""
+    body_end = newline if closed else ""
+    body = "x" * (length - len(opening + closing + body_end)) + body_end
+    source = opening + body + closing
+    assert len(source) == length
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = "completed" if closed else "streaming"
+    session.answer_text = source
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == "card"
+    assert result.primary_text == source
+    assert [e["content"] for e in result.card["body"]["elements"]
+            if e.get("element_id", "").startswith("main_content")] == [source]
+    assert session.answer_text == source
+
+
+@pytest.mark.parametrize("status,disposition", [("streaming", "deferred_native"), ("completed", "native")])
+def test_task_code_projection_expansion_still_uses_final_capacity_gate(monkeypatch, status, disposition):
+    import copy
+    from hermes_feishu_card import card_limits
+    source = "```python\nprint('CAPACITY_END')\n" + "# original body\n" * 50 + "```"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = status
+    session.answer_text = source
+    baseline = render_card_result(session, presentation="task")
+    assert baseline.disposition == "card"
+    # Only the added display label/fence width crosses this exact serialized budget.
+    unprojected = copy.deepcopy(baseline.card)
+    next(e for e in unprojected["body"]["elements"] if e.get("element_id") == "main_content")["content"] = source
+    monkeypatch.setattr(card_limits, "SAFE_CARD_JSON_BYTES", inspect_card_limits(unprojected).json_bytes)
+    assert inspect_card_limits(unprojected).safe
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == disposition
+    assert inspect_card_limits(result.card).safe
+    assert session.answer_text == source
+    assert "CAPACITY_END" not in str(result.card)
+
+
 def test_render_timeline_limits_reasoning_without_truncating_answer():
     from hermes_feishu_card.events import SidecarEvent
 

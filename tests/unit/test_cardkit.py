@@ -89,6 +89,42 @@ async def test_cumulative_text_updates_use_element_api_not_message_patch(transpo
 
 
 @pytest.mark.asyncio
+async def test_task_code_projection_remains_identical_through_cardkit_create_patch_and_terminal(transport):
+    from hermes_feishu_card.render import render_card_result
+    from hermes_feishu_card.session import CardSession
+
+    client, calls = transport
+    session = CardSession(conversation_id="fixture", message_id="fixture", chat_id="fixture")
+    session.status = "streaming"
+    session.answer_text = "```python\nprint('first')\n"
+    first = render_card_result(session, presentation="task")
+    first.card["config"]["streaming_mode"] = True
+    await client.send_card("oc_fixture", first.card, delivery_uuid="task-code")
+    created = json.loads(calls[0][2]["data"])
+    assert next(e["content"] for e in created["body"]["elements"]
+                if e.get("element_id") == "main_content") == first.primary_text
+    assert first.primary_text.startswith("语言：python\n\n```plain_text\n")
+    session.answer_text += "\tprint('CODE_END')  \n"
+    update = render_card_result(session, presentation="task")
+    update.card["config"]["streaming_mode"] = True
+    await client.update_card_message("om_fixture", update.card)
+    patch = calls[-1]
+    assert patch[:2] == ("PUT", "/cardkit/v1/cards/card_fixture/elements/main_content/content")
+    assert patch[2]["content"] == update.primary_text
+    session.answer_text += "```"
+    session.status = "completed"
+    final = render_card_result(session, presentation="task")
+    final.card["config"]["streaming_mode"] = False
+    await client.update_card_message("om_fixture", final.card)
+    assert calls[-1][:2] == ("PUT", "/cardkit/v1/cards/card_fixture")
+    terminal = json.loads(calls[-1][2]["card"]["data"])
+    assert next(e["content"] for e in terminal["body"]["elements"]
+                if e.get("element_id") == "main_content") == final.primary_text
+    assert final.primary_text == update.primary_text + "```"
+    assert session.answer_text.startswith("```python\n")
+
+
+@pytest.mark.asyncio
 async def test_terminal_explicitly_closes_then_publishes_full_card(transport):
     client, calls = transport
     await client.send_card('oc_group', card(), delivery_uuid='turn-1')

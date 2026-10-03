@@ -29,6 +29,8 @@ card:
 
 模型与统计使用中性文字，状态颜色承担主要提示。过程关闭或未包含某个工具时，该工具参数仍保留在正文，避免为整洁丢失内容。短答不额外堆叠状态横幅和空区块；长内容保留完整正文。布局、字号、颜色、间距与信息密度按[视觉发布门槛](wiki/card-visual-guidelines.md)逐状态验收。
 
+任务正文中可安全识别的顶层代码块使用飞书原生 `plain_text` 显示，原语言在块外标注，改善浅色主题下部分语法颜色偏淡的问题。代码体和保存的原回答不改；其他预设、过程、审批范围及完整答案回退沿用原文。未知结构或会因显示变化而拆开长单行的代码块保留原显示。新候选的实际外观与交互结论以验收记录为准。
+
 短审批选项直接显示动作名称，长选项保留完整说明与编号。新样式若让原本可发送的交互卡超过整卡容量，自动保留原布局，不截断问题或操作范围。标题颜色沿用[飞书官方标题枚举](https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/card-header)。
 
 静默提醒复用原卡的刷新控制器：原有短动画之后等待观测窗口，最多再更新一次；收到新事件后可重新触发。每个任务最多等待检查 60 次，不增加独立消息，不轮询 Hermes 或调用模型。审批待输入、展示分段待切换、已完成或失败时停止刷新。它不是存活检测，也不会推算 ETA。
@@ -58,6 +60,8 @@ hermes-feishu-card card-config --config ~/.hermes_feishu_card/config.yaml --prev
 This is an **unreleased 4.7.0 candidate feature**, pending final acceptance and not part of published V4.6.13. Set `card.reading_preset: task` to opt into the task layout. Explicit display values retain precedence; restart through the existing service manager after editing. Switch to `classic`, `focused` or `detailed` to revert.
 
 Task cards emphasize observed state and the complete answer, keep reasoning in a collapsible process panel, retain permission scope and callback ownership, and omit unreported footer metrics. After 60 seconds without an event, one bounded update explains that execution status is unknown. Pending input and terminal states stop refreshes. Restored display does not restore execution or authorization.
+
+Recognized top-level code fences in task answers use native `plain_text` display with the original language labeled outside the code. The code body, canonical answer, other presets, permission scope and full-answer fallback remain unchanged. Unknown structures and blocks whose new fence would split a long line retain their original display. Actual client validation is recorded separately.
 
 Run `hermes-feishu-card card-config --config <path> --preview-dir ./card-preview` and open `index.html`. Nine synthetic scenarios compare both layouts with simulated desktop/mobile widths and light/dark backgrounds. `cards.json` contains actual renderer payloads. The preview is offline, sends nothing, uses a configuration allowlist and refuses to overwrite existing output files.
 

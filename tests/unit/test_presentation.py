@@ -24,6 +24,65 @@ def snapshot(value):
                           if key not in {"thinking_normalizer", "answer_normalizer"}})
 
 
+@pytest.mark.parametrize("marker", ["```", "````", "~~~", "~~~~"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("closed", [False, True])
+def test_task_code_projection_preserves_literal_body_and_language(marker, newline, closed):
+    from hermes_feishu_card.presentation import task_answer_code_projection
+
+    body = newline.join(['\tprint("中英文 <tag> `tick`")  ', "", "# LAST  "])
+    suffix = newline + marker if closed else ""
+    source = f"前文{newline}{newline}{marker}PyThOn{newline}{body}{suffix}"
+    expected = (f"前文{newline}{newline}语言：PyThOn{newline}{newline}"
+                f"{marker}plain_text{newline}{body}{suffix}")
+    projected = task_answer_code_projection(source)
+    assert projected == expected
+    assert task_answer_code_projection(projected) == projected
+
+
+@pytest.mark.parametrize("source", [
+    "```\nbody\n```", "```plain_text\nbody\n```", "~~~PLAIN_TEXT\nbody\n~~~",
+    "```python", "```python extra\nbody\n```", "```python{.numberLines}\nbody\n```",
+    "```<at id=all>\nbody\n```", "```unknown-language\nbody\n```",
+    " ```python\nbody\n ```", "> ```python\n> body\n> ```",
+    "- ```python\n  body\n  ```", "行内 `python` 和 ```python``` 保留。",
+    "| code |\n| --- |\n| `python` |\n",
+    "<div>\n\n```python\nbody\n```\n</div>",
+    "```python\nbody\v```\n```json\n{}\n```",
+    "```python\rbody\r```",
+    "```text\nbody\n```", "```plaintext\nbody\n```", "```none\nbody\n```",
+])
+def test_task_code_projection_keeps_unknown_or_unrelated_markdown(source):
+    from hermes_feishu_card.presentation import task_answer_code_projection
+    assert task_answer_code_projection(source) == source
+
+
+def test_task_code_projection_does_not_treat_shorter_fence_inside_code_as_new_block():
+    from hermes_feishu_card.presentation import task_answer_code_projection
+
+    source = "````python\n```json\n{\"literal\": true}\n```\n````\n\nTAIL"
+    projected = task_answer_code_projection(source)
+    assert projected == "语言：python\n\n" + source.replace("````python", "````plain_text", 1)
+    assert projected.count("语言：") == 1
+
+
+@pytest.mark.parametrize("language", ["C_Sharp", "objective_c", "OpenGL_Shading_Language"])
+def test_task_code_projection_keeps_official_selector_label_literal(language):
+    from hermes_feishu_card.presentation import task_answer_code_projection
+    source = f"```{language}\nORIGINAL_BODY\n```"
+    label = language.replace("_", "&#95;")
+    assert task_answer_code_projection(source) == f"语言：{label}\n\n```plain_text\nORIGINAL_BODY\n```"
+
+
+@pytest.mark.parametrize("closing", ["``````   \t", "``````   \t\r\n", ""])
+def test_task_code_projection_budget_uses_actual_or_default_closing_and_open_tail(closing):
+    from hermes_feishu_card.presentation import task_answer_code_projection
+    # A longer real closing or an unfinished final line must not acquire new LF.
+    body = ("x" * 2370 + "\n") if closing else ("short line\n" * 250 + "NO_FINAL_NEWLINE")
+    source = "```python\n" + body + closing
+    assert task_answer_code_projection(source, max_block_size=2390) == source
+
+
 def test_task_state_separates_silence_from_execution_failure():
     value = session(updated_at=100)
     result = task_presentation(value, now=225)

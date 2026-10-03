@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 import math
+import re
 import time
 from typing import Any
 
@@ -13,6 +14,69 @@ TASK_TEXT_SIZE_DEFAULTS = {
     "notice": "normal", "footer": "notation",
 }
 TASK_OBSERVATION_SECONDS = 60
+
+# Documented Feishu Markdown selectors, not guessed aliases such as text/none.
+# https://open.feishu.cn/document/feishu-cards/card-json-v2-components/content-components/rich-text
+_TASK_CODE_LANGUAGES = frozenset("""
+abap ada apache apex assembly bash c_sharp cpp c cmake cobol css coffee_script d
+dart delphi diff django docker_file erlang fortran gherkin go graphql groovy html
+htmlbars http haskell json java javascript julia kotlin latex lisp lua matlab
+makefile markdown nginx objective_c opengl_shading_language php perl powershell
+prolog properties protobuf python r ruby rust sas scss sql scala scheme shell
+solidity swift toml thrift typescript vbscript visual_basic xml yaml
+""".split())
+_TASK_CODE_OPENING = re.compile(
+    r"(?P<marker>`{3,}|~{3,})(?P<before>[ \t]*)(?P<language>[A-Za-z_]+)"
+    r"(?P<after>[ \t]*)(?P<newline>\r?\n)"
+)
+
+
+def task_answer_code_projection(text: str, *, max_block_size: int | None = None) -> str:
+    """Use neutral native code blocks only in a disposable task answer view.
+
+    Keep the original selector as a literal label outside the copyable body.
+    The complete opening line is required, but a streaming block need not have
+    closed yet: no body character or closing fence is inserted or rewritten.
+    """
+    from .text import _is_fence_closing, scan_markdown_blocks
+
+    # The shared scanner also recognizes non-Markdown Unicode line separators.
+    # Raw HTML blocks have container rules it does not model. Leave both alone.
+    if re.search(r"\r(?!\n)|[\v\f\x1c-\x1e\x85\u2028\u2029]", text):
+        return text
+    blocks = scan_markdown_blocks(text)
+    if any(block.kind == "plain" and re.search(r"(?m)^ {0,3}<[A-Za-z!/?]", block.text)
+           for block in blocks):
+        return text
+    projected = []
+    for block in blocks:
+        opening_end = block.text.find("\n") + 1
+        opening = _TASK_CODE_OPENING.fullmatch(block.text[:opening_end]) if block.kind == "fence" else None
+        if opening is None or opening["language"].lower() not in _TASK_CODE_LANGUAGES:
+            projected.append(block.text)
+            continue
+        newline = opening["newline"]
+        replacement = f"{opening['marker']}{opening['before']}plain_text{opening['after']}{newline}"
+        fence = replacement + block.text[opening_end:]
+        if max_block_size is not None and len(fence) > max_block_size:
+            lines = block.text.splitlines(keepends=True)
+            marker = opening["marker"]
+            closed = len(lines) > 1 and _is_fence_closing(lines[-1], marker[0], len(marker))
+            closing = lines[-1] if closed else marker + "\n"
+            body_lines = lines[1:-1] if closed else lines[1:]
+            body_limit = max_block_size - len(replacement) - len(closing)
+            # The shared splitter adds a newline when wrapping a cut long line
+            # or an unfinished final line. Never newly cause either rewrite.
+            if (body_limit <= 0 or any(len(line) > body_limit for line in body_lines)
+                    or body_lines and not body_lines[-1].endswith("\n")):
+                projected.append(block.text)
+                continue
+        # Official selectors contain underscores; keep their labels literal too.
+        label = opening["language"].replace("_", "&#95;")
+        projected.append(
+            f"语言：{label}{newline}{newline}" + fence
+        )
+    return "".join(projected)
 
 
 def task_observation_delay(session: Any, *, now: float | None = None) -> float:

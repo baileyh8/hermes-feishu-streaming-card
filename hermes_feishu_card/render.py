@@ -25,7 +25,7 @@ from .status import StatusConfig, resolve_display_status
 from .subscription_usage import uses_codex_subscription
 from .presentation import (
     apply_task_presentation, task_presentation, task_interaction_prompt,
-    task_button_label, TASK_TEXT_SIZE_DEFAULTS,
+    task_button_label, task_answer_code_projection, TASK_TEXT_SIZE_DEFAULTS,
 )
 from .text import (
     TableOverflowResult,
@@ -204,6 +204,7 @@ def render_card_result(
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body,
         thinking_body_tail_chars=thinking_body_tail_chars,
+        presentation=presentation,
     )
     table_overflow = transform_table_overflow(
         primary_text,
@@ -259,7 +260,8 @@ def render_card_result(
         if best is not None:
             card, inspection, limit = best
             primary_text = _primary_text_for_session(
-                session, stream_thinking_to_body=True, thinking_body_tail_chars=limit
+                session, stream_thinking_to_body=True, thinking_body_tail_chars=limit,
+                presentation=presentation,
             )
             table_overflow = transform_table_overflow(primary_text, mode=table_overflow_mode)
     if inspection.safe:
@@ -329,6 +331,7 @@ def _render_card_unchecked(
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body,
         thinking_body_tail_chars=thinking_body_tail_chars,
+        presentation=presentation,
     )
     attachment_summary = _render_attachment_summary(session)
     footer = _render_footer(
@@ -858,12 +861,14 @@ def _card_quote_summary(
 
 def _primary_text_for_session(
     session: CardSession, *, stream_thinking_to_body: bool = True,
-    thinking_body_tail_chars: int = 0,
+    thinking_body_tail_chars: int = 0, presentation: str = "classic",
 ) -> str:
-    if session.status in {"completed", "failed"}:
-        return normalize_stream_text(session.answer_text)
-    if session.answer_text:
-        return normalize_stream_text(session.answer_text)
+    if session.status in {"completed", "failed"} or session.answer_text:
+        text = normalize_stream_text(session.answer_text)
+        if (presentation == "task" and session.delivery_kind == "chat"
+                and not session.terminal_reasoning_notice):
+            return task_answer_code_projection(text, max_block_size=MAIN_CONTENT_CHUNK_CHARS)
+        return text
     if stream_thinking_to_body and session.thinking_text:
         text = normalize_stream_text(session.thinking_text)
         if type(thinking_body_tail_chars) is int and thinking_body_tail_chars > 0:
