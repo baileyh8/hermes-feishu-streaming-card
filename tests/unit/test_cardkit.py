@@ -96,14 +96,15 @@ async def test_task_code_projection_remains_identical_through_cardkit_create_pat
     client, calls = transport
     session = CardSession(conversation_id="fixture", message_id="fixture", chat_id="fixture")
     session.status = "streaming"
-    session.answer_text = "```python\nprint('first')\n"
+    table = "| key |\n| --- |\n| TABLE_END |\n"
+    session.answer_text = table + "```python\nprint('first')\n"
     first = render_card_result(session, presentation="task")
     first.card["config"]["streaming_mode"] = True
     await client.send_card("oc_fixture", first.card, delivery_uuid="task-code")
     created = json.loads(calls[0][2]["data"])
     assert next(e["content"] for e in created["body"]["elements"]
                 if e.get("element_id") == "main_content") == first.primary_text
-    assert first.primary_text.startswith("语言：python\n\n```plain_text\n")
+    assert first.primary_text.startswith(table + "\n语言：python\n\n```plain_text\n")
     session.answer_text += "\tprint('CODE_END')  \n"
     update = render_card_result(session, presentation="task")
     update.card["config"]["streaming_mode"] = True
@@ -121,7 +122,7 @@ async def test_task_code_projection_remains_identical_through_cardkit_create_pat
     assert next(e["content"] for e in terminal["body"]["elements"]
                 if e.get("element_id") == "main_content") == final.primary_text
     assert final.primary_text == update.primary_text + "```"
-    assert session.answer_text.startswith("```python\n")
+    assert session.answer_text.startswith(table + "```python\n")
 
 
 @pytest.mark.asyncio

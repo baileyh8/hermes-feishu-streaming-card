@@ -87,8 +87,10 @@ async def test_task_code_projection_survives_legacy_owner_continuation_failure(p
     async with TestClient(TestServer(app)) as http:
         await request_first(http, app)
         client.fail_create = True
-        source = '```python\n\tprint("完整代码 <tag>")  '
-        expected = ("语言：python\n\n" + source.replace("```python", "```plain_text", 1)
+        table = "| key |\n| --- |\n| TABLE_END |\n"
+        code = '```python\n\tprint("完整代码 <tag>")  '
+        source = table + code
+        expected = (table + "\n语言：python\n\n" + code.replace("```python", "```plain_text", 1)
                     if presentation == "task" else source)
         await post(http, "answer.delta", 3, {"text": source})
         await asyncio.sleep(.03)

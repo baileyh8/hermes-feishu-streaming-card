@@ -73,8 +73,15 @@ def task_answer_code_projection(text: str, *, max_block_size: int | None = None)
                 continue
         # Official selectors contain underscores; keep their labels literal too.
         label = opening["language"].replace("_", "&#95;")
+        separator = ""
+        if block.start:
+            previous_line = text[text.rfind("\n", 0, block.start - 1) + 1:block.start]
+            if previous_line.strip(" \t\r\n"):
+                # A fence can end a table/list without a blank line, but the
+                # new plain caption needs its own paragraph in Feishu Markdown.
+                separator = newline
         projected.append(
-            f"语言：{label}{newline}{newline}" + fence
+            separator + f"语言：{label}{newline}{newline}" + fence
         )
     return "".join(projected)
 

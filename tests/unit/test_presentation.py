@@ -40,6 +40,32 @@ def test_task_code_projection_preserves_literal_body_and_language(marker, newlin
     assert task_answer_code_projection(projected) == projected
 
 
+@pytest.mark.parametrize("previous", [
+    "paragraph", "- list item", "> quoted paragraph",
+    "| scene | marker |\n| --- | --- |\n| row | TABLE_END |",
+])
+@pytest.mark.parametrize("gap", ["\n", "\n\n", "\n \t\n"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_task_code_projection_caption_is_a_separate_paragraph(previous, gap, newline):
+    from hermes_feishu_card.presentation import task_answer_code_projection
+    prefix = (previous + gap).replace("\n", newline)
+    code = f"```python{newline}\tprint('CODE_END')  {newline}```"
+    source = prefix + code
+    boundary = newline if gap == "\n" else ""
+    expected = prefix + boundary + f"语言：python{newline}{newline}" + code.replace("```python", "```plain_text", 1)
+    projected = task_answer_code_projection(source, max_block_size=2400)
+    assert projected == expected
+    assert task_answer_code_projection(projected, max_block_size=2400) == expected
+
+
+def test_task_code_projection_adjacent_fences_keep_caption_outside_previous_block():
+    from hermes_feishu_card.presentation import task_answer_code_projection
+    source = "```json\n{}\n```\n```python\nprint('CODE_END')\n```"
+    expected = ("语言：json\n\n```plain_text\n{}\n```\n\n"
+                "语言：python\n\n```plain_text\nprint('CODE_END')\n```")
+    assert task_answer_code_projection(source, max_block_size=2400) == expected
+
+
 @pytest.mark.parametrize("source", [
     "```\nbody\n```", "```plain_text\nbody\n```", "~~~PLAIN_TEXT\nbody\n~~~",
     "```python", "```python extra\nbody\n```", "```python{.numberLines}\nbody\n```",

@@ -1516,6 +1516,30 @@ def test_task_code_projection_long_chunks_reassemble_exact_code_body():
     assert session.answer_text == source
 
 
+def test_task_code_projection_actual_table_adjacency_retains_three_rows_and_separate_caption():
+    from hermes_feishu_card.text import scan_markdown_blocks
+    # V15 native-client regression: the model omitted all blank lines outside code.
+    table = ("| 场景 | 内容 | 标记 |\n| --- | --- | --- |\n"
+             "| 浅色阅读 | 中文与 English | ROW_A |\n"
+             "| 深色阅读 | 普通文字和代码 | ROW_B |\n"
+             "| 窄窗口 | 完整内容可达 | TABLE_END |\n")
+    source = table + '```python\nprint("原始代码")\n```\n```json\n{"end":"JSON_END"}\n```'
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.answer_text = source
+    session.status = "completed"
+    result = render_card_result(session, presentation="task")
+    main = [e["content"] for e in result.card["body"]["elements"]
+            if e.get("element_id", "").startswith("main_content")]
+    assert main == [result.primary_text]
+    assert "TABLE_END |\n\n语言：python\n\n```plain_text" in main[0]
+    assert '\n```\n\n语言：json\n\n```plain_text' in main[0]
+    tables = [b.table for b in scan_markdown_blocks(main[0]) if b.kind == "table"]
+    assert len(tables) == 1 and len(tables[0].rows) == 3
+    assert result.disposition == "card" and inspect_card_limits(result.card).safe
+    assert session.answer_text == source
+    assert render_card_result(session, presentation="classic").primary_text == source
+
+
 @pytest.mark.parametrize("marker", ["```", "````", "~~~", "~~~~"])
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
 @pytest.mark.parametrize("closed", [False, True])
