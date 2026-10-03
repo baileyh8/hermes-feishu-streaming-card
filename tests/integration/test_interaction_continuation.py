@@ -297,7 +297,7 @@ async def test_task_handoff_has_one_honest_note_and_retains_tool_details(show_re
         })
         old_id = client.sent[0][0]
         retired = next(card for mid, card in reversed(client.updated) if mid == old_id)
-        assert retired["header"]["template"] == "grey"
+        assert retired["header"]["template"] == "default"
         assert "已转入交互卡片" in str(retired["header"])
         assert "执行中" not in str(retired) and "已中断" not in str(retired)
         assert "fixture.py" in str(retired) and "120" in str(retired)

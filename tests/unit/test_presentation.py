@@ -49,7 +49,7 @@ def test_reconnecting_presentation_does_not_claim_resumed_execution():
     assert view.label == "等待状态同步"
     assert "原授权不会恢复" in view.observation
     card = render_card(value, presentation="task")
-    assert card["header"]["template"] == "grey"
+    assert card["header"]["template"] == "default"
     assert card["header"]["title"]["content"].endswith("等待状态同步")
     assert not any(e.get("element_id") == "footer" for e in card["body"]["elements"])
 
@@ -130,7 +130,7 @@ def test_task_silent_tool_is_last_observed_action_not_live_claim():
     value.updated_at = time.time() - 130
     card = render_card(value, presentation="task")
     assert "等待新进展" in card["header"]["title"]["content"]
-    assert card["header"]["template"] == "grey"
+    assert card["header"]["template"] == "default"
     activity = next(e["content"] for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_"))
     assert "上次动作" in activity and "执行中" not in activity
     assert "10s" not in activity

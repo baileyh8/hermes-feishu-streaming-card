@@ -6113,7 +6113,7 @@ def _render_static_display_card(app, snapshot, *, session_key, note, display_sta
             if element.get("element_id") == "footer":
                 element["content"] = note
         if card_config.get("_presentation_mode") == "task":
-            card["header"]["template"] = "grey"
+            card["header"]["template"] = "default"
             # The static header owns this display-transfer note. A stale
             # observation/action or repeated footer would imply live execution.
             card["body"]["elements"] = [e for e in card["body"]["elements"]

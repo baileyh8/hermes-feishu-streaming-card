@@ -79,7 +79,9 @@ def apply_task_presentation(
 
     if "header" in result:
         label = f"{title} · {view.label}"
-        result["header"]["template"] = view.color
+        # Feishu's grey header uses a filled surface with light text. Its
+        # default template is the neutral theme-aware surface for unknown state.
+        result["header"]["template"] = "default" if view.color == "grey" else view.color
         result["header"]["title"] = {"tag": "plain_text", "content": label}
         result["header"].pop("subtitle", None)
 
