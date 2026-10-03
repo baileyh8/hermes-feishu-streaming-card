@@ -41,7 +41,7 @@ class SessionStore:
         body = {k: getattr(session, k) for k in _FIELDS}
         # Ordinary cards remain readable by v4.6.3 after a rollback. Records
         # using new presentation ownership need the newer reader instead.
-        for optional in ('display_segment', 'legacy_owner_receipt'):
+        for optional in ('display_segment', 'legacy_owner_receipt', 'terminal_reasoning_notice'):
             if not body[optional]:
                 body.pop(optional)
         body['tools'] = {k: asdict(v) for k, v in session.tools.items()}
@@ -117,7 +117,10 @@ class SessionStore:
                 # semantics; new records retain the original logical identity.
                 data.setdefault('display_segment', {})
                 data.setdefault('legacy_owner_receipt', {})
+                data.setdefault('terminal_reasoning_notice', '')
                 if set(data) != _FIELDS | {'tools','timeline','normalizers'}:
+                    continue
+                if type(data['terminal_reasoning_notice']) is not str:
                     continue
                 if not valid_checkpoint_state(data['display_segment']):
                     continue
@@ -137,6 +140,7 @@ class SessionStore:
                     session.status = 'failed'
                     session.display_status = ''
                     session.answer_text += '\n\n连接已重建，原授权已失效，请重新发起请求。'
+                    session.terminal_reasoning_notice = ''
                     session.timeline.complete()
                     session.display_segment = {}
                 r['session'] = session

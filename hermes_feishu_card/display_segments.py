@@ -73,11 +73,15 @@ def record_terminal(session, event) -> None:
     elif event.event == "message.failed":
         error = event.data.get("error")
         error = error if isinstance(error, str) and error.strip() else "消息处理失败"
+        if not state["answer"].strip() and state["thinking"].strip():
+            state["terminal_reasoning_notice"] = error
         partial = state["answer"].rstrip() or state["thinking"].rstrip()
         state["answer"] = partial + "\n\n> " + error if partial else error
         state["has_output"] = True
     elif session.status == "failed":
         state["answer"] = session.answer_text
+        if session.terminal_reasoning_notice:
+            state["terminal_reasoning_notice"] = session.terminal_reasoning_notice
         state["full_result"] = True
         state["has_output"] = True
 
@@ -103,6 +107,7 @@ def display_view(session):
         return session
     if state.get("failed"):
         view = copy.copy(session)
+        view.terminal_reasoning_notice = ""  # Retain the failed-delivery warning and full fallback.
         view.answer_text = (
             "续答卡未能确认送达，后续内容继续保留在此卡。\n\n"
             + session.answer_text
@@ -112,9 +117,12 @@ def display_view(session):
         return session
     view = copy.copy(session)
     view.answer_text = state["answer"]
+    view.terminal_reasoning_notice = state.get("terminal_reasoning_notice", "")
     if state.get("full_result") and view.answer_text:
         view.answer_text = "**本轮完整结果**\n\n" + view.answer_text
-    view.thinking_text = state["thinking"]
+    view.thinking_text = (session.thinking_text
+                          if state.get("full_result") and view.terminal_reasoning_notice
+                          else state["thinking"])
     view.active_interaction = None  # the completed receipt has its own message
     view.tools = {
         key: tool for key, tool in session.tools.items()
@@ -134,7 +142,8 @@ def valid_checkpoint_state(state) -> bool:
                 "thinking", "tool_floor", "running_tools", "thread_id", "reply_to_message_id",
                 "reply_in_thread", "full_result", "has_output"}
     return (
-        set(state) == required
+        required <= set(state) <= required | {"terminal_reasoning_notice"}
+        and type(state.get("terminal_reasoning_notice", "")) is str
         and type(state["generation"]) is int and 0 <= state["generation"] <= MAX_DISPLAY_SEGMENTS
         and type(state["tool_floor"]) is int and state["tool_floor"] >= 0
         and type(state["boundary_sequence"]) is int and state["boundary_sequence"] >= 0

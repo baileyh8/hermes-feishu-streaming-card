@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 from dataclasses import dataclass
 import html
 import json
@@ -187,6 +188,11 @@ def render_card_result(
     width_mode: str = "default",
     presentation: str = "classic",
 ) -> CardRenderResult:
+    if presentation == "task" and session.status == "failed" and session.terminal_reasoning_notice:
+        # This source marker comes from the terminal event, never a text match.
+        # Keep one view for both the payload budget and actual body rendering.
+        session = copy.copy(session)
+        session.answer_text = session.terminal_reasoning_notice
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body,
         thinking_body_tail_chars=thinking_body_tail_chars,
@@ -408,7 +414,9 @@ def _render_card_unchecked(
             rendered_tool_ids=rendered_tool_ids,
             live_thinking=(
                 session.thinking_text
-                if not stream_thinking_to_body and session.status not in {"completed", "failed"}
+                if (not stream_thinking_to_body and session.status not in {"completed", "failed"}
+                    or presentation == "task" and session.status == "failed"
+                    and session.terminal_reasoning_notice)
                 else ""
             ),
         )
@@ -1922,6 +1930,36 @@ def _tool_activity_params(
     return f"参数: {_cap_activity_text(params, max_chars)}"
 
 
+def _task_clarify_summary(tool: ToolState, *, max_chars: int) -> str:
+    """Name an observed clarify question; never infer a choice from another call.
+
+    Call only when the exact current parameters already fit in the process
+    panel. Unknown shapes retain the established argument fallback.
+    """
+    if str(tool.name or "").strip().lower() != "clarify":
+        return ""
+    for line in str(tool.detail or "").splitlines():
+        match = _TOOL_ARGUMENT_LINE_RE.match(line.strip())
+        if match is None:
+            continue
+        try:
+            parsed = json.loads(match.group(1))
+        except (TypeError, ValueError):
+            return ""
+        questions = parsed.get("questions") if isinstance(parsed, dict) else None
+        if (not isinstance(questions, list) or not questions
+                or any(not isinstance(item, dict) or not isinstance(item.get("question"), str)
+                       or not item["question"].strip() for item in questions)):
+            return ""
+        question = " ".join(normalize_stream_text(questions[0]["question"]).split())
+        if not question:
+            return ""
+        label = "澄清问题" if len(questions) == 1 else f"澄清 {len(questions)} 个问题"
+        limit = min(max_chars, 180) if max_chars > 0 else 180
+        return _cap_activity_text(f"{label}：{question}", limit)
+    return ""
+
+
 def _cap_activity_text(text: str, limit: int) -> str:
     """Sanitize then cap, so an untrusted command cannot smuggle text past the limit.
 
@@ -1994,7 +2032,8 @@ def _tool_activity_row(
     # the parameters. Only the first row is unconditional; the action row is dropped when the tool
     # has no target to name, and the parameter row when its arguments carry nothing new.
     lines = [" · ".join(parts)]
-    action = _tool_activity_text(tool, max_chars=max_chars, prefer_full_target=task_layout)
+    action = _task_clarify_summary(tool, max_chars=max_chars) if task_layout and not include_params else ""
+    action = action or _tool_activity_text(tool, max_chars=max_chars, prefer_full_target=task_layout)
     if action:
         lines.append(action)
     params = _tool_activity_params(tool, max_chars=max_chars)
@@ -2053,7 +2092,9 @@ def _render_timeline_elements(
         from .card_timeline import TimelineEntry
 
         live_entry = TimelineEntry(
-            kind="reasoning", title="实时思考", status="running", content=live_thinking
+            kind="reasoning", content=live_thinking,
+            title="结束前思考" if session.status == "failed" else "实时思考",
+            status="已停止" if session.status == "failed" else "running",
         )
         all_entries.append(live_entry)
     if not all_entries:

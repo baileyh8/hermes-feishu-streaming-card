@@ -6239,7 +6239,7 @@ async def _retire_continuation_predecessor(app, session_key, message_id, snapsho
         interaction = snapshot.active_interaction
         owner = app[SESSIONS_KEY].get(session_key)
         if (owner is not None and interaction is not None
-                and interaction.kind == "approval" and interaction.status == "completed"
+                and interaction.kind in {"approval", "clarify"} and interaction.status == "completed"
                 and interaction.feishu_message_id and interaction.feishu_message_id != message_id
                 and len(owner.approval_retirements) < 32):
             clean = copy.deepcopy(card)

@@ -265,7 +265,13 @@ async def test_confirmed_handoff_freezes_old_card_without_claiming_turn_success(
         footer = next(e for e in retired['body']['elements'] if e.get('element_id') == 'footer')
         assert '下方新卡' in footer['content'] and '已完成' not in footer['content']
         assert 'BEFORE_SELECTION' in str(retired) and 'AFTER_SELECTION' not in str(retired)
-        assert '已选择' in str(retired) and 'Choose fixture' in str(retired)
+        assert ('已选择' in str(retired)) is (not terminal)
+        assert ('Choose fixture' in str(retired)) is (not terminal)
+        # A terminal cleanup can retire this duplicate only after an explicit
+        # full PATCH of the separate interaction receipt, in its own dialect.
+        if terminal:
+            receipt = next(card for mid, card in reversed(client.updated) if mid == client.sent[1][0])
+            assert '已选择' in str(receipt) and 'Choose fixture' in str(receipt)
         assert '执行中' not in str(retired) and '已中断' not in str(retired)
         assert retired['config']['streaming_mode'] is False
         session = app[SESSIONS_KEY]['turn_fixture']

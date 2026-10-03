@@ -176,6 +176,10 @@ class CardSession:
     last_sequence: int = -1
     thinking_text: str = ""
     answer_text: str = ""
+    # Set only when a terminal event promotes reasoning in the absence of an
+    # answer. Task presentation can separate that reasoning without guessing
+    # from the text or changing the canonical/classic failure content.
+    terminal_reasoning_notice: str = ""
     latest_tool_preview: str = ""
     runtime_phase_text: str = ""
     tools: Dict[str, ToolState] = field(default_factory=dict)
@@ -557,7 +561,7 @@ class CardSession:
             if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
                 self.status = "failed"
                 self.answer_text = (
-                    self._adopt_in_progress_content()
+                    self._adopt_in_progress_content(_UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome])
                     + "\n\n> "
                     + _UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome]
                 ).lstrip()
@@ -569,7 +573,7 @@ class CardSession:
             error = event.data.get("error")
             error = error if isinstance(error, str) and error.strip() else "消息处理失败"
             self._adopt_failure_metrics(event.data)
-            partial = self._adopt_in_progress_content()
+            partial = self._adopt_in_progress_content(error)
             self.answer_text = partial + "\n\n> " + error if partial else error
         if event.event in {"message.completed", "message.failed"}:
             # A terminal execution event cannot leave an unresolved decision
@@ -612,7 +616,7 @@ class CardSession:
             if math.isfinite(duration) and duration > 0:
                 self.duration = duration
 
-    def _adopt_in_progress_content(self) -> str:
+    def _adopt_in_progress_content(self, terminal_notice: str = "") -> str:
         """Promote the content the user was reading, so a failure cannot erase it.
 
         Maintainer note (contract change): while a turn runs, the card streams whatever has arrived —
@@ -626,8 +630,10 @@ class CardSession:
         case that already worked: the work in progress stays where it was, and the failure text is
         appended below it as a quote.
         """
+        self.terminal_reasoning_notice = ""
         if not self.answer_text.strip() and self.thinking_text.strip():
             self.answer_text = self.thinking_text.strip()
+            self.terminal_reasoning_notice = terminal_notice
         return self.answer_text.rstrip()
 
     def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:

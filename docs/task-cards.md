@@ -1,6 +1,6 @@
-# 任务卡片与离线预览（开发分支，未发布）
+# 任务卡片与离线预览（4.7.0 发布候选）
 
-`task` 把卡片分为状态、正文、过程和统计四个阅读区域。它沿用已有投递与权限流程，适合希望先看答案、再查看执行细节的用户。已发布的 V4.6.13 尚不包含本页新增选项。
+`task` 把卡片分为状态、正文、过程和统计四个阅读区域。它沿用已有投递与权限流程，适合希望先看答案、再查看执行细节的用户。4.7.0 候选正在最终验收，尚未发布；已发布的 V4.6.13 尚不包含本页新增选项。
 
 ## 启用与回退
 
@@ -55,7 +55,7 @@ hermes-feishu-card card-config --config ~/.hermes_feishu_card/config.yaml --prev
 
 ## English quick reference
 
-This is an **unreleased development feature**, not part of published V4.6.13. Set `card.reading_preset: task` to opt into the task layout. Explicit display values retain precedence; restart through the existing service manager after editing. Switch to `classic`, `focused` or `detailed` to revert.
+This is an **unreleased 4.7.0 candidate feature**, pending final acceptance and not part of published V4.6.13. Set `card.reading_preset: task` to opt into the task layout. Explicit display values retain precedence; restart through the existing service manager after editing. Switch to `classic`, `focused` or `detailed` to revert.
 
 Task cards emphasize observed state and the complete answer, keep reasoning in a collapsible process panel, retain permission scope and callback ownership, and omit unreported footer metrics. After 60 seconds without an event, one bounded update explains that execution status is unknown. Pending input and terminal states stop refreshes. Restored display does not restore execution or authorization.
 

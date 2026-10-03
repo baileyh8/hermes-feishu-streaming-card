@@ -112,7 +112,7 @@ async def test_regular_expiry_retires_actual_auxiliary_once(tmp_path, mode, kind
         assert "hfc_action" not in str(receipt)
         owner_id = http.app[server.FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]
         owner = next(card for mid, card in reversed(fake.updated) if mid == owner_id)
-        assert ("KEEP_SCOPE" in str(owner)) is (kind != "approval")
+        assert "KEEP_SCOPE" not in str(owner), "the confirmed auxiliary retains the complete scope"
         count = len(fake.updated)
         assert await server._expire_pending_interactions(http.app, now=now + 1) == 0
         assert len(fake.updated) == count and len(fake.sent) == 2

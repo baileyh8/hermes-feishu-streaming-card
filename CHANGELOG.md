@@ -5,17 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
-## [Unreleased]
+## [4.7.0] - Unreleased
 
-- Close the original legacy-path card from Hermes' explicit interrupted result before its verified stale-generation return; preserve original turn binding, duplicate suppression and exact installer restore. Persist one bounded token-free auxiliary receipt so restart and expiry clear stale controls, and compact duplicate approval scope only after the full separate receipt is confirmed delivered.
-- Retain task parameters when the selected process detail is truncated; preserve legacy predecessor dialects when approval pauses. Close unresolved choices when the owning task ends, update the full receipt and reject late submissions instead of leaving stale waiting controls.
-- Keep unknown/waiting and transferred task displays neutral; freeze predecessor tools without claiming execution or interruption, remove duplicate transfer/pending footers, and give short choices and multi-select options readable labels while preserving callback values and full scope.
-- Remove repeated task state/action across the header, activity area and footer after real-client review; move parameters only when that tool is present in the rendered process panel, retain one completion marker, and keep task metrics neutral. Make layout, hierarchy, typography, color, spacing, density and real-client evidence explicit visual release gates.
-- Add opt-in `reading_preset: task`: state-led headings, clearer type roles, complete interaction prompts, compact attributed metrics, and one bounded same-card silence observation without refreshing pending input or terminal cards.
-- Extend `card-config` with appearance values and per-role sources, explicit next-load semantics, and credential-free offline HTML/Card JSON previews for nine scenarios; preserve existing files on output collisions.
-- Extract pure task presentation and shared renderer options; add focused preflight appearance/quota groups and AGENTS.md routing.
-- Verify and pin Hermes main `c8301ea6c9b797184df16a9c5dd462400b264ff4` (2026-10-03) for exact source compatibility.
-- Show opt-in Codex subscription quota only for a completed GPT turn attributed to `openai-codex`; omit unrelated/unknown models, other providers and stale quota after a model change.
+Release candidate; final visual/client acceptance, exact-commit CI and publication are still pending.
+
+- Add opt-in `reading_preset: task`: one clear state/action, answer-first reading, consistent type roles, folded process details and compact metrics. Preserve existing presets and explicit configuration.
+- Add offline HTML/Card JSON previews for nine scenarios and explain appearance values with their configuration sources and next-load semantics.
+- Show optional subscription quota only on completed GPT turns attributed to `openai-codex`; omit unrelated, unknown and stale model routes.
+- Preserve complete parameters, permission scope and original interaction dialects while reducing repeated headings, waiting labels and approval details.
+- Close the original card from Hermes' explicit interrupted result; retain bounded token-free auxiliary receipts so expiry and restart remove stale controls without restoring execution or consent.
+- Strengthen real-client visual release gates and pin Hermes main `c8301ea6c9b797184df16a9c5dd462400b264ff4` for source compatibility. See [Chinese notes](docs/release-notes-v4.7.0.md), [English notes](docs/release-notes-v4.7.0.en.md) and the [acceptance record](docs/reviews/2026-10-03-task-cards-acceptance.md).
 
 ## [4.6.13] - 2026-10-02
 
