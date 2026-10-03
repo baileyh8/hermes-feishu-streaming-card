@@ -13,9 +13,9 @@ from hermes_feishu_card.install import patcher
 FIXTURE = Path(__file__).parents[1] / "fixtures/hermes_decomposed/gateway/run_turn.py"
 
 
-def stop_source():
+def stop_source(*, pinned_channel=False):
     source = FIXTURE.read_text()
-    return source.replace(
+    source = source.replace(
         "agent_result = await self._run_agent(event, source)",
         "agent_result = await self._run_agent(\n"
         "            source=source, session_key=session_key, run_generation=run_generation,\n"
@@ -24,16 +24,27 @@ def stop_source():
         "            self._hmwa_discard_stale_result(source, _quick_key, run_generation)\n"
         "            return None",
     )
+    if pinned_channel:
+        source = source.replace(
+            "agent_result = await self._run_agent(\n",
+            "_turn_channel_prompt, _turn_source = self._pinned_channel_inputs(\n"
+            "            session_key, event.channel_prompt, source, internal=event.internal)\n"
+            "        agent_result = await self._run_agent(\n",
+        ).replace("source=source, session_key=session_key", "source=_turn_source, session_key=session_key"
+        ).replace("event_message_id=self._reply_anchor_for_event(event))",
+                  "event_message_id=self._reply_anchor_for_event(event), channel_prompt=_turn_channel_prompt)")
+    return source
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pinned_channel", [False, True])
 @pytest.mark.parametrize("result,expected", [
     ({"interrupted": True, "completed": False}, 1),
     ({"failed": True}, 0),
     ({"interrupted": "true"}, 0),
     ({"interrupted": False, "completed": True}, 0),
 ])
-async def test_stale_guard_delivers_only_explicit_interrupted_result(monkeypatch, result, expected):
+async def test_stale_guard_delivers_only_explicit_interrupted_result(monkeypatch, result, expected, pinned_channel):
     emitted = []
     async def emit(local_vars, *, event_name):
         emitted.append((event_name, local_vars))
@@ -41,16 +52,21 @@ async def test_stale_guard_delivers_only_explicit_interrupted_result(monkeypatch
     monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_async", emit)
     monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals", lambda *a, **kw: False)
     namespace = {}
-    exec(patcher.apply_gateway_fragment(stop_source(), "gateway/run_turn.py"), namespace)
+    exec(patcher.apply_gateway_fragment(stop_source(pinned_channel=pinned_channel), "gateway/run_turn.py"), namespace)
     runner = namespace["GatewayTurnMixin"]()
     async def run(**kwargs):
         return result
     runner._run_agent = run
+    # Latest main pins channel context separately; the original event still
+    # owns this terminal card even when the tool runner receives a source copy.
+    from copy import copy
+    runner._pinned_channel_inputs = lambda key, prompt, source, **kwargs: (prompt, copy(source))
     runner._is_session_run_current = lambda *args: False
     discarded = []
     runner._hmwa_discard_stale_result = lambda *args: discarded.append(args)
     source = SimpleNamespace(platform="feishu", chat_id="fixture-chat", thread_id="topic-1")
-    event = SimpleNamespace(source=source, message_id="original-turn", reply_to_message_id="reply-alias")
+    event = SimpleNamespace(source=source, message_id="original-turn", reply_to_message_id="reply-alias",
+                            channel_prompt="fixture-channel", internal=False)
     assert await runner._handle_message_with_agent(event, source, "gateway-session", 7) is None
     assert len(discarded) == 1
     assert len(emitted) == expected
@@ -76,14 +92,33 @@ def test_stale_interrupted_anchor_drift_is_refused(old, new):
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
-def test_stale_interrupted_patch_roundtrip(newline):
-    source = stop_source().replace("\n", newline)
+@pytest.mark.parametrize("pinned_channel", [False, True])
+def test_stale_interrupted_patch_roundtrip(newline, pinned_channel):
+    source = stop_source(pinned_channel=pinned_channel).replace("\n", newline)
     patched = patcher.apply_gateway_fragment(source, "gateway/run_turn.py")
     assert "HERMES_FEISHU_CARD_STALE_INTERRUPTED_PATCH_BEGIN" in patched
     assert patcher.apply_gateway_fragment(patched, "gateway/run_turn.py") == patched
     assert patcher.remove_patch(patched) == source
     with pytest.raises(ValueError, match="stale interrupted"):
         patcher.remove_patch(patched.replace("_hfc_emit_interrupted(locals())", "_hfc_emit_interrupted({})"))
+
+
+@pytest.mark.parametrize("old,new", [
+    ("session_key, event.channel_prompt, source, internal=event.internal",
+     "other_session, event.channel_prompt, source, internal=event.internal"),
+    ("session_key, event.channel_prompt, source, internal=event.internal",
+     "session_key, event.channel_prompt, other_source, internal=event.internal"),
+    ("internal=event.internal", "internal=True"),
+    ("channel_prompt=_turn_channel_prompt", "channel_prompt=other_prompt"),
+    ("self._pinned_channel_inputs(", "self.other_inputs("),
+    ("        agent_result = await self._run_agent(",
+     "        _turn_source = other_source\n        agent_result = await self._run_agent("),
+])
+def test_pinned_channel_stale_interrupt_binding_drift_is_refused(old, new):
+    source = stop_source(pinned_channel=True)
+    assert old in source
+    with pytest.raises(ValueError, match="stale result"):
+        patcher.apply_gateway_fragment(source.replace(old, new), "gateway/run_turn.py")
 
 
 @pytest.mark.asyncio

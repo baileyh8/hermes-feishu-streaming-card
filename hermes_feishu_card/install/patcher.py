@@ -5217,6 +5217,22 @@ def _apply_stale_interrupted_patch(content):
         "event_message_id": "self._reply_anchor_for_event(event)",
     }
     keywords = {item.arg: item.value for item in call.keywords} if isinstance(call, ast.Call) else {}
+    if "source" in keywords and _same_expression(keywords["source"], "_turn_source"):
+        # Verified main c8301ea6 pins channel inputs before execution. Accept
+        # only that exact tuple binding from this event/session/source; an
+        # arbitrary alias or reassignment must not broaden turn ownership.
+        pin = ast.parse(
+            "_turn_channel_prompt, _turn_source = self._pinned_channel_inputs("
+            "session_key, event.channel_prompt, source, internal=event.internal)"
+        ).body[0]
+        before_run = preceding[:preceding.index(assignment)]
+        pins = [node for node in before_run if ast.dump(node) == ast.dump(pin)]
+        pin_stores = [node for statement in before_run for node in ast.walk(statement)
+                      if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+                      and node.id in {"_turn_channel_prompt", "_turn_source"}]
+        if len(pins) != 1 or len(pin_stores) != 2:
+            raise ValueError("stale result pinned source binding changed")
+        required.update(source="_turn_source", channel_prompt="_turn_channel_prompt")
     if (not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1
             or not isinstance(call, ast.Call) or call.args or None in keywords
             or not _same_expression(call.func, "self._run_agent")
