@@ -163,6 +163,49 @@ def test_task_parallel_tools_only_move_parameters_that_are_in_the_rendered_panel
     assert "timeout" in str(rows) + str(panel) and "limit" in str(rows) + str(panel)
 
 
+@pytest.mark.parametrize("max_chars", [80, 600])
+def test_task_truncated_process_detail_keeps_parameters_in_body(max_chars):
+    value = running_tool_session()
+    command = "python3 " + "x" * (max_chars + 50)
+    detail = command + "\n参数: " + json.dumps({
+        "cwd": "/example/complete-scope", "command": command, "timeout": 120,
+    })
+    value.tools["fixture-tool"].detail = detail
+    value.timeline.record_tool("fixture-tool", "terminal", "running", detail)
+
+    card = render_card(value, presentation="task", max_tool_result_chars=max_chars)
+    activity = next(e["content"] for e in card["body"]["elements"]
+                    if e.get("element_id", "").startswith("tool_activity_"))
+    panel = next(e for e in card["body"]["elements"]
+                 if e.get("element_id") == "auxiliary_timeline")
+    assert "工具详情过长，已截断" in str(panel)
+    assert "/example/complete-scope" not in str(panel)
+    assert "cwd=/example/complete-scope" in activity
+    assert "timeout=120" in activity
+    assert inspect_card_limits(card).safe
+
+
+@pytest.mark.parametrize("order", ["newest_first", "chronological"])
+def test_task_reused_tool_id_cannot_hide_current_parameters_using_old_detail(order):
+    value = running_tool_session()
+    value.timeline.record_tool("fixture-tool", "terminal", "completed", "old command")
+    command = "python3 " + "x" * 700
+    detail = command + '\n参数: {"cwd": "/example/current-scope", "timeout": 120}'
+    value.tools["fixture-tool"].detail = detail
+    value.timeline.record_tool("fixture-tool", "terminal", "running", detail)
+
+    card = render_card(value, presentation="task", max_tool_result_chars=600,
+                       timeline_order=order)
+    activity = next(e["content"] for e in card["body"]["elements"]
+                    if e.get("element_id", "").startswith("tool_activity_"))
+    panel = next(e for e in card["body"]["elements"]
+                 if e.get("element_id") == "auxiliary_timeline")
+    assert "old command" in str(panel)
+    assert "/example/current-scope" not in str(panel)
+    assert "cwd=/example/current-scope" in activity and "timeout=120" in activity
+    assert inspect_card_limits(card).safe
+
+
 def test_task_current_action_keeps_identifiable_target_when_upstream_preview_was_shortened():
     value = running_tool_session()
     command = "python3 /example/acceptance/work/long_task.py"

@@ -2041,6 +2041,10 @@ def _render_timeline_elements(
     if not getattr(session, "timeline", None):
         return []
     all_entries = session.timeline.snapshot()
+    latest_tool_entries = {
+        entry.tool_id: entry for entry in all_entries
+        if entry.kind == "tool" and entry.tool_id
+    }
     # Raw thinking stays out of persisted timeline/history. Opting out of body streaming
     # adds a bounded render-only preview, including for old restored checkpoints.
     live_entry = None
@@ -2133,16 +2137,27 @@ def _render_timeline_elements(
                 )
             )
         elif item.kind == "tool":
-            if rendered_tool_ids is not None and item.tool_id:
-                rendered_tool_ids.add(item.tool_id)
-            detail, duration = _split_tool_timeline_detail(
+            full_detail, duration = _split_tool_timeline_detail(
                 _redact_tool_detail(item.detail)
             )
             detail = _limit_text(
-                detail,
+                full_detail,
                 max_tool_result_chars,
                 overflow_label="工具详情过长，已截断",
             )
+            # A selected tool is not proof that its parameters reached the
+            # panel: a long preview can consume the entire detail budget.
+            # Legacy producers can reuse an ID. Only the latest matching
+            # entry can prove that the current tool's full detail is present.
+            if (rendered_tool_ids is not None and item.tool_id
+                    and latest_tool_entries.get(item.tool_id) is item
+                    and detail == full_detail):
+                tool = session.tools.get(item.tool_id)
+                current_detail = _split_tool_timeline_detail(
+                    _redact_tool_detail(tool.detail)
+                )[0] if tool is not None else None
+                if current_detail == full_detail:
+                    rendered_tool_ids.add(item.tool_id)
             panel_elements.extend(
                 _timeline_markdown_elements(
                     _render_tool_timeline_row(

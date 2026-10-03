@@ -5768,7 +5768,13 @@ async def _apply_event_locked_inner(
                 ),
             }
         ), None
-    if applied and event.event.startswith("interaction."):
+    terminal_receipt_update = None
+    terminal_unresolved_receipt = (
+        event_is_terminal and not terminal_already_handled
+        and session.active_interaction is not None
+        and session.active_interaction.status == "failed"
+    )
+    if applied and (event.event.startswith("interaction.") or terminal_unresolved_receipt):
         _store_interaction_result(request.app, session)
         # Callback responses replace their own legacy card in Feishu. Gateway
         # text completions and failure events have no such response: settle the
@@ -5776,8 +5782,14 @@ async def _apply_event_locked_inner(
         receipt = session.active_interaction
         if (receipt is not None and receipt.feishu_message_id
                 and receipt.status in {"completed", "failed"}
+                # An interaction-first owner receives the full terminal body
+                # through its existing dialect-safe path. A receipt-only PATCH
+                # after that update would erase the answer.
+                and (not terminal_unresolved_receipt
+                     or receipt.feishu_message_id != feishu_message_id)
                 and (event.event == "interaction.failed"
-                     or event.event == "interaction.completed" and advance_sequence)):
+                     or event.event == "interaction.completed" and advance_sequence
+                     or terminal_unresolved_receipt)):
             receipt_snapshot = copy.deepcopy(session)
             receipt_snapshot.display_segment = {}
             # This snapshot targets the auxiliary receipt, not the historical
@@ -5797,12 +5809,20 @@ async def _apply_event_locked_inner(
                     receipt_card = _render_session_card_for_app(
                         request.app, copy.deepcopy(session), session_key=session_key
                     )
-            updated = await _update_card_for_app(
-                request.app, receipt.feishu_message_id, receipt_card,
-                message_bot_ids.get(session_key),
-                is_current=lambda: sessions.get(session_key) is session and session.active_interaction is receipt,
-            )
-            request.app[DIAGNOSTICS_KEY]["last_interaction_receipt_update"] = "delivered" if updated else "failed"
+            async def update_receipt():
+                updated = await _update_card_for_app(
+                    request.app, receipt.feishu_message_id, receipt_card,
+                    message_bot_ids.get(session_key),
+                    is_current=lambda: sessions.get(session_key) is session and session.active_interaction is receipt,
+                )
+                request.app[DIAGNOSTICS_KEY]["last_interaction_receipt_update"] = "delivered" if updated else "failed"
+
+            if terminal_unresolved_receipt:
+                # Reuse the one managed terminal task; optional receipt cleanup
+                # must not delay the terminal ACK or its actual final answer.
+                terminal_receipt_update = update_receipt
+            else:
+                await update_receipt()
     if event_is_terminal:
         request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
             "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -5953,6 +5973,8 @@ async def _apply_event_locked_inner(
                     handoff_identity,
                     handoff_record,
                 )
+            if terminal_receipt_update is not None:
+                await terminal_receipt_update()
             if (
                 updated
                 and is_terminal
@@ -7264,9 +7286,11 @@ def _render_session_card_for_app(
         key, config, _, _ = _session_card_render_context(app, session, session_key=session_key)
         owner_id = app[FEISHU_MESSAGE_IDS_KEY].get(key)
         if (config.get("_presentation_mode") == "task" and owner_id
+                and not session.legacy_owner_receipt
                 and interaction.feishu_message_id != owner_id):
             # The separate approval card owns the full scope and resume button.
             # Expiry must not repaint its retired predecessor as a second form.
+            # A legacy predecessor must keep the existing dialect-safe fallback.
             snapshot = copy.deepcopy(session)
             snapshot.active_interaction = None
             card = _render_static_display_card(

@@ -572,6 +572,10 @@ class CardSession:
             partial = self._adopt_in_progress_content()
             self.answer_text = partial + "\n\n> " + error if partial else error
         if event.event in {"message.completed", "message.failed"}:
+            # A terminal execution event cannot leave an unresolved decision
+            # looking live. Preserve its scope as a failed receipt; never infer
+            # an approval or restore a paused waiter from a display checkpoint.
+            self._fail_interaction({"error": "本轮任务已结束，未提交的选择已失效。"})
             record_terminal(self, event)
         if self.display_segment and event.event in {"tool.updated", "subagent.updated"}:
             self.display_segment["has_output"] = bool(
