@@ -320,6 +320,31 @@ async def test_task_handoff_has_one_honest_note_and_retains_tool_details(show_re
 
 
 @pytest.mark.asyncio
+async def test_task_paused_approval_does_not_duplicate_scope_on_predecessor():
+    from hermes_feishu_card.server import _expire_pending_interactions
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0, "reading_preset": "task"})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "interaction.requested", 1, {
+            "interaction_id": "approval_one", "kind": "approval", "prompt": "Confirm fixture",
+            "description": "EXACT_APPROVAL_SCOPE", "pause_on_timeout": True, "timeout_seconds": 1,
+            "options": [{"label": "允许一次", "value": "once"}, {"label": "拒绝", "value": "deny"}],
+        })
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        interaction = session.active_interaction
+        await _expire_pending_interactions(app, now=interaction.expires_at + 1)
+        await asyncio.sleep(.03)
+        assert interaction.status == "paused" and not interaction.choice
+        predecessor = next(card for mid, card in reversed(client.updated) if mid == client.sent[0][0])
+        approval = next(card for mid, card in reversed(client.updated) if mid == interaction.feishu_message_id)
+        assert "EXACT_APPROVAL_SCOPE" not in str(predecessor)
+        assert "继续审批" in str(predecessor) and "执行中" not in str(predecessor)
+        assert "EXACT_APPROVAL_SCOPE" in str(approval) and "查看并继续审批" in str(approval)
+        assert "schema" not in approval and predecessor["schema"] == "2.0"
+
+
+@pytest.mark.asyncio
 async def test_failed_predecessor_patch_keeps_new_owner_and_terminal_delivery():
     from hermes_feishu_card.server import DIAGNOSTICS_KEY
     class FailingOldUpdate(Client):

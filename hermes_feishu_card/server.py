@@ -7258,6 +7258,23 @@ def _render_session_card_for_app(
     *,
     session_key: str | None = None,
 ) -> dict[str, Any]:
+    interaction = session.active_interaction
+    if (session.status not in {"completed", "failed"} and interaction is not None
+            and interaction.status == "paused" and interaction.feishu_message_id):
+        key, config, _, _ = _session_card_render_context(app, session, session_key=session_key)
+        owner_id = app[FEISHU_MESSAGE_IDS_KEY].get(key)
+        if (config.get("_presentation_mode") == "task" and owner_id
+                and interaction.feishu_message_id != owner_id):
+            # The separate approval card owns the full scope and resume button.
+            # Expiry must not repaint its retired predecessor as a second form.
+            snapshot = copy.deepcopy(session)
+            snapshot.active_interaction = None
+            card = _render_static_display_card(
+                app, snapshot, session_key=key, note="已转入交互卡片，请在下方继续审批",
+                display_state="display_receipt",
+            )
+            if card is not None:
+                return card
     result = _render_session_card_result_for_app(
         app,
         session,
