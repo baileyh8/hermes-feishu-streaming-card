@@ -9908,6 +9908,56 @@ async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) 
     return await recall_transient_thread_notice_async(event, content, result)
 
 
+async def emit_stale_interrupted_turn_async(local_vars: dict[str, Any]) -> bool:
+    """Close the original card when Hermes discards its explicit interrupt result.
+
+    The managed call site sits inside the verified stale-generation branch. That
+    branch alone is not terminal evidence: only the returned interrupted flag is.
+    A source-bound immutable identity prevents the old drain from closing a newer
+    sender/turn sharing the chat, session or reply anchor.
+    """
+    result = local_vars.get("agent_result")
+    source = local_vars.get("source")
+    event = local_vars.get("event")
+    if (not isinstance(result, dict) or result.get("interrupted") is not True
+            or _platform_name(local_vars, source) != "feishu"):
+        return False
+    turn_id = _first_attr_string(source, ("_hfc_turn_id",))
+    incoming_id = _first_attr_string(event, ("message_id",))
+    internal_id = _first_attr_string(source, ("_hfc_internal_turn_id",))
+    if not turn_id or (incoming_id != turn_id and not (not incoming_id and internal_id == turn_id)):
+        return False
+    # A queued chain returns its last child's result to the original handler;
+    # that child already owns the existing queued-final terminal hook.
+    queued_terminal = result.get("queued_terminal_inbound_id")
+    if queued_terminal and queued_terminal != turn_id:
+        return False
+    marker = "_hfc_stale_interrupted_terminal"
+    if getattr(source, marker, None) == turn_id:
+        return False
+    try:
+        # Set before awaiting so duplicate drains cannot race the same card.
+        setattr(source, marker, turn_id)
+    except Exception:
+        return False
+    accepted = False
+    try:
+        terminal_locals = {
+            **local_vars,
+            **interrupted_turn_locals(source, turn_id, result),
+            "turn_id": turn_id,
+            "error": "任务已中断",
+        }
+        if local_vars.get("_turn_seconds") is not None:
+            terminal_locals["duration"] = local_vars["_turn_seconds"]
+        accepted = await emit_from_hermes_locals_async(terminal_locals, event_name="message.failed")
+        return accepted
+    finally:
+        # A failed transport can retry; accepted duplicates remain suppressed.
+        if not accepted:
+            setattr(source, marker, None)
+
+
 def interrupted_turn_locals(source: Any, message_id: str, result: Any) -> dict[str, Any]:
     """Carry measured old-turn metrics into the queued-followup failure event.
 

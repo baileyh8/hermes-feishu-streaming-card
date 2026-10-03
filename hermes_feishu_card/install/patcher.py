@@ -19,6 +19,8 @@ from .patch_descriptors import (
 
 TURN_TIMING_PATCH_BEGIN = "# HERMES_FEISHU_CARD_TURN_TIMING_PATCH_BEGIN"
 TURN_TIMING_PATCH_END = "# HERMES_FEISHU_CARD_TURN_TIMING_PATCH_END"
+STALE_INTERRUPTED_PATCH_BEGIN = "# HERMES_FEISHU_CARD_STALE_INTERRUPTED_PATCH_BEGIN"
+STALE_INTERRUPTED_PATCH_END = "# HERMES_FEISHU_CARD_STALE_INTERRUPTED_PATCH_END"
 PATCH_BEGIN = "# HERMES_FEISHU_CARD_PATCH_BEGIN"
 PATCH_END = "# HERMES_FEISHU_CARD_PATCH_END"
 COMPLETE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN"
@@ -1020,6 +1022,9 @@ def remove_patch(content: str) -> str:
     from .provider_route import remove_provider_route_patch
     content = remove_provider_route_patch(content)
     content = _remove_simple_owned_patch(
+        content, STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END,
+        _render_stale_interrupted_hook_block, "stale interrupted patch markers")
+    content = _remove_simple_owned_patch(
         content, TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END,
         _render_turn_timing_hook_block, "turn timing patch markers")
     content = _remove_cron_patch(content)
@@ -1196,6 +1201,7 @@ def remove_patch_lenient(content: str) -> str:
     for begin_marker, end_marker in (
         (PATCH_BEGIN, PATCH_END),
         (TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END),
+        (STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END),
         (STABLE_TOOL_PATCH_BEGIN, STABLE_TOOL_PATCH_END),
         (TOOL_PATCH_BEGIN, TOOL_PATCH_END),
         (ANSWER_DELTA_PATCH_BEGIN, ANSWER_DELTA_PATCH_END),
@@ -4732,6 +4738,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
         content = _apply_start_patch(content, strategy=strategy)
         content = _apply_complete_patch(content, strategy=strategy)
         content = _apply_turn_timing_patch(content)
+        content = _apply_stale_interrupted_patch(content)
     content = _apply_queued_complete_patch(content)
     content = _apply_queued_followup_patch(content)
     content = _apply_redirect_patch(content)
@@ -5151,6 +5158,76 @@ def _render_turn_timing_hook_block(indent, newline):
             f'{_child_indent(indent)}agent_result = {{**agent_result, "_hfc_turn_seconds": _turn_seconds}}{newline}',
             *_render_hook_exception_handler(indent, newline),
             f"{indent}{TURN_TIMING_PATCH_END}{newline}"]
+
+
+def _render_stale_interrupted_hook_block(indent, newline):
+    inner = _child_indent(indent)
+    return [
+        f"{indent}{STALE_INTERRUPTED_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import emit_stale_interrupted_turn_async as _hfc_emit_interrupted{newline}",
+        f"{inner}await _hfc_emit_interrupted(locals()){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{STALE_INTERRUPTED_PATCH_END}{newline}",
+    ]
+
+
+def _apply_stale_interrupted_patch(content):
+    """Observe only the exact discarded result; never infer stop from a command."""
+    content = _remove_simple_owned_patch(
+        content, STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END,
+        _render_stale_interrupted_hook_block, "stale interrupted patch markers")
+    handler = _find_handler_node(_parse_content(content))
+    if handler is None:
+        return content
+    discard_calls = [node for node in ast.walk(handler)
+                     if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute)
+                     and node.func.attr == "_hmwa_discard_stale_result"]
+    # Earlier verified layouts have no discarded-result branch.
+    if not discard_calls:
+        return content
+    expected = ast.parse(
+        "if not self._is_session_run_current(_quick_key, run_generation):\n"
+        "    self._hmwa_discard_stale_result(source, _quick_key, run_generation)\n"
+        "    return None\n"
+    ).body[0]
+    guards = [node for node in ast.walk(handler)
+              if isinstance(node, ast.If) and ast.dump(node) == ast.dump(expected)]
+    if len(discard_calls) != 1 or len(guards) != 1:
+        raise ValueError("stale result discard contract changed")
+    guard = guards[0]
+    blocks = [value for node in ast.walk(handler) for _, value in ast.iter_fields(node)
+              if isinstance(value, list) and guard in value]
+    if len(blocks) != 1:
+        raise ValueError("stale result control flow changed")
+    preceding = blocks[0][:blocks[0].index(guard)]
+    writes = [node for statement in preceding for node in ast.walk(statement)
+              if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+              and any(isinstance(target, ast.Name) and target.id == "agent_result"
+                      for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))]
+    if len(writes) != 1 or writes[0] not in preceding:
+        raise ValueError("stale result assignment changed")
+    assignment = writes[0]
+    awaited = assignment.value
+    call = awaited.value if isinstance(awaited, ast.Await) else None
+    required = {
+        "source": "source", "session_key": "session_key",
+        "run_generation": "run_generation",
+        "event_message_id": "self._reply_anchor_for_event(event)",
+    }
+    keywords = {item.arg: item.value for item in call.keywords} if isinstance(call, ast.Call) else {}
+    if (not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1
+            or not isinstance(call, ast.Call) or call.args or None in keywords
+            or not _same_expression(call.func, "self._run_agent")
+            or any(key not in keywords or not _same_expression(keywords[key], value)
+                   for key, value in required.items())):
+        raise ValueError("stale result runner binding changed")
+    lines = content.splitlines(keepends=True)
+    index = guard.body[0].lineno - 1
+    lines[index:index] = _render_stale_interrupted_hook_block(
+        _line_indent(lines, index), _detect_newline(content))
+    return "".join(lines)
 
 
 def _apply_turn_timing_patch(content):

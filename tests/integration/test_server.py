@@ -13366,7 +13366,12 @@ async def test_topic_approval_expiry_updates_current_card_without_main_stream_se
     assert all(feishu_client.sent_reply_in_thread)
     assert await sidecar_server._expire_pending_interactions(test_client.app, now=400.0) == 1
     updated_id, card = await wait_for_card_update(feishu_client, "交互已过期")
-    assert updated_id == current_card_id
+    # The independently delivered approval owns the expiry receipt. Refresh
+    # it first; only a confirmed full receipt permits removing owner duplicates.
+    assert updated_id == session.active_interaction.feishu_message_id
+    assert updated_id != current_card_id
+    owner = next(card for mid, card in reversed(feishu_client.updated) if mid == current_card_id)
+    assert "交互已过期" not in str(owner)
     assert len(feishu_client.sent) == sent_count
     assert not feishu_client.texts
     assert not interaction_buttons(card)

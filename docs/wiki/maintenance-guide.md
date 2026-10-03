@@ -65,6 +65,7 @@
 - 显式 `turn_id` 必须作为 canonical turn hard fence，直接决定 session ownership、ordering 和 native handoff，绝不查 reply alias；只有缺少 `turn_id` 的 legacy topic 后续事件使用不同内部 `message_id` 时，才查 `reply_to_message_id` anchor。
 - 群聊新轮清理必须同时匹配可验证的 `sender_open_id`；缺少发送者时保留旧卡。hook 的首事件 fallback 也必须携带发送者和 `chat_type`。原生插件通道使用 Gateway session key 的哈希 `execution_scope` 隔离；缺少可匹配范围时不猜测接管。redirect 只清理明确指定的来源 turn，不能结束同群其他成员的卡片。参见 Issue #348。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
+- decomposed Hermes 的 stale-generation 分支只在返回值明确 `interrupted is True`、原 source/turn 身份一致且不是 queued 子轮结果时补发原任务终态；stale 本身不证明失败。安装器须精确验证该接点并保持逐字可逆。
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
 - legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
@@ -80,6 +81,7 @@
 - interaction deadline 由 sidecar 接收时刻与 `timeout_seconds` 计算为绝对截止时间 `expires_at`；action、result poll 与周期清理都在现有 session lock 下先做幂等过期转换。未声明暂停能力的过期状态为 failed；声明 pause_on_timeout 且没有 native runtime admission 的同步 Gateway 审批可转 paused，并撤销旧 token。晚到按钮/form 均不能批准过期操作。恢复按钮要求 Gateway 在最近 15 秒内仍轮询，旋转 token 并重新展示完整范围，只恢复审阅窗口；后续明确选择才解析原 request_id。不得延长 native admission 证明或把重启后旧执行当作仍在等待。
 - card action 是认证的 out-of-band 回调：它生成的内部 `interaction.completed` 可以执行 identity/stale 校验，但不得推进 Hermes `/events` transport 的 `last_sequence`。batch 下一条 `interaction.requested` 必须仍按严格单调序列接受；callback 响应卡要在同一 session lock 内快照，不能混入随后到达的下一题。
 - cleanup 只把尚未到期的 pending interaction 视为活跃；周期循环先转换/刷新过期 interaction，再执行普通 retention cleanup，避免永久保留或删掉仍显示可点击按钮的旧卡。
+- 展示检查点最多保存一个有界、脱敏、无 token 的实际辅助回执；重启验证原 profile/bot/client 后按原方言更新，不恢复执行或授权。只有完整回执 PATCH 明确成功才精简 owner 重复范围；终态已补发或送达不确定时禁止回填旧 owner。
 - 重启临时文本的撤回遵循 [通知生命周期](notice-lifecycle.md)：精确 profile/bot/chat/thread、发送前登记代次快照、成功投递后调度、DELETE 成功后释放记录。不能用空 thread 通配其他话题、话题活动清 home、或静默替换失败的待撤回项。新增发卡入口必须传入当前 profile，更新入口通过真实消息 owner 取身份。
 
 ### `hermes_feishu_card/install/patcher.py`

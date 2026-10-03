@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+- Close the original legacy-path card from Hermes' explicit interrupted result before its verified stale-generation return; preserve original turn binding, duplicate suppression and exact installer restore. Persist one bounded token-free auxiliary receipt so restart and expiry clear stale controls, and compact duplicate approval scope only after the full separate receipt is confirmed delivered.
 - Retain task parameters when the selected process detail is truncated; preserve legacy predecessor dialects when approval pauses. Close unresolved choices when the owning task ends, update the full receipt and reject late submissions instead of leaving stale waiting controls.
 - Keep unknown/waiting and transferred task displays neutral; freeze predecessor tools without claiming execution or interruption, remove duplicate transfer/pending footers, and give short choices and multi-select options readable labels while preserving callback values and full scope.
 - Remove repeated task state/action across the header, activity area and footer after real-client review; move parameters only when that tool is present in the rendered process panel, retain one completion marker, and keep task metrics neutral. Make layout, hierarchy, typography, color, spacing, density and real-client evidence explicit visual release gates.

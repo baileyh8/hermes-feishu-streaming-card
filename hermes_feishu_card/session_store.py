@@ -10,7 +10,7 @@ from pathlib import Path
 from .card_timeline import CardTimeline, TimelineEntry
 from .session import CardSession, ToolState
 from .display_segments import valid_checkpoint_state
-from .legacy_owner import valid_legacy_receipt
+from .legacy_owner import valid_auxiliary_receipt, valid_legacy_receipt
 from .native_handoff import (
     _prepare_private_root, _validate_existing_private_file, _atomic_write_private,
 )
@@ -32,7 +32,8 @@ class SessionStore:
     def _path(self, key):
         return self.root / (hashlib.sha256(key.encode()).hexdigest() + '.json')
 
-    def save(self, key, session, message_id, bot_id, profile_id, aliases, client_identity):
+    def save(self, key, session, message_id, bot_id, profile_id, aliases, client_identity,
+             *, auxiliary_receipt=None):
         # Handoff has its own durable proof protocol. Do not recreate that state.
         if session.terminal_disposition or session.delivery_kind != 'chat':
             self.remove(key)
@@ -56,6 +57,11 @@ class SessionStore:
                       bot_id=bot_id, profile_id=profile_id, aliases=aliases, client_identity=client_identity,
                       had_interaction=(session.active_interaction is not None and session.active_interaction.status in {"pending","paused"}),
                       saved_at=time.time())
+        if auxiliary_receipt:
+            if (not valid_auxiliary_receipt(auxiliary_receipt)
+                    or auxiliary_receipt['message_id'] == message_id):
+                raise ValueError('invalid auxiliary display receipt')
+            record['auxiliary_receipt'] = auxiliary_receipt
         encoded = json.dumps(record, ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
         payload = json.dumps({'record':record, 'digest':hashlib.sha256(encoded).hexdigest()},
                              ensure_ascii=False, allow_nan=False).encode()
@@ -101,6 +107,10 @@ class SessionStore:
                 if not r['turn_id'] or r['key'] != prefix + r['turn_id']:
                     continue
                 if not r['message_id'] or r['bot_id'] is not None and not isinstance(r['bot_id'],str):
+                    continue
+                auxiliary = r.get('auxiliary_receipt', {})
+                if (not valid_auxiliary_receipt(auxiliary)
+                        or auxiliary and auxiliary['message_id'] == r['message_id']):
                     continue
                 data = r['session']
                 # v4.6.3 records predate display segments. Preserve their exact

@@ -149,6 +149,12 @@ real child-process checks. UI changes need relevant real-client checks. Distingu
 source tests, mock/local HTTP, public installation, real platform API, visual QA
 and actual Gateway/model execution. Preserve failures before a justified rerun.
 
+Reclaim owned test artifacts as each completed batch no longer needs them. Check
+process/open-file references before removing temporary test trees, copied fixtures,
+old candidate packages or preview servers. Keep the current retest environment,
+failure logs, screenshots, provenance and production restore evidence; record the
+exact cleanup scope. Never clean production runtimes or unrelated user files.
+
 ## Delivery and release
 
 - PRs state the user-visible problem, final change, affected boundary, tests and

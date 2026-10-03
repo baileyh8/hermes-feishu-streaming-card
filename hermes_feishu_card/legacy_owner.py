@@ -36,6 +36,33 @@ def valid_legacy_receipt(card):
         return False
 
 
+def auxiliary_receipt_card(receipt):
+    """Materialize a token-free receipt in the originally delivered dialect."""
+    card = deepcopy(receipt["card"])
+    card["header"]["template"] = receipt["template"]
+    if receipt["dialect"] == "2.0":
+        card["schema"] = "2.0"
+        card["config"].pop("wide_screen_mode", None)
+        card["body"] = {"elements": card.pop("elements")}
+    return card
+
+
+def valid_auxiliary_receipt(receipt):
+    """One actual message and static text only, with the shared wire limits."""
+    if receipt == {}:
+        return True
+    if not isinstance(receipt, dict) or set(receipt) != {"message_id", "dialect", "card", "template"}:
+        return False
+    mid = receipt["message_id"]
+    if (not isinstance(mid, str) or not mid or len(mid) > 256
+            or any(ord(char) < 33 or ord(char) > 126 for char in mid)
+            or not isinstance(receipt["dialect"], str) or receipt["dialect"] not in {"legacy", "2.0"}
+            or not isinstance(receipt["template"], str) or receipt["template"] not in {"red", "green"}
+            or not receipt["card"] or not valid_legacy_receipt(receipt["card"])):
+        return False
+    return inspect_card_limits(auxiliary_receipt_card(receipt)).safe
+
+
 def legacy_owner_body(receipt, source_card, primary_text=None):
     """Retain the question/decision and add an answer in the same dialect.
 

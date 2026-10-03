@@ -1215,7 +1215,8 @@ def _render_interaction_elements(
     interaction = session.active_interaction
     if interaction is None:
         return []
-    if session.status in {"completed", "failed"} and has_confirmed_approval_receipt(session):
+    if (has_confirmed_approval_receipt(session)
+            and (session.status in {"completed", "failed"} or interaction.status == "failed")):
         # #337/#339: only remove a duplicate after the complete independent
         # receipt has been confirmed by Feishu; rendering a callback is no ACK.
         return []

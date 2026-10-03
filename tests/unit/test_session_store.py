@@ -70,3 +70,50 @@ def test_pre_task_layout_checkpoint_still_loads_with_full_answer(tmp_path):
     assert len(records) == 1
     assert records[0]['session'].answer_text == 'private body'
     assert records[0]['session'].presentation_state == ''
+
+
+def auxiliary():
+    from hermes_feishu_card.legacy_owner import static_legacy_receipt
+    return dict(message_id='om_auxiliary', dialect='legacy', template='red', card=static_legacy_receipt({
+        'elements': [{'tag': 'markdown', 'content': 'KEEP_SCOPE 已失效'}]}))
+
+
+@pytest.mark.parametrize('damage', ['controls', 'callback_field', 'id', 'owner', 'dialect', 'oversize', 'template'])
+def test_auxiliary_checkpoint_refuses_unsafe_display_record(tmp_path, damage):
+    store = SessionStore(tmp_path)
+    value = auxiliary()
+    if damage == 'controls':
+        value['card']['elements'].append({'tag': 'action', 'actions': [{'tag': 'button'}]})
+    elif damage == 'callback_field':
+        value['callback_token'] = 'SECRET_FIXTURE_TOKEN'
+    elif damage == 'id':
+        value['message_id'] = 'x' * 257
+    elif damage == 'owner':
+        value['message_id'] = 'om_owner'
+    elif damage == 'dialect':
+        value['dialect'] = 'unknown'
+    elif damage == 'template':
+        value['template'] = 'unknown'
+    else:
+        value['card']['elements'][0]['content'] = 'x' * 28000
+    with pytest.raises(ValueError):
+        store.save('turn', CardSession('conversation', 'turn', 'chat'), 'om_owner', None, '', {},
+                   'fixture_client', auxiliary_receipt=value)
+    assert store.load() == []
+
+
+def test_auxiliary_payload_is_bounded_and_validated_again_when_loading(tmp_path):
+    store = SessionStore(tmp_path)
+    store.save('turn', CardSession('conversation', 'turn', 'chat'), 'om_owner', None, '', {},
+               'fixture_client', auxiliary_receipt=auxiliary())
+    record = store.load()[0]
+    assert record['auxiliary_receipt']['message_id'] == 'om_auxiliary'
+    assert record['session'].active_interaction is None
+    path = next(store.root.glob('*.json'))
+    envelope = json.loads(path.read_text())
+    envelope['record']['auxiliary_receipt']['card']['elements'].append(
+        {'tag': 'button', 'value': {'token': 'SECRET_FIXTURE_TOKEN'}})
+    envelope['digest'] = hashlib.sha256(json.dumps(envelope['record'], ensure_ascii=False,
+        allow_nan=False, sort_keys=True).encode()).hexdigest()
+    path.write_text(json.dumps(envelope))
+    assert store.load() == []
