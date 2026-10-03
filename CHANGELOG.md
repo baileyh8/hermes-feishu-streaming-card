@@ -13,7 +13,8 @@ Release candidate; final visual/client acceptance, exact-commit CI and publicati
 - Add offline HTML/Card JSON previews for nine scenarios and explain appearance values with their configuration sources and next-load semantics.
 - Show optional subscription quota only on completed GPT turns attributed to `openai-codex`; omit unrelated, unknown and stale model routes.
 - Preserve complete parameters, permission scope and original interaction dialects while reducing repeated headings, waiting labels and approval details.
-- Close the original card from Hermes' explicit interrupted result; retain bounded token-free auxiliary receipts so expiry and restart remove stale controls without restoring execution or consent.
+- Close the original card from Hermes' explicit interrupted result or verified controlled stop cancellation, without blocking queued messages; retain bounded token-free auxiliary receipts so expiry and restart remove stale controls without restoring execution or consent.
+- Suppress duplicate Working heartbeats only after authenticated proof that the exact turn has an accepted task card; preserve classic and unknown-path behavior.
 - Strengthen real-client visual release gates and pin Hermes main `c8301ea6c9b797184df16a9c5dd462400b264ff4` for source compatibility. See [Chinese notes](docs/release-notes-v4.7.0.md), [English notes](docs/release-notes-v4.7.0.en.md) and the [acceptance record](docs/reviews/2026-10-03-task-cards-acceptance.md).
 
 ## [4.6.13] - 2026-10-02

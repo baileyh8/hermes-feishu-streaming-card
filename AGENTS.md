@@ -154,6 +154,11 @@ process/open-file references before removing temporary test trees, copied fixtur
 old candidate packages or preview servers. Keep the current retest environment,
 failure logs, screenshots, provenance and production restore evidence; record the
 exact cleanup scope. Never clean production runtimes or unrelated user files.
+Check available disk space before another full run, clone or dependency install.
+Reuse one compatible test environment and the verified source fixture; private
+HOME/state does not require a fresh virtualenv for every candidate. Retire obsolete
+public-install environments after preserving their provenance and logs. Do not
+let completed pytest trees and source archives accumulate across release rounds.
 
 ## Delivery and release
 

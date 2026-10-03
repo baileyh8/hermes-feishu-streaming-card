@@ -66,6 +66,7 @@
 - 群聊新轮清理必须同时匹配可验证的 `sender_open_id`；缺少发送者时保留旧卡。hook 的首事件 fallback 也必须携带发送者和 `chat_type`。原生插件通道使用 Gateway session key 的哈希 `execution_scope` 隔离；缺少可匹配范围时不猜测接管。redirect 只清理明确指定的来源 turn，不能结束同群其他成员的卡片。参见 Issue #348。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
 - decomposed Hermes 的 stale-generation 分支只在返回值明确 `interrupted is True`、原 source/turn 身份一致且不是 queued 子轮结果时补发原任务终态；stale 本身不证明失败。安装器须精确验证该接点并保持逐字可逆。
+- Base 的受控 `/stop` 取消可能早于工具结果返回。仅在精确处理 task 的原 owner、会话和路由一致且该 task 确已取消时补发终态；`/new`、`/reset` 与未知取消不猜测。显示投递复用 adapter 的受管后台任务，限制数量和期限，不阻塞原 pending-message drain，也不恢复执行或授权。
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
 - legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。

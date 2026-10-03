@@ -1,5 +1,8 @@
 import ast
+import re
 import textwrap
+
+from . import stop_cancellation
 
 from .patch_descriptors import (
     HYBRID_PATCH_DESCRIPTORS,
@@ -38,6 +41,8 @@ BUSY_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_BUSY_RECALL_PATCH_END_V1"
 # READS it — no upstream statement is captured (unlike the busy-recall block above).
 LONG_RUNNING_RECALL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_LONG_RUNNING_RECALL_PATCH_BEGIN"
 LONG_RUNNING_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_LONG_RUNNING_RECALL_PATCH_END"
+TASK_HEARTBEAT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_TASK_HEARTBEAT_PATCH_BEGIN"
+TASK_HEARTBEAT_PATCH_END = "# HERMES_FEISHU_CARD_TASK_HEARTBEAT_PATCH_END"
 QUEUED_FINAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_BEGIN"
 QUEUED_FINAL_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_END"
 REDIRECT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_REDIRECT_PATCH_BEGIN"
@@ -178,6 +183,7 @@ def apply_patch(
         content = _apply_redirect_patch(content)
         content = _apply_busy_recall_patch(content)
         content = _apply_long_running_recall_patch(content)
+        content = _apply_task_heartbeat_patch(content)
         content = _apply_cron_patch(content)
         content = _apply_command_card_startup_patch(content)
         content = _apply_native_redelivery_patch(content)
@@ -309,7 +315,7 @@ def apply_base_patch(
             no_text_location=no_text_location,
             final_location=final_location,
         )
-        return content
+        return stop_cancellation.apply(content)
 
     newline = _detect_newline(content)
     no_text_index, no_text_indent = no_text_location
@@ -332,11 +338,12 @@ def apply_base_patch(
     # block. Both anchors are guaranteed to belong to the same exact pipeline.
     for index, hook in sorted(((final_index, final_hook), (no_text_index, no_text_hook)), reverse=True):
         lines[index:index] = hook
-    return "".join(lines)
+    return stop_cancellation.apply("".join(lines))
 
 
 def remove_base_patch(content: str) -> str:
     """Strictly remove exact BasePlatformAdapter hooks owned by this project."""
+    content = stop_cancellation.remove(content)
     owned = _find_owned_exact_base_blocks(content, strict=True)
     if owned is None:
         return content
@@ -354,6 +361,7 @@ def remove_base_patch(content: str) -> str:
 
 def remove_base_patch_lenient(content: str) -> str:
     """Remove owned Base hooks while accepting older generated block bodies."""
+    content = stop_cancellation.remove(content)
     owned = _find_owned_exact_base_blocks(content, strict=False)
     if owned is None:
         return content
@@ -804,6 +812,92 @@ def _remove_long_running_recall_patch(content: str) -> str:
         _render_long_running_notice_hook_block, "long running recall patch markers")
 
 
+def _render_task_heartbeat_hook_block(indent, newline):
+    inner = _child_indent(indent)
+    return [
+        f"{indent}{TASK_HEARTBEAT_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import suppress_task_heartbeat_async as _hfc_suppress_heartbeat{newline}",
+        f"{inner}if await _hfc_suppress_heartbeat(source):{newline}",
+        f"{_child_indent(inner)}continue{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{TASK_HEARTBEAT_PATCH_END}{newline}",
+    ]
+
+
+def _apply_task_heartbeat_patch(content):
+    """Gate the verified heartbeat producer, never arbitrary adapter text."""
+    content = _remove_simple_owned_patch(content, TASK_HEARTBEAT_PATCH_BEGIN,
+        TASK_HEARTBEAT_PATCH_END, _render_task_heartbeat_hook_block, "task heartbeat patch markers")
+    tree = _parse_content(content)
+    scopes = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
+              and node.name in {"_notify_long_running", "_run_agent_notify_long_running"}]
+    if not scopes:
+        return content
+    if len(scopes) != 1:
+        raise ValueError("ambiguous task heartbeat producer")
+    scope = scopes[0]
+    checks = [node for node in ast.walk(scope) if isinstance(node, ast.Call)
+              and isinstance(node.func, ast.Attribute)
+              and node.func.attr == "_should_emit_long_running_notification"]
+    if not checks:
+        return content  # Older producers have no verified live-owner boundary.
+    expected = ast.parse(
+        "if not self._should_emit_long_running_notification(session_key, agent_holder[0], _executor_task_holder[0]):\n"
+        "    break\n"
+    ).body[0]
+    guards = [(loop, node) for loop in ast.walk(scope) if isinstance(loop, ast.While)
+              for node in loop.body if isinstance(node, ast.If) and ast.dump(node) == ast.dump(expected)]
+    if len(guards) != 1:
+        raise ValueError("task heartbeat live-owner contract changed")
+    loop, guard = guards[0]
+    assignments = [node for node in loop.body if isinstance(node, ast.Assign)
+                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                   and node.targets[0].id == "_heartbeat_text"]
+    if len(assignments) != 1 or loop.body.index(assignments[0]) <= loop.body.index(guard):
+        raise ValueError("task heartbeat text contract changed")
+    text = assignments[0].value
+    known_templates = (
+        'disp._generic_status_phrase("status") if _long_running_mode == "generic" '
+        'else f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
+        'disp._generic_status_phrase("status") if _long_running_mode == "generic" '
+        'else t("gateway.progress.working_heartbeat", minutes=_elapsed_mins, detail=_status_detail)',
+        'f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
+    )
+    fixed_heartbeat = (isinstance(text, ast.Constant) and type(text.value) is str
+                       and re.fullmatch(r"⏳ Working — \d+ min(?: — [^\r\n]*)?", text.value))
+    if not fixed_heartbeat and not any(_same_expression(text, item) for item in known_templates):
+        raise ValueError("task heartbeat message template changed")
+    source_writes = [node.id for node in ast.walk(scope)
+                     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+                     and node.id in {"source", "session_key", "agent_holder"}]
+    for method, count, arguments in (
+        ("send", 2, ("source.chat_id", "_heartbeat_text")),
+        ("edit_message", 3, ("source.chat_id", "_heartbeat_msg_id", "_heartbeat_text")),
+    ):
+        calls = [node for node in ast.walk(scope) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr == method]
+        if (len(calls) != 1 or not any(_same_expression(calls[0].func, f"{name}.{method}")
+                                     for name in ("adapter", "_notify_adapter"))
+                or len(calls[0].args) != count
+                or not all(_same_expression(value, expected_value)
+                           for value, expected_value in zip(calls[0].args, arguments))
+                or any(item.arg != "metadata" for item in calls[0].keywords)):
+            raise ValueError("task heartbeat delivery contract changed")
+    if scope.name == "_run_agent_notify_long_running":
+        binding = ast.parse("source, session_key, agent_holder = turn_ctx.source, turn_ctx.session_key, turn_ctx.agent_holder").body[0]
+        if (sorted(source_writes) != ["agent_holder", "session_key", "source"]
+                or not any(ast.dump(node) == ast.dump(binding) for node in scope.body)):
+            raise ValueError("task heartbeat source contract changed")
+    elif source_writes:
+        raise ValueError("task heartbeat source contract changed")
+    lines = content.splitlines(keepends=True)
+    index = guard.end_lineno
+    lines[index:index] = _render_task_heartbeat_hook_block(
+        _line_indent(lines, guard.lineno - 1), _detect_newline(content))
+    return "".join(lines)
+
+
 def _apply_slash_confirm_patch(content: str) -> str:
     owned_block = _find_simple_marker_block(
         content,
@@ -1019,6 +1113,8 @@ def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
     content = _remove_busy_recall_patch(content)
     content = _remove_long_running_recall_patch(content)
+    content = _remove_simple_owned_patch(content, TASK_HEARTBEAT_PATCH_BEGIN,
+        TASK_HEARTBEAT_PATCH_END, _render_task_heartbeat_hook_block, "task heartbeat patch markers")
     from .provider_route import remove_provider_route_patch
     content = remove_provider_route_patch(content)
     content = _remove_simple_owned_patch(
@@ -1202,6 +1298,7 @@ def remove_patch_lenient(content: str) -> str:
         (PATCH_BEGIN, PATCH_END),
         (TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END),
         (STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END),
+        (TASK_HEARTBEAT_PATCH_BEGIN, TASK_HEARTBEAT_PATCH_END),
         (STABLE_TOOL_PATCH_BEGIN, STABLE_TOOL_PATCH_END),
         (TOOL_PATCH_BEGIN, TOOL_PATCH_END),
         (ANSWER_DELTA_PATCH_BEGIN, ANSWER_DELTA_PATCH_END),
@@ -4699,6 +4796,7 @@ LEGACY_TARGET_PATCH_ADAPTERS = (
         renderer=_render_legacy_base_target,
         strict_remover=remove_base_patch,
         owned_markers=(
+            (stop_cancellation.BEGIN, stop_cancellation.END),
             (EXACT_BASE_NO_TEXT_PATCH_BEGIN, EXACT_BASE_NO_TEXT_PATCH_END),
             (
                 EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN,
@@ -4744,6 +4842,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
     content = _apply_redirect_patch(content)
     content = _apply_busy_recall_patch(content)
     content = _apply_long_running_recall_patch(content)
+    content = _apply_task_heartbeat_patch(content)
     for apply in (_apply_command_card_adapter_patch, _apply_hfc_command_patch,
                   _apply_slash_confirm_patch, _apply_command_card_startup_patch,
                   _apply_native_redelivery_patch, _apply_platform_notice_patch):

@@ -3421,13 +3421,39 @@ async def _delivery_policy(request: web.Request) -> web.Response:
         payload["chat_id"],
         profile_id=payload.get("profile_id", ""),
     )
-    return web.json_response(
-        {
-            "ok": True,
-            "disposition": decision.disposition,
-            "reason": decision.reason,
-            "ttl_ms": 1000,
-        }
+    response = {
+        "ok": True,
+        "disposition": decision.disposition,
+        "reason": decision.reason,
+        "ttl_ms": 1000,
+    }
+    if payload.get("turn_id"):
+        # A policy decision alone says nothing about actual delivery. This
+        # fresh, read-only proof uses the exact owner committed after create.
+        response["accepted_task_card"] = (
+            decision.disposition == CARD_DISPOSITION
+            and _accepted_task_card_for_policy_probe(request.app, payload)
+        )
+    return web.json_response(response)
+
+
+def _accepted_task_card_for_policy_probe(app, payload):
+    turn_id = payload.get("turn_id")
+    conversation_id = payload.get("conversation_id")
+    if not turn_id or not conversation_id:
+        return False
+    profile = payload.get("profile_id", "")
+    key = f"{profile}:{turn_id}" if profile else turn_id
+    session = app[SESSIONS_KEY].get(key)  # Never resolve a reply/turn alias.
+    return bool(
+        session is not None
+        and session.chat_id == payload["chat_id"]
+        and session.conversation_id == conversation_id
+        and session.route_profile_id == (profile or "default")
+        and session.delivery_kind == "chat"
+        and not session.terminal_disposition
+        and app[FEISHU_MESSAGE_IDS_KEY].get(key)
+        and app[SESSION_CARD_CONFIGS_KEY].get(key, {}).get("_presentation_mode") == "task"
     )
 
 

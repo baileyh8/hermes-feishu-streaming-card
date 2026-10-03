@@ -8,7 +8,8 @@
 - Extend `card-config` with effective appearance values and their sources, plus offline HTML/Card JSON previews for nine states. Reports describe the next configuration load, not the running service. Previews use built-in examples, read no conversations and send no Feishu messages.
 - Show subscription quota only on GPT turns attributed to `openai-codex`. Unrelated or unknown routes and stale queries after a model change omit it.
 - Preserve complete tool parameters, questions and permission scope. Fix missing parameters after detail truncation, paused-card dialect changes and stale interaction controls after a task ends. Compact duplicate scope only after the complete separate receipt is confirmed delivered.
-- Close the original task card when Hermes explicitly returns an interrupted result. Retain bounded, token-free auxiliary-card display records so expiry and restart can replace controls with an expired receipt. This restores no execution, waiter or consent. Older checkpoints without an auxiliary message identity cannot retroactively refresh that message.
+- Close the original task card when Hermes explicitly returns an interrupted result or controlled `/stop` confirms cancellation of its original processing task. Display delivery does not block pending messages. Retain bounded, token-free auxiliary-card display records so expiry and restart can replace controls with an expired receipt. This restores no execution, waiter or consent. Older checkpoints without an auxiliary message identity cannot retroactively refresh that message.
+- Suppress duplicate native Working heartbeats after the exact task card has accepted delivery. Classic mode, unknown identities and failed queries retain Hermes' existing behavior.
 
 After 60 seconds without a new event, the task layout performs one bounded update explaining that it is waiting for new information and execution status is unconfirmed. Restored display likewise does not imply that execution resumed.
 
@@ -34,7 +35,7 @@ See [task cards](task-cards.md#english-quick-reference) and [reading presets](wi
 
 ## Acceptance status
 
-The full regression for `1e993bd` recorded **4,509 passed and 22 skipped**. Real desktop `/stop`, auxiliary receipt recovery and multi-select flows have execution evidence. Later visual-density repairs still require verification on the final candidate; these results do not establish a full pass for subsequent commits.
+The full regression for `1e993bd` recorded **4,509 passed and 22 skipped**. All 14 GitHub checks for `9d986ad` passed, with real desktop evidence for long tasks, multi-select and light/dark themes. A pure approval `/stop` exposed another cancellation order, and a long wait produced a duplicate Working message. Both source fixes still require real verification on a new candidate; earlier successful cases do not establish final acceptance.
 
 Final-commit regression and cross-platform CI, relevant real flows, visual gates, exact merge provenance, an annotated tag, assets/checksums and public-install provenance remain required. Android/iOS, dark theme and enlarged type are separate evidence; missing coverage stays unverified. Automated results do not substitute for client acceptance.
 
