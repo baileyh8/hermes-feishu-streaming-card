@@ -264,7 +264,8 @@ def test_v4_running_card_uses_state_title_and_public_interim_body():
 
 
 def test_compaction_phase_replaces_header_title_and_hides_stale_tool_summary():
-    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    # This test covers phase precedence, not how long the runner was scheduled.
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc", created_at=0)
     session.thinking_text = "已保留的公开阶段说明"
     session.latest_tool_preview = "读取文件：weather_client.py"
     session.runtime_phase_text = "正在压缩上下文"
