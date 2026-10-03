@@ -75,6 +75,9 @@ do not combine rebranding, broad rewrites and behavior fixes in one PR.
   revive expired approvals or infer successful completion from missing events.
 - Display checkpoints restore presentation, not execution or old authorization.
   Keep state, caches, replay windows and retries bounded; define failure behavior.
+  Every new CardSession field must explicitly choose persistence or exclusion:
+  session_store derives its schema from dataclass fields. Transient display state
+  belongs in its exclusion set, with old-checkpoint and rollback tests.
 - Use the shared serializer and `card_limits.py` for every final combined payload.
   Do not truncate final answers or permission scope merely to fit a card.
 - Keep slow external I/O outside session/message locks where the contract permits;

@@ -27,7 +27,8 @@ GROUPS = {
     "preflight": ["tests/unit/test_preflight.py"],
     "appearance": ["tests/unit/test_presentation.py", "tests/unit/test_card_preview.py",
                    "tests/unit/test_reading_presets.py", "tests/unit/test_render.py",
-                   "tests/integration/test_reading_presets_http.py"],
+                   "tests/unit/test_session_store.py", "tests/unit/test_legacy_owner_checkpoint.py",
+                   "tests/integration/test_reading_presets_http.py", "tests/integration/test_combined_stability.py"],
     "quota": ["tests/unit/test_subscription_usage.py", "tests/unit/test_render.py",
               "tests/integration/test_server.py"],
 }
@@ -147,13 +148,15 @@ def select_targets(paths, modules):
             groups.update({"appearance", "runtime"})
         elif name == "hermes_feishu_card/subscription_usage.py":
             groups.add("quota")
+        elif name in {"hermes_feishu_card/session.py", "hermes_feishu_card/session_store.py"}:
+            groups.update({"render", "appearance"})
         elif name == "tools/preflight.py":
             groups.add("preflight")
         elif name.startswith("hermes_feishu_card/install/") or name.startswith("install"):
             groups.add("install")
         elif name in {"hermes_feishu_card/hook_runtime.py", "hermes_feishu_card/server.py"}:
             groups.add("runtime")
-        elif name in {"hermes_feishu_card/render.py", "hermes_feishu_card/session.py", "hermes_feishu_card/text.py"}:
+        elif name in {"hermes_feishu_card/render.py", "hermes_feishu_card/text.py"}:
             groups.add("render")
         elif name in {"hermes_feishu_card/process.py", "hermes_feishu_card/persistent_service.py"}:
             groups.add("process")

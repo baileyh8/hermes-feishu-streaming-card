@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import time
 import pytest
@@ -42,3 +43,30 @@ def test_checkpoint_does_not_store_approval_credentials(tmp_path):
     store.save('turn',s,'om_fixture',None,'',{},'fixture_client')
     assert 'SECRET_FIXTURE_TOKEN' not in next(store.root.glob('*.json')).read_text()
     r=store.load()[0]['session'];assert r.active_interaction is None and r.status=='failed'
+
+
+def test_task_presentation_state_is_ephemeral_and_does_not_change_checkpoint_schema(tmp_path):
+    store = SessionStore(tmp_path)
+    value = CardSession('conversation', 'turn', 'chat')
+    value.presentation_state = 'reconnecting'
+    store.save('turn', value, 'om_fixture', None, '', {}, 'fixture_client')
+    payload = json.loads(next(store.root.glob('*.json')).read_text())
+    assert 'presentation_state' not in payload['record']['session']
+    assert store.load()[0]['session'].presentation_state == ''
+
+
+def test_pre_task_layout_checkpoint_still_loads_with_full_answer(tmp_path):
+    store = SessionStore(tmp_path)
+    save(store)
+    path = next(store.root.glob('*.json'))
+    payload = json.loads(path.read_text())
+    # Pre-task-layout checkpoints have no presentation_state field. Retain
+    # the real v1 envelope/digest so this tests schema compatibility, not corruption.
+    payload['record']['session'].pop('presentation_state', None)
+    encoded = json.dumps(payload['record'], ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
+    payload['digest'] = hashlib.sha256(encoded).hexdigest()
+    path.write_text(json.dumps(payload))
+    records = store.load()
+    assert len(records) == 1
+    assert records[0]['session'].answer_text == 'private body'
+    assert records[0]['session'].presentation_state == ''

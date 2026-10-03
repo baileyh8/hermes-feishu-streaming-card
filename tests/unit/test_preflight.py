@@ -76,11 +76,13 @@ def test_task_presentation_and_rules_changes_select_their_contract_tests():
         "hermes_feishu_card/preview_template.html", "hermes_feishu_card/reading.py",
         "hermes_feishu_card/presentation.py", "hermes_feishu_card/preview.py",
         "hermes_feishu_card/subscription_usage.py",
+        "hermes_feishu_card/session.py", "hermes_feishu_card/session_store.py",
     ], [])
     assert unknown == 0
-    assert set(groups) == {"docs", "appearance", "runtime", "quota"}
+    assert set(groups) == {"docs", "appearance", "runtime", "quota", "render"}
     assert {"tests/unit/test_docs.py", "tests/unit/test_card_preview.py",
-            "tests/integration/test_server.py", "tests/unit/test_subscription_usage.py"} <= set(targets)
+            "tests/integration/test_server.py", "tests/unit/test_subscription_usage.py",
+            "tests/unit/test_session_store.py"} <= set(targets)
 
 
 def test_missing_fixture_reports_incomplete_and_blocks_full(repo, capsys, monkeypatch):
