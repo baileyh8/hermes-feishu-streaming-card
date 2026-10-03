@@ -100,7 +100,9 @@ from .approval_receipts import approval_receipt_fingerprint
 from .display_segments import display_view, needs_continuation
 from .legacy_owner import legacy_owner_body, static_legacy_receipt
 from .status import StatusConfig
-from .subscription_usage import fetch_codex_subscription_usage
+from .subscription_usage import fetch_codex_subscription_usage, uses_codex_subscription
+from .render_options import card_render_options
+from .presentation import task_observation_delay
 from .install.detect import HermesDetection, detect_hermes
 from .install.integrity import IntegrityRepairRefused, plan_integrity_repair
 from .install.recovery import execute_recovery, plan_recovery
@@ -265,6 +267,7 @@ UPDATE_MAX_ATTEMPTS = 3
 UPDATE_MIN_INTERVAL_SECONDS = 0.2
 CARD_ANIMATION_INTERVAL_SECONDS = 0.8
 CARD_ANIMATION_MAX_UPDATES = 15
+CARD_TASK_OBSERVATION_MAX_CHECKS = 60
 _CARD_ANIMATION_SLEEP = asyncio.sleep
 RUNTIME_CLEANUP_INTERVAL_SECONDS = 60.0
 RUNTIME_INTEGRITY_STARTUP_GRACE_SECONDS = 30.0
@@ -4757,6 +4760,7 @@ async def _restore_card_checkpoints(app):
                 continue
             display = copy.deepcopy(session)
             if display.status not in {'completed','failed'}:
+                display.presentation_state = "reconnecting"
                 display.status = 'failed'
                 display.display_status = ''
                 display.answer_text += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
@@ -6587,10 +6591,18 @@ async def _run_card_animation(
     bot_id: str | None,
 ) -> None:
     controller = _flush_controller_for_session(app, session_key)
-    for _ in range(CARD_ANIMATION_MAX_UPDATES):
-        await _CARD_ANIMATION_SLEEP(CARD_ANIMATION_INTERVAL_SECONDS)
+    task_layout = _session_card_render_context(app, session, session_key=session_key)[1].get("_presentation_mode") == "task"
+    checks = CARD_ANIMATION_MAX_UPDATES + (CARD_TASK_OBSERVATION_MAX_CHECKS if task_layout else 0)
+    for index in range(checks):
+        observation = index >= CARD_ANIMATION_MAX_UPDATES
+        delay = task_observation_delay(session) if observation else CARD_ANIMATION_INTERVAL_SECONDS
+        await _CARD_ANIMATION_SLEEP(delay)
         if not _card_animation_is_current(app, session_key, session):
             return
+        if observation and task_observation_delay(session) > 0:
+            continue
+        if not observation and not (_is_initial_loading(session) or _has_running_tool(session)):
+            continue
 
         update_failed = False
 
@@ -6617,6 +6629,10 @@ async def _run_card_animation(
             return
         if not _card_animation_is_current(app, session_key, session):
             return
+        if observation:
+            # One bounded update after silence, on the same card and controller.
+            # New events can re-arm it; there is no perpetual polling/PATCH loop.
+            return
 
 
 def _card_animation_is_current(
@@ -6630,9 +6646,10 @@ def _card_animation_is_current(
     if (session.display_segment.get("pending")
             or (interaction is not None and interaction.status in {"pending", "paused"})):
         return False
-    return app[SESSIONS_KEY].get(session_key) is session and (
-        _is_initial_loading(session) or _has_running_tool(session)
-    )
+    if app[SESSIONS_KEY].get(session_key) is not session or session.status in {"completed", "failed"}:
+        return False
+    return (_is_initial_loading(session) or _has_running_tool(session)
+            or _session_card_render_context(app, session, session_key=session_key)[1].get("_presentation_mode") == "task")
 
 
 def _has_running_tool(session: CardSession) -> bool:
@@ -7304,14 +7321,6 @@ def _render_session_card_result_for_app(
         app,
         resolved_session_key,
     )
-    raw_table_overflow_mode = card_config.get("table_overflow_mode", "compact")
-    table_overflow_mode = (
-        raw_table_overflow_mode.strip().lower()
-        if isinstance(raw_table_overflow_mode, str)
-        else "compact"
-    )
-    if table_overflow_mode not in {"compact", "truncate"}:
-        table_overflow_mode = "compact"
     notify = card_config.get("completion_notify") or {}
     completion_in_card = (isinstance(notify, dict) and notify.get("enabled") is True
                           and notify.get("placement", "message") == "card")
@@ -7321,38 +7330,7 @@ def _render_session_card_result_for_app(
         title=title,
         interaction_mode=interaction_mode,
         interaction_profile_id=interaction_profile_id,
-        show_reasoning=_safe_bool(card_config.get("show_reasoning"), True),
-        stream_thinking_to_body=_safe_bool(
-            card_config.get("stream_thinking_to_body"), True
-        ),
-        hide_completed_tool_activity=_safe_bool(
-            card_config.get("hide_completed_tool_activity"), False
-        ),
-        hide_successful_tool_activity=_safe_bool(
-            card_config.get("_hide_successful_tool_activity"), False
-        ),
-        reasoning_format=card_config.get("reasoning_format", "panel"),
-        timeline_expanded=_safe_bool(card_config.get("timeline_expanded"), False),
-        timeline_order=card_config.get("timeline_order", "newest_first"),
-        timeline_tools_per_reasoning=card_config.get("timeline_tools_per_reasoning", 0),
-        thinking_body_tail_chars=card_config.get("thinking_body_tail_chars", 0),
-        max_timeline_items=_safe_positive_int(
-            card_config.get("max_timeline_items"), 12
-        ),
-        max_reasoning_chars=_safe_positive_int(
-            card_config.get("max_reasoning_chars"), 1200
-        ),
-        max_tool_result_chars=_safe_positive_int(
-            card_config.get("max_tool_result_chars"), 600
-        ),
-        status_config=StatusConfig.from_mapping(card_config.get("status")),
-        text_sizes=(
-            card_config.get("text_sizes")
-            if isinstance(card_config.get("text_sizes"), dict)
-            else None
-        ),
-        table_overflow_mode=table_overflow_mode,
-        width_mode=card_config.get("width_mode", "default"),
+        **card_render_options(card_config),
         completion_mention=completion_in_card and card_completion_mention_enabled(card_config),
         mentions_enabled=card_interaction_mention_enabled(
             card_config,
@@ -7390,6 +7368,7 @@ def _render_interaction_callback_card_for_app(
         session,
         title=title,
         interaction_profile_id=interaction_profile_id,
+        presentation=card_config.get("_presentation_mode", "classic"),
         mentions_enabled=card_interaction_mention_enabled(
             card_config,
             kind=getattr(session.active_interaction, "kind", "") or "",
@@ -7483,15 +7462,21 @@ def _footer_fields_for_session(
 async def _populate_subscription_usage(
     app: web.Application, session: CardSession
 ) -> None:
+    if not uses_codex_subscription(session.model, session.provider):
+        session.subscription_usage = ""
+        return
     if session.status != "completed" or session.subscription_usage_checked:
         return
     footer_fields = _footer_fields_for_session(app, session)
     if not footer_fields or "subscription_usage" not in footer_fields:
         return
     session.subscription_usage_checked = True
-    session.subscription_usage = await fetch_codex_subscription_usage(
+    route = (session.model, session.provider)
+    usage = await fetch_codex_subscription_usage(
         app[OPERATIONS_HERMES_ROOT_KEY]
     )
+    # A delayed account response must not attach to changed model metadata.
+    session.subscription_usage = usage if route == (session.model, session.provider) else ""
 
 
 def _interaction_mode_for_session_key(app: web.Application, session_key: str) -> str:

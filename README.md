@@ -150,6 +150,8 @@ card:
 | `focused` | 重点看答案；思考放在面板，正常完成后精简成功工具行 |
 | `detailed` | 展开思考与工具过程，便于追踪任务 |
 
+开发分支新增可选 `task` 布局与九种状态的离线预览，**尚未发布**。启用方式、配置来源和回退见[任务卡片](docs/task-cards.md)。
+
 同层显式字段优先于预设。若从完整示例复制了旧显示开关，预设可能被覆盖；用 `hermes-feishu-card card-config --config <配置路径>` 检查有效值，重启 sidecar 后生效。更多选项见[阅读预设](docs/wiki/reading-presets.md)。
 
 | 想调整什么 | 配置 / 文档 |

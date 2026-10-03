@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 ## [Unreleased]
 
+- Add opt-in `reading_preset: task`: state-led headings, clearer type roles, complete interaction prompts, compact attributed metrics, and one bounded same-card silence observation without refreshing pending input or terminal cards.
+- Extend `card-config` with appearance values and per-role sources, explicit next-load semantics, and credential-free offline HTML/Card JSON previews for nine scenarios; preserve existing files on output collisions.
+- Extract pure task presentation and shared renderer options; add focused preflight appearance/quota groups and AGENTS.md routing.
+- Verify and pin Hermes main `c8301ea6c9b797184df16a9c5dd462400b264ff4` (2026-10-03) for exact source compatibility.
+- Show opt-in Codex subscription quota only for a completed GPT turn attributed to `openai-codex`; omit unrelated/unknown models, other providers and stale quota after a model change.
+
 ## [4.6.13] - 2026-10-02
 
 - Move managed sidecar control tokens from argv to private files; retain ownership handshake, authenticated stop and restart behavior, with no insecure fallback (#367, ffdxdynotable).

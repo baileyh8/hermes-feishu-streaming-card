@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src data:">
+<title>Hermes 卡片预览</title>
+<style>
+:root{color-scheme:light;--page:#f5f6f8;--surface:#fff;--text:#20242e;--muted:#677183;--line:#e3e7ed;--soft:#f4f6f9;--blue:#225fcc;--shadow:0 8px 28px #17233709}
+*{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--text);font:14px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+body.dark{color-scheme:dark;--page:#171b22;--surface:#242a34;--text:#e6eaf0;--muted:#a5adba;--line:#39414e;--soft:#2d3440;--blue:#8bb5ff;--shadow:none}
+main{max-width:1300px;margin:auto;padding:40px 32px 70px}header.page{display:flex;gap:24px;justify-content:space-between;align-items:start;margin-bottom:28px}
+h1{font-size:27px;font-weight:650;letter-spacing:-.7px;margin:0 0 7px}p{margin:0 0 10px}.caption{color:var(--muted);font-size:13px;max-width:720px}
+.eyebrow{font-size:12px;letter-spacing:1.3px;color:var(--blue);margin-bottom:12px;font-weight:650}a{color:var(--blue);text-decoration:none}
+.toolbar{display:flex;flex-wrap:wrap;gap:18px;align-items:center;background:var(--surface);border:1px solid var(--line);padding:14px 18px;border-radius:12px;margin-bottom:24px}
+label{display:flex;align-items:center;gap:9px;color:var(--muted)}select,.toggle,.export{border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:7px;padding:7px 11px;font:inherit}
+.toggle{cursor:pointer}select{max-width:220px}.export{white-space:nowrap;font-size:13px}.toolbar .end{margin-left:auto}
+.stage{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;align-items:start}.column{min-width:0}
+.rail-label{display:flex;justify-content:space-between;margin:0 0 12px;font-size:13px;font-weight:650}.rail-label span{font-weight:400;color:var(--muted);font-size:12px}
+.chat{background:var(--soft);padding:22px;border-radius:14px;border:1px solid var(--line);min-height:340px}
+.sender{display:flex;align-items:center;gap:9px;margin-bottom:12px;color:var(--muted);font-size:12px}.avatar{display:grid;place-items:center;width:28px;height:28px;border-radius:8px;background:#e5edff;color:#2e60be;font-weight:700}
+.card{border:1px solid var(--line);border-radius:10px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow);overflow-wrap:anywhere}
+.card-head{padding:14px 18px;background:#eaf1ff;color:#244d89}.card-head.green{background:#e9f4ed;color:#286843}.card-head.orange{background:#fff1df;color:#87530a}.card-head.red{background:#fdecee;color:#983849}.card-head.grey{background:#eceff3;color:#515f70}
+.dark .card-head{background:#2a3b57;color:#c0d5fa}.dark .card-head.green{background:#293f35;color:#b4dfc6}.dark .card-head.orange{background:#4b3924;color:#f4d097}.dark .card-head.red{background:#4b3037;color:#f3bac4}.dark .card-head.grey{background:#343d49;color:#ccd6e4}
+.card-title{font-weight:650;font-size:16px;line-height:1.6}.card-subtitle{font-size:12px;opacity:.85;margin-top:3px}.card-body{padding:18px}
+.md{white-space:normal;line-height:1.7;margin-bottom:12px;word-break:break-word}.md:last-child{margin-bottom:0}.md h2,.md h3{font-size:17px;line-height:1.6;margin:7px 0 12px}.md h4{font-size:15px;margin:6px 0}
+.md p{margin:0 0 9px}.md pre{overflow:auto;white-space:pre;background:var(--soft);padding:13px;border-radius:7px;border:1px solid var(--line);font-size:12px;line-height:1.65}.md code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.md blockquote{border-left:3px solid var(--line);padding:1px 0 1px 12px;margin:10px 0;color:var(--muted)}
+.md ul,.md ol{padding-left:20px;margin:8px 0}.pill{display:inline;padding:2px 5px;border-radius:4px;font-size:.9em;background:var(--soft);color:var(--blue)}.pill.neutral,.pill.grey{color:var(--muted)}.pill.green{color:#247149}.pill.red{color:#b74455}.pill.orange{color:#976012}.dark .pill.green{color:#9bd7ad}.dark .pill.red{color:#f8a6b6}.dark .pill.orange{color:#f2c37d}
+hr{border:0;border-top:1px solid var(--line);margin:16px 0}.footer{color:var(--muted)}details.panel{margin:12px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+summary{cursor:pointer;padding:10px 12px;line-height:1.6;font-size:13px;color:var(--muted)}details.panel>.inside{padding:2px 12px 12px}
+.cols{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.col{flex:1;min-width:120px}.actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.card button{font:inherit;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:6px;min-height:38px;padding:8px 13px;text-align:left;opacity:1;cursor:default;white-space:normal}
+.card button.primary{background:#3370ff;border-color:#3370ff;color:white}.card button.danger{color:#b74455;border-color:#d38e99}
+.field{border:1px solid var(--line);padding:10px 12px;color:var(--muted);border-radius:6px;margin:10px 0}.table-wrap{overflow:auto;margin:12px 0}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:9px 11px;text-align:left;border:1px solid var(--line)}th{background:var(--soft);font-weight:600}
+.settings{margin-top:26px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}.settings .inside{padding:0 18px 18px}.settings pre{white-space:pre-wrap;font-size:12px;overflow-wrap:anywhere;color:var(--muted)}
+.mobile .chat{max-width:390px;margin:auto;padding:15px}.mobile .card-body{padding:15px}.mobile .card-title{font-size:15px}.mobile .rail-label{max-width:390px;margin-left:auto;margin-right:auto}
+@media(max-width:850px){main{padding:24px 16px}.stage{grid-template-columns:minmax(0,1fr)}header.page{flex-direction:column;gap:10px}.toolbar .end{margin-left:0}.chat{padding:14px}.rail-label{margin-top:5px}}
+</style>
+<main>
+  <header class="page"><div><div class="eyebrow">HERMES / CARD PREVIEW</div><h1>先看看卡片怎么读</h1><p class="caption">同一份内容，对比经典与任务布局。这里使用示例数据和真实 renderer 输出；排版为离线模拟，仍需在飞书/Lark 客户端验收。</p></div><a class="export" href="cards.json" download>下载 Card JSON</a></header>
+  <section class="toolbar" aria-label="预览选项">
+    <label>场景 <select id="scenario" aria-label="卡片场景"></select></label>
+    <label>宽度 <select id="viewport" aria-label="模拟设备宽度"><option value="desktop">桌面</option><option value="mobile">手机</option></select></label>
+    <button class="toggle" id="theme" type="button">切换深色</button>
+    <span class="caption end">仅预览 · 卡片按钮不会提交</span>
+  </section>
+  <section class="stage" id="stage" aria-label="布局对比"></section>
+  <details class="settings"><summary>查看有效配置与来源</summary><div class="inside"><p class="caption">这是配置文件下次加载时的结果；未读取当前运行进程，也不会写入配置。</p><pre id="settings"></pre></div></details>
+</main>
+<script type="application/json" id="preview-data">__HFC_PREVIEW_DATA__</script>
+<script>
+const data=JSON.parse(document.querySelector('#preview-data').textContent);
+const el=(tag,cls='',text='')=>{const n=document.createElement(tag);n.className=cls;n.textContent=text;return n};
+const escapeText=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function inline(s){
+  let t=escapeText(s);
+  t=t.replace(/&lt;text_tag color=(?:&#39;|&quot;)(blue|green|red|orange|purple|indigo|grey|neutral)(?:&#39;|&quot;)&gt;([\s\S]*?)&lt;\/text_tag&gt;/g,'<span class="pill $1">$2</span>');
+  t=t.replace(/&lt;font color=(?:&#39;|&quot;)?[\w-]+(?:&#39;|&quot;)?&gt;([\s\S]*?)&lt;\/font&gt;/g,'$1');
+  t=t.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>').replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>');
+  return t;
+}
+function markdown(s){
+  const n=el('div','md'),lines=String(s??'').split('\n');let code=null,list=null;
+  const cells=line=>line.trim().replace(/^\||\|$/g,'').split(/(?<!\\)\|/).map(c=>c.trim().replace(/\\\|/g,'|'));
+  for(let i=0;i<lines.length;i++){
+    const line=lines[i];
+    if(line.startsWith(String.fromCharCode(96,96,96))){if(code===null){code=[]}else{const pre=el('pre');pre.append(el('code','',code.join('\n')));n.append(pre);code=null}continue}
+    if(code!==null){code.push(line);continue}
+    if(!line.trim()){list=null;continue}
+    if(line.includes('|')&&i+1<lines.length&&cells(lines[i+1]).every(c=>/^:?-{3,}:?$/.test(c))){
+      const wrap=el('div','table-wrap'),table=el('table'),tr=el('tr');
+      for(const text of cells(line)){const th=el('th');th.innerHTML=inline(text);tr.append(th)}table.append(tr);i++;
+      while(i+1<lines.length&&lines[i+1].includes('|')){const row=el('tr');for(const text of cells(lines[++i])){const td=el('td');td.innerHTML=inline(text);row.append(td)}table.append(row)}
+      wrap.append(table);n.append(wrap);list=null;continue;
+    }
+    const bullet=line.match(/^\s*(?:([-*+])|(\d+)\.)\s+(.+)$/);
+    if(bullet){const type=bullet[1]?'ul':'ol';if(!list||list.tagName.toLowerCase()!==type){list=el(type);if(type==='ol')list.start=Number(bullet[2]);n.append(list)}const li=el('li');li.innerHTML=inline(bullet[3]);list.append(li);continue}
+    list=null;
+    const m=line.match(/^(#{1,4})\s+(.+)$/),quote=line.match(/^>\s?(.*)$/);
+    const p=el(m?'h'+Math.min(4,m[1].length+1):quote?'blockquote':'p');
+    p.innerHTML=inline(m?m[2]:quote?quote[1]:line);n.append(p);
+  }
+  if(code!==null){const pre=el('pre');pre.append(el('code','',code.join('\n')));n.append(pre)}
+  return n;
+}
+let styles={},device='pc';
+function sizeFor(v){
+  if(v?.startsWith('hfc_')){const m=styles[v];v=m?.[device]||m?.default||'normal'}
+  return ({'normal':'14px','small':'13px','x-small':'12px','notation':'12px','large':'16px','medium':'14px','heading':'18px','heading-2':'19px','heading-3':'17px','heading-4':'16px'})[v]||'';
+}
+function node(item){
+  if(!item||typeof item!=='object')return el('span');
+  let n;
+  if(item.tag==='markdown'||item.tag==='plain_text'||item.tag==='lark_md'){
+    n=markdown(item.content||'');if(item.element_id==='footer')n.classList.add('footer');const size=sizeFor(item.text_size);if(size)n.style.fontSize=size;return n;
+  }
+  if(item.tag==='hr')return el('hr');
+  if(item.tag==='collapsible_panel'){
+    n=el('details','panel');n.open=!!item.expanded;const h=item.header||{};n.append(el('summary','',String(h.title?.content||h.title||'执行过程').replace(/^[▸▾]\s*/,'')));
+    const inside=el('div','inside');(item.elements||[]).forEach(x=>inside.append(node(x)));n.append(inside);return n;
+  }
+  if(item.tag==='column_set'){n=el('div','cols');(item.columns||[]).forEach(x=>n.append(node(x)));return n}
+  if(item.tag==='button'){n=el('button',['primary','danger'].includes(item.type)?item.type:'',item.text?.content||'选择');n.disabled=true;n.title='离线预览，不会提交';return n}
+  if(item.tag==='input'||String(item.tag).startsWith('select_'))return el('div','field',item.placeholder?.content||'输入或选择内容');
+  if(item.tag==='table'){
+    n=el('div','table-wrap');const table=el('table'),head=el('tr'),columns=item.columns||[];
+    columns.forEach(c=>head.append(el('th','',c.display_name||c.name||'')));table.append(head);
+    (item.rows||[]).forEach(row=>{const tr=el('tr');columns.forEach(c=>tr.append(el('td','',String(row[c.name]??''))));table.append(tr)});n.append(table);return n;
+  }
+  n=el('div',item.tag==='column'?'col':item.tag==='action'?'actions':'');
+  if(item.text?.content)n.append(markdown(item.text.content));
+  (item.elements||item.actions||[]).forEach(x=>n.append(node(x)));return n;
+}
+function render(){
+  const sample=data.scenarios.find(x=>x.id===document.querySelector('#scenario').value)||data.scenarios[0];
+  device=document.querySelector('#viewport').value==='mobile'?'mobile':'pc';
+  const stage=document.querySelector('#stage');stage.classList.toggle('mobile',device==='mobile');stage.replaceChildren();
+  for(const [layout,label] of [['classic','经典布局'],['task','任务布局']]){
+    const column=el('div','column'),caption=el('div','rail-label',label);caption.append(el('span','',sample.label));column.append(caption);
+    const chat=el('div','chat'),sender=el('div','sender');sender.append(el('div','avatar','H'),el('span','','Hermes · 示例机器人'));chat.append(sender);
+    const payload=sample.cards[layout],card=el('article','card');styles=payload.config?.style?.text_size||{};
+    if(payload.header){const head=el('div','card-head '+(payload.header.template||''));head.append(el('div','card-title',payload.header.title?.content||''));if(payload.header.subtitle)head.append(el('div','card-subtitle',payload.header.subtitle.content));card.append(head)}
+    const body=el('div','card-body');(payload.body?.elements||payload.elements||[]).forEach(x=>body.append(node(x)));card.append(body);chat.append(card);column.append(chat);stage.append(column);
+  }
+}
+const select=document.querySelector('#scenario');data.scenarios.forEach(s=>{const option=el('option','',s.label);option.value=s.id;select.append(option)});
+select.addEventListener('change',render);document.querySelector('#viewport').addEventListener('change',render);
+document.querySelector('#theme').addEventListener('click',()=>{const dark=document.body.classList.toggle('dark');document.querySelector('#theme').textContent=dark?'切换浅色':'切换深色'});
+document.querySelector('#settings').textContent=JSON.stringify(data.configuration,null,2);render();
+</script>
+</html>

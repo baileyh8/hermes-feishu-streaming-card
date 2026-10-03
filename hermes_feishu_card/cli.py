@@ -258,6 +258,7 @@ def _build_parser() -> argparse.ArgumentParser:
     card_config.add_argument("--profile-id")
     card_config.add_argument("--bot-id")
     card_config.add_argument("--json", action="store_true", dest="json_output")
+    card_config.add_argument("--preview-dir", help="write offline sample cards and an HTML comparison to a new directory")
 
     setup = subparsers.add_parser(
         "setup",
@@ -922,12 +923,25 @@ def _run_card_config(args: argparse.Namespace) -> int:
         # Selection errors contain fixed messages, never YAML values.
         print(str(exc), file=sys.stderr)
         return 2
+    if args.preview_dir:
+        from .preview import write_preview
+        try:
+            write_preview(Path(args.preview_dir).expanduser(), report)
+        except FileExistsError:
+            print("Preview files already exist; choose a new preview directory.", file=sys.stderr)
+            return 2
+        except (OSError, ValueError):
+            print("Unable to create a safe offline preview.", file=sys.stderr)
+            return 2
+        report["preview"] = {"files": ["index.html", "cards.json"], "mode": "offline_samples", "sends_messages": False}
     if args.json_output:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         for key, value in report["values"].items():
             print(f"{key}: {json.dumps(value, ensure_ascii=False)}  [{report['sources'][key]}]")
         print(report["note"])
+        if args.preview_dir:
+            print("Preview created: index.html and cards.json. Sample data only; no messages sent.")
     return 0
 
 

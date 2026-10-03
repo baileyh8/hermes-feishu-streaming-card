@@ -777,7 +777,7 @@ card:
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 ```
 
-多 Profile 模式下，`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不会覆盖 profile 内的 `feishu` 配置。`footer_fields` 支持 `duration`、`model`、`input_tokens`、`output_tokens`、`context`、`subscription_usage`。其中 `subscription_usage` 默认关闭；显式加入后，完成态会通过 Hermes runtime 的 `fetch_account_usage("openai-codex")` 显示 `5h 26% · weekly 89%` 风格的剩余额度。旧 Hermes、未登录、网络错误或超时会静默跳过。
+多 Profile 模式下，`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不会覆盖 profile 内的 `feishu` 配置。`footer_fields` 支持 `duration`、`model`、`input_tokens`、`output_tokens`、`context`、`subscription_usage`。其中 `subscription_usage` 默认关闭；显式加入后，仅在本轮 GPT 模型明确归属 `openai-codex` 时，通过 Hermes runtime 的 `fetch_account_usage("openai-codex")` 显示 `5h 26% · weekly 89%` 风格的剩余额度。归属来自本轮 `provider` 或 `openai-codex/gpt-…` 模型标识；只知道裸 GPT 名称不足以区分订阅与 API key。非 GPT、其他 provider、未知模型/归属都不查询、不显示这份额度，切换模型不会沿用上一轮额度。旧 Hermes 未报告归属、未登录、网络错误或超时会静默跳过。
 
 ### 卡片宽度
 
@@ -1085,3 +1085,8 @@ macOS 的持久服务提示明确 Linux systemd 限制；缺少可验证 pidfile
 ## 控制凭据文件（V4.6.13）
 
 受管启动只把 `--token-file` 路径传给 runner，token 存在私有 state 目录的 `sidecar-control.token`（POSIX 0600）。文件需保留供 systemd 自动重启；不可安全读写时必须失败，不回退 argv。升级后通过原服务管理入口重启 sidecar；不要手工删除仍被服务使用的文件。同用户访问与 Windows ACL 边界见 [发布说明](release-notes-v4.6.13.md)。
+
+
+## 任务布局与离线预览（开发分支）
+
+新增可选 `reading_preset: task`，以及 `card-config --preview-dir`。状态、字号、完整审批范围、配置来源与回退方式见[任务卡片说明](task-cards.md)。当前尚未发布；HTML 使用示例数据模拟排版，不代表真实客户端验收。

@@ -33,6 +33,8 @@ feishu:
   timeout_seconds: 30
 
 card:
+  # Development branch (unreleased): reading_preset: task opts into task layout.
+  # Check sources/preview with card-config --config <path> --preview-dir <new-dir>.
   # Global fallback title. profiles.<id>.card.title and bots.items.<id>.card.title
   # can override it; bot title wins over profile title.
   title: Hermes Agent
@@ -126,6 +128,7 @@ card:
   # Footer fields and order. Supported values:
   # duration, model, input_tokens, output_tokens, context, subscription_usage
   # subscription_usage is opt-in and uses Hermes native Codex account usage.
+  # Only shown for GPT turns attributed to openai-codex; other/unknown routes omit it.
   footer_fields:
     - duration
     - model

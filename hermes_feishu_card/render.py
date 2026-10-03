@@ -21,6 +21,8 @@ from .session import (
     _runtime_tool_summary,
 )
 from .status import StatusConfig, resolve_display_status
+from .subscription_usage import uses_codex_subscription
+from .presentation import apply_task_presentation, TASK_TEXT_SIZE_DEFAULTS
 from .text import (
     TableOverflowResult,
     normalize_stream_text,
@@ -129,6 +131,7 @@ def render_card(
     timeline_tools_per_reasoning: int = 0,
     thinking_body_tail_chars: int = 0,
     width_mode: str = "default",
+    presentation: str = "classic",
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -154,6 +157,7 @@ def render_card(
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
         thinking_body_tail_chars=thinking_body_tail_chars,
         width_mode=width_mode,
+        presentation=presentation,
     ).card
 
 
@@ -181,6 +185,7 @@ def render_card_result(
     timeline_tools_per_reasoning: int = 0,
     thinking_body_tail_chars: int = 0,
     width_mode: str = "default",
+    presentation: str = "classic",
 ) -> CardRenderResult:
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body,
@@ -213,6 +218,7 @@ def render_card_result(
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
         thinking_body_tail_chars=thinking_body_tail_chars,
         width_mode=width_mode,
+        presentation=presentation,
     )
     card = _render_card_unchecked(session, **render_options)
     inspection = inspect_card_limits(card)
@@ -292,7 +298,10 @@ def _render_card_unchecked(
     timeline_tools_per_reasoning: int = 0,
     thinking_body_tail_chars: int = 0,
     width_mode: str = "default",
+    presentation: str = "classic",
 ) -> Dict[str, Any]:
+    if presentation == "task":
+        text_sizes = {**TASK_TEXT_SIZE_DEFAULTS, **dict(text_sizes or {})}
     used_text_size_roles: set[str] = set()
     status = _render_status(session, status_config=status_config)
     display_status = resolve_display_status(
@@ -312,6 +321,7 @@ def _render_card_unchecked(
         session,
         footer_fields,
         display_status=display_status,
+        compact=presentation == "task",
         # Maintainer note (contract change): the footer no longer repeats "本轮回复结束" at all.
         # The user asked for it to go from the footer ("footer 区域不显示本轮回复结束"), and only
         # the native-reply rail ever had it there — that rail drops the whole header
@@ -510,11 +520,16 @@ def _render_card_unchecked(
     if not native_reply_completed:
         card["header"] = header
     if _uses_legacy_callback_card(session, interaction_mode=interaction_mode):
-        return _render_legacy_callback_card(
+        card = _render_legacy_callback_card(
             session,
             header=header,
             profile_id=_normalize_interaction_profile_id(interaction_profile_id),
             mentions_enabled=mentions_enabled,
+        )
+    if presentation == "task":
+        card = apply_task_presentation(
+            card, session, title=configured_title, action=header_action or runtime_summary,
+            has_primary_content=bool(session.answer_text or (stream_thinking_to_body and session.thinking_text)),
         )
     return card
 
@@ -549,6 +564,7 @@ def render_legacy_interaction_callback_card(
     title: str = DEFAULT_TITLE,
     interaction_profile_id: str = "default",
     mentions_enabled: bool = True,
+    presentation: str = "classic",
 ) -> Dict[str, Any]:
     """Render one interaction entirely on Feishu's legacy callback rail.
 
@@ -578,12 +594,14 @@ def render_legacy_interaction_callback_card(
             "content": header_title,
         },
     }
-    return _render_legacy_callback_card(
+    card = _render_legacy_callback_card(
         session,
         header=header,
         profile_id=_normalize_interaction_profile_id(interaction_profile_id),
         mentions_enabled=mentions_enabled,
     )
+
+    return apply_task_presentation(card, session, title=title) if presentation == "task" else card
 
 
 def _render_legacy_callback_card(
@@ -2498,6 +2516,7 @@ def _render_footer(
     footer_fields: list[str] | tuple[str, ...] | None = None,
     *,
     display_status: str = "",
+    compact: bool = False,
 ) -> str:
     # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
     # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
@@ -2584,9 +2603,13 @@ def _render_footer(
     # 如果这样的话感觉不需要展示这一行"). The guard must be HERE, before `values` is built: the zeroed
     # strings ("0s", "Unknown", "↑0", "ctx 0/0 0%") are all TRUTHY, so an emptiness check on the
     # rendered values cannot tell "no data" from "real data" — it would pass every field through.
-    # `subscription_usage` counts as real data on its own: it is the plan-quota line
-    # ("5h 26% · weekly 89%") a turn can report with no duration/model/token figures at all.
+    # Quota is real data only for a known Codex GPT route. Cached or externally
+    # supplied values must not leak onto another provider/model's footer.
     # A turn that reported any metric keeps its full line, so nothing real is ever hidden.
+    subscription_usage = (
+        session.subscription_usage
+        if uses_codex_subscription(session.model, session.provider) else ""
+    )
     if not (
         duration > 0
         or model != "Unknown"
@@ -2594,7 +2617,7 @@ def _render_footer(
         or output_tokens
         or max_context
         or session.tool_count
-        or session.subscription_usage
+        or subscription_usage
     ):
         return pill
     values = {
@@ -2606,7 +2629,7 @@ def _render_footer(
             f"ctx {_format_count(used_context)}/"
             f"{_format_count(max_context)} {context_percent}%"
         ),
-        "subscription_usage": session.subscription_usage,
+        "subscription_usage": subscription_usage,
     }
     selected = []
     if session.tool_count:
@@ -2614,6 +2637,14 @@ def _render_footer(
         # (it used to be appended last, after ctx); it carries a hash, per the user's request.
         selected.append(f"工具 #{session.tool_count}")
     fields = DEFAULT_FOOTER_FIELDS if footer_fields is None else footer_fields
+    if compact:
+        available = {
+            "duration": duration > 0, "model": model != "Unknown",
+            "input_tokens": "input_tokens" in tokens,
+            "output_tokens": "output_tokens" in tokens,
+            "context": max_context > 0, "subscription_usage": bool(subscription_usage),
+        }
+        fields = [field for field in fields if available.get(field, False)]
     for field in fields:
         value = values.get(field)
         if value:

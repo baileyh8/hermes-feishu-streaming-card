@@ -725,7 +725,7 @@ card:
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 ```
 
-In multi-profile mode, `FEISHU_APP_ID`/`FEISHU_APP_SECRET` env vars are ignored. `footer_fields` accepts: `duration`, `model`, `input_tokens`, `output_tokens`, `context`, `subscription_usage`. `subscription_usage` is disabled by default; when explicitly included, completed cards use Hermes runtime `fetch_account_usage("openai-codex")` and render remaining quota in the `5h 26% · weekly 89%` style. Older Hermes versions, missing login, network errors, and timeouts silently omit it.
+In multi-profile mode, `FEISHU_APP_ID`/`FEISHU_APP_SECRET` env vars are ignored. `footer_fields` accepts: `duration`, `model`, `input_tokens`, `output_tokens`, `context`, `subscription_usage`. `subscription_usage` is disabled by default. When enabled, only completed GPT turns attributed to `openai-codex` use Hermes runtime `fetch_account_usage("openai-codex")` to show remaining quota in the `5h 26% · weekly 89%` style. Attribution comes from the turn's `provider` or an `openai-codex/gpt-…` model identifier; a bare GPT name cannot distinguish subscription use from an API key. Non-GPT models, other providers and unknown routes neither fetch nor display this quota, and model changes do not carry it to the next turn. Older Hermes versions without route metadata, missing login, network errors, and timeouts silently omit it.
 
 ### Card width
 
@@ -1011,3 +1011,8 @@ macOS persistence guidance explains the Linux systemd requirement; a missing ver
 ## Control credential file (V4.6.13)
 
 Managed launches pass only `--token-file`; the private state directory contains `sidecar-control.token` (POSIX 0600). Keep it for systemd restarts. Unsafe reads/writes fail without argv fallback. Restart through the existing service manager after upgrading. See [release notes](release-notes-v4.6.13.en.md) for same-user trust and Windows ACL limits.
+
+
+## Task layout and offline preview (development branch)
+
+The unreleased `reading_preset: task` and `card-config --preview-dir` provide clearer state/typography and safe configuration previews. See [task cards](task-cards.md#english-quick-reference) for scope, rollback and real-client acceptance boundaries.

@@ -1581,20 +1581,36 @@ def test_render_completed_card_handles_missing_token_stats():
     assert "↓0" not in footer["content"]
 
 
-def test_subscription_usage_alone_keeps_the_footer_line():
-    """A quota-only card must not lose its usage line.
-
-    Regression guard for the empty-metrics guard above: the plan-quota field IS real data, so a card
-    reporting ONLY `subscription_usage` (no duration, model, tokens or tool count) still renders it.
-    Dropping it would hide the one number the footer was configured for.
-    """
+def test_subscription_usage_without_token_metrics_keeps_the_footer_line():
+    """A known Codex GPT turn keeps its configured quota without token metrics."""
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     session.answer_text = "最终答案"
     session.status = "completed"
+    session.model = "openai-codex/gpt-5.5"
     session.subscription_usage = "5h 26% · weekly 89%"
     card = render_card(session, footer_fields=["duration", "subscription_usage"])
     footer = next(item for item in card["body"]["elements"] if item.get("element_id") == "footer")
     assert "5h 26% · weekly 89%" in footer["content"]
+
+
+@pytest.mark.parametrize("model,provider", [
+    ("deepseek-v4-pro", "deepseek"),
+    ("gpt-5.5", "openai"),
+    ("openrouter/openai/gpt-5.5", ""),
+    ("Unknown", ""),
+])
+def test_footer_hides_cached_codex_quota_for_unrelated_or_unknown_model(model, provider):
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "完整答案"
+    session.status = "completed"
+    session.model = model
+    session.provider = provider
+    session.subscription_usage = "5h 26% · weekly 89%"
+
+    card = render_card(session, footer_fields=["subscription_usage"])
+
+    assert card["body"]["elements"][-1]["content"] == "<text_tag color='green'>已完成</text_tag>"
+    assert "完整答案" in str(card)
 
 
 def test_body_reasoning_reads_chronologically_while_the_panel_reads_newest_first():
@@ -1675,6 +1691,7 @@ def test_render_completed_card_footer_adds_configured_subscription_usage_only():
     session.answer_text = "最终答案"
     session.status = "completed"
     session.duration = 3
+    session.model = "openai-codex/gpt-5.5"
     session.subscription_usage = "5h 26% · weekly 89%"
 
     configured = render_card(

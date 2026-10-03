@@ -70,6 +70,19 @@ def test_check_only_is_readonly_and_never_claims_test_pass(repo, capsys, monkeyp
     assert report["state_dir"]["created"] is False
 
 
+def test_task_presentation_and_rules_changes_select_their_contract_tests():
+    targets, groups, unknown = preflight.select_targets([
+        "AGENTS.md", "hermes_feishu_card/render_options.py",
+        "hermes_feishu_card/preview_template.html", "hermes_feishu_card/reading.py",
+        "hermes_feishu_card/presentation.py", "hermes_feishu_card/preview.py",
+        "hermes_feishu_card/subscription_usage.py",
+    ], [])
+    assert unknown == 0
+    assert set(groups) == {"docs", "appearance", "runtime", "quota"}
+    assert {"tests/unit/test_docs.py", "tests/unit/test_card_preview.py",
+            "tests/integration/test_server.py", "tests/unit/test_subscription_usage.py"} <= set(targets)
+
+
 def test_missing_fixture_reports_incomplete_and_blocks_full(repo, capsys, monkeypatch):
     monkeypatch.setattr(preflight, "execute_suite", lambda *args: pytest.fail("pytest started without required fixture"))
     for args in ([], ["--suite", "full"]):

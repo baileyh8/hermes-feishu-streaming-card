@@ -156,6 +156,8 @@ card:
 | `focused` | Emphasize the answer; reasoning stays in the panel and successful tool rows are reduced after normal completion |
 | `detailed` | Expand reasoning and tools to follow the task |
 
+The development branch adds an optional `task` layout and an offline preview of nine states; **these are not yet released**. See [task cards](docs/task-cards.md#english-quick-reference) for setup, configuration sources and rollback.
+
 Explicit fields at the same level override presets. Copying all existing display switches may override your preset; inspect effective values with `hermes-feishu-card card-config --config <config-path>` and restart the sidecar to apply changes. See [reading presets](docs/wiki/reading-presets.md).
 
 | Change | Setting / reference |

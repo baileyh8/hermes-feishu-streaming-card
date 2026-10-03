@@ -171,6 +171,8 @@ class CardSession:
     status: str = "thinking"
     display_status: str = ""
     display_status_source: str = "session"
+    # Rendering-only context, never event authority or persisted execution state.
+    presentation_state: str = ""
     last_sequence: int = -1
     thinking_text: str = ""
     answer_text: str = ""

@@ -47,7 +47,7 @@ linter or typechecker; do not claim their checks ran or mass-format existing cod
 | Hermes capability/plugin/legacy adapters | `hermes_plugin*`, `hook_runtime.py`, `install/native_hooks.py` |
 | Event and interaction contracts | `events.py`, `session.py`, `runtime_interaction_transport.py` |
 | Orchestration, identity and delivery ownership | `server.py`, `native_handoff.py`, `delivery_policy.py` |
-| Presentation and payload budgets | `render.py`, `reading.py`, `card_limits.py`, `text.py` |
+| Presentation and payload budgets | `render.py`, `presentation.py`, `reading.py`, `render_options.py`, `card_limits.py`, `text.py` |
 | Feishu I/O and CardKit sequencing | `feishu_client.py`, `cardkit.py` |
 | Config, installation and safe recovery | `config.py`, `cli.py`, `install/` |
 | Process credentials and service ownership | `process.py`, `runner.py`, `persistent_service.py` |
@@ -119,8 +119,9 @@ git diff --check
 ```
 
 Choose only the relevant commands, not every group for every change. `AGENTS.md`
-and some modules are not auto-mapped: select groups explicitly and add focused
-tests from the maintenance matrix. Pure docs/rules changes need docs/metadata and
+routes to docs; the new `appearance` and `quota` groups cover their feature
+boundaries. Other unmapped files still require explicit groups and focused tests
+from the maintenance matrix. Pure docs/rules changes need docs/metadata and
 link/contract checks; they do not require a new product release or a redundant
 local full run. Runtime/stability changes need meaningful failing reproduction,
 normal/failure/duplicate/late-event assertions and the affected integration paths.

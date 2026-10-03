@@ -1,6 +1,7 @@
 """Exercise preset resolution through HTTP and the real multi-bot factory."""
 import asyncio
 import copy
+import time
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -44,9 +45,10 @@ async def wait_for(capture, text):
 @pytest.mark.parametrize("terminal", ["completed", "failed"])
 @pytest.mark.parametrize("explicit_hide", [None, True, False])
 @pytest.mark.parametrize("streaming", [False, True])
-async def test_focused_http_keeps_failed_activity_and_legacy_overrides(terminal, explicit_hide, streaming):
+@pytest.mark.parametrize("preset", ["focused", "task"])
+async def test_focused_http_keeps_failed_activity_and_legacy_overrides(terminal, explicit_hide, streaming, preset):
     capture = CardCapture()
-    settings = {"reading_preset": "focused", "flush_interval_ms": 0, "streaming_mode": streaming}
+    settings = {"reading_preset": preset, "flush_interval_ms": 0, "streaming_mode": streaming}
     if explicit_hide is not None:
         settings["hide_completed_tool_activity"] = explicit_hide
     app = create_app(capture, card_config=settings)
@@ -67,6 +69,8 @@ async def test_focused_http_keeps_failed_activity_and_legacy_overrides(terminal,
         assert (await http.post("/events", json=event(f"message.{terminal}", 4, data))).status == 200
         card = await wait_for(capture, "FINAL_RESULT" if terminal == "completed" else "FAILURE_REASON")
         assert "PRESERVED_PARTIAL" in str(card)
+        if preset == "task":
+            assert ("已完成" if terminal == "completed" else "已停止") in card["header"]["title"]["content"]
         tool_rows = [e for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_")]
         # The missing tool terminal becomes interrupted; compaction may hide
         # successful work but must preserve evidence of an unfinished call.
@@ -79,7 +83,8 @@ async def test_focused_http_keeps_failed_activity_and_legacy_overrides(terminal,
         assert capture.updated[-1][1] == before
 
 
-async def test_http_real_factory_uses_bot_preset_over_profile_but_keeps_explicit_keys(tmp_path):
+@pytest.mark.parametrize("preset", ["focused", "task"])
+async def test_http_real_factory_uses_bot_preset_over_profile_but_keeps_explicit_keys(tmp_path, preset):
     path = tmp_path / "config.yaml"
     path.write_text("""
 card:
@@ -98,7 +103,7 @@ profiles:
           card:
             reading_preset: focused
             timeline_expanded: true
-""")
+""".replace("reading_preset: focused", "reading_preset: " + preset))
     config = load_config(path)
     profile = config["profiles"]["work"]
     capture = CardCapture()
@@ -111,3 +116,45 @@ profiles:
         assert "BOT_THINKING" not in "\n".join(e.get("content", "") for e in card["body"]["elements"])
         panel = next(e for e in card["body"]["elements"] if e.get("element_id") == "auxiliary_timeline")
         assert panel["expanded"] is True
+        assert ("执行过程" in panel["header"]["title"]["content"]) is (preset == "task")
+
+
+@pytest.mark.parametrize("stop", [None, "completed", "interaction"])
+async def test_task_silence_refresh_is_bounded_and_freezes_for_terminal_or_input(monkeypatch, stop):
+    from hermes_feishu_card import server
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def controlled_sleep(delay):
+        assert 0 <= delay <= 60
+        entered.set()
+        await release.wait()
+    monkeypatch.setattr(server, "CARD_ANIMATION_MAX_UPDATES", 0)
+    monkeypatch.setattr(server, "_CARD_ANIMATION_SLEEP", controlled_sleep)
+    capture = CardCapture()
+    app = create_app(capture, card_config={"reading_preset": "task", "flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        assert (await http.post("/events", json=event("message.started", 0))).status == 200
+        await asyncio.wait_for(entered.wait(), 1)
+        assert (await http.post("/events", json=event("thinking.delta", 1, {"text": "OBSERVED_THINKING"}))).status == 200
+        value = next(iter(app[server.SESSIONS_KEY].values()))
+        value.updated_at = time.time() - 130
+        if stop == "completed":
+            assert (await http.post("/events", json=event("message.completed", 2, {"answer": "FINAL_RESULT"}))).status == 200
+            await wait_for(capture, "FINAL_RESULT")
+        elif stop == "interaction":
+            assert (await http.post("/events", json=event("interaction.requested", 2, {
+                "interaction_id": "fixture-choice", "kind": "clarify", "prompt": "选择内容",
+                "options": [{"label": "选项", "value": "one"}],
+            }))).status == 200
+        before = len(capture.updated)
+        release.set()
+        if stop is None:
+            card = await wait_for(capture, "等待新进展")
+            assert "2 分钟未收到新事件" in str(card)
+            footer = next(e["content"] for e in card["body"]["elements"] if e.get("element_id") == "footer")
+            assert "执行中" not in footer
+            assert len(capture.sent) == 1
+        # Wait for the existing lifecycle task to finish; it cannot keep PATCHing.
+        tasks = list(app[server.CARD_ANIMATION_TASKS_KEY].values())
+        if tasks:
+            await asyncio.wait_for(asyncio.gather(*tasks), 1)
+        assert len(capture.updated) == before + (1 if stop is None else 0)

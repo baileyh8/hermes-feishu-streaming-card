@@ -281,3 +281,8 @@ Use the outbound `_delivery_adapter_for` resolver when present; None/errors are 
 ## 控制凭据文件（V4.6.13）
 
 受管启动只把 `--token-file` 路径传给 runner，token 存在私有 state 目录的 `sidecar-control.token`（POSIX 0600）。文件需保留供 systemd 自动重启；不可安全读写时必须失败，不回退 argv。升级后通过原服务管理入口重启 sidecar；不要手工删除仍被服务使用的文件。同用户访问与 Windows ACL 边界见 [发布说明](../release-notes-v4.6.13.md)。
+
+
+## Task presentation and preview (unreleased)
+
+`presentation.py` only derives display state; `render_options.py` is the shared runtime/preview boundary. `preview.py` must stay offline and export allowlisted configuration plus synthetic examples. The task preset uses the existing animation/flush lifecycle for at most one extra silence PATCH; pending input, terminal state, owner changes and cleanup must stop it. Run `python tools/preflight.py --suite focused --module appearance --module quota --module runtime` for this boundary, then full regression for runtime changes. See [task cards](../task-cards.md).
