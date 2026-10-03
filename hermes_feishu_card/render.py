@@ -1864,7 +1864,8 @@ def _format_tool_arguments(pairs: list[tuple[str, str]]) -> str:
 
 
 def _tool_activity_text(
-    tool: ToolState, *, max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS
+    tool: ToolState, *, max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
+    prefer_full_target: bool = False,
 ) -> str:
     """The live action line for a tool: its friendly action plus target ("读取文件：session.py").
 
@@ -1880,6 +1881,17 @@ def _tool_activity_text(
     rather than a hardcoded phrase list keeps this correct as phrases change.
     """
     target, _ = _tool_detail_lines(tool.detail)
+    if prefer_full_target and target.endswith(("...", "…")):
+        # Hermes previews can already be shortened before reaching HFC. Once
+        # task details move into the panel, the body must still name the target.
+        for line in str(tool.detail or "").splitlines():
+            match = _TOOL_ARGUMENT_LINE_RE.match(line.strip())
+            if match:
+                full_target = next((value for key, value in _tool_argument_pairs(match.group(1))
+                                    if key.lower() in _TOOL_ARGUMENT_KEY_PRIORITY), "")
+                if full_target:
+                    target = full_target
+                    break
     if not target:
         return ""
     summary = _runtime_tool_summary(tool.name, target)
@@ -1975,7 +1987,7 @@ def _tool_activity_row(
     # the parameters. Only the first row is unconditional; the action row is dropped when the tool
     # has no target to name, and the parameter row when its arguments carry nothing new.
     lines = [" · ".join(parts)]
-    action = _tool_activity_text(tool, max_chars=max_chars)
+    action = _tool_activity_text(tool, max_chars=max_chars, prefer_full_target=task_layout)
     if action:
         lines.append(action)
     params = _tool_activity_params(tool, max_chars=max_chars)

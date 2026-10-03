@@ -161,6 +161,18 @@ def test_task_parallel_tools_only_move_parameters_that_are_in_the_rendered_panel
     assert "timeout" in str(rows) + str(panel) and "limit" in str(rows) + str(panel)
 
 
+def test_task_current_action_keeps_identifiable_target_when_upstream_preview_was_shortened():
+    value = running_tool_session()
+    command = "python3 /example/acceptance/work/long_task.py"
+    detail = 'python3 /example/acceptance/...\n参数: ' + json.dumps({"command": command, "timeout": 120})
+    value.tools["fixture-tool"].detail = detail
+    value.timeline.record_tool("fixture-tool", "terminal", "running", detail)
+    card = render_card(value, presentation="task")
+    activity = next(e["content"] for e in card["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_"))
+    assert command in activity
+    assert "参数:" not in activity
+
+
 def test_task_approval_keeps_full_prompt_scope_and_callback_values():
     value = session()
     value.active_interaction = InteractionState(
