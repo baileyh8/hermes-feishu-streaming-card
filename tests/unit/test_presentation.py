@@ -302,6 +302,101 @@ def test_task_interaction_receipt_color_matches_its_own_state(status, color):
     assert card["header"]["template"] == color
 
 
+def test_task_failed_approval_marks_prompt_as_history_without_losing_scope():
+    from hermes_feishu_card.render import render_legacy_interaction_callback_card
+    value = session(status="failed")
+    value.active_interaction = InteractionState(
+        interaction_id="fixture", kind="approval", prompt="需要授权后继续执行",
+        description="完整操作范围：只允许修改 example.txt。", status="failed",
+        error="本轮任务已结束，未提交的选择已失效。",
+        options=[InteractionOption("允许一次", "once"), InteractionOption("拒绝", "deny")],
+    )
+    before = snapshot(value)
+    classic = render_legacy_interaction_callback_card(value)
+    task = render_legacy_interaction_callback_card(value, presentation="task")
+    assert task["elements"][0]["content"] == "**原审批请求**\n\n需要授权后继续执行"
+    assert classic["elements"][0]["content"] == "需要授权后继续执行"
+    assert value.active_interaction.description in str(task)
+    assert "允许一次" in str(task) and "拒绝" in str(task)
+    assert value.active_interaction.error in str(task)
+    assert "interaction.select" not in str(task)
+    assert snapshot(value) == before
+
+
+@pytest.mark.parametrize("kind", ["approval", "clarify"])
+def test_task_short_single_choices_remove_only_generated_duplicate_list(kind):
+    from hermes_feishu_card.render import render_legacy_interaction_callback_card
+    value = session()
+    # The scope deliberately matches the generated options. It must survive.
+    option_list = "1. 允许一次\n\n2. 拒绝"
+    value.active_interaction = InteractionState(
+        interaction_id="fixture", kind=kind, prompt="确认操作？", description=option_list,
+        options=[InteractionOption("允许一次", "once"), InteractionOption("拒绝", "deny")],
+    )
+    classic = render_legacy_interaction_callback_card(value)
+    task = render_legacy_interaction_callback_card(value, presentation="task")
+    assert sum(e.get("content") == option_list for e in classic["elements"]) == 2
+    assert sum(e.get("content") == option_list for e in task["elements"]) == 1
+    def buttons(node):
+        if isinstance(node, dict):
+            if node.get("tag") == "button":
+                yield node["text"]["content"], node["value"]
+            for child in node.values():
+                yield from buttons(child)
+        elif isinstance(node, list):
+            for child in node:
+                yield from buttons(child)
+    assert [text for text, _ in buttons(task)] == ["允许一次", "拒绝"]
+    assert [value for _, value in buttons(task)] == [value for _, value in buttons(classic)]
+
+
+@pytest.mark.parametrize("multi_select,long_label", [(True, False), (False, True)])
+def test_task_choices_retain_list_when_controls_do_not_carry_complete_labels(multi_select, long_label):
+    from hermes_feishu_card.render import render_legacy_interaction_callback_card
+    label = "仅允许本次请求操作指定目录并保留其他所有文件" if long_label else "允许一次"
+    value = session()
+    value.active_interaction = InteractionState(
+        interaction_id="fixture", kind="approval", prompt="确认操作？",
+        multi_select=multi_select,
+        options=[InteractionOption(label, "once"), InteractionOption("拒绝", "deny")],
+    )
+    task = render_legacy_interaction_callback_card(value, presentation="task")
+    assert any(e.get("content") == f"1. {label}\n\n2. 拒绝" for e in task["elements"])
+
+
+def test_task_event_sourced_generic_interrupt_uses_header_and_keeps_tool_evidence():
+    from hermes_feishu_card.events import SidecarEvent
+    value = running_tool_session()
+    value.thinking_text = "已读取文件，正在检查结果。"
+    value.apply(SidecarEvent(
+        schema_version="1", event="message.failed", sequence=1,
+        conversation_id=value.conversation_id, message_id=value.message_id, chat_id=value.chat_id,
+        platform="feishu", created_at=time.time(), data={"error": "任务已中断"},
+    ))
+    assert value.terminal_reasoning_notice == "任务已中断"
+    before = snapshot(value)
+    classic = render_card(value)
+    result = render_card_result(value, presentation="task")
+    task = result.card
+    assert task["header"]["title"]["content"].endswith("已停止")
+    assert not any(e.get("element_id", "").startswith("main_content") for e in task["body"]["elements"])
+    assert result.primary_text == ""
+    assert "任务已中断" in str(classic)
+    assert value.thinking_text in str(task)
+    assert any("已中断" in e.get("content", "") and "terminal" in e.get("content", "")
+               for e in task["body"]["elements"] if e.get("element_id", "").startswith("tool_activity_"))
+    assert snapshot(value) == before
+
+
+@pytest.mark.parametrize("notice", ["", "任务已中断：连接已断开", "读取文件失败：权限不足"])
+def test_task_does_not_merge_unsourced_or_specific_failure_content(notice):
+    value = session(status="failed", answer_text=notice or "任务已中断",
+                    terminal_reasoning_notice=notice)
+    task = render_card(value, presentation="task")
+    assert any(e.get("content") == value.answer_text for e in task["body"]["elements"]
+               if e.get("element_id", "").startswith("main_content"))
+
+
 def test_task_style_never_evades_final_card_capacity_gate():
     value = session(status="completed", answer_text="完整答案" * 12000)
     result = render_card_result(value, presentation="task")

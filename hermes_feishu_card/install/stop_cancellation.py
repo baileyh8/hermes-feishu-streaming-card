@@ -5,6 +5,22 @@ import ast
 BEGIN = "# HERMES_FEISHU_CARD_BASE_STOP_CANCEL_PATCH_BEGIN"
 END = "# HERMES_FEISHU_CARD_BASE_STOP_CANCEL_PATCH_END"
 _CANCEL = "await self.cancel_session_processing(session_key, release_guard=False, discard_pending=False)"
+_LEGACY_PREFIX = '''current_guard = self._active_sessions.get(session_key)
+command_guard = asyncio.Event()
+self._active_sessions[session_key] = command_guard
+thread_meta = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))'''
+_LEGACY_REPLY = '''response = await self._message_handler(event)
+_text, _eph_ttl = self._unwrap_ephemeral(response)
+if _text:
+    logger.info("[%s] Sending command '/%s' response (%d chars) to %s",
+                self.name, cmd, len(_text), event.source.chat_id)
+    _r = await self._send_with_retry(
+        chat_id=event.source.chat_id, content=_text,
+        reply_to=_reply_anchor_for_event(event),
+        metadata=_mark_notify_metadata(thread_meta))
+    if _eph_ttl > 0 and _r.success and _r.message_id:
+        self._schedule_ephemeral_delete(
+            chat_id=event.source.chat_id, message_id=_r.message_id, ttl_seconds=_eph_ttl)'''
 
 
 def _same(node, source):
@@ -14,6 +30,34 @@ def _same(node, source):
 
 def _fail():
     raise ValueError("unsafe stop cancellation contract")
+
+
+def _same_body(nodes, source):
+    expected = ast.parse(source).body
+    return len(nodes) == len(expected) and all(
+        ast.dump(a, include_attributes=False) == ast.dump(b, include_attributes=False)
+        for a, b in zip(nodes, expected))
+
+
+def _legacy_reply(dispatch, attempt):
+    """Verified pre-extraction reply, including its session and topic scope."""
+    prefix = dispatch.body[:dispatch.body.index(attempt)]
+    if (prefix and isinstance(prefix[0], ast.Expr)
+            and isinstance(prefix[0].value, ast.Constant)
+            and isinstance(prefix[0].value.value, str)):
+        prefix = prefix[1:]
+    if prefix and _same(prefix[0], '''logger.debug(
+        "[%s] Command '/%s' bypassing active-session guard for %s",
+        self.name, cmd, session_key)'''):
+        prefix = prefix[1:]
+    return (_same_body(prefix, _LEGACY_PREFIX)
+            and _same_body(attempt.body[:-1], _LEGACY_REPLY))
+
+
+def _cancel_lines(indent, newline, multiline):
+    lines = ("await self.cancel_session_processing(", "    session_key,",
+             "    release_guard=False,", "    discard_pending=False,", ")") if multiline else (_CANCEL,)
+    return [indent + line + newline for line in lines]
 
 
 def _anchor(content):
@@ -39,11 +83,13 @@ def _anchor(content):
     # The reply must have returned before this single cancellation; no other
     # await or mutation may interleave the snapshot and the original call.
     attempts = [n for n in dispatch.body if isinstance(n, ast.Try)]
-    if len(attempts) != 1 or len(attempts[0].body) != 2:
+    if len(attempts) != 1 or not attempts[0].body:
         _fail()
-    reply, call = attempts[0].body
-    if (not _same(reply, "await self._dispatch_inline_reply(event, log_cmd=cmd)")
-            or not _same(call, _CANCEL)):
+    attempt = attempts[0]
+    call = attempt.body[-1]
+    if (not _same(call, _CANCEL)
+            or not (_same_body(attempt.body[:-1], "await self._dispatch_inline_reply(event, log_cmd=cmd)")
+                    or _legacy_reply(dispatch, attempt))):
         _fail()
     # Match the actual owner-pop -> expected-cancel -> task.cancel -> bounded
     # shielded wait. Merely finding a similarly named method is not evidence.
@@ -87,12 +133,14 @@ def _anchor(content):
     lines = content.splitlines(keepends=True)
     line = lines[call.lineno - 1]
     indent = line[:len(line) - len(line.lstrip())]
-    if call.end_lineno != call.lineno or line.strip() != _CANCEL:
+    newline = "\r\n" if line.endswith("\r\n") else "\n"
+    multiline = call.end_lineno != call.lineno
+    if lines[call.lineno - 1:call.end_lineno] != _cancel_lines(indent, newline, multiline):
         _fail()
-    return call.lineno - 1, indent
+    return call.lineno - 1, call.end_lineno, indent, multiline
 
 
-def _block(indent, newline):
+def _block(indent, newline, multiline=False):
     return [indent + line + newline for line in (
         BEGIN,
         "_hfc_stop_owner = None",
@@ -101,7 +149,7 @@ def _block(indent, newline):
         "    _hfc_stop_owner = _hfc_capture_stop(self, event, session_key, cmd)",
         "except Exception:",
         "    pass",
-        _CANCEL,
+    )] + _cancel_lines(indent, newline, multiline) + [indent + line + newline for line in (
         "try:",
         "    from hermes_feishu_card.hook_runtime import schedule_cancelled_stop_turn as _hfc_schedule_stop",
         "    _hfc_schedule_stop(self, _hfc_stop_owner)",
@@ -124,11 +172,13 @@ def remove(content):
     first, last = begins[0], ends[0]
     indent = lines[first][:len(lines[first]) - len(lines[first].lstrip())]
     newline = "\r\n" if lines[first].endswith("\r\n") else "\n"
-    if lines[first:last + 1] != _block(indent, newline):
+    multiline = lines[first:last + 1] == _block(indent, newline, True)
+    if not multiline and lines[first:last + 1] != _block(indent, newline):
         _fail()
-    lines[first:last + 1] = [indent + _CANCEL + newline]
+    cancel = _cancel_lines(indent, newline, multiline)
+    lines[first:last + 1] = cancel
     restored = "".join(lines)
-    if _anchor(restored) != (first, indent):
+    if _anchor(restored) != (first, first + len(cancel), indent, multiline):
         _fail()
     return restored
 
@@ -138,8 +188,8 @@ def apply(content):
     location = _anchor(restored)
     if location is None:
         return restored
-    index, indent = location
+    index, end, indent, multiline = location
     lines = restored.splitlines(keepends=True)
     newline = "\r\n" if lines[index].endswith("\r\n") else "\n"
-    lines[index:index + 1] = _block(indent, newline)
+    lines[index:end] = _block(indent, newline, multiline)
     return "".join(lines)

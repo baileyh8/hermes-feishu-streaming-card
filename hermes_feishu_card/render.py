@@ -23,7 +23,10 @@ from .session import (
 )
 from .status import StatusConfig, resolve_display_status
 from .subscription_usage import uses_codex_subscription
-from .presentation import apply_task_presentation, task_presentation, TASK_TEXT_SIZE_DEFAULTS
+from .presentation import (
+    apply_task_presentation, task_presentation, task_interaction_prompt,
+    task_button_label, TASK_TEXT_SIZE_DEFAULTS,
+)
 from .text import (
     TableOverflowResult,
     normalize_stream_text,
@@ -192,7 +195,12 @@ def render_card_result(
         # This source marker comes from the terminal event, never a text match.
         # Keep one view for both the payload budget and actual body rendering.
         session = copy.copy(session)
-        session.answer_text = session.terminal_reasoning_notice
+        # The task header already owns this exact generic interruption notice.
+        # Real answers and specific failure explanations retain their body text.
+        session.answer_text = (
+            "" if session.terminal_reasoning_notice == "任务已中断" and not session.presentation_state
+            else session.terminal_reasoning_notice
+        )
     primary_text = _primary_text_for_session(
         session, stream_thinking_to_body=stream_thinking_to_body,
         thinking_body_tail_chars=thinking_body_tail_chars,
@@ -442,6 +450,7 @@ def _render_card_unchecked(
             session,
             interaction_mode=interaction_mode,
             mentions_enabled=mentions_enabled,
+            presentation=presentation,
         )
     )
     if attachment_summary and not pending_approval:
@@ -531,17 +540,26 @@ def _render_card_unchecked(
         card["config"]["style"] = {"text_size": mapped_styles}
     if not native_reply_completed:
         card["header"] = header
+    legacy_fallback_card = None
     if _uses_legacy_callback_card(session, interaction_mode=interaction_mode):
+        if presentation == "task":
+            legacy_fallback_card = _render_legacy_callback_card(
+                session, header=header,
+                profile_id=_normalize_interaction_profile_id(interaction_profile_id),
+                mentions_enabled=mentions_enabled,
+            )
         card = _render_legacy_callback_card(
             session,
             header=header,
             profile_id=_normalize_interaction_profile_id(interaction_profile_id),
             mentions_enabled=mentions_enabled,
+            presentation=presentation,
         )
     if presentation == "task":
         card = apply_task_presentation(
             card, session, title=configured_title, action=header_action or runtime_summary,
             has_primary_content=bool(session.answer_text or (stream_thinking_to_body and session.thinking_text)),
+            legacy_fallback_card=legacy_fallback_card,
         )
     return card
 
@@ -611,9 +629,17 @@ def render_legacy_interaction_callback_card(
         header=header,
         profile_id=_normalize_interaction_profile_id(interaction_profile_id),
         mentions_enabled=mentions_enabled,
+        presentation=presentation,
     )
 
-    return apply_task_presentation(card, session, title=title) if presentation == "task" else card
+    if presentation == "task":
+        classic = _render_legacy_callback_card(
+            session, header=header,
+            profile_id=_normalize_interaction_profile_id(interaction_profile_id),
+            mentions_enabled=mentions_enabled,
+        )
+        return apply_task_presentation(card, session, title=title, legacy_fallback_card=classic)
+    return card
 
 
 def _render_legacy_callback_card(
@@ -622,6 +648,7 @@ def _render_legacy_callback_card(
     header: Mapping[str, Any],
     profile_id: str,
     mentions_enabled: bool = True,
+    presentation: str = "classic",
 ) -> Dict[str, Any]:
     """Render an interaction on Feishu's server-callback card rail.
 
@@ -636,7 +663,7 @@ def _render_legacy_callback_card(
 
     elements: list[Dict[str, Any]] = []
     if interaction.status == "completed":
-        elements.extend(_interaction_review_elements(interaction))
+        elements.extend(_interaction_review_elements(interaction, presentation=presentation))
         choice = interaction.choice_label or interaction.choice or "已完成"
         user = f" by {interaction.user_name}" if interaction.user_name else ""
         elements.append(
@@ -648,7 +675,7 @@ def _render_legacy_callback_card(
             "elements": elements,
         }
     if interaction.status == "paused":
-        elements.extend(_interaction_review_elements(interaction))
+        elements.extend(_interaction_review_elements(interaction, presentation=presentation))
         elements.append({"tag": "markdown", "content": interaction.error})
         elements.append({"tag": "action", "actions": [{
             "tag": "button", "type": "primary",
@@ -661,7 +688,7 @@ def _render_legacy_callback_card(
                 "header": {"template": "orange", "title": {"tag": "plain_text", "content": "任务已暂停，等待审批"}},
                 "elements": elements}
     if interaction.status != "pending":
-        elements.extend(_interaction_review_elements(interaction))
+        elements.extend(_interaction_review_elements(interaction, presentation=presentation))
         elements.append(
             {
                 "tag": "markdown",
@@ -687,7 +714,14 @@ def _render_legacy_callback_card(
     if description:
         elements.append({"tag": "markdown", "content": description})
 
-    if interaction.kind in {"approval", "clarify"}:
+    # These task buttons use the same complete-label predicate as presentation.
+    # Omit only our generated list, never matching prompt/description content.
+    choices_on_buttons = (
+        presentation == "task" and not interaction.multi_select and bool(interaction.options)
+        and len({option.value for option in interaction.options}) == len(interaction.options)
+        and all(task_button_label(option.label) for option in interaction.options)
+    )
+    if interaction.kind in {"approval", "clarify"} and not choices_on_buttons:
         elements.extend(_interaction_option_descriptions(interaction))
 
     mention = _interaction_mention_content(
@@ -1219,6 +1253,7 @@ def _render_interaction_elements(
     *,
     interaction_mode: str = "callback",
     mentions_enabled: bool = True,
+    presentation: str = "classic",
 ) -> list[Dict[str, Any]]:
     interaction = session.active_interaction
     if interaction is None:
@@ -1355,7 +1390,7 @@ def _render_interaction_elements(
         choice = interaction.choice_label or interaction.choice or "已完成"
         user = f" by {interaction.user_name}" if interaction.user_name else ""
         content = f"已选择：{choice}{user}"
-        for index, element in enumerate(_interaction_review_elements(interaction)):
+        for index, element in enumerate(_interaction_review_elements(interaction, presentation=presentation)):
             elements.append(dict(element, element_id=f"interaction_review_{index}"))
         elements.append({
             "tag": "markdown", "element_id": "interaction_result",
@@ -1364,7 +1399,7 @@ def _render_interaction_elements(
         return elements
 
     content = interaction.error or "交互请求失败"
-    elements.extend(_interaction_review_elements(interaction))
+    elements.extend(_interaction_review_elements(interaction, presentation=presentation))
     elements.append(
         {
             "tag": "markdown",
@@ -1432,7 +1467,7 @@ def mask_approval_scope(text: str) -> str:
     return _TOOL_DETAIL_REDACTION_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", masked)
 
 
-def _interaction_review_elements(interaction: Any) -> list[Dict[str, Any]]:
+def _interaction_review_elements(interaction: Any, *, presentation: str = "classic") -> list[Dict[str, Any]]:
     # Mobile has no hover: keep the original question, the full operation scope and the options in
     # the card body after submission/expiry, without retaining callback credentials. An approval
     # must stay auditable afterwards — what was asked, what was chosen, and what would run — so the
@@ -1442,7 +1477,8 @@ def _interaction_review_elements(interaction: Any) -> list[Dict[str, Any]]:
     #   2. the scope is always masked, so retention does not put credentials into group history.
     elements = []
     if interaction.prompt:
-        elements.append({"tag": "markdown", "content": interaction.prompt})
+        prompt = task_interaction_prompt(interaction) if presentation == "task" else interaction.prompt
+        elements.append({"tag": "markdown", "content": prompt})
     if interaction.description:
         elements.append(
             {

@@ -32,6 +32,21 @@ class TaskPresentation:
     observation: str = ""
 
 
+def task_interaction_prompt(interaction: Any) -> str:
+    from .text import normalize_stream_text
+    prompt = normalize_stream_text(interaction.prompt).strip()
+    if prompt and interaction.kind == "approval" and interaction.status == "failed":
+        return f"**原审批请求**\n\n{prompt}"
+    return prompt
+
+
+def task_button_label(label: str) -> str:
+    """Return the complete label only when a task button can carry it."""
+    from .text import normalize_stream_text
+    label = normalize_stream_text(label).strip()
+    return label if 0 < len(label) <= 16 and "\n" not in label else ""
+
+
 def task_presentation(session: Any, *, now: float | None = None) -> TaskPresentation:
     """Describe observed state without inferring success or liveness from silence."""
     if getattr(session, "presentation_state", "") == "reconnecting":
@@ -67,6 +82,7 @@ def task_presentation(session: Any, *, now: float | None = None) -> TaskPresenta
 def apply_task_presentation(
     card: dict[str, Any], session: Any, *, title: str, action: str = "",
     has_primary_content: bool = True, now: float | None = None,
+    legacy_fallback_card: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Restyle only known display fields; preserve content, controls and dialect."""
     result = copy.deepcopy(card)
@@ -90,7 +106,7 @@ def apply_task_presentation(
         # in the header. Keep the full question before the existing scope/controls.
         if interaction is not None:
             from .text import normalize_stream_text
-            prompt = normalize_stream_text(interaction.prompt).strip()
+            prompt = task_interaction_prompt(interaction)
             if prompt and not any(item.get("tag") == "markdown" and item.get("content") == prompt
                                   for item in elements):
                 elements.insert(0, {"tag": "markdown", "content": prompt})
@@ -115,8 +131,8 @@ def apply_task_presentation(
                         if (node.get("tag") == "button" and isinstance(value, dict)
                                 and value.get("hfc_action") == "interaction.select"
                                 and isinstance(text, dict) and str(text.get("content", "")).isdigit()):
-                            label = labels.get(value.get("choice"), "")
-                            if 0 < len(label) <= 16 and "\n" not in label:
+                            label = task_button_label(labels.get(value.get("choice"), ""))
+                            if label:
                                 text["content"] = label
                         if node.get("tag") == "multi_select_static":
                             for option in node.get("options", []):
@@ -144,7 +160,8 @@ def apply_task_presentation(
         # render_card_result. Never let decoration make an accepted scope exceed
         # its original budget; preserve the full classic card when it cannot fit.
         from .card_limits import inspect_card_limits
-        return result if inspect_card_limits(result).safe else copy.deepcopy(card)
+        fallback = legacy_fallback_card if legacy_fallback_card is not None else card
+        return result if inspect_card_limits(result).safe else copy.deepcopy(fallback)
 
     if not has_primary_content and not (interaction and interaction.status in {"pending", "paused"}):
         elements[:] = [item for item in elements

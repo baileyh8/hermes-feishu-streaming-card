@@ -35,7 +35,7 @@ See [task cards](task-cards.md#english-quick-reference) and [reading presets](wi
 
 ## Acceptance status
 
-The full regression for `1e993bd` recorded **4,509 passed and 22 skipped**. All 14 GitHub checks for `9d986ad` passed, with real desktop evidence for long tasks, multi-select and light/dark themes. A pure approval `/stop` exposed another cancellation order, and a long wait produced a duplicate Working message. Both source fixes still require real verification on a new candidate; earlier successful cases do not establish final acceptance.
+The full regression for `1e993bd` recorded **4,509 passed and 22 skipped**. All 14 GitHub checks for `9d986ad` passed, with real desktop evidence for long tasks, multi-select and light/dark themes. A pure approval `/stop` exposed another cancellation order, and a long wait produced a duplicate Working message. `8edb213` passed real pure-approval cancellation and a 210-second heartbeat-deduplication run on upgraded Hermes `3d0a61ac`. Strict visual review still found ambiguous expired-approval copy and redundant information, while CI exposed an older inline-reply layout regression. Those repairs require final-package verification; earlier successful cases do not establish final acceptance.
 
 Final-commit regression and cross-platform CI, relevant real flows, visual gates, exact merge provenance, an annotated tag, assets/checksums and public-install provenance remain required. Android/iOS, dark theme and enlarged type are separate evidence; missing coverage stays unverified. Automated results do not substitute for client acceptance.
 

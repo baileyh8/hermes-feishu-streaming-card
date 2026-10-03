@@ -36,8 +36,43 @@ CONTRACT = '''
 '''
 
 
-def source():
-    return BASE.read_text() + CONTRACT
+LEGACY_REPLY = '''            response = await self._message_handler(event)
+            _text, _eph_ttl = self._unwrap_ephemeral(response)
+            if _text:
+                logger.info("[%s] Sending command '/%s' response (%d chars) to %s",
+                            self.name, cmd, len(_text), event.source.chat_id)
+                _r = await self._send_with_retry(
+                    chat_id=event.source.chat_id,
+                    content=_text,
+                    reply_to=_reply_anchor_for_event(event),
+                    metadata=_mark_notify_metadata(thread_meta),
+                )
+                if _eph_ttl > 0 and _r.success and _r.message_id:
+                    self._schedule_ephemeral_delete(
+                        chat_id=event.source.chat_id,
+                        message_id=_r.message_id,
+                        ttl_seconds=_eph_ttl,
+                    )'''
+
+
+def source(*, inline=False, multiline=False):
+    contract = CONTRACT
+    if inline:
+        contract = contract.replace(
+            "            await self._dispatch_inline_reply(event, log_cmd=cmd)", LEGACY_REPLY)
+        contract = contract.replace(
+            "        self._active_sessions[session_key] = command_guard",
+            "        self._active_sessions[session_key] = command_guard\n"
+            "        thread_meta = _thread_metadata_for_source(event.source, _reply_anchor_for_event(event))")
+    if multiline:
+        contract = contract.replace(
+            "await self.cancel_session_processing(session_key, release_guard=False, discard_pending=False)",
+            "await self.cancel_session_processing(\n"
+            "                session_key,\n"
+            "                release_guard=False,\n"
+            "                discard_pending=False,\n"
+            "            )")
+    return BASE.read_text() + contract
 
 
 def event(turn, *, profile="fixture", chat="chat", thread="topic", platform="feishu"):
@@ -52,15 +87,19 @@ def route(event):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cmd", ["stop", "new", "reset"])
-async def test_stop_cancels_handler_before_worker_result(monkeypatch, cmd):
+@pytest.mark.parametrize("inline", [False, True])
+async def test_stop_cancels_handler_before_worker_result(monkeypatch, cmd, inline):
     emitted, order = [], []
     async def emit(values, *, event_name):
         emitted.append((event_name, values))
         order.append("terminal")
         return True
     monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_async", emit)
-    namespace = {"asyncio": asyncio}
-    exec(patcher.apply_base_patch(source()), namespace)
+    namespace = {"asyncio": asyncio, "logger": SimpleNamespace(info=lambda *args: None),
+                 "_reply_anchor_for_event": lambda event: event.message_id,
+                 "_thread_metadata_for_source": lambda source, reply: {"thread": source.thread_id, "reply": reply},
+                 "_mark_notify_metadata": lambda metadata: metadata}
+    exec(patcher.apply_base_patch(source(inline=inline, multiline=inline)), namespace)
     adapter = namespace["BasePlatformAdapter"]()
     old_event, stop_event = event("original"), event("command")
     key = route(old_event)
@@ -87,12 +126,28 @@ async def test_stop_cancels_handler_before_worker_result(monkeypatch, cmd):
         order.append("stop-reply")
     async def drain(*args):
         order.append("drain")
+    ephemeral = []
+    async def handler(incoming):
+        assert incoming is stop_event
+        return "stopped"
+    async def send(**kwargs):
+        assert kwargs == {"chat_id": "chat", "content": "stopped", "reply_to": "command",
+                          "metadata": {"thread": "topic", "reply": "command"}}
+        order.append("stop-reply")
+        return SimpleNamespace(success=True, message_id="command-receipt")
+    adapter.name = "fixture"
+    adapter._message_handler = handler
+    adapter._unwrap_ephemeral = lambda response: (response, 30)
+    adapter._send_with_retry = send
+    adapter._schedule_ephemeral_delete = lambda **kwargs: ephemeral.append(kwargs)
     adapter._dispatch_inline_reply = reply
     adapter._drain_pending_after_session_command = drain
     await adapter._dispatch_active_session_command(stop_event, key, cmd)
     await asyncio.gather(*adapter._background_tasks)
     assert task.cancelled()
     assert not worker_finished.is_set()
+    assert ephemeral == ([{"chat_id": "chat", "message_id": "command-receipt", "ttl_seconds": 30}]
+                         if inline else [])
     assert len(emitted) == (1 if cmd == "stop" else 0)
     if cmd == "stop":
         name, values = emitted[0]
@@ -111,6 +166,48 @@ def test_stop_patch_roundtrip(newline):
     assert patcher.apply_base_patch(patched) == patched
     assert patcher.remove_base_patch(patched) == original
     assert patcher.remove_base_patch_lenient(patched) == original
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("multiline", [False, True])
+def test_legacy_inline_reply_roundtrip(newline, multiline):
+    original = source(inline=True, multiline=multiline).replace("\n", newline)
+    patched = patcher.apply_base_patch(original)
+    compile(patched, "<legacy-inline-stop>", "exec")
+    assert "BASE_STOP_CANCEL_PATCH_BEGIN" in patched
+    assert patcher.apply_base_patch(patched) == patched
+    assert patcher.remove_base_patch(patched) == original
+    assert patcher.remove_base_patch_lenient(patched) == original
+
+
+@pytest.mark.parametrize("before,after", [
+    ("self._message_handler(event)", "self._message_handler(other_event)"),
+    ("self._unwrap_ephemeral(response)", "self._unwrap_ephemeral(other_response)"),
+    ("self._active_sessions.get(session_key)", "self._active_sessions.get(other_session)"),
+    ("self._active_sessions[session_key] =", "self._active_sessions[other_session] ="),
+    ("_thread_metadata_for_source(event.source,", "_thread_metadata_for_source(other_source,"),
+    ("_reply_anchor_for_event(event))", "_reply_anchor_for_event(other_event))"),
+    ("chat_id=event.source.chat_id", "chat_id=other_chat"),
+    ("content=_text", "content=other_text"),
+    ("reply_to=_reply_anchor_for_event(event)", "reply_to=_reply_anchor_for_event(other_event)"),
+    ("_mark_notify_metadata(thread_meta)", "_mark_notify_metadata(other_meta)"),
+    ("metadata=_mark_notify_metadata(thread_meta),", "metadata=_mark_notify_metadata(thread_meta), notify=True,"),
+    ("_eph_ttl > 0 and _r.success", "_eph_ttl >= 0 and _r.success"),
+    ("_r.success and _r.message_id", "_r.message_id"),
+    ("message_id=_r.message_id", "message_id=other_message"),
+    ("ttl_seconds=_eph_ttl", "ttl_seconds=other_ttl"),
+    ("ttl_seconds=_eph_ttl,", "ttl_seconds=_eph_ttl, extra=True,"),
+    ("release_guard=False,", "release_guard=True,"),
+    ("discard_pending=False,", "discard_pending=True,"),
+    ("self._unwrap_ephemeral(response)", "self._unwrap_ephemeral(response)\n            await self.other_work()"),
+])
+def test_legacy_inline_reply_scope_and_delivery_drift_is_rejected(before, after):
+    original = source(inline=True, multiline=True)
+    assert before in original
+    base = BASE.read_text()
+    changed = base + original[len(base):].replace(before, after)
+    with pytest.raises(ValueError, match="stop cancellation"):
+        patcher.apply_base_patch(changed)
 
 
 @pytest.mark.parametrize("before,after", [
@@ -220,8 +317,9 @@ async def test_cancelled_stop_terminal_proof_and_dedup(monkeypatch, outcome):
     ("_hfc_schedule_stop(self, _hfc_stop_owner)", "_hfc_schedule_stop(self, None)"),
     ("HERMES_FEISHU_CARD_BASE_STOP_CANCEL_PATCH_END", "MISSING_END"),
 ])
-def test_owned_stop_markers_reject_corruption(before, after):
-    corrupt = patcher.apply_base_patch(source()).replace(before, after)
+@pytest.mark.parametrize("multiline", [False, True])
+def test_owned_stop_markers_reject_corruption(before, after, multiline):
+    corrupt = patcher.apply_base_patch(source(multiline=multiline)).replace(before, after)
     for remove in (patcher.remove_base_patch, patcher.remove_base_patch_lenient):
         with pytest.raises(ValueError, match="stop cancellation"):
             remove(corrupt)
