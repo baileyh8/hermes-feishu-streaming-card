@@ -10,7 +10,7 @@ from pathlib import Path
 from .card_timeline import CardTimeline, TimelineEntry
 from .session import CardSession, ToolState
 from .display_segments import valid_checkpoint_state
-from .legacy_owner import valid_legacy_receipt
+from .legacy_owner import valid_auxiliary_receipt, valid_legacy_receipt
 from .native_handoff import (
     _prepare_private_root, _validate_existing_private_file, _atomic_write_private,
 )
@@ -19,7 +19,8 @@ MAX_RECORD_BYTES = 1024 * 1024
 MAX_RECORDS = 128
 RETENTION_SECONDS = 24 * 3600
 _EXCLUDED = {'tools', 'timeline', 'thinking_normalizer', 'answer_normalizer',
-             'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id', '_process_activity'}
+             'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id', '_process_activity',
+             'presentation_state'}
 _FIELDS = {f.name for f in fields(CardSession)} - _EXCLUDED
 
 
@@ -31,7 +32,8 @@ class SessionStore:
     def _path(self, key):
         return self.root / (hashlib.sha256(key.encode()).hexdigest() + '.json')
 
-    def save(self, key, session, message_id, bot_id, profile_id, aliases, client_identity):
+    def save(self, key, session, message_id, bot_id, profile_id, aliases, client_identity,
+             *, auxiliary_receipt=None):
         # Handoff has its own durable proof protocol. Do not recreate that state.
         if session.terminal_disposition or session.delivery_kind != 'chat':
             self.remove(key)
@@ -39,7 +41,7 @@ class SessionStore:
         body = {k: getattr(session, k) for k in _FIELDS}
         # Ordinary cards remain readable by v4.6.3 after a rollback. Records
         # using new presentation ownership need the newer reader instead.
-        for optional in ('display_segment', 'legacy_owner_receipt'):
+        for optional in ('display_segment', 'legacy_owner_receipt', 'terminal_reasoning_notice'):
             if not body[optional]:
                 body.pop(optional)
         body['tools'] = {k: asdict(v) for k, v in session.tools.items()}
@@ -55,6 +57,11 @@ class SessionStore:
                       bot_id=bot_id, profile_id=profile_id, aliases=aliases, client_identity=client_identity,
                       had_interaction=(session.active_interaction is not None and session.active_interaction.status in {"pending","paused"}),
                       saved_at=time.time())
+        if auxiliary_receipt:
+            if (not valid_auxiliary_receipt(auxiliary_receipt)
+                    or auxiliary_receipt['message_id'] == message_id):
+                raise ValueError('invalid auxiliary display receipt')
+            record['auxiliary_receipt'] = auxiliary_receipt
         encoded = json.dumps(record, ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
         payload = json.dumps({'record':record, 'digest':hashlib.sha256(encoded).hexdigest()},
                              ensure_ascii=False, allow_nan=False).encode()
@@ -101,12 +108,19 @@ class SessionStore:
                     continue
                 if not r['message_id'] or r['bot_id'] is not None and not isinstance(r['bot_id'],str):
                     continue
+                auxiliary = r.get('auxiliary_receipt', {})
+                if (not valid_auxiliary_receipt(auxiliary)
+                        or auxiliary and auxiliary['message_id'] == r['message_id']):
+                    continue
                 data = r['session']
                 # v4.6.3 records predate display segments. Preserve their exact
                 # semantics; new records retain the original logical identity.
                 data.setdefault('display_segment', {})
                 data.setdefault('legacy_owner_receipt', {})
+                data.setdefault('terminal_reasoning_notice', '')
                 if set(data) != _FIELDS | {'tools','timeline','normalizers'}:
+                    continue
+                if type(data['terminal_reasoning_notice']) is not str:
                     continue
                 if not valid_checkpoint_state(data['display_segment']):
                     continue
@@ -126,6 +140,7 @@ class SessionStore:
                     session.status = 'failed'
                     session.display_status = ''
                     session.answer_text += '\n\n连接已重建，原授权已失效，请重新发起请求。'
+                    session.terminal_reasoning_notice = ''
                     session.timeline.complete()
                     session.display_segment = {}
                 r['session'] = session

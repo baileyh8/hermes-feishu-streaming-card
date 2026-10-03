@@ -265,7 +265,13 @@ async def test_confirmed_handoff_freezes_old_card_without_claiming_turn_success(
         footer = next(e for e in retired['body']['elements'] if e.get('element_id') == 'footer')
         assert '下方新卡' in footer['content'] and '已完成' not in footer['content']
         assert 'BEFORE_SELECTION' in str(retired) and 'AFTER_SELECTION' not in str(retired)
-        assert '已选择' in str(retired) and 'Choose fixture' in str(retired)
+        assert ('已选择' in str(retired)) is (not terminal)
+        assert ('Choose fixture' in str(retired)) is (not terminal)
+        # A terminal cleanup can retire this duplicate only after an explicit
+        # full PATCH of the separate interaction receipt, in its own dialect.
+        if terminal:
+            receipt = next(card for mid, card in reversed(client.updated) if mid == client.sent[1][0])
+            assert '已选择' in str(receipt) and 'Choose fixture' in str(receipt)
         assert '执行中' not in str(retired) and '已中断' not in str(retired)
         assert retired['config']['streaming_mode'] is False
         session = app[SESSIONS_KEY]['turn_fixture']
@@ -276,6 +282,202 @@ async def test_confirmed_handoff_freezes_old_card_without_claiming_turn_success(
         else:
             assert session.status not in {'completed', 'failed'}
         assert app[FEISHU_MESSAGE_IDS_KEY]['turn_fixture'] != old_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("show_reasoning", [True, False])
+async def test_task_handoff_has_one_honest_note_and_retains_tool_details(show_reasoning):
+    client = Client()
+    app = create_app(client, card_config={
+        "flush_interval_ms": 0, "reading_preset": "task", "show_reasoning": show_reasoning,
+    })
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "tool.updated", 1, {
+            "tool_id": "live", "name": "terminal", "status": "running",
+            "detail": 'fixture.py\n参数: {"command": "fixture.py", "timeout": 120}',
+        })
+        await post(http, "interaction.requested", 2, {
+            "interaction_id": "question_one", "kind": "clarify", "prompt": "Choose fixture",
+            "options": [{"label": "Continue", "value": "once"}],
+        })
+        old_id = client.sent[0][0]
+        retired = next(card for mid, card in reversed(client.updated) if mid == old_id)
+        assert retired["header"]["template"] == "default"
+        assert "已转入交互卡片" in str(retired["header"])
+        assert "执行中" not in str(retired) and "已中断" not in str(retired)
+        assert "fixture.py" in str(retired) and "120" in str(retired)
+        assert not any(e.get("element_id") in {"footer", "task_observation", "main_divider"}
+                       for e in retired["body"]["elements"])
+        if show_reasoning:
+            assert not any(e.get("element_id", "").startswith("tool_activity_")
+                           for e in retired["body"]["elements"])
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        assert session.tools["live"].status == "running"
+        assert session.active_interaction.status == "pending"
+        await post(http, "interaction.completed", 3, {"interaction_id": "question_one", "choice": "once"})
+        await post(http, "answer.delta", 4, {"text": "NEW_RESULT"})
+        await asyncio.sleep(.03)
+        retired = next(card for mid, card in reversed(client.updated) if mid == old_id)
+        assert "本段已转入续答" in str(retired["header"])
+        assert str(retired["body"]).count("本段已转入续答") == 0
+        assert "执行中" not in str(retired) and "已中断" not in str(retired)
+        assert session.tools["live"].status == "running"
+
+
+@pytest.mark.asyncio
+async def test_task_paused_approval_does_not_duplicate_scope_on_predecessor():
+    from hermes_feishu_card.server import _expire_pending_interactions
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0, "reading_preset": "task"})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "interaction.requested", 1, {
+            "interaction_id": "approval_one", "kind": "approval", "prompt": "Confirm fixture",
+            "description": "EXACT_APPROVAL_SCOPE", "pause_on_timeout": True, "timeout_seconds": 1,
+            "options": [{"label": "允许一次", "value": "once"}, {"label": "拒绝", "value": "deny"}],
+        })
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        interaction = session.active_interaction
+        await _expire_pending_interactions(app, now=interaction.expires_at + 1)
+        await asyncio.sleep(.03)
+        assert interaction.status == "paused" and not interaction.choice
+        predecessor = next(card for mid, card in reversed(client.updated) if mid == client.sent[0][0])
+        approval = next(card for mid, card in reversed(client.updated) if mid == interaction.feishu_message_id)
+        assert "EXACT_APPROVAL_SCOPE" not in str(predecessor)
+        assert "继续审批" in str(predecessor) and "执行中" not in str(predecessor)
+        assert "EXACT_APPROVAL_SCOPE" in str(approval) and "查看并继续审批" in str(approval)
+        assert "schema" not in approval and predecessor["schema"] == "2.0"
+
+
+@pytest.mark.asyncio
+async def test_task_paused_second_approval_keeps_first_legacy_owner_dialect():
+    from hermes_feishu_card.server import _expire_pending_interactions
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0, "reading_preset": "task"})
+    async with TestClient(TestServer(app)) as http:
+        # No message.started: the first interaction itself owns the legacy card.
+        await interact(http, 0, "first_question")
+        owner_id = app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]
+        await post(http, "interaction.requested", 2, {
+            "interaction_id": "approval_two", "kind": "approval", "prompt": "Confirm fixture",
+            "description": "EXACT_APPROVAL_SCOPE", "pause_on_timeout": True, "timeout_seconds": 1,
+            "reply_to_message_id": "om_fixture_anchor", "reply_in_thread": True,
+            "options": [{"label": "允许一次", "value": "once"}, {"label": "拒绝", "value": "deny"}],
+        })
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        interaction = session.active_interaction
+        assert interaction.feishu_message_id != owner_id
+        await _expire_pending_interactions(app, now=interaction.expires_at + 1)
+        await asyncio.sleep(.03)
+
+        assert not client.cross_dialect
+        assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] == owner_id
+        assert interaction.status == "paused" and not interaction.choice
+        predecessor = next(card for mid, card in reversed(client.updated) if mid == owner_id)
+        approval = next(card for mid, card in reversed(client.updated) if mid == interaction.feishu_message_id)
+        assert "schema" not in predecessor and "schema" not in approval
+        assert "Choose fixture" in str(predecessor) and "已选择" in str(predecessor)
+        assert "EXACT_APPROVAL_SCOPE" in str(approval) and "查看并继续审批" in str(approval)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["message.completed", "message.failed"])
+@pytest.mark.parametrize("paused", [False, True])
+@pytest.mark.parametrize("start_first", [False, True])
+async def test_terminal_closes_unresolved_approval_and_rejects_late_choice(terminal, paused, start_first):
+    from hermes_feishu_card.server import _expire_pending_interactions
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0, "reading_preset": "task"})
+    async with TestClient(TestServer(app)) as http:
+        if start_first:
+            await post(http, "message.started", 0)
+        await post(http, "interaction.requested", 1, {
+            "interaction_id": "terminal_approval", "kind": "approval", "prompt": "Confirm fixture",
+            "description": "KEEP_EXACT_SCOPE", "pause_on_timeout": True, "timeout_seconds": 300,
+            "options": [{"label": "允许一次", "value": "once"}, {"label": "拒绝", "value": "deny"}],
+        })
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        interaction = session.active_interaction
+        token = interaction.callback_token
+        receipt_id = interaction.feishu_message_id
+        if paused:
+            await _expire_pending_interactions(app, now=interaction.expires_at + 1)
+            await asyncio.sleep(.02)
+        await post(http, terminal, 2, {"answer": "ACTUAL_TERMINAL_RESULT", "error": "ACTUAL_TERMINAL_RESULT"})
+        await asyncio.sleep(.03)
+        assert interaction.status == "failed" and not interaction.choice
+        result = await (await http.get("/interactions/terminal_approval")).json()
+        assert result["status"] == "failed" and not result["choice"]
+        receipt = next(card for mid, card in reversed(client.updated) if mid == receipt_id)
+        assert "KEEP_EXACT_SCOPE" in str(receipt)
+        assert "查看并继续审批" not in str(receipt) and "hfc_action" not in str(receipt)
+        owner = next(card for mid, card in reversed(client.updated)
+                     if mid == app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"])
+        assert "ACTUAL_TERMINAL_RESULT" in str(owner)
+        assert "等待选择" not in str(owner) and "分钟后过期" not in str(owner)
+        payload = {"event": {"context": {"open_chat_id": "chat_fixture"},
+            "operator": {"open_id": "ou_fixture"}, "action": {"value": {
+                "hfc_action": "interaction.select", "interaction_id": "terminal_approval",
+                "token": token, "choice": "once"}}}}
+        assert (await http.post("/card/actions", json=payload)).status in {404, 409}
+        assert not interaction.choice and not client.cross_dialect
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", ["message.completed", "message.failed"])
+async def test_terminal_ack_and_answer_do_not_wait_for_receipt_or_repeat_its_patch(terminal):
+    class BlockingReceiptClient(Client):
+        def __init__(self):
+            super().__init__()
+            self.receipt_id = ""
+            self.receipt_started = asyncio.Event()
+            self.release_receipt = asyncio.Event()
+            self.receipt_updates = 0
+
+        async def update_card_message(self, mid, card):
+            if mid == self.receipt_id:
+                self.receipt_updates += 1
+                self.receipt_started.set()
+                await self.release_receipt.wait()
+            await super().update_card_message(mid, card)
+
+    client = BlockingReceiptClient()
+    app = create_app(client, card_config={"flush_interval_ms": 0, "reading_preset": "task"})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "interaction.requested", 1, {
+            "interaction_id": "slow_receipt", "kind": "approval", "prompt": "Confirm fixture",
+            "description": "KEEP_EXACT_SCOPE", "timeout_seconds": 300,
+            "options": [{"label": "允许一次", "value": "once"}],
+        })
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        client.receipt_id = session.active_interaction.feishu_message_id
+        owner_id = app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]
+        try:
+            # Receipt PATCH remains blocked. Neither the ACK nor the actual
+            # final answer may depend on this optional display cleanup.
+            result = await asyncio.wait_for(post(http, terminal, 2, {
+                "answer": "FINAL_WITHOUT_RECEIPT", "error": "FINAL_WITHOUT_RECEIPT",
+            }), timeout=.2)
+            assert result == {"ok": True, "applied": True}
+            await asyncio.wait_for(client.receipt_started.wait(), timeout=.5)
+            assert any(mid == owner_id and "FINAL_WITHOUT_RECEIPT" in str(card)
+                       for mid, card in client.updated)
+            assert session.active_interaction.status == "failed"
+            await asyncio.wait_for(post(http, terminal, 2, {
+                "answer": "DUPLICATE_MUST_NOT_REPLACE", "error": "DUPLICATE_MUST_NOT_REPLACE",
+            }), timeout=.2)
+            assert client.receipt_updates == 1
+        finally:
+            client.release_receipt.set()
+        for _ in range(50):
+            if any(mid == client.receipt_id for mid, _ in client.updated):
+                break
+            await asyncio.sleep(.01)
+        receipt = next(card for mid, card in reversed(client.updated) if mid == client.receipt_id)
+        assert "KEEP_EXACT_SCOPE" in str(receipt) and "hfc_action" not in str(receipt)
+        assert not client.cross_dialect
 
 
 @pytest.mark.asyncio

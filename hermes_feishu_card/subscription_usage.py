@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 from pathlib import Path
+import re
 import subprocess
 from typing import Any
 
@@ -30,6 +31,27 @@ _WINDOW_LABELS = {
     "week": "weekly",
     "secondary": "weekly",
 }
+
+
+def uses_codex_subscription(model: object, provider: object = "") -> bool:
+    """Require this turn's Codex GPT route, not merely an available account.
+
+    Current Hermes adapters can qualify the model as provider/model. Older or
+    custom events may supply provider separately. An unqualified GPT name alone
+    cannot distinguish a subscription from an API key or another gateway.
+    """
+    if not isinstance(model, str) or not isinstance(provider, str):
+        return False
+    model = model.strip().lower()
+    provider = provider.strip().lower()
+    if "/" in model:
+        model_provider, model = model.split("/", 1)
+        if provider and provider != model_provider:
+            return False
+        provider = model_provider
+    return provider == "openai-codex" and bool(
+        re.fullmatch(r"gpt-[a-z0-9]+(?:[._-][a-z0-9]+)*", model)
+    )
 
 
 async def fetch_codex_subscription_usage(

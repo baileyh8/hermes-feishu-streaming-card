@@ -5,7 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
-## [Unreleased]
+## [4.7.0] - Unreleased
+
+Release candidate; final visual/client acceptance, exact-commit CI and publication are still pending.
+
+- Add opt-in `reading_preset: task`: one clear state/action, answer-first reading, consistent type roles, folded process details and compact metrics. Preserve existing presets and explicit configuration.
+- Add offline HTML/Card JSON previews for nine scenarios and explain appearance values with their configuration sources and next-load semantics.
+- Show optional subscription quota only on completed GPT turns attributed to `openai-codex`; omit unrelated, unknown and stale model routes.
+- Preserve complete parameters, permission scope and original interaction dialects while reducing repeated headings, waiting labels and approval details.
+- Close the original card from Hermes' explicit interrupted result or verified controlled stop cancellation, without blocking queued messages; retain bounded token-free auxiliary receipts so expiry and restart remove stale controls without restoring execution or consent.
+- Suppress duplicate Working heartbeats only after authenticated proof that the exact turn has an accepted task card; preserve classic and unknown-path behavior.
+- Preserve older verified Hermes inline-reply cancellation layouts. Mark expired task approvals as historical requests, omit redundant short single-choice lists only when full button labels preserve every option, and avoid repeating a source-identified generic interruption notice.
+- Observe cancellation that completes after Hermes' initial stop wait, within the existing delivery budget and owner checks. Support the verified older heartbeat executor alias while retaining the current split-source contract.
+- Improve task-answer code readability with native plain-text fences and separate language labels. Preserve code bodies and canonical answers; keep uncertain structures and unsafe long-line boundaries unchanged, including legacy owner and CardKit display paths.
+- Strengthen real-client visual release gates and pin Hermes main `c8301ea6c9b797184df16a9c5dd462400b264ff4` for source compatibility. See [Chinese notes](docs/release-notes-v4.7.0.md), [English notes](docs/release-notes-v4.7.0.en.md) and the [acceptance record](docs/reviews/2026-10-03-task-cards-acceptance.md).
 
 ## [4.6.13] - 2026-10-02
 

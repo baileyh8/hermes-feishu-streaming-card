@@ -6,7 +6,11 @@
 
 `hermes-feishu-streaming-card` 是 Hermes Agent Gateway 的 Feishu/Lark sidecar 插件：Hermes 进程只安装最小 hook，真实卡片状态、Feishu 发送/更新、交互回调、诊断和发布资产都由本仓库维护。
 
-## V4.6.4 版本资料
+## 开发入口与项目方向
+
+[开发规则与技术栈](development-rules.md) · [功能准入与体验规则](feature-rules.md) · [卡片视觉体验规范](card-visual-guidelines.md) · [2026-10-03 代码审查](../reviews/2026-10-03-project-review.md) · [V5 功能与体验建议](../roadmap-v5.md)。审查和路线建议不代表功能已经实现；当前发行版本以根目录 README 和 CHANGELOG 为准。
+
+## V4.6.4 历史版本资料
 
 [V4.6.4 范围](../release-notes-v4.6.4.md) · [交互续答](interaction-continuation.md) · [阅读预设](reading-presets.md) · [真实验收清单](feishu-acceptance-v4.6.4.md) · [实施状态](../superpowers/plans/2026-09-20-v4.6.x-experience.md)。真实客户端验收与公开发布证据分别记录。
 
@@ -57,13 +61,15 @@
 | 版本说明 | `CHANGELOG.md` + `docs/release-notes-*` | 面向版本使用者，记录每个版本变化 |
 | 测试说明 | `docs/testing.md` | 面向开发者，列出测试命令和覆盖范围 |
 | 架构说明 | `docs/architecture.md` | 面向实现理解，说明 sidecar-only 结构 |
+| 项目审查与路线建议 | `docs/reviews/` + `docs/roadmap-v5.md` | 有日期的证据与待决策方案，不作为当前能力声明 |
 
 ## 与 Obsidian LLM Wiki 的关系
 
 仓库内 wiki 是公开、可随项目发布的维护资料；Bailey 的 Obsidian LLM Wiki 是长期检索层，会保存项目总览、维护规则和跨项目复用经验。
 
-当本目录新增稳定知识时，同步到 Bailey 的 Obsidian LLM Wiki 镜像；仓库文档不记录本机绝对路径。
-# v4.2 maintenance update
+个人记忆与外部 wiki 仅在明确要求时同步，不作为仓库工作的隐含步骤；仓库文档不记录本机绝对路径。
+
+## v4.2 maintenance update
 
 The private Feishu `/update` workflow is documented in
 [`event-flow.md`](event-flow.md), operated through

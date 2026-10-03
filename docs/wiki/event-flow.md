@@ -184,7 +184,6 @@ cron scheduler 必须先完成 `BasePlatformAdapter.extract_media(...)` 与 `med
 
 Hermes 原生运行提示会被归一为 `system.notice`：
 
-- `Working — ...`
 - context window / auto-compaction 提示
 - automatic session reset
 - skill loading
@@ -197,7 +196,7 @@ Hermes 原生运行提示会被归一为 `system.notice`：
 
 1. 如果当前 session 可用，notice 进入辅助 timeline。
 2. 如果没有当前 session，发送独立小卡片。
-3. `Working` heartbeat 始终是非终态；主 session 缺失时，chat + 原始用户消息锚点 + notice kind 组成稳定的 independent message id。连续 heartbeat 更新同一卡，不同任务锚点保持隔离，最终 `message.completed` 通过 reply-anchor alias 收束该卡。
+3. `Working` heartbeat 不转为 `system.notice` 卡。已验证的 producer 通过认证 `/delivery/policy` 取得精确 turn 的 `accepted_task_card`；实际 owner 已建卡且有效配置为 task 时跳过原生发送/编辑。classic、未接管或查询结果未知时保留 Hermes 原生心跳。原始用户消息锚点不代替 canonical turn；这条只读检查不推进事件序号、生成卡片或修改交互输入。
 4. 同一 background process 使用稳定的 `notice_id` 和独立 message id；running 更新与 finished 终态复用同一张卡。exit code `0` 显示成功，非零显示失败，未知 exit code 显示警告。
 5. Gateway 启动时会在 recovered watcher drain 前安装 adapter wrapper；contextless / recovered watcher 优先沿用 Hermes `metadata.thread_id`，避免独立通知掉出原 topic。
 6. 已有卡片的异步 PATCH 返回 `accepted` 后抑制原生灰色文本；独立卡首次投递的 `delivered` 同样抑制原生文本。`not_sent` 才回退原始通知文本；`unknown` 或不可解析响应只尝试发送 `⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。`，不重复原始通知文本。飞书本身完全不可用时，不保证通用提示最终可见。

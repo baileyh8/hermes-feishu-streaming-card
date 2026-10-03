@@ -9823,6 +9823,49 @@ def _post_json_sync_response(url: str, payload: dict[str, Any], timeout: float) 
     return _open_json_request(req, timeout)
 
 
+def _task_heartbeat_probe(source: Any) -> dict[str, str] | None:
+    if _platform_name({}, source) != "feishu":
+        return None
+    turn_id = _first_attr_string(source, ("_hfc_turn_id",))
+    conversation_id = _first_attr_string(source, ("_hfc_conversation_id",))
+    chat_id = _first_attr_string(source, ("chat_id",))
+    thread_id = _first_attr_string(source, ("thread_id",))
+    profile, provenance = _profile_identity({}, source, None)
+    if (not turn_id or not conversation_id or not chat_id
+            or provenance.startswith("sanitized_")
+            or thread_id and thread_id != conversation_id):
+        return None
+    return {"schema_version": "1", "profile_id": profile, "chat_id": chat_id,
+            "conversation_id": conversation_id, "turn_id": turn_id, "message_id": turn_id}
+
+
+async def suppress_task_heartbeat_async(source: Any) -> bool:
+    """Suppress only this producer's heartbeat after an exact task-card proof.
+
+    No policy cache, synthetic send result, extra event or card mutation. Older
+    sidecars and unbound/native sources without this identity remain fail-open.
+    """
+    try:
+        config = load_runtime_config()
+        payload = _task_heartbeat_probe(source)
+        if not config.enabled or payload is None:
+            return False
+        timeout = min(config.timeout_seconds, POLICY_QUERY_TIMEOUT_SECONDS)
+        result = await asyncio.wait_for(_post_json_response(
+            f"{_summary_base_url(config.event_url)}/delivery/policy", payload, timeout),
+            timeout=timeout + 0.1)
+        current_config = load_runtime_config()
+        return bool(
+            current_config.enabled and current_config.event_url == config.event_url
+            and payload == _task_heartbeat_probe(source)
+            and isinstance(result, dict) and result.get("ok") is True
+            and result.get("disposition") == "card"
+            and result.get("accepted_task_card") is True
+        )
+    except Exception:
+        return False
+
+
 def _transient_notice_recall_seconds(content: Any) -> Optional[float]:
     """Seconds to wait before withdrawing this notice, or None when it must stay."""
     text = str(content or "")
@@ -9906,6 +9949,201 @@ async def recall_busy_redirect_ack_async(event: Any, content: Any, result: Any) 
                                         BUSY_STEER_ACK_PREFIX)):
         return False
     return await recall_transient_thread_notice_async(event, content, result)
+
+
+def _bind_stop_turn_owner(source: Any, event: Any, conversation_id: str) -> None:
+    """Keep one exact, nonpersistent display owner on its processing task."""
+    try:
+        task = asyncio.current_task()
+        if task is not None:
+            # A queued child without a verified identity must not inherit its
+            # predecessor's display owner on the same processing task.
+            task._hfc_stop_turn_owner = None
+        turn_id = _first_attr_string(source, ("_hfc_turn_id",))
+        profile, provenance = _profile_identity({}, source, None)
+        if (task is not None and turn_id and conversation_id
+                and turn_id == _first_attr_string(event, ("message_id",))
+                and _platform_name({}, source) == "feishu"
+                and not provenance.startswith("sanitized_")):
+            task._hfc_stop_turn_owner = (
+                source, event, turn_id, conversation_id, profile,
+                getattr(source, "chat_id", None), getattr(source, "thread_id", None),
+            )
+    except Exception:
+        pass
+
+
+def capture_stop_cancellation(adapter: Any, event: Any, session_key: Any, cmd: Any) -> Any:
+    """Observe the exact old task just before Hermes' verified /stop cancel call."""
+    try:
+        if cmd != "stop" or _platform_name({}, getattr(event, "source", None)) != "feishu":
+            return None
+        task = adapter._session_tasks.get(session_key)
+        if (not isinstance(task, asyncio.Task) or task.done()
+                or (getattr(task, "cancelling", lambda: 0)() != 0)
+                or task in adapter._expected_cancelled_tasks):
+            return None
+        owner = getattr(task, "_hfc_stop_turn_owner", None)
+        if not isinstance(owner, tuple) or len(owner) != 7:
+            return None
+        source, original, turn_id, conversation, profile, chat_id, thread_id = owner
+        if (adapter._event_session_key(original) != session_key
+                or adapter._event_session_key(event) != session_key
+                or original is event or original.message_id != turn_id
+                or event.message_id == turn_id
+                or _first_attr_string(source, ("_hfc_turn_id",)) != turn_id
+                or _first_attr_string(source, ("_hfc_conversation_id",)) != conversation
+                or _profile_identity({}, source, None)[0] != profile
+                or _profile_identity({}, event.source, None)[0] != profile
+                or getattr(source, "chat_id", None) != chat_id
+                or getattr(source, "thread_id", None) != thread_id
+                or any(getattr(source, key, None) != getattr(event.source, key, None)
+                       for key in ("chat_id", "thread_id"))):
+            return None
+        return task, owner
+    except Exception:
+        return None
+
+
+async def emit_cancelled_stop_turn_async(proof: Any) -> bool:
+    """Close only the owner whose handler the verified stop call actually cancelled."""
+    try:
+        if not isinstance(proof, tuple) or len(proof) != 2:
+            return False
+        task, owner = proof
+        if (not isinstance(task, asyncio.Task) or not task.cancelled()
+                or getattr(task, "_hfc_stop_turn_owner", None) is not owner):
+            return False
+        source, event, turn_id, conversation, profile, chat_id, thread_id = owner
+        if (_profile_identity({}, source, None)[0] != profile
+                or _profile_identity({}, getattr(event, "source", None), None)[0] != profile
+                or _platform_name({}, source) != "feishu"
+                or _platform_name({}, getattr(event, "source", None)) != "feishu"
+                or _first_attr_string(source, ("_hfc_turn_id",)) != turn_id
+                or _first_attr_string(event, ("message_id",)) != turn_id
+                or _first_attr_string(source, ("_hfc_conversation_id",)) != conversation
+                or getattr(source, "chat_id", None) != chat_id
+                or getattr(source, "thread_id", None) != thread_id
+                or getattr(getattr(event, "source", None), "chat_id", None) != chat_id
+                or getattr(getattr(event, "source", None), "thread_id", None) != thread_id):
+            return False
+        # Share terminal deduplication with the result-first stale-drain path.
+        return await emit_stale_interrupted_turn_async({
+            "source": source, "event": event, "turn_id": turn_id,
+            "conversation_id": conversation, "profile_id": profile,
+            "agent_result": {"interrupted": True},
+        })
+    except Exception:
+        return False
+
+
+def schedule_cancelled_stop_turn(adapter: Any, proof: Any) -> bool:
+    """Use Hermes' shutdown-owned task set; never delay its pending-message drain."""
+    if not isinstance(proof, tuple) or len(proof) != 2:
+        return False
+    original, owner = proof
+    background = getattr(adapter, "_background_tasks", None)
+    expected = getattr(adapter, "_expected_cancelled_tasks", None)
+    if (not isinstance(original, asyncio.Task)
+            or not (original.cancelled() or (not original.done()
+                    and isinstance(expected, set) and original in expected))
+            or getattr(original, "_hfc_stop_turn_owner", None) is not owner
+            or getattr(original, "_hfc_stop_delivery_scheduled", False)
+            or not isinstance(background, set)
+            or sum(bool(getattr(task, "_hfc_stop_display_delivery", False))
+                   for task in background if not task.done()) >= 16):
+        return False
+
+    async def deliver():
+        async def observe_and_emit():
+            if not original.done():
+                # Hermes' 5s cancel wait can end while its handler is still in
+                # cleanup. Observe completion without awaiting/cancelling that
+                # business task when this display task times out or shuts down.
+                finished = asyncio.get_running_loop().create_future()
+
+                def original_done(done):
+                    if not finished.done():
+                        finished.set_result(None)
+
+                original.add_done_callback(original_done)
+                try:
+                    await finished
+                finally:
+                    original.remove_done_callback(original_done)
+            # A handler that swallowed cancellation is not interrupted evidence.
+            await emit_cancelled_stop_turn_async(proof)
+
+        try:
+            await asyncio.wait_for(observe_and_emit(),
+                                   timeout=TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS)
+        except (Exception, asyncio.CancelledError):
+            pass
+
+    original._hfc_stop_delivery_scheduled = True
+    task = asyncio.create_task(deliver())
+    task._hfc_stop_display_delivery = True
+    background.add(task)
+
+    def completed(done):
+        # Also runs if shutdown cancels the task before its coroutine starts.
+        original._hfc_stop_delivery_scheduled = False
+        background.discard(done)
+        if isinstance(expected, set):
+            expected.discard(done)
+
+    task.add_done_callback(completed)
+    return True
+
+
+async def emit_stale_interrupted_turn_async(local_vars: dict[str, Any]) -> bool:
+    """Close the original card when Hermes discards its explicit interrupt result.
+
+    The managed call site sits inside the verified stale-generation branch. That
+    branch alone is not terminal evidence: only the returned interrupted flag is.
+    A source-bound immutable identity prevents the old drain from closing a newer
+    sender/turn sharing the chat, session or reply anchor.
+    """
+    result = local_vars.get("agent_result")
+    source = local_vars.get("source")
+    event = local_vars.get("event")
+    if (not isinstance(result, dict) or result.get("interrupted") is not True
+            or _platform_name(local_vars, source) != "feishu"):
+        return False
+    turn_id = _first_attr_string(source, ("_hfc_turn_id",))
+    incoming_id = _first_attr_string(event, ("message_id",))
+    internal_id = _first_attr_string(source, ("_hfc_internal_turn_id",))
+    if not turn_id or (incoming_id != turn_id and not (not incoming_id and internal_id == turn_id)):
+        return False
+    # A queued chain returns its last child's result to the original handler;
+    # that child already owns the existing queued-final terminal hook.
+    queued_terminal = result.get("queued_terminal_inbound_id")
+    if queued_terminal and queued_terminal != turn_id:
+        return False
+    marker = "_hfc_stale_interrupted_terminal"
+    if getattr(source, marker, None) == turn_id:
+        return False
+    try:
+        # Set before awaiting so duplicate drains cannot race the same card.
+        setattr(source, marker, turn_id)
+    except Exception:
+        return False
+    accepted = False
+    try:
+        terminal_locals = {
+            **local_vars,
+            **interrupted_turn_locals(source, turn_id, result),
+            "turn_id": turn_id,
+            "error": "任务已中断",
+        }
+        if local_vars.get("_turn_seconds") is not None:
+            terminal_locals["duration"] = local_vars["_turn_seconds"]
+        accepted = await emit_from_hermes_locals_async(terminal_locals, event_name="message.failed")
+        return accepted
+    finally:
+        # A failed transport can retry; accepted duplicates remain suppressed.
+        if not accepted:
+            setattr(source, marker, None)
 
 
 def interrupted_turn_locals(source: Any, message_id: str, result: Any) -> dict[str, Any]:
@@ -10267,6 +10505,7 @@ def _build_event(
     if event_name == "message.started" and not preview and source_obj is not None:
         try:
             setattr(source_obj, "_hfc_conversation_id", conversation_id)
+            _bind_stop_turn_owner(source_obj, gateway_event_obj, conversation_id)
         except Exception:
             pass
     if is_terminal_event:

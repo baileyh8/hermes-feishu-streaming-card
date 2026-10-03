@@ -2,7 +2,11 @@
 
 自动化测试不能完全证明 Feishu/Lark 客户端体验。涉及卡片 UX、topic、系统提示、命令卡片的版本，发布前需要真实飞书 smoke。
 
-## 当前 V4.6.4 候选
+## 当前任务卡片候选
+
+2026-10-03 的 `task` 预设在真实 Gateway、模型、工具和飞书客户端中验收，尚未通过全部发布门槛。详见[真实验收与失败记录](../reviews/2026-10-03-task-cards-acceptance.md)及[视觉发布规范](card-visual-guidelines.md)。桌面、Android、iOS 和不同主题/字号分别记录，不能用自动化、离线预览或旧版截图代替。
+
+## V4.6.4 验收基线
 
 本轮使用[V4.6.4验收清单](feishu-acceptance-v4.6.4.md)，涵盖首次回调、按需续答、唯一 legacy owner、可选预设和有来源证明的通知清理。下文保留历史版本的验收记录；旧版“交互卡直接成为唯一续写位置”的描述不适用于当前[交互续答契约](interaction-continuation.md)。
 
