@@ -848,6 +848,33 @@ def _apply_task_heartbeat_patch(content):
     ).body[0]
     guards = [(loop, node) for loop in ast.walk(scope) if isinstance(loop, ast.While)
               for node in loop.body if isinstance(node, ast.If) and ast.dump(node) == ast.dump(expected)]
+    legacy_executor_alias = False
+    if not guards and scope.name == "_notify_long_running":
+        if len(checks) != 1:
+            raise ValueError("ambiguous task heartbeat live-owner checks")
+        legacy_guard = ast.parse(
+            "if not self._should_emit_long_running_notification(session_key, agent_holder[0], _exec_ref):\n"
+            "    break\n"
+        ).body[0]
+        guards = [(loop, node) for loop in ast.walk(scope) if isinstance(loop, ast.While)
+                  for node in loop.body if isinstance(node, ast.If) and ast.dump(node) == ast.dump(legacy_guard)]
+        if len(guards) == 1:
+            loop, guard = guards[0]
+            binding = ast.parse(
+                "try:\n    _exec_ref = _executor_task\n"
+                "except NameError:\n    _exec_ref = None\n"
+            ).body[0]
+            position = loop.body.index(guard)
+            previous = loop.body[position - 1] if position else None
+            writes = [node for node in ast.walk(scope) if isinstance(node, ast.Name)
+                      and isinstance(node.ctx, (ast.Store, ast.Del))
+                      and node.id in {"_exec_ref", "_executor_task"}]
+            if (previous is None or ast.dump(previous) != ast.dump(binding)
+                    or scope.args.posonlyargs or scope.args.args or scope.args.kwonlyargs
+                    or scope.args.vararg or scope.args.kwarg
+                    or len(writes) != 2 or any(node not in set(ast.walk(previous)) for node in writes)):
+                raise ValueError("task heartbeat executor alias binding changed")
+            legacy_executor_alias = True
     if len(guards) != 1:
         raise ValueError("task heartbeat live-owner contract changed")
     loop, guard = guards[0]
@@ -864,7 +891,12 @@ def _apply_task_heartbeat_patch(content):
         'else t("gateway.progress.working_heartbeat", minutes=_elapsed_mins, detail=_status_detail)',
         'f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
     )
-    fixed_heartbeat = (isinstance(text, ast.Constant) and type(text.value) is str
+    if legacy_executor_alias:
+        known_templates = (
+            '_generic_status_phrase("status") if _long_running_mode == "generic" '
+            'else f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
+        )
+    fixed_heartbeat = (not legacy_executor_alias and isinstance(text, ast.Constant) and type(text.value) is str
                        and re.fullmatch(r"⏳ Working — \d+ min(?: — [^\r\n]*)?", text.value))
     if not fixed_heartbeat and not any(_same_expression(text, item) for item in known_templates):
         raise ValueError("task heartbeat message template changed")

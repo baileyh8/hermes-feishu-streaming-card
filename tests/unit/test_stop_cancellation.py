@@ -440,3 +440,92 @@ async def test_consecutive_started_turn_replaces_or_clears_task_owner():
     s = hook_runtime.queued_followup_source(incoming.source, incoming)
     hook_runtime.build_event("message.started", {"source": s, "event": incoming})
     assert task._hfc_stop_turn_owner is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["cancelled", "normal", "owner_changed", "source_profile",
+                                    "source_chat", "source_thread", "source_conversation",
+                                    "source_and_event_turn", "event_profile", "timeout", "shutdown"])
+async def test_stop_observes_delayed_handler_cleanup_without_cancelling_it(monkeypatch, outcome):
+    order = []
+    ready, cleanup_started, release_cleanup = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original, command = event("original"), event("command")
+    async def handler():
+        s = hook_runtime.queued_followup_source(original.source, original)
+        hook_runtime.build_event("message.started", {"source": s, "event": original})
+        ready.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            order.append("cancellation-started")
+            cleanup_started.set()
+            await release_cleanup.wait()
+            order.append("cleanup-finished")
+            if outcome == "normal":
+                return
+            raise
+    task = asyncio.create_task(handler())
+    await ready.wait()
+    key = route(original)
+    async def bounded_wait(awaitable, *, timeout):
+        # Execute Hermes' exact 5s branch without spending 5s per boundary case.
+        assert timeout == 5.0
+        return await asyncio.wait_for(awaitable, timeout=0.01)
+    namespace = {"asyncio": SimpleNamespace(Event=asyncio.Event, wait_for=bounded_wait,
+        shield=asyncio.shield, CancelledError=asyncio.CancelledError, TimeoutError=asyncio.TimeoutError)}
+    exec(patcher.apply_base_patch(source()), namespace)
+    adapter = namespace["BasePlatformAdapter"]()
+    adapter._event_session_key = route
+    adapter._active_sessions = {key: asyncio.Event()}
+    adapter._session_tasks = {key: task}
+    adapter._expected_cancelled_tasks = set()
+    adapter._background_tasks = set()
+    async def reply(*args, **kwargs):
+        order.append("reply")
+    async def drain(*args):
+        order.append("drain")
+    async def emit(*args, **kwargs):
+        order.append("terminal")
+        return True
+    adapter._dispatch_inline_reply, adapter._drain_pending_after_session_command = reply, drain
+    monkeypatch.setattr(hook_runtime, "emit_from_hermes_locals_async", emit)
+    if outcome == "timeout":
+        monkeypatch.setattr(hook_runtime, "TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS", 0.02)
+    try:
+        await adapter._dispatch_active_session_command(command, key, "stop")
+        assert cleanup_started.is_set() and not task.done()
+        assert order == ["reply", "cancellation-started", "drain"]
+        owner = task._hfc_stop_turn_owner
+        assert len(adapter._background_tasks) == 1
+        assert not hook_runtime.schedule_cancelled_stop_turn(adapter, (task, owner))
+        if outcome == "owner_changed":
+            task._hfc_stop_turn_owner = tuple(list(owner))
+        elif outcome == "source_profile":
+            owner[0].profile_id = "other"
+        elif outcome == "source_chat":
+            owner[0].chat_id = "other"
+        elif outcome == "source_thread":
+            owner[0].thread_id = "other"
+        elif outcome == "source_conversation":
+            owner[0]._hfc_conversation_id = "other"
+        elif outcome == "source_and_event_turn":
+            owner[0]._hfc_turn_id = original.message_id = "other"
+        elif outcome == "event_profile":
+            original.source.profile_id = "other"
+        observers = list(adapter._background_tasks)
+        if outcome in {"timeout", "shutdown"}:
+            if outcome == "shutdown":
+                observers[0].cancel()
+            await asyncio.wait_for(asyncio.gather(*observers, return_exceptions=True), 0.2)
+            assert not task.done()  # Observer timeout/shutdown cannot cancel business cleanup.
+            assert "cleanup-finished" not in order and "terminal" not in order
+        release_cleanup.set()
+        await asyncio.gather(task, *observers, return_exceptions=True)
+        await asyncio.sleep(0)
+        assert task.cancelled() is (outcome != "normal")
+        assert order == ["reply", "cancellation-started", "drain", "cleanup-finished"] + (
+            ["terminal"] if outcome == "cancelled" else [])
+        assert not adapter._background_tasks and not task._hfc_stop_delivery_scheduled
+    finally:
+        release_cleanup.set()
+        await asyncio.gather(task, *adapter._background_tasks, return_exceptions=True)

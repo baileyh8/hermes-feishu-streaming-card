@@ -30,6 +30,12 @@ def main_text(card):
         if str(item.get("element_id", "")).startswith("main_content"))
 
 
+def assert_generic_interrupt_uses_stopped_header(card):
+    assert main_text(card) == ""
+    assert card["header"]["title"] == {"tag": "plain_text", "content": "Hermes Agent · 已停止"}
+    assert card["header"]["template"] == "red"
+
+
 @pytest.mark.parametrize("outcome", [None, "failed", "interrupted", "incomplete"])
 def test_task_promoted_thinking_moves_to_process_with_terminal_notice_first(outcome):
     session = failed_thinking(outcome=outcome)
@@ -38,7 +44,16 @@ def test_task_promoted_thinking_moves_to_process_with_terminal_notice_first(outc
     result = render_card_result(session, presentation="task", stream_thinking_to_body=False)
     assert "THINKING_SENTINEL" not in main_text(result.card)
     assert main_text(result.card) == result.primary_text
-    assert main_text(result.card)
+    if outcome is None:
+        assert session.terminal_reasoning_notice == "任务已中断"
+        assert_generic_interrupt_uses_stopped_header(result.card)
+    else:
+        notices = {
+            "failed": "本轮执行失败，任务完成情况请以实际结果为准。",
+            "interrupted": "本轮已中断，任务尚未确认完成。",
+            "incomplete": "本轮已结束，但 Hermes 未报告执行完成。",
+        }
+        assert main_text(result.card) == notices[outcome]
     panel = next(item for item in result.card["body"]["elements"] if item.get("tag") == "collapsible_panel")
     assert "THINKING_SENTINEL" in str(panel) and "running" not in str(panel)
     assert panel["expanded"] is False
@@ -69,19 +84,26 @@ def test_unsuccessful_completion_with_explicit_answer_keeps_that_answer():
 
 def test_long_promoted_thinking_does_not_consume_task_primary_payload_budget():
     session = failed_thinking(thinking="THINKING_SENTINEL " * 2400)
+    canonical = session.answer_text
     result = render_card_result(session, presentation="task", max_reasoning_chars=100)
     assert result.disposition == "card" and result.inspection.safe
-    assert result.primary_text == "任务已中断"
-    assert main_text(result.card) == "任务已中断"
+    assert result.primary_text == ""
+    assert_generic_interrupt_uses_stopped_header(result.card)
+    panel = next(item for item in result.card["body"]["elements"] if item.get("tag") == "collapsible_panel")
+    assert "THINKING_SENTINEL" in str(panel)
+    assert session.answer_text == canonical
+    assert session.thinking_text == "THINKING_SENTINEL " * 2400
     assert render_card_result(session, presentation="classic").disposition == "native"
 
 
 def test_task_terminal_honors_explicit_hidden_reasoning_without_erasing_it():
     session = failed_thinking()
+    canonical = session.answer_text
     card = render_card(session, presentation="task", show_reasoning=False)
-    assert main_text(card) == "任务已中断"
+    assert_generic_interrupt_uses_stopped_header(card)
     assert "THINKING_SENTINEL" not in str(card)
     assert session.thinking_text == "THINKING_SENTINEL"
+    assert session.answer_text == canonical
 
 
 def test_task_terminal_source_survives_checkpoint_and_old_records_remain_readable(tmp_path):
@@ -89,7 +111,11 @@ def test_task_terminal_source_survives_checkpoint_and_old_records_remain_readabl
     session = failed_thinking()
     store.save("turn", session, "om_fixture", None, "", {}, "fixture_client")
     restored = store.load()[0]["session"]
-    assert main_text(render_card(restored, presentation="task")) == "任务已中断"
+    card = render_card(restored, presentation="task")
+    assert restored.terminal_reasoning_notice == "任务已中断"
+    assert_generic_interrupt_uses_stopped_header(card)
+    assert "THINKING_SENTINEL" in str(card)
+    assert restored.thinking_text == session.thinking_text
     assert restored.answer_text == session.answer_text
     path = next(store.root.glob("*.json"))
     payload = json.loads(path.read_text())
@@ -127,13 +153,18 @@ def test_continuation_thinking_failure_does_not_hide_prior_canonical_answer(tmp_
     assert session.apply(event("thinking.delta", 1, {"text": "CONTINUATION_THINKING"}))
     assert session.apply(event("message.failed", 2, {"error": "任务已中断"}))
     view = display_view(session)
-    assert main_text(render_card(view, presentation="task")) == "任务已中断"
-    assert "CONTINUATION_THINKING" in str(render_card(view, presentation="task"))
+    card = render_card(view, presentation="task")
+    assert view.terminal_reasoning_notice == "任务已中断"
+    assert_generic_interrupt_uses_stopped_header(card)
+    assert "CONTINUATION_THINKING" in str(card)
     assert "PRIOR_REAL_ANSWER" in main_text(render_card(session, presentation="task"))
     store = SessionStore(tmp_path)
     store.save("turn", session, "om_fixture", None, "", {}, "fixture_client")
     restored = store.load()[0]["session"]
-    assert main_text(render_card(display_view(restored), presentation="task")) == "任务已中断"
+    restored_card = render_card(display_view(restored), presentation="task")
+    assert_generic_interrupt_uses_stopped_header(restored_card)
+    assert "CONTINUATION_THINKING" in str(restored_card)
+    assert restored.answer_text == session.answer_text
     # A failed continuation delivery still explains where the retained content
     # lives; a display-only projection must not erase that fallback warning.
     session.display_segment["failed"] = True

@@ -16,6 +16,7 @@ Release candidate; final visual/client acceptance, exact-commit CI and publicati
 - Close the original card from Hermes' explicit interrupted result or verified controlled stop cancellation, without blocking queued messages; retain bounded token-free auxiliary receipts so expiry and restart remove stale controls without restoring execution or consent.
 - Suppress duplicate Working heartbeats only after authenticated proof that the exact turn has an accepted task card; preserve classic and unknown-path behavior.
 - Preserve older verified Hermes inline-reply cancellation layouts. Mark expired task approvals as historical requests, omit redundant short single-choice lists only when full button labels preserve every option, and avoid repeating a source-identified generic interruption notice.
+- Observe cancellation that completes after Hermes' initial stop wait, within the existing delivery budget and owner checks. Support the verified older heartbeat executor alias while retaining the current split-source contract.
 - Strengthen real-client visual release gates and pin Hermes main `c8301ea6c9b797184df16a9c5dd462400b264ff4` for source compatibility. See [Chinese notes](docs/release-notes-v4.7.0.md), [English notes](docs/release-notes-v4.7.0.en.md) and the [acceptance record](docs/reviews/2026-10-03-task-cards-acceptance.md).
 
 ## [4.6.13] - 2026-10-02

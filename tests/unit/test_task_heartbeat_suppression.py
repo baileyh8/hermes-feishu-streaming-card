@@ -30,6 +30,35 @@ SOURCE = '''class Gateway:
 '''
 
 
+# The three pinned monolithic producers capture _executor_task from the outer
+# turn and copy it through this exact NameError guard before checking liveness.
+LEGACY_SOURCE = '''class Gateway:
+    async def run(self, source, session_key, agent_holder, _executor_task):
+        _long_running_mode = "detailed"
+        async def _notify_long_running():
+            _notify_adapter = self._adapter_for_source(source)
+            _heartbeat_msg_id = None
+            while True:
+                try:
+                    _exec_ref = _executor_task
+                except NameError:
+                    _exec_ref = None
+                if not self._should_emit_long_running_notification(session_key, agent_holder[0], _exec_ref):
+                    break
+                _elapsed_mins = 3
+                _status_detail = ""
+                _heartbeat_text = _generic_status_phrase("status") if _long_running_mode == "generic" else f"⏳ Working — {_elapsed_mins} min{_status_detail}"
+                _notify_res = None
+                if _heartbeat_msg_id:
+                    _notify_res = await _notify_adapter.edit_message(source.chat_id, _heartbeat_msg_id, _heartbeat_text)
+                if not (_notify_res and getattr(_notify_res, "success", False)):
+                    _notify_res = await _notify_adapter.send(source.chat_id, _heartbeat_text)
+                    if getattr(_notify_res, "success", False) and getattr(_notify_res, "message_id", None):
+                        _heartbeat_msg_id = str(_notify_res.message_id)
+        await _notify_long_running()
+'''
+
+
 @pytest.fixture(autouse=True)
 def isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(tmp_path / "state"))
@@ -232,3 +261,114 @@ def test_i18n_heartbeat_key_and_arguments_cannot_drift(before, after):
     original = SOURCE.replace('"⏳ Working — 3 min — iteration 2/15, clarify"', template)
     with pytest.raises(ValueError, match="heartbeat message template"):
         patcher._apply_task_heartbeat_patch(original)
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_legacy_executor_alias_heartbeat_is_exactly_reversible(newline):
+    original = LEGACY_SOURCE.replace("\n", newline)
+    patched = patcher._apply_task_heartbeat_patch(original)
+    assert patched != original
+    compile(patched, "<legacy-heartbeat>", "exec")
+    assert patcher._apply_task_heartbeat_patch(patched) == patched
+    assert patcher.remove_patch(patched) == original
+    assert patcher.remove_patch_lenient(patched) == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+@pytest.mark.parametrize("executor_present", [True, False])
+async def test_legacy_heartbeat_checks_original_owner_before_suppression(monkeypatch, accepted, executor_present):
+    proof_sources, calls, owners = [], [], []
+    async def suppress(value):
+        proof_sources.append(value)
+        return accepted
+    monkeypatch.setattr(hook_runtime, "suppress_task_heartbeat_async", suppress)
+    original = LEGACY_SOURCE
+    if not executor_present:
+        original = original.replace("agent_holder, _executor_task):", "agent_holder):")
+    namespace = {}
+    exec(patcher._apply_task_heartbeat_patch(original), namespace)
+    runner = namespace["Gateway"]()
+    async def send(*args):
+        calls.append("send")
+        return SimpleNamespace(success=True, message_id="om_heartbeat")
+    async def edit(*args):
+        calls.append("edit")
+        return SimpleNamespace(success=True, message_id="om_heartbeat")
+    runner._adapter_for_source = lambda value: SimpleNamespace(send=send, edit_message=edit)
+    def live(*args):
+        owners.append(args)
+        return len(owners) <= 3
+    runner._should_emit_long_running_notification = live
+    value, agent, executor = source(), object(), object()
+    args = (value, "fixture-session", [agent], executor) if executor_present else (value, "fixture-session", [agent])
+    await runner.run(*args)
+    assert owners == [("fixture-session", agent, executor if executor_present else None)] * 4
+    assert proof_sources == [value] * 3
+    assert calls == ([] if accepted else ["send", "edit", "edit"])
+
+
+@pytest.mark.parametrize("before,after", [
+    ("_exec_ref = _executor_task", "_exec_ref = other_task"),
+    ("except NameError:", "except Exception:"),
+    ("_exec_ref = None", "_exec_ref = other_task"),
+    ("                if not self._should_emit", "                _exec_ref = None\n                if not self._should_emit"),
+    ("                _elapsed_mins = 3", "                _exec_ref = None\n                _elapsed_mins = 3"),
+    ("                _elapsed_mins = 3", "                _executor_task = None\n                _elapsed_mins = 3"),
+    ("agent_holder[0], _exec_ref)", "agent_holder[0], other_task)"),
+    ("                    break", "                    return"),
+    ('_generic_status_phrase("status")', '_generic_status_phrase("important")'),
+    ('_generic_status_phrase("status")', 'other_status_phrase("status")'),
+    ("async def _notify_long_running():", "async def _notify_long_running(_executor_task):"),
+    ("                _elapsed_mins = 3", "                self._should_emit_long_running_notification(session_key, agent_holder[0], _exec_ref)\n                _elapsed_mins = 3"),
+])
+def test_legacy_heartbeat_alias_binding_and_template_drift_are_refused(before, after):
+    with pytest.raises(ValueError, match="heartbeat"):
+        patcher._apply_task_heartbeat_patch(LEGACY_SOURCE.replace(before, after))
+
+
+MODERN_RECHECK_SOURCE = SOURCE.replace(
+    '"⏳ Working — 3 min — iteration 2/15, clarify"', I18N_HEARTBEAT,
+).replace(
+    '                _notify_res = await _notify_adapter.send',
+    '                if not self._should_emit_long_running_notification(session_key, agent_holder[0], _executor_task_holder[0]):\n'
+    '                    break\n'
+    '                _notify_res = await _notify_adapter.send',
+)
+
+
+def test_modern_heartbeat_keeps_second_pre_send_owner_check():
+    patched = patcher._apply_task_heartbeat_patch(MODERN_RECHECK_SOURCE)
+    assert patched.count(patcher.TASK_HEARTBEAT_PATCH_BEGIN) == 1
+    assert patched.count("self._should_emit_long_running_notification(") == 2
+    compile(patched, "<modern-heartbeat-recheck>", "exec")
+    assert patcher._apply_task_heartbeat_patch(patched) == patched
+    assert patcher.remove_patch(patched) == MODERN_RECHECK_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_modern_heartbeat_lost_owner_cannot_send_after_unsuppressed_probe(monkeypatch):
+    proof_sources, calls, owners = [], [], []
+    async def suppress(value):
+        proof_sources.append(value)
+        return False
+    monkeypatch.setattr(hook_runtime, "suppress_task_heartbeat_async", suppress)
+    original = MODERN_RECHECK_SOURCE.replace(I18N_HEARTBEAT, '"⏳ Working — 3 min"')
+    namespace = {}
+    exec(patcher._apply_task_heartbeat_patch(original), namespace)
+    runner = namespace["Gateway"]()
+    async def send(*args):
+        calls.append("send")
+    async def edit(*args):
+        calls.append("edit")
+    runner._delivery_adapter_for = lambda value: SimpleNamespace(send=send, edit_message=edit)
+    def live(*args):
+        owners.append(args)
+        return len(owners) == 1
+    runner._should_emit_long_running_notification = live
+    value, agent, executor = source(), object(), object()
+    await runner._run_agent_notify_long_running(None, SimpleNamespace(
+        source=value, session_key="fixture-session", agent_holder=[agent]), [executor])
+    assert len(owners) == 2
+    assert proof_sources == [value]
+    assert calls == []

@@ -10016,9 +10016,16 @@ async def emit_cancelled_stop_turn_async(proof: Any) -> bool:
             return False
         source, event, turn_id, conversation, profile, chat_id, thread_id = owner
         if (_profile_identity({}, source, None)[0] != profile
+                or _profile_identity({}, getattr(event, "source", None), None)[0] != profile
+                or _platform_name({}, source) != "feishu"
+                or _platform_name({}, getattr(event, "source", None)) != "feishu"
+                or _first_attr_string(source, ("_hfc_turn_id",)) != turn_id
+                or _first_attr_string(event, ("message_id",)) != turn_id
                 or _first_attr_string(source, ("_hfc_conversation_id",)) != conversation
                 or getattr(source, "chat_id", None) != chat_id
-                or getattr(source, "thread_id", None) != thread_id):
+                or getattr(source, "thread_id", None) != thread_id
+                or getattr(getattr(event, "source", None), "chat_id", None) != chat_id
+                or getattr(getattr(event, "source", None), "thread_id", None) != thread_id):
             return False
         # Share terminal deduplication with the result-first stale-drain path.
         return await emit_stale_interrupted_turn_async({
@@ -10036,7 +10043,10 @@ def schedule_cancelled_stop_turn(adapter: Any, proof: Any) -> bool:
         return False
     original, owner = proof
     background = getattr(adapter, "_background_tasks", None)
-    if (not isinstance(original, asyncio.Task) or not original.cancelled()
+    expected = getattr(adapter, "_expected_cancelled_tasks", None)
+    if (not isinstance(original, asyncio.Task)
+            or not (original.cancelled() or (not original.done()
+                    and isinstance(expected, set) and original in expected))
             or getattr(original, "_hfc_stop_turn_owner", None) is not owner
             or getattr(original, "_hfc_stop_delivery_scheduled", False)
             or not isinstance(background, set)
@@ -10045,8 +10055,27 @@ def schedule_cancelled_stop_turn(adapter: Any, proof: Any) -> bool:
         return False
 
     async def deliver():
+        async def observe_and_emit():
+            if not original.done():
+                # Hermes' 5s cancel wait can end while its handler is still in
+                # cleanup. Observe completion without awaiting/cancelling that
+                # business task when this display task times out or shuts down.
+                finished = asyncio.get_running_loop().create_future()
+
+                def original_done(done):
+                    if not finished.done():
+                        finished.set_result(None)
+
+                original.add_done_callback(original_done)
+                try:
+                    await finished
+                finally:
+                    original.remove_done_callback(original_done)
+            # A handler that swallowed cancellation is not interrupted evidence.
+            await emit_cancelled_stop_turn_async(proof)
+
         try:
-            await asyncio.wait_for(emit_cancelled_stop_turn_async(proof),
+            await asyncio.wait_for(observe_and_emit(),
                                    timeout=TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS)
         except (Exception, asyncio.CancelledError):
             pass
@@ -10055,7 +10084,6 @@ def schedule_cancelled_stop_turn(adapter: Any, proof: Any) -> bool:
     task = asyncio.create_task(deliver())
     task._hfc_stop_display_delivery = True
     background.add(task)
-    expected = getattr(adapter, "_expected_cancelled_tasks", None)
 
     def completed(done):
         # Also runs if shutdown cancels the task before its coroutine starts.

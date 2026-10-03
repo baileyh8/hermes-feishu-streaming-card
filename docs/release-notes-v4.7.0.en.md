@@ -37,7 +37,9 @@ See [task cards](task-cards.md#english-quick-reference) and [reading presets](wi
 
 The full regression for `1e993bd` recorded **4,509 passed and 22 skipped**. All 14 GitHub checks for `9d986ad` passed, with real desktop evidence for long tasks, multi-select and light/dark themes. A pure approval `/stop` exposed another cancellation order, and a long wait produced a duplicate Working message. `8edb213` passed real pure-approval cancellation and a 210-second heartbeat-deduplication run on upgraded Hermes `3d0a61ac`. Strict visual review still found ambiguous expired-approval copy and redundant information, while CI exposed an older inline-reply layout regression. Those repairs require final-package verification; earlier successful cases do not establish final acceptance.
 
-Final-commit regression and cross-platform CI, relevant real flows, visual gates, exact merge provenance, an annotated tag, assets/checksums and public-install provenance remain required. Android/iOS, dark theme and enlarged type are separate evidence; missing coverage stays unverified. Automated results do not substitute for client acceptance.
+On `b57e84a`, the real multi-select card submitted two choices plus custom text, and the final code block could be scrolled to its end in dark mode at 125%. Stopping a paused approval exposed cancellation completing after Hermes' initial five-second wait. Its repair passed 88 focused tests and independent review but still requires a new-wheel real-client run. The older heartbeat-layout compatibility failure exposed by CI is also repaired: three older baselines and current `3d0a61ac` each passed installation, repeat installation, doctor, integrity migration and byte-for-byte restore. Intermediate failures remain recorded.
+
+Final-commit regression and cross-platform CI, relevant real flows, visual gates, exact merge provenance, an annotated tag, assets/checksums and public-install provenance remain required. Android/iOS, narrow chat areas, dark theme and enlarged type are separate evidence; missing coverage stays unverified. Automated results do not substitute for client acceptance.
 
 ## Credits
 
