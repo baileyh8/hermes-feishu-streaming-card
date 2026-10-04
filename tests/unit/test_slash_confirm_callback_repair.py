@@ -152,3 +152,37 @@ async def test_rejected_confirmation_never_routes_as_slash_command(runtime, fiel
     await asyncio.gather(*adapter.tasks)
     assert not adapter.native and not runtime.resolved and not runtime.updated
     assert "confirm-1" in adapter._hfc_slash_confirm_state
+
+
+@pytest.mark.asyncio
+async def test_reinstall_does_not_save_previous_hfc_wrapper_as_native(runtime):
+    Adapter = adapter_type()
+    adapter = Adapter()
+    runner = SimpleNamespace(adapters={"feishu": adapter})
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner)
+
+    # An earlier import of HFC has different function identities but the same
+    # wrapper names. Saving it as the native fallback would recurse forever.
+    def previous_sync(self, data):
+        return hook_runtime._hfc_on_feishu_card_action_trigger(self, data)
+
+    async def previous_async(self, data):
+        return await hook_runtime._hfc_handle_feishu_card_action_event(self, data)
+
+    for previous, wrapper in (
+        (previous_sync, hook_runtime._hfc_on_feishu_card_action_trigger),
+        (previous_async, hook_runtime._hfc_handle_feishu_card_action_event),
+    ):
+        previous.__name__ = wrapper.__name__
+        previous.__module__ = wrapper.__module__
+    Adapter._on_card_action_trigger = previous_sync
+    Adapter._handle_card_action_event = previous_async
+    original_sync = Adapter._hfc_original_on_card_action_trigger
+    original_async = Adapter._hfc_original_handle_card_action_event
+    assert hook_runtime.install_feishu_command_card_adapter_methods(runner)
+    assert Adapter._hfc_original_on_card_action_trigger is original_sync
+    assert Adapter._hfc_original_handle_card_action_event is original_async
+    other = SimpleNamespace(event=SimpleNamespace(action=SimpleNamespace(value={"third_party": True})))
+    adapter._on_card_action_trigger(other)
+    await asyncio.gather(*adapter.tasks)
+    assert adapter.native == [other]

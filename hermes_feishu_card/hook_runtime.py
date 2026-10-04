@@ -9212,6 +9212,19 @@ def _hfc_install_policy_adapter_method(
     return True
 
 
+def _hfc_preserve_native_card_callback(
+    adapter_type: type, current: Callable[..., Any], wrapper: Callable[..., Any], original_name: str,
+) -> None:
+    # A previous HFC import has the same wrapper name but a different identity.
+    # Keep its saved native fallback, rather than stacking HFC on itself.
+    previous_hfc = (
+        getattr(current, "__module__", None) == wrapper.__module__
+        and getattr(current, "__name__", None) == wrapper.__name__
+    )
+    if not previous_hfc:
+        setattr(adapter_type, original_name, current)
+
+
 def _hfc_thread_metadata_for_target_with_feishu_reply_anchor(
     self: Any,
     *args: Any,
@@ -9393,7 +9406,10 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
                 setattr(adapter_type, "_hfc_command_card_action_wrapped", True)
                 adapter_ready = True
             elif callable(current_action_handler):
-                setattr(adapter_type, "_hfc_original_on_card_action_trigger", current_action_handler)
+                _hfc_preserve_native_card_callback(
+                    adapter_type, current_action_handler, _hfc_on_feishu_card_action_trigger,
+                    "_hfc_original_on_card_action_trigger",
+                )
                 setattr(adapter_type, "_on_card_action_trigger", _hfc_on_feishu_card_action_trigger)
                 setattr(adapter_type, "_hfc_command_card_action_wrapped", True)
                 adapter_ready = True
@@ -9403,10 +9419,9 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
                 setattr(adapter_type, "_hfc_command_card_event_wrapped", True)
                 adapter_ready = True
             elif callable(current_event_handler):
-                setattr(
-                    adapter_type,
+                _hfc_preserve_native_card_callback(
+                    adapter_type, current_event_handler, _hfc_handle_feishu_card_action_event,
                     "_hfc_original_handle_card_action_event",
-                    current_event_handler,
                 )
                 setattr(
                     adapter_type,
