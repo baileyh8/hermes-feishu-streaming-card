@@ -1,5 +1,12 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.7.1：命令确认回调
+
+- [x] 校验同步/异步实际回调，修复重绑定和继承标记导致的漏接管，保留旧 HFC 包装器的原生 fallback。
+- [x] 旧 dispatcher 异步确认路径更新原卡，复用一次性确认与保存的 IM message ID。
+- [x] 聚焦回归 1,137 passed；Hermes 0.19.0、正式版 0.21.5、main `af90026` 的 24 项源码/SDK/原生确认状态隔离验证通过。
+- 发布门禁与安装证据以 [v4.7.1 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.1) 为准。报告者的 HFC 版本和 action.value 尚未补齐，现场触发原因与真实飞书复验不能写为已确认。
+
 ## V4.7.0：任务卡片与阅读体验
 
 - [x] 可选 `task` 预设、九状态离线预览、逐角色外观配置来源与 GPT/Codex 额度归属。
@@ -9,7 +16,7 @@
 - [x] 修复只读源码快照清理，回收已退役的 117 份系统临时快照；新增边界回归，最终测试单独登记。
 - [x] 2026-10-04 Bailey 批准按已验收桌面范围发布，接受延迟取消仅有自动化验证。
 - [ ] Android/iOS 真机及超过 5 秒取消的真实分支复验，继续明确未验证，不阻断本次已批准范围。
-- [ ] 精确合并、annotated tag、资产校验、公开安装与发布收尾；最终状态见 [Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0)。
+- [x] 精确合并、annotated tag、资产校验、公开安装与发布收尾；最终状态见 [Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0)。
 - 测试环境已按批次回收；发行流程新建的临时产物也须清理。见[发行说明](docs/release-notes-v4.7.0.md)与[验收记录](docs/reviews/2026-10-03-task-cards-acceptance.md)。
 
 ## V4.6.13：私有控制凭据

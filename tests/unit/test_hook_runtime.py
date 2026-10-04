@@ -5660,7 +5660,8 @@ def test_stale_feishu_card_action_handler_resolves_native_slash_confirm(monkeypa
     assert adapter.routed == []
     assert resolved == [("feishu:oc_abc", "cf-1", "once")]
     assert "cf-1" not in adapter._hfc_slash_confirm_state
-    assert adapter.updated is None
+    assert adapter.updated.message_id == "om_slash_card"
+    assert "New session started." in adapter.updated.request_body.content
 
 
 def test_install_feishu_command_card_methods_adds_model_picker(monkeypatch):

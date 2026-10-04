@@ -3481,7 +3481,9 @@ def _hfc_eager_ensure_command_card_hooks(local_vars: dict[str, Any]) -> bool:
         adapter_type = type(adapter)
         if (getattr(adapter_type, "_hfc_command_card_methods_installed", False)
                 and getattr(adapter_type, "_on_card_action_trigger", None)
-                is _hfc_on_feishu_card_action_trigger):
+                is _hfc_on_feishu_card_action_trigger
+                and getattr(adapter_type, "_handle_card_action_event", None)
+                is _hfc_handle_feishu_card_action_event):
             _hfc_refresh_feishu_event_handler(adapter)
             return True
         return install_feishu_command_card_adapter_methods(runner)
@@ -8862,15 +8864,15 @@ async def _hfc_handle_feishu_card_action_event(self: Any, data: Any) -> None:
     if action == "slash_confirm":
         if _hfc_is_duplicate_card_action(self, data):
             return
-        resolved = await _hfc_resolve_native_slash_action_async(self, data, action_value)
-        if resolved is not None:
-            card, message_id = resolved
-            _hfc_info(
-                "background slash_confirm resolved without direct update: "
-                f"{_hfc_log_reference('message', message_id)}"
-            )
-        else:
+        prepared = _hfc_prepare_native_slash_action(self, data, action_value, claim=True)
+        if prepared is None:
             _hfc_info("background slash_confirm ignored: unresolved")
+            return
+        # A dispatcher retained before installation reaches this async fallback.
+        # It cannot return a card to the SDK, so publish the result just as the
+        # inline callback's background task does. Use the stored IM message ID,
+        # never the callback token or a CardKit container ID.
+        await _hfc_resolve_slash_confirm_background(self, data, action_value, prepared)
         return
     if action == "model_picker":
         if _hfc_is_duplicate_card_action(self, data):
@@ -9210,6 +9212,19 @@ def _hfc_install_policy_adapter_method(
     return True
 
 
+def _hfc_preserve_native_card_callback(
+    adapter_type: type, current: Callable[..., Any], wrapper: Callable[..., Any], original_name: str,
+) -> None:
+    # A previous HFC import has the same wrapper name but a different identity.
+    # Keep its saved native fallback, rather than stacking HFC on itself.
+    previous_hfc = (
+        getattr(current, "__module__", None) == wrapper.__module__
+        and getattr(current, "__name__", None) == wrapper.__name__
+    )
+    if not previous_hfc:
+        setattr(adapter_type, original_name, current)
+
+
 def _hfc_thread_metadata_for_target_with_feishu_reply_anchor(
     self: Any,
     *args: Any,
@@ -9383,42 +9398,37 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
                 original_name="_hfc_original_send_resume_picker",
             ) or adapter_ready
 
-            current_action_handler = adapter_type.__dict__.get("_on_card_action_trigger")
+            # Installation markers can survive upstream method rebinding or be
+            # inherited by a subclass overriding the callbacks. Inspect actual
+            # methods: otherwise HFC buttons leak into Hermes' /card fallback.
+            current_action_handler = getattr(adapter_type, "_on_card_action_trigger", None)
             if current_action_handler is _hfc_on_feishu_card_action_trigger:
                 setattr(adapter_type, "_hfc_command_card_action_wrapped", True)
                 adapter_ready = True
-            elif not getattr(adapter_type, "_hfc_command_card_action_wrapped", False):
-                original = current_action_handler or getattr(adapter_type, "_on_card_action_trigger", None)
-                if callable(original):
-                    setattr(adapter_type, "_hfc_original_on_card_action_trigger", original)
-                    setattr(adapter_type, "_on_card_action_trigger", _hfc_on_feishu_card_action_trigger)
-                    setattr(adapter_type, "_hfc_command_card_action_wrapped", True)
-                    adapter_ready = True
-            elif callable(getattr(adapter_type, "_on_card_action_trigger", None)):
+            elif callable(current_action_handler):
+                _hfc_preserve_native_card_callback(
+                    adapter_type, current_action_handler, _hfc_on_feishu_card_action_trigger,
+                    "_hfc_original_on_card_action_trigger",
+                )
+                setattr(adapter_type, "_on_card_action_trigger", _hfc_on_feishu_card_action_trigger)
+                setattr(adapter_type, "_hfc_command_card_action_wrapped", True)
                 adapter_ready = True
 
-            current_event_handler = adapter_type.__dict__.get("_handle_card_action_event")
+            current_event_handler = getattr(adapter_type, "_handle_card_action_event", None)
             if current_event_handler is _hfc_handle_feishu_card_action_event:
                 setattr(adapter_type, "_hfc_command_card_event_wrapped", True)
                 adapter_ready = True
-            elif not getattr(adapter_type, "_hfc_command_card_event_wrapped", False):
-                original_event_handler = current_event_handler or getattr(
-                    adapter_type, "_handle_card_action_event", None
+            elif callable(current_event_handler):
+                _hfc_preserve_native_card_callback(
+                    adapter_type, current_event_handler, _hfc_handle_feishu_card_action_event,
+                    "_hfc_original_handle_card_action_event",
                 )
-                if callable(original_event_handler):
-                    setattr(
-                        adapter_type,
-                        "_hfc_original_handle_card_action_event",
-                        original_event_handler,
-                    )
-                    setattr(
-                        adapter_type,
-                        "_handle_card_action_event",
-                        _hfc_handle_feishu_card_action_event,
-                    )
-                    setattr(adapter_type, "_hfc_command_card_event_wrapped", True)
-                    adapter_ready = True
-            elif callable(getattr(adapter_type, "_handle_card_action_event", None)):
+                setattr(
+                    adapter_type,
+                    "_handle_card_action_event",
+                    _hfc_handle_feishu_card_action_event,
+                )
+                setattr(adapter_type, "_hfc_command_card_event_wrapped", True)
                 adapter_ready = True
 
             current_send = adapter_type.__dict__.get("send")

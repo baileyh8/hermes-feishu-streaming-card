@@ -15,7 +15,7 @@
 
 [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**发行版本：[v4.7.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0)。** 本版按已验收桌面范围发布；手机真机与超过 5 秒取消的真实分支仍未验证，详见[发行说明](docs/release-notes-v4.7.0.md)。
+**发行版本：[v4.7.1](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.1)。** 修复 `/new` 等命令的确认回调接管与结果卡更新，详见[发行说明](docs/release-notes-v4.7.1.md)。
 
 ## 为什么使用 HFC
 
@@ -80,7 +80,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.1
 bash install-docker.sh
 ```
 
@@ -201,6 +201,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v4.7.1](docs/release-notes-v4.7.1.md) | 命令确认回调修复与结果卡刷新 |
 | [v4.7.0](docs/release-notes-v4.7.0.md) | 任务布局、离线预览、额度归属与交互状态修复 |
 | [v4.6.13](docs/release-notes-v4.6.13.md) | 控制凭据移出命令行与最新 Hermes 源码验证 |
 | [v4.6.12](docs/release-notes-v4.6.12.md) | 可选卡片宽度与 Hermes 回复计时契约适配 |
@@ -210,11 +211,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v4.6.8](docs/release-notes-v4.6.8.md) | macOS 安装与恢复提示，明确自主管理登录启动和未知进程归属 |
 | [v4.6.7](docs/release-notes-v4.6.7.md) | 保留可编辑心跳，紧凑审批按钮与完整正文 |
 | [v4.6.6](docs/release-notes-v4.6.6.md) | 审批回执确认后精简重复、运行工具可见与原生通知自动收尾 |
-| [v4.6.5](docs/release-notes-v4.6.5.md) | 重启通知持久归属、工具调用去重、可选时间线显示与模型报错去重 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V4.7.1：[baileyh8](https://github.com/baileyh8) 根据用户提供的日志修复命令确认回调，见 [PR #371](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/371)；报告者尚未提供可公开署名。
 
 - V4.7.0：延续 [jackwude](https://github.com/jackwude) 在 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 和 [leavrcn](https://github.com/leavrcn) 在 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333) 提出的阅读体验需求。本轮提交作者为 [baileyh8](https://github.com/baileyh8)；保留全部历史代码作者、方案和现场证据记录。
 
