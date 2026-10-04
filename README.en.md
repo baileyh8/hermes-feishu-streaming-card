@@ -21,7 +21,7 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**Release version: [v4.7.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0).** This release uses the accepted desktop scope. Real mobile devices and the actual cancellation branch exceeding five seconds remain unverified; see [release notes](docs/release-notes-v4.7.0.en.md).
+**Release version: [v4.7.1](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.1).** Repairs slash-confirm callback routing and result-card updates. See [release notes](docs/release-notes-v4.7.1.en.md).
 
 ## Why HFC
 
@@ -86,7 +86,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.0
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.1
 bash install-docker.sh
 ```
 
@@ -207,6 +207,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v4.7.1](docs/release-notes-v4.7.1.en.md) | Slash-confirm callback repair and visible confirmation results |
 | [v4.7.0](docs/release-notes-v4.7.0.en.md) | Task layout, offline previews, attributed quota and interaction-state repairs |
 | [v4.6.13](docs/release-notes-v4.6.13.en.md) | Private control-token transport and current Hermes source verification |
 | [v4.6.12](docs/release-notes-v4.6.12.en.md) | Optional card width and Hermes reply-clock compatibility |
@@ -216,11 +217,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v4.6.8](docs/release-notes-v4.6.8.en.md) | macOS setup and recovery guidance with explicit startup and ownership boundaries |
 | [v4.6.7](docs/release-notes-v4.6.7.en.md) | Preserve editable heartbeats and compact approval buttons |
 | [v4.6.6](docs/release-notes-v4.6.6.en.md) | Verified approval-receipt compaction, visible active tools and native notice expiry |
-| [v4.6.5](docs/release-notes-v4.6.5.en.md) | Persistent notice ownership, explicit tool-call identity, optional timeline controls and provider-error deduplication |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V4.7.1: [baileyh8](https://github.com/baileyh8) repaired slash-confirm callbacks in [PR #371](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/371), informed by user-supplied logs. No public reporter attribution was provided.
 
 - V4.7.0 continues the reading-experience requests from [jackwude](https://github.com/jackwude) in [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn) in [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). Commits in this release are authored by [baileyh8](https://github.com/baileyh8); all historical code, proposal and field-evidence credits remain intact.
 

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0.html).
 
+## [4.7.1] - 2026-10-05
+
+- Repair slash-confirm callback installation after method rebinding or subclass overrides; inspect both actual callback methods and retain native fallback across earlier HFC wrapper identities.
+- Update the original confirmation card when a retained dispatcher resolves `/new` or another slash confirmation through the asynchronous fallback. Reuse the saved IM message ID and exactly-once confirmation path.
+- Verify the callback path against Hermes 0.19.0, official release 0.21.5 and main snapshot `af90026`; keep reporter-environment verification distinct from isolated SDK/source checks.
+- See [Chinese notes](docs/release-notes-v4.7.1.md) and [English notes](docs/release-notes-v4.7.1.en.md). Earlier contributor credits remain intact.
+
 ## [4.7.0] - 2026-10-04
 
 Release scope approved on 2026-10-04: verified desktop flows and visuals. Android/iOS devices and real cancellation lasting more than five seconds remain unverified; delayed cancellation has automated coverage.
