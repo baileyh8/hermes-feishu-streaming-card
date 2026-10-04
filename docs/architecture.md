@@ -2,13 +2,13 @@
 
 [中文](architecture.md) | [English](architecture.en.md)
 
-当前主线采用 sidecar-only 架构：Hermes Agent 内只保留最小 hook，把消息生命周期事件转发到 HTTP sidecar；飞书/Lark 卡片创建、更新、终态渲染、会话累积、诊断和安全恢复都在 `hermes_feishu_card/` 内完成。V4 已完成真实飞书私聊、群聊、topic、WebSocket card action 和长空闲连接 smoke；自动化测试不能替代发布前的真实飞书验收。
+当前主线采用 sidecar-only 架构：Hermes Agent 通过原生 plugin 与必要的精确兼容 hook，把消息生命周期事件转发到 HTTP sidecar；飞书/Lark 卡片创建、更新、终态渲染、会话累积、诊断和安全恢复都在 `hermes_feishu_card/` 内完成。执行与授权由 Hermes 负责，展示与投递由 HFC 负责。历史 V4 版本记录过真实飞书私聊、群聊、topic、WebSocket card action 和长空闲连接 smoke；这些记录不等于当前版本在所有客户端重新验收通过，自动化测试也不能替代发布前的真实飞书验收。
 
 ```text
 Hermes Gateway
-  -> marker-wrapped lifecycle hook (gateway/run.py)
-  -> exact final-delivery hooks (gateway/platforms/base.py, Hermes 0.19+)
-  -> hermes_feishu_card.hook_runtime
+  -> verified native plugin lifecycle hooks (hermes_plugin_runtime)
+  +  exact compatibility/final-delivery hooks (hook_runtime)
+     [capability-selected producers; one owner per event/delivery]
      -> signed POST /delivery/policy (before native suppression)
      -> authenticated/fail-open POST /events
      -> signed POST /runtime/events (hello/heartbeat)
@@ -16,7 +16,7 @@ Hermes Gateway
   -> policy + readiness + session + render + Feishu CardKit send/update
 ```
 
-V4.3 在固定 Hermes `v2026.8.3` 上把这条链路实现为 Hybrid：真实 `hermes_agent.plugins` lifecycle hooks 通过 signed loopback transport 驱动 sidecar，17 个精确 patch group 只补齐 hook call-site 未提供的 ingress、delta、interaction、terminal、cron 与 exact Base delivery 证据。能力选择必须同时通过固定源码 hashes/slices、runtime Python、entrypoint origin 与真实 PluginManager subprocess；V3 manifest 把 7 个 target、官方 plugin config preimage 和 venv identity 纳入同一 ownership transaction。
+V4.3 在固定 Hermes `v2026.8.3` 上建立 Hybrid 基线：真实 `hermes_agent.plugins` lifecycle hooks 通过 signed loopback transport 驱动 sidecar，17 个精确 patch group 补齐该基线 hook call-site 未提供的 ingress、delta、interaction、terminal、cron 与 exact Base delivery 证据；V3 manifest 把 7 个 target、官方 plugin config preimage 和 venv identity 纳入同一 ownership transaction。当前兼容策略会随 Hermes 源码布局选择入口，不能把这组历史数量套用到所有版本。能力选择继续验证源码 hashes/slices、runtime Python、entrypoint origin 与真实 PluginManager subprocess；最新固定兼容基线见 [Hermes 源码迁移](wiki/hermes-decomposed-patcher.md)及 CI。
 
 approval/clarify/slash callback 使用独立的 runtime interaction listener，直接调用 Hermes 原 pending handle/future 的 resolver，不创建第二套 wait/poll/queue。Sidecar 的 event-id fence 保留首次 canonical response；Feishu create/PATCH 与 listener POST 都在 session/message lock 外发生。只有 card terminal success 可以抑制原生成功正文，failed/interrupted 保持 native fail-open。
 
@@ -34,11 +34,13 @@ Hermes hook 到 sidecar `/events` 的 fail-open 转发链路已经落地：sidec
 
 `hermes_feishu_card.server` 接收事件，按 profile、bot、message/reply anchor 管理 `CardSession`，把高频 delta 合并成有限 PATCH，并在 terminal 前排空待发送内容。`hermes_feishu_card.cli start/status/stop` 管理本机进程；停止时同时校验 pidfile PID/token 和 `/health` 的 `process_pid/process_token_hash`，避免 PID 复用误杀。独立进程和 systemd user service 生命周期主要面向 macOS/Linux 等 POSIX 环境。
 
-`/health` 只暴露脱敏、hash 化和 process-local 的状态，包括事件、事件鉴权拒绝、卡片发送/更新、cleanup 和路由指标。`send_card` 不盲目重试，避免重复创建卡片；已有 message id 的更新采用有限重试。
+`/health` 只暴露脱敏、hash 化和 process-local 的状态，包括事件、事件鉴权拒绝、卡片发送/更新、cleanup 和路由指标。普通卡片的 create/reply 只有携带稳定 `delivery_uuid` 才允许最多 3 次发送尝试；没有 UUID 时只尝试一次。已有 message id 的更新使用独立的有限重试；不能把发送重试扩展为所有事件的重放。
 
 ### 会话与渲染
 
-`hermes_feishu_card.session` 保存单进程内的流式会话状态；`render` 根据 thinking、answer、tool preview、notice、interaction 和 terminal 状态生成 CardKit JSON。状态是有界清理的暂态数据，sidecar 重启不承诺恢复正在进行的卡片；Hermes 仍是主流程事实来源。
+`hermes_feishu_card.session` 保存单进程内的流式会话状态；`render` 根据 thinking、answer、tool preview、notice、interaction 和 terminal 状态生成卡片 JSON。独立 runner 的私有、有界检查点可以恢复普通卡片的 message ID 和展示内容；非终态卡先显示等待执行状态同步，收到原轮有效事件后继续更新。检查点不恢复执行、waiter 或旧审批，也不能追溯恢复没有记录的卡片。具体容量、隐私和回滚边界见[卡片连接恢复](wiki/card-restart-recovery.md)。
+
+可选 [CardKit streaming](wiki/cardkit-streaming.md) 使用独立实体与严格递增的 sequence；实体状态目前在进程内，不能由普通卡片检查点推导出其跨重启恢复能力。Hermes 始终是执行流程的事实来源。
 
 ### Feishu client
 

@@ -9,8 +9,10 @@ from typing import Any
 # This derived field is internal: the legacy hide switch still covers both
 # successful and failed terminals, including an explicit False override.
 HIDE_SUCCESSFUL_TOOL_ACTIVITY = "_hide_successful_tool_activity"
+PRESENTATION_MODE = "_presentation_mode"
 READING_PRESETS = {
     "classic": {
+        PRESENTATION_MODE: "classic",
         "show_reasoning": True,
         "stream_thinking_to_body": True,
         "hide_completed_tool_activity": False,
@@ -19,6 +21,7 @@ READING_PRESETS = {
         HIDE_SUCCESSFUL_TOOL_ACTIVITY: False,
     },
     "focused": {
+        PRESENTATION_MODE: "classic",
         "show_reasoning": True,
         "stream_thinking_to_body": False,
         "hide_completed_tool_activity": False,
@@ -27,12 +30,22 @@ READING_PRESETS = {
         HIDE_SUCCESSFUL_TOOL_ACTIVITY: True,
     },
     "detailed": {
+        PRESENTATION_MODE: "classic",
         "show_reasoning": True,
         "stream_thinking_to_body": False,
         "hide_completed_tool_activity": False,
         "reasoning_format": "panel",
         "timeline_expanded": True,
         HIDE_SUCCESSFUL_TOOL_ACTIVITY: False,
+    },
+    "task": {
+        PRESENTATION_MODE: "task",
+        "show_reasoning": True,
+        "stream_thinking_to_body": False,
+        "hide_completed_tool_activity": False,
+        "reasoning_format": "panel",
+        "timeline_expanded": False,
+        HIDE_SUCCESSFUL_TOOL_ACTIVITY: True,
     },
 }
 READING_FIELDS = (
@@ -41,12 +54,13 @@ READING_FIELDS = (
     "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
     "table_overflow_mode",
     "timeline_order", "timeline_tools_per_reasoning", "thinking_body_tail_chars",
+    "width_mode", "text_sizes", "footer_fields", "interaction_mode", "streaming_mode",
 )
 
 
 def normalize_reading_preset(value: object, *, path: str = "card.reading_preset") -> str:
     if not isinstance(value, str) or value.strip().lower() not in READING_PRESETS:
-        raise ValueError(f"{path} must be classic, focused or detailed")
+        raise ValueError(f"{path} must be classic, focused, detailed or task")
     return value.strip().lower()
 
 
@@ -77,11 +91,14 @@ def explain_reading_config(
     Callers validate the YAML with load_config first. No credentials, paths,
     route identifiers, user titles, or arbitrary config objects are returned.
     """
-    from .config import DEFAULT_CONFIG, merge_card_config
+    from .config import DEFAULT_CONFIG, CARD_TEXT_SIZE_DEFAULTS, merge_card_config, normalize_text_sizes, normalize_width_mode
+    from .presentation import TASK_TEXT_SIZE_DEFAULTS
 
     resolved = copy.deepcopy(DEFAULT_CONFIG["card"])
     resolved["reading_preset"] = "classic"
-    sources = {key: "default" for key in (*READING_FIELDS, HIDE_SUCCESSFUL_TOOL_ACTIVITY)}
+    resolved[PRESENTATION_MODE] = "classic"
+    sources = {key: "default" for key in (*READING_FIELDS, HIDE_SUCCESSFUL_TOOL_ACTIVITY, PRESENTATION_MODE)}
+    text_size_sources: dict[str, str] = {}
 
     def mapping(value: object, label: str) -> Mapping[str, Any]:
         if value is None:
@@ -102,6 +119,10 @@ def explain_reading_config(
                 sources[key] = f"{label}.{key} (explicit)"
         if "hide_completed_tool_activity" in card:
             sources[HIDE_SUCCESSFUL_TOOL_ACTIVITY] = f"{label}.hide_completed_tool_activity (explicit)"
+        if isinstance(card.get("text_sizes"), Mapping):
+            for role in CARD_TEXT_SIZE_DEFAULTS:
+                if role in card["text_sizes"]:
+                    text_size_sources[role] = f"{label}.text_sizes.{role} (explicit)"
         resolved = merge_card_config(resolved, card)
 
     apply_scope(raw.get("card"), "global.card")
@@ -135,6 +156,7 @@ def explain_reading_config(
     for key, fallback in (
         ("show_reasoning", True), ("stream_thinking_to_body", True),
         ("hide_completed_tool_activity", False), ("timeline_expanded", False),
+        ("streaming_mode", False),
     ):
         value = resolved.get(key, fallback)
         if isinstance(value, str):
@@ -163,12 +185,37 @@ def explain_reading_config(
     # The runtime loader normalizes these at every scope.
     resolved["reasoning_format"] = str(resolved["reasoning_format"]).strip().lower()
     resolved["table_overflow_mode"] = str(resolved["table_overflow_mode"]).strip().lower()
+    resolved["width_mode"] = normalize_width_mode(resolved.get("width_mode", "default"))
+    presentation = "task" if resolved.get(PRESENTATION_MODE) == "task" else "classic"
+    size_defaults = TASK_TEXT_SIZE_DEFAULTS if presentation == "task" else CARD_TEXT_SIZE_DEFAULTS
+    resolved["text_sizes"] = {
+        **size_defaults, **normalize_text_sizes(resolved.get("text_sizes") or {}),
+    }
+    size_source = sources[PRESENTATION_MODE] if presentation == "task" else "default"
+    text_size_sources = {role: text_size_sources.get(role, size_source) for role in size_defaults}
+    sources["text_sizes"] = "per-role (see text_size_sources)"
+    fields = resolved.get("footer_fields")
+    if not isinstance(fields, list):
+        fields = DEFAULT_CONFIG["card"]["footer_fields"]
+    allowed_fields = {"duration", "model", "input_tokens", "output_tokens", "context", "subscription_usage"}
+    resolved["footer_fields"] = [key for key in fields if isinstance(key, str) and key in allowed_fields]
+    mode = resolved.get("interaction_mode", "auto")
+    mode = mode.strip().lower() if isinstance(mode, str) else "callback"
+    resolved["interaction_mode"] = mode if mode in {"auto", "callback", "text", "markdown", "reply"} else "callback"
+    from .render_options import card_render_options
+    # Reuse the runtime's handling of accepted legacy booleans and limits.
+    options = card_render_options(resolved)
+    for key in ("show_reasoning", "stream_thinking_to_body", "hide_completed_tool_activity",
+                "timeline_expanded", "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars"):
+        resolved[key] = options[key]
     terminal_policy = (
         "unsuccessful_only" if resolved["hide_completed_tool_activity"] else
         "failed_only" if resolved.get(HIDE_SUCCESSFUL_TOOL_ACTIVITY) else "visible"
     )
     values = {key: resolved[key] for key in READING_FIELDS}
     values["terminal_tool_activity"] = terminal_policy
+    values["presentation"] = presentation
+    sources["presentation"] = sources[PRESENTATION_MODE]
     sources["terminal_tool_activity"] = (
         sources["hide_completed_tool_activity"] if resolved["hide_completed_tool_activity"]
         else sources[HIDE_SUCCESSFUL_TOOL_ACTIVITY]
@@ -176,5 +223,8 @@ def explain_reading_config(
     return {
         "values": values,
         "sources": {key: sources[key] for key in values},
-        "note": "Read-only. Scope order: global, profile, bot; explicit fields win within each scope. Restart the sidecar after editing YAML.",
+        "text_size_sources": text_size_sources,
+        "effective_for": "next_load",
+        "running_config": "not_checked",
+        "note": "Read-only. Scope order: global, profile, bot; explicit fields win within each scope. These are next-load values, not proof of the running configuration. Restart the sidecar after editing YAML.",
     }

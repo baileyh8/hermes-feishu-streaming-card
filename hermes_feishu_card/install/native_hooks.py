@@ -13,6 +13,7 @@ import importlib.metadata
 import importlib.resources
 import io
 import json
+import logging
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -240,9 +241,69 @@ class _SourceSnapshot:
         if self._closed:
             return None
         self._closed = True
-        os.close(self.descriptor)
-        shutil.rmtree(self.container, ignore_errors=True)
+        try:
+            _remove_source_snapshot(self)
+        except (OSError, ValueError):
+            # A rebound path must be retained, not treated as our old snapshot.
+            logging.getLogger(__name__).warning("native source snapshot cleanup incomplete")
+        finally:
+            os.close(self.descriptor)
         return None
+
+
+def _empty_snapshot_directory(descriptor: int, device: int) -> None:
+    info = os.fstat(descriptor)
+    if info.st_dev != device or info.st_uid != os.geteuid():
+        raise ValueError("snapshot directory ownership changed")
+    # Unlink needs writable directories, not writable files. In particular,
+    # never chmod a file that could have been replaced by an external hardlink.
+    os.fchmod(descriptor, stat.S_IMODE(info.st_mode) | 0o700)
+    with os.scandir(descriptor) as iterator:
+        entries = list(iterator)
+    for entry in entries:
+        before = entry.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(before.st_mode):
+            os.unlink(entry.name, dir_fd=descriptor)
+            continue
+        child = os.open(entry.name, _directory_flags(), dir_fd=descriptor)
+        try:
+            bound = os.fstat(child)
+            if (bound.st_dev, bound.st_ino) != (before.st_dev, before.st_ino):
+                raise ValueError("snapshot child identity changed")
+            _empty_snapshot_directory(child, device)
+            current = os.stat(entry.name, dir_fd=descriptor, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (bound.st_dev, bound.st_ino):
+                raise ValueError("snapshot child identity changed")
+            os.rmdir(entry.name, dir_fd=descriptor)
+        finally:
+            os.close(child)
+
+
+def _remove_source_snapshot(snapshot: _SourceSnapshot) -> None:
+    container = _open_absolute_directory(snapshot.container)
+    try:
+        current = os.stat("source", dir_fd=container, follow_symlinks=False)
+        bound = os.fstat(snapshot.descriptor)
+        if (
+            snapshot.root != snapshot.container / "source"
+            or (current.st_dev, current.st_ino) != snapshot.identity
+            or (bound.st_dev, bound.st_ino) != snapshot.identity
+        ):
+            raise ValueError("snapshot root identity changed")
+        _empty_snapshot_directory(snapshot.descriptor, bound.st_dev)
+        current = os.stat("source", dir_fd=container, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != snapshot.identity:
+            raise ValueError("snapshot root identity changed")
+        os.rmdir("source", dir_fd=container)
+        try:
+            os.unlink("source.tar", dir_fd=container)
+        except FileNotFoundError:
+            pass
+        if not _bound_directory_unchanged(snapshot.container, container):
+            raise ValueError("snapshot container identity changed")
+        os.rmdir(snapshot.container)
+    finally:
+        os.close(container)
 
 
 class _DescriptorSourceLoader(importlib.abc.Loader):
@@ -2377,44 +2438,45 @@ def _build_trusted_source_snapshot(
         prefix="hfc-fixed-source-snapshot-"
     )))
     snapshot_root = container / "source"
-    snapshot_root.mkdir(mode=0o700)
-    archive_path = container / "source.tar"
-    archive_descriptor = _open_new_regular_file(
-        archive_path, 0o600, readable=True
-    )
+    snapshot: _SourceSnapshot | None = None
     try:
-        _run_trusted_git(
-            root,
-            ["archive", "--format=tar", expected_commit],
-            timeout=30,
-            stdout=archive_descriptor,
+        snapshot_root.mkdir(mode=0o700)
+        descriptor = _open_absolute_directory(snapshot_root)
+        info = os.fstat(descriptor)
+        snapshot = _SourceSnapshot(
+            root=snapshot_root,
+            descriptor=descriptor,
+            identity=(info.st_dev, info.st_ino),
+            container=container,
         )
-        os.lseek(archive_descriptor, 0, os.SEEK_SET)
-        extracted = _extract_and_verify_git_archive(
-            archive_descriptor, snapshot_root, expected_tree
+        archive_path = container / "source.tar"
+        archive_descriptor = _open_new_regular_file(
+            archive_path, 0o600, readable=True
         )
-        if extracted != set(expected_tree):
-            raise ValueError("git snapshot paths mismatch")
-    except BaseException:
-        os.close(archive_descriptor)
-        shutil.rmtree(container, ignore_errors=True)
-        raise
-    os.close(archive_descriptor)
-    archive_path.unlink()
-    _make_tree_read_only(snapshot_root)
-    descriptor = _open_absolute_directory(snapshot_root)
-    info = os.fstat(descriptor)
-    snapshot = _SourceSnapshot(
-        root=snapshot_root,
-        descriptor=descriptor,
-        identity=(info.st_dev, info.st_ino),
-        container=container,
-    )
-    try:
+        try:
+            _run_trusted_git(
+                root,
+                ["archive", "--format=tar", expected_commit],
+                timeout=30,
+                stdout=archive_descriptor,
+            )
+            os.lseek(archive_descriptor, 0, os.SEEK_SET)
+            extracted = _extract_and_verify_git_archive(
+                archive_descriptor, snapshot_root, expected_tree
+            )
+            if extracted != set(expected_tree):
+                raise ValueError("git snapshot paths mismatch")
+        finally:
+            os.close(archive_descriptor)
+        archive_path.unlink()
+        _make_tree_read_only(snapshot_root)
         _verify_snapshot_provenance(snapshot, provenance)
         return snapshot
     except BaseException:
-        snapshot.close()
+        if snapshot is not None:
+            snapshot.close()
+        else:
+            shutil.rmtree(container, ignore_errors=True)
         raise
 
 

@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-Current release version: `4.6.13`; implementation scope: private control-token transport and current Hermes source verification. Final acceptance is recorded in the GitHub Release.
+Current release version: `4.7.0`. On 2026-10-04, Bailey approved publication within the accepted desktop scope, with automated coverage for cancellation exceeding five seconds. Android/iOS devices and that real timing branch remain unverified.
 
-Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v4.6.13.en.md); platform API smoke, real Gateway execution and mobile visual acceptance are recorded separately.
+Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v4.7.0.en.md) and the [acceptance record](reviews/2026-10-03-task-cards-acceptance.md). Platform API smoke, real Gateway execution, desktop visuals and Android/iOS acceptance are separate evidence; missing coverage is not a pass.
 
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.

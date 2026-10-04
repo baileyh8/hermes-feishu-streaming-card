@@ -5,7 +5,28 @@ from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from hermes_feishu_card import subscription_usage
+
+
+@pytest.mark.parametrize("model,provider,expected", [
+    ("openai-codex/gpt-5.5", "", True),
+    ("gpt-5.5", "openai-codex", True),
+    (" OpenAI-Codex/GPT-5.5-Codex ", " OPENAI-CODEX ", True),
+    ("gpt-5.5", "", False),
+    ("gpt-5.5", "openai", False),
+    ("openai-codex/gpt-5.5", "openrouter", False),
+    ("openrouter/openai/gpt-5.5", "", False),
+    ("openai-codex/deepseek-v4-pro", "", False),
+    ("deepseek-v4-pro", "openai-codex", False),
+    ("Unknown", "openai-codex", False),
+    ("gpt-", "openai-codex", False),
+    (None, "openai-codex", False),
+    ("gpt-5.5", None, False),
+])
+def test_subscription_usage_requires_a_known_codex_gpt_route(model, provider, expected):
+    assert subscription_usage.uses_codex_subscription(model, provider) is expected
 
 
 def test_format_subscription_usage_uses_compact_remaining_percentages():

@@ -2,9 +2,13 @@
 
 [中文](README.md) | [English](README.en.md)
 
+**Release version: v4.7.0.** The default `latest` installer selects the published stable release. This release uses the accepted desktop scope; mobile devices and the actual cancellation branch exceeding five seconds remain unverified. See [release notes](docs/release-notes-v4.7.0.en.md).
+
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
 hook, start the sidecar, and print the health-check command.
+
+4.7.0 preserves existing display defaults and adds opt-in `card.reading_preset: task`. Re-run `setup` or `install` against the actual Hermes directory after updating the package, then restart the sidecar and Gateway through their existing service owners. This refreshes the managed interruption hook; never edit installed Hermes source manually. See [task cards](docs/task-cards.md#english-quick-reference) and [release notes](docs/release-notes-v4.7.0.en.md).
 
 V4.6.8 clarifies macOS setup and recovery guidance: `enable` requires Linux systemd,
 and a missing verified pidfile does not establish launchd ownership. Self-managed
@@ -347,7 +351,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.6.13
+export HFC_VERSION=v4.7.0
 bash install-docker.sh
 ```
 

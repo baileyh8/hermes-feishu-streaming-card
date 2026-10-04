@@ -1,5 +1,8 @@
 import ast
+import re
 import textwrap
+
+from . import stop_cancellation
 
 from .patch_descriptors import (
     HYBRID_PATCH_DESCRIPTORS,
@@ -19,6 +22,8 @@ from .patch_descriptors import (
 
 TURN_TIMING_PATCH_BEGIN = "# HERMES_FEISHU_CARD_TURN_TIMING_PATCH_BEGIN"
 TURN_TIMING_PATCH_END = "# HERMES_FEISHU_CARD_TURN_TIMING_PATCH_END"
+STALE_INTERRUPTED_PATCH_BEGIN = "# HERMES_FEISHU_CARD_STALE_INTERRUPTED_PATCH_BEGIN"
+STALE_INTERRUPTED_PATCH_END = "# HERMES_FEISHU_CARD_STALE_INTERRUPTED_PATCH_END"
 PATCH_BEGIN = "# HERMES_FEISHU_CARD_PATCH_BEGIN"
 PATCH_END = "# HERMES_FEISHU_CARD_PATCH_END"
 COMPLETE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN"
@@ -36,6 +41,8 @@ BUSY_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_BUSY_RECALL_PATCH_END_V1"
 # READS it — no upstream statement is captured (unlike the busy-recall block above).
 LONG_RUNNING_RECALL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_LONG_RUNNING_RECALL_PATCH_BEGIN"
 LONG_RUNNING_RECALL_PATCH_END = "# HERMES_FEISHU_CARD_LONG_RUNNING_RECALL_PATCH_END"
+TASK_HEARTBEAT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_TASK_HEARTBEAT_PATCH_BEGIN"
+TASK_HEARTBEAT_PATCH_END = "# HERMES_FEISHU_CARD_TASK_HEARTBEAT_PATCH_END"
 QUEUED_FINAL_PATCH_BEGIN = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_BEGIN"
 QUEUED_FINAL_PATCH_END = "# HERMES_FEISHU_CARD_QUEUED_FINAL_PATCH_END"
 REDIRECT_PATCH_BEGIN = "# HERMES_FEISHU_CARD_REDIRECT_PATCH_BEGIN"
@@ -176,6 +183,7 @@ def apply_patch(
         content = _apply_redirect_patch(content)
         content = _apply_busy_recall_patch(content)
         content = _apply_long_running_recall_patch(content)
+        content = _apply_task_heartbeat_patch(content)
         content = _apply_cron_patch(content)
         content = _apply_command_card_startup_patch(content)
         content = _apply_native_redelivery_patch(content)
@@ -307,7 +315,7 @@ def apply_base_patch(
             no_text_location=no_text_location,
             final_location=final_location,
         )
-        return content
+        return stop_cancellation.apply(content)
 
     newline = _detect_newline(content)
     no_text_index, no_text_indent = no_text_location
@@ -330,11 +338,12 @@ def apply_base_patch(
     # block. Both anchors are guaranteed to belong to the same exact pipeline.
     for index, hook in sorted(((final_index, final_hook), (no_text_index, no_text_hook)), reverse=True):
         lines[index:index] = hook
-    return "".join(lines)
+    return stop_cancellation.apply("".join(lines))
 
 
 def remove_base_patch(content: str) -> str:
     """Strictly remove exact BasePlatformAdapter hooks owned by this project."""
+    content = stop_cancellation.remove(content)
     owned = _find_owned_exact_base_blocks(content, strict=True)
     if owned is None:
         return content
@@ -352,6 +361,7 @@ def remove_base_patch(content: str) -> str:
 
 def remove_base_patch_lenient(content: str) -> str:
     """Remove owned Base hooks while accepting older generated block bodies."""
+    content = stop_cancellation.remove(content)
     owned = _find_owned_exact_base_blocks(content, strict=False)
     if owned is None:
         return content
@@ -802,6 +812,124 @@ def _remove_long_running_recall_patch(content: str) -> str:
         _render_long_running_notice_hook_block, "long running recall patch markers")
 
 
+def _render_task_heartbeat_hook_block(indent, newline):
+    inner = _child_indent(indent)
+    return [
+        f"{indent}{TASK_HEARTBEAT_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import suppress_task_heartbeat_async as _hfc_suppress_heartbeat{newline}",
+        f"{inner}if await _hfc_suppress_heartbeat(source):{newline}",
+        f"{_child_indent(inner)}continue{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{TASK_HEARTBEAT_PATCH_END}{newline}",
+    ]
+
+
+def _apply_task_heartbeat_patch(content):
+    """Gate the verified heartbeat producer, never arbitrary adapter text."""
+    content = _remove_simple_owned_patch(content, TASK_HEARTBEAT_PATCH_BEGIN,
+        TASK_HEARTBEAT_PATCH_END, _render_task_heartbeat_hook_block, "task heartbeat patch markers")
+    tree = _parse_content(content)
+    scopes = [node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
+              and node.name in {"_notify_long_running", "_run_agent_notify_long_running"}]
+    if not scopes:
+        return content
+    if len(scopes) != 1:
+        raise ValueError("ambiguous task heartbeat producer")
+    scope = scopes[0]
+    checks = [node for node in ast.walk(scope) if isinstance(node, ast.Call)
+              and isinstance(node.func, ast.Attribute)
+              and node.func.attr == "_should_emit_long_running_notification"]
+    if not checks:
+        return content  # Older producers have no verified live-owner boundary.
+    expected = ast.parse(
+        "if not self._should_emit_long_running_notification(session_key, agent_holder[0], _executor_task_holder[0]):\n"
+        "    break\n"
+    ).body[0]
+    guards = [(loop, node) for loop in ast.walk(scope) if isinstance(loop, ast.While)
+              for node in loop.body if isinstance(node, ast.If) and ast.dump(node) == ast.dump(expected)]
+    legacy_executor_alias = False
+    if not guards and scope.name == "_notify_long_running":
+        if len(checks) != 1:
+            raise ValueError("ambiguous task heartbeat live-owner checks")
+        legacy_guard = ast.parse(
+            "if not self._should_emit_long_running_notification(session_key, agent_holder[0], _exec_ref):\n"
+            "    break\n"
+        ).body[0]
+        guards = [(loop, node) for loop in ast.walk(scope) if isinstance(loop, ast.While)
+                  for node in loop.body if isinstance(node, ast.If) and ast.dump(node) == ast.dump(legacy_guard)]
+        if len(guards) == 1:
+            loop, guard = guards[0]
+            binding = ast.parse(
+                "try:\n    _exec_ref = _executor_task\n"
+                "except NameError:\n    _exec_ref = None\n"
+            ).body[0]
+            position = loop.body.index(guard)
+            previous = loop.body[position - 1] if position else None
+            writes = [node for node in ast.walk(scope) if isinstance(node, ast.Name)
+                      and isinstance(node.ctx, (ast.Store, ast.Del))
+                      and node.id in {"_exec_ref", "_executor_task"}]
+            if (previous is None or ast.dump(previous) != ast.dump(binding)
+                    or scope.args.posonlyargs or scope.args.args or scope.args.kwonlyargs
+                    or scope.args.vararg or scope.args.kwarg
+                    or len(writes) != 2 or any(node not in set(ast.walk(previous)) for node in writes)):
+                raise ValueError("task heartbeat executor alias binding changed")
+            legacy_executor_alias = True
+    if len(guards) != 1:
+        raise ValueError("task heartbeat live-owner contract changed")
+    loop, guard = guards[0]
+    assignments = [node for node in loop.body if isinstance(node, ast.Assign)
+                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                   and node.targets[0].id == "_heartbeat_text"]
+    if len(assignments) != 1 or loop.body.index(assignments[0]) <= loop.body.index(guard):
+        raise ValueError("task heartbeat text contract changed")
+    text = assignments[0].value
+    known_templates = (
+        'disp._generic_status_phrase("status") if _long_running_mode == "generic" '
+        'else f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
+        'disp._generic_status_phrase("status") if _long_running_mode == "generic" '
+        'else t("gateway.progress.working_heartbeat", minutes=_elapsed_mins, detail=_status_detail)',
+        'f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
+    )
+    if legacy_executor_alias:
+        known_templates = (
+            '_generic_status_phrase("status") if _long_running_mode == "generic" '
+            'else f"⏳ Working — {_elapsed_mins} min{_status_detail}"',
+        )
+    fixed_heartbeat = (not legacy_executor_alias and isinstance(text, ast.Constant) and type(text.value) is str
+                       and re.fullmatch(r"⏳ Working — \d+ min(?: — [^\r\n]*)?", text.value))
+    if not fixed_heartbeat and not any(_same_expression(text, item) for item in known_templates):
+        raise ValueError("task heartbeat message template changed")
+    source_writes = [node.id for node in ast.walk(scope)
+                     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+                     and node.id in {"source", "session_key", "agent_holder"}]
+    for method, count, arguments in (
+        ("send", 2, ("source.chat_id", "_heartbeat_text")),
+        ("edit_message", 3, ("source.chat_id", "_heartbeat_msg_id", "_heartbeat_text")),
+    ):
+        calls = [node for node in ast.walk(scope) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute) and node.func.attr == method]
+        if (len(calls) != 1 or not any(_same_expression(calls[0].func, f"{name}.{method}")
+                                     for name in ("adapter", "_notify_adapter"))
+                or len(calls[0].args) != count
+                or not all(_same_expression(value, expected_value)
+                           for value, expected_value in zip(calls[0].args, arguments))
+                or any(item.arg != "metadata" for item in calls[0].keywords)):
+            raise ValueError("task heartbeat delivery contract changed")
+    if scope.name == "_run_agent_notify_long_running":
+        binding = ast.parse("source, session_key, agent_holder = turn_ctx.source, turn_ctx.session_key, turn_ctx.agent_holder").body[0]
+        if (sorted(source_writes) != ["agent_holder", "session_key", "source"]
+                or not any(ast.dump(node) == ast.dump(binding) for node in scope.body)):
+            raise ValueError("task heartbeat source contract changed")
+    elif source_writes:
+        raise ValueError("task heartbeat source contract changed")
+    lines = content.splitlines(keepends=True)
+    index = guard.end_lineno
+    lines[index:index] = _render_task_heartbeat_hook_block(
+        _line_indent(lines, guard.lineno - 1), _detect_newline(content))
+    return "".join(lines)
+
+
 def _apply_slash_confirm_patch(content: str) -> str:
     owned_block = _find_simple_marker_block(
         content,
@@ -1017,8 +1145,13 @@ def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
     content = _remove_busy_recall_patch(content)
     content = _remove_long_running_recall_patch(content)
+    content = _remove_simple_owned_patch(content, TASK_HEARTBEAT_PATCH_BEGIN,
+        TASK_HEARTBEAT_PATCH_END, _render_task_heartbeat_hook_block, "task heartbeat patch markers")
     from .provider_route import remove_provider_route_patch
     content = remove_provider_route_patch(content)
+    content = _remove_simple_owned_patch(
+        content, STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END,
+        _render_stale_interrupted_hook_block, "stale interrupted patch markers")
     content = _remove_simple_owned_patch(
         content, TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END,
         _render_turn_timing_hook_block, "turn timing patch markers")
@@ -1196,6 +1329,8 @@ def remove_patch_lenient(content: str) -> str:
     for begin_marker, end_marker in (
         (PATCH_BEGIN, PATCH_END),
         (TURN_TIMING_PATCH_BEGIN, TURN_TIMING_PATCH_END),
+        (STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END),
+        (TASK_HEARTBEAT_PATCH_BEGIN, TASK_HEARTBEAT_PATCH_END),
         (STABLE_TOOL_PATCH_BEGIN, STABLE_TOOL_PATCH_END),
         (TOOL_PATCH_BEGIN, TOOL_PATCH_END),
         (ANSWER_DELTA_PATCH_BEGIN, ANSWER_DELTA_PATCH_END),
@@ -4693,6 +4828,7 @@ LEGACY_TARGET_PATCH_ADAPTERS = (
         renderer=_render_legacy_base_target,
         strict_remover=remove_base_patch,
         owned_markers=(
+            (stop_cancellation.BEGIN, stop_cancellation.END),
             (EXACT_BASE_NO_TEXT_PATCH_BEGIN, EXACT_BASE_NO_TEXT_PATCH_END),
             (
                 EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN,
@@ -4732,11 +4868,13 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
         content = _apply_start_patch(content, strategy=strategy)
         content = _apply_complete_patch(content, strategy=strategy)
         content = _apply_turn_timing_patch(content)
+        content = _apply_stale_interrupted_patch(content)
     content = _apply_queued_complete_patch(content)
     content = _apply_queued_followup_patch(content)
     content = _apply_redirect_patch(content)
     content = _apply_busy_recall_patch(content)
     content = _apply_long_running_recall_patch(content)
+    content = _apply_task_heartbeat_patch(content)
     for apply in (_apply_command_card_adapter_patch, _apply_hfc_command_patch,
                   _apply_slash_confirm_patch, _apply_command_card_startup_patch,
                   _apply_native_redelivery_patch, _apply_platform_notice_patch):
@@ -5151,6 +5289,92 @@ def _render_turn_timing_hook_block(indent, newline):
             f'{_child_indent(indent)}agent_result = {{**agent_result, "_hfc_turn_seconds": _turn_seconds}}{newline}',
             *_render_hook_exception_handler(indent, newline),
             f"{indent}{TURN_TIMING_PATCH_END}{newline}"]
+
+
+def _render_stale_interrupted_hook_block(indent, newline):
+    inner = _child_indent(indent)
+    return [
+        f"{indent}{STALE_INTERRUPTED_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        f"{inner}from hermes_feishu_card.hook_runtime import emit_stale_interrupted_turn_async as _hfc_emit_interrupted{newline}",
+        f"{inner}await _hfc_emit_interrupted(locals()){newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{STALE_INTERRUPTED_PATCH_END}{newline}",
+    ]
+
+
+def _apply_stale_interrupted_patch(content):
+    """Observe only the exact discarded result; never infer stop from a command."""
+    content = _remove_simple_owned_patch(
+        content, STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END,
+        _render_stale_interrupted_hook_block, "stale interrupted patch markers")
+    handler = _find_handler_node(_parse_content(content))
+    if handler is None:
+        return content
+    discard_calls = [node for node in ast.walk(handler)
+                     if isinstance(node, ast.Call)
+                     and isinstance(node.func, ast.Attribute)
+                     and node.func.attr == "_hmwa_discard_stale_result"]
+    # Earlier verified layouts have no discarded-result branch.
+    if not discard_calls:
+        return content
+    expected = ast.parse(
+        "if not self._is_session_run_current(_quick_key, run_generation):\n"
+        "    self._hmwa_discard_stale_result(source, _quick_key, run_generation)\n"
+        "    return None\n"
+    ).body[0]
+    guards = [node for node in ast.walk(handler)
+              if isinstance(node, ast.If) and ast.dump(node) == ast.dump(expected)]
+    if len(discard_calls) != 1 or len(guards) != 1:
+        raise ValueError("stale result discard contract changed")
+    guard = guards[0]
+    blocks = [value for node in ast.walk(handler) for _, value in ast.iter_fields(node)
+              if isinstance(value, list) and guard in value]
+    if len(blocks) != 1:
+        raise ValueError("stale result control flow changed")
+    preceding = blocks[0][:blocks[0].index(guard)]
+    writes = [node for statement in preceding for node in ast.walk(statement)
+              if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+              and any(isinstance(target, ast.Name) and target.id == "agent_result"
+                      for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))]
+    if len(writes) != 1 or writes[0] not in preceding:
+        raise ValueError("stale result assignment changed")
+    assignment = writes[0]
+    awaited = assignment.value
+    call = awaited.value if isinstance(awaited, ast.Await) else None
+    required = {
+        "source": "source", "session_key": "session_key",
+        "run_generation": "run_generation",
+        "event_message_id": "self._reply_anchor_for_event(event)",
+    }
+    keywords = {item.arg: item.value for item in call.keywords} if isinstance(call, ast.Call) else {}
+    if "source" in keywords and _same_expression(keywords["source"], "_turn_source"):
+        # Verified main c8301ea6 pins channel inputs before execution. Accept
+        # only that exact tuple binding from this event/session/source; an
+        # arbitrary alias or reassignment must not broaden turn ownership.
+        pin = ast.parse(
+            "_turn_channel_prompt, _turn_source = self._pinned_channel_inputs("
+            "session_key, event.channel_prompt, source, internal=event.internal)"
+        ).body[0]
+        before_run = preceding[:preceding.index(assignment)]
+        pins = [node for node in before_run if ast.dump(node) == ast.dump(pin)]
+        pin_stores = [node for statement in before_run for node in ast.walk(statement)
+                      if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+                      and node.id in {"_turn_channel_prompt", "_turn_source"}]
+        if len(pins) != 1 or len(pin_stores) != 2:
+            raise ValueError("stale result pinned source binding changed")
+        required.update(source="_turn_source", channel_prompt="_turn_channel_prompt")
+    if (not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1
+            or not isinstance(call, ast.Call) or call.args or None in keywords
+            or not _same_expression(call.func, "self._run_agent")
+            or any(key not in keywords or not _same_expression(keywords[key], value)
+                   for key, value in required.items())):
+        raise ValueError("stale result runner binding changed")
+    lines = content.splitlines(keepends=True)
+    index = guard.body[0].lineno - 1
+    lines[index:index] = _render_stale_interrupted_hook_block(
+        _line_indent(lines, index), _detect_newline(content))
+    return "".join(lines)
 
 
 def _apply_turn_timing_patch(content):

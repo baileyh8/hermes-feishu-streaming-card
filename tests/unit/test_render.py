@@ -264,7 +264,8 @@ def test_v4_running_card_uses_state_title_and_public_interim_body():
 
 
 def test_compaction_phase_replaces_header_title_and_hides_stale_tool_summary():
-    session = CardSession(conversation_id="c", message_id="m", chat_id="oc")
+    # This test covers phase precedence, not how long the runner was scheduled.
+    session = CardSession(conversation_id="c", message_id="m", chat_id="oc", created_at=0)
     session.thinking_text = "已保留的公开阶段说明"
     session.latest_tool_preview = "读取文件：weather_client.py"
     session.runtime_phase_text = "正在压缩上下文"
@@ -1446,6 +1447,143 @@ def test_render_long_code_block_chunks_remain_fenced():
     assert all(item["content"].rstrip().endswith("```") for item in main_elements)
 
 
+@pytest.mark.parametrize("status,closing", [("streaming", ""), ("completed", "\n```")])
+def test_task_code_projection_is_shared_by_body_and_primary_text_without_mutating_answer(status, closing):
+    import copy
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = status
+    source = '```python\n\tprint("中文 <tag> `tick`")  ' + closing
+    session.answer_text = source
+    before = copy.deepcopy(vars(session))
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == "card"
+    expected = "语言：python\n\n" + source.replace("```python", "```plain_text", 1)
+    assert result.primary_text == expected
+    body = [e["content"] for e in result.card["body"]["elements"]
+            if e.get("element_id", "").startswith("main_content")]
+    assert body == [expected]
+    assert session.answer_text == source
+    for key in before:
+        if key not in {"answer_normalizer", "thinking_normalizer"}:
+            assert vars(session)[key] == before[key]
+    classic = render_card_result(session, presentation="classic")
+    assert classic.primary_text == source
+    assert next(e for e in classic.card["body"]["elements"]
+                if e.get("element_id") == "main_content")["content"] == source
+
+
+@pytest.mark.parametrize("source_kind", ["thinking", "notice", "terminal_notice", "approval"])
+def test_task_code_projection_never_changes_non_answer_content(source_kind):
+    from hermes_feishu_card.session import InteractionState, InteractionOption
+    source = "```python\nSCOPE_OR_NOTICE_MUST_STAY_ORIGINAL\n```"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = "streaming"
+    if source_kind == "thinking":
+        session.thinking_text = source
+    elif source_kind == "notice":
+        session.delivery_kind = "notice"
+        session.answer_text = source
+    elif source_kind == "terminal_notice":
+        session.status = "failed"
+        session.answer_text = source
+        session.terminal_reasoning_notice = source
+    else:
+        session.active_interaction = InteractionState(
+            interaction_id="approval", kind="approval", prompt=source,
+            options=[InteractionOption(label="允许", value="allow")])
+    result = render_card_result(session, presentation="task")
+    assert source in str(result.card).replace("\\n", "\n")
+    assert "```plain_text" not in str(result.card)
+    assert "语言：" not in str(result.card)
+
+
+def test_task_code_projection_long_chunks_reassemble_exact_code_body():
+    from hermes_feishu_card.text import scan_markdown_blocks
+    body = "".join(f"\tprint({i})  # 中文 {'x' * 70}  \n" for i in range(85))
+    source = "```python\n" + body + "```"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.answer_text = source
+    session.status = "completed"
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == "card" and inspect_card_limits(result.card).safe
+    chunks = [e["content"] for e in result.card["body"]["elements"]
+              if e.get("element_id", "").startswith("main_content")]
+    assert len(chunks) > 2
+    assert all(len(chunk) <= 2400 for chunk in chunks)
+    blocks = [block.text for chunk in chunks for block in scan_markdown_blocks(chunk) if block.kind == "fence"]
+    assert all(block.startswith("```plain_text\n") for block in blocks)
+    assert "".join("".join(block.splitlines(keepends=True)[1:-1]) for block in blocks) == body
+    assert session.answer_text == source
+
+
+def test_task_code_projection_actual_table_adjacency_retains_three_rows_and_separate_caption():
+    from hermes_feishu_card.text import scan_markdown_blocks
+    # V15 native-client regression: the model omitted all blank lines outside code.
+    table = ("| 场景 | 内容 | 标记 |\n| --- | --- | --- |\n"
+             "| 浅色阅读 | 中文与 English | ROW_A |\n"
+             "| 深色阅读 | 普通文字和代码 | ROW_B |\n"
+             "| 窄窗口 | 完整内容可达 | TABLE_END |\n")
+    source = table + '```python\nprint("原始代码")\n```\n```json\n{"end":"JSON_END"}\n```'
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.answer_text = source
+    session.status = "completed"
+    result = render_card_result(session, presentation="task")
+    main = [e["content"] for e in result.card["body"]["elements"]
+            if e.get("element_id", "").startswith("main_content")]
+    assert main == [result.primary_text]
+    assert "TABLE_END |\n\n语言：python\n\n```plain_text" in main[0]
+    assert '\n```\n\n语言：json\n\n```plain_text' in main[0]
+    tables = [b.table for b in scan_markdown_blocks(main[0]) if b.kind == "table"]
+    assert len(tables) == 1 and len(tables[0].rows) == 3
+    assert result.disposition == "card" and inspect_card_limits(result.card).safe
+    assert session.answer_text == source
+    assert render_card_result(session, presentation="classic").primary_text == source
+
+
+@pytest.mark.parametrize("marker", ["```", "````", "~~~", "~~~~"])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("length", [2399, 2400])
+def test_task_code_projection_does_not_newly_split_a_single_code_line(marker, newline, closed, length):
+    opening = marker + "python" + newline
+    closing = marker if closed else ""
+    body_end = newline if closed else ""
+    body = "x" * (length - len(opening + closing + body_end)) + body_end
+    source = opening + body + closing
+    assert len(source) == length
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = "completed" if closed else "streaming"
+    session.answer_text = source
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == "card"
+    assert result.primary_text == source
+    assert [e["content"] for e in result.card["body"]["elements"]
+            if e.get("element_id", "").startswith("main_content")] == [source]
+    assert session.answer_text == source
+
+
+@pytest.mark.parametrize("status,disposition", [("streaming", "deferred_native"), ("completed", "native")])
+def test_task_code_projection_expansion_still_uses_final_capacity_gate(monkeypatch, status, disposition):
+    import copy
+    from hermes_feishu_card import card_limits
+    source = "```python\nprint('CAPACITY_END')\n" + "# original body\n" * 50 + "```"
+    session = CardSession(conversation_id="c", message_id="m", chat_id="c")
+    session.status = status
+    session.answer_text = source
+    baseline = render_card_result(session, presentation="task")
+    assert baseline.disposition == "card"
+    # Only the added display label/fence width crosses this exact serialized budget.
+    unprojected = copy.deepcopy(baseline.card)
+    next(e for e in unprojected["body"]["elements"] if e.get("element_id") == "main_content")["content"] = source
+    monkeypatch.setattr(card_limits, "SAFE_CARD_JSON_BYTES", inspect_card_limits(unprojected).json_bytes)
+    assert inspect_card_limits(unprojected).safe
+    result = render_card_result(session, presentation="task")
+    assert result.disposition == disposition
+    assert inspect_card_limits(result.card).safe
+    assert session.answer_text == source
+    assert "CAPACITY_END" not in str(result.card)
+
+
 def test_render_timeline_limits_reasoning_without_truncating_answer():
     from hermes_feishu_card.events import SidecarEvent
 
@@ -1581,20 +1719,36 @@ def test_render_completed_card_handles_missing_token_stats():
     assert "↓0" not in footer["content"]
 
 
-def test_subscription_usage_alone_keeps_the_footer_line():
-    """A quota-only card must not lose its usage line.
-
-    Regression guard for the empty-metrics guard above: the plan-quota field IS real data, so a card
-    reporting ONLY `subscription_usage` (no duration, model, tokens or tool count) still renders it.
-    Dropping it would hide the one number the footer was configured for.
-    """
+def test_subscription_usage_without_token_metrics_keeps_the_footer_line():
+    """A known Codex GPT turn keeps its configured quota without token metrics."""
     session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
     session.answer_text = "最终答案"
     session.status = "completed"
+    session.model = "openai-codex/gpt-5.5"
     session.subscription_usage = "5h 26% · weekly 89%"
     card = render_card(session, footer_fields=["duration", "subscription_usage"])
     footer = next(item for item in card["body"]["elements"] if item.get("element_id") == "footer")
     assert "5h 26% · weekly 89%" in footer["content"]
+
+
+@pytest.mark.parametrize("model,provider", [
+    ("deepseek-v4-pro", "deepseek"),
+    ("gpt-5.5", "openai"),
+    ("openrouter/openai/gpt-5.5", ""),
+    ("Unknown", ""),
+])
+def test_footer_hides_cached_codex_quota_for_unrelated_or_unknown_model(model, provider):
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.answer_text = "完整答案"
+    session.status = "completed"
+    session.model = model
+    session.provider = provider
+    session.subscription_usage = "5h 26% · weekly 89%"
+
+    card = render_card(session, footer_fields=["subscription_usage"])
+
+    assert card["body"]["elements"][-1]["content"] == "<text_tag color='green'>已完成</text_tag>"
+    assert "完整答案" in str(card)
 
 
 def test_body_reasoning_reads_chronologically_while_the_panel_reads_newest_first():
@@ -1675,6 +1829,7 @@ def test_render_completed_card_footer_adds_configured_subscription_usage_only():
     session.answer_text = "最终答案"
     session.status = "completed"
     session.duration = 3
+    session.model = "openai-codex/gpt-5.5"
     session.subscription_usage = "5h 26% · weekly 89%"
 
     configured = render_card(

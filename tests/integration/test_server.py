@@ -2536,7 +2536,11 @@ async def test_terminal_update_removes_its_closed_controller(client):
     assert test_client.app[METRICS_KEY].flush_controllers_collected == 1
 
 
-async def test_terminal_update_fetches_configured_subscription_usage_once(monkeypatch):
+@pytest.mark.parametrize("model,provider", [
+    ("openai-codex/gpt-5.5", ""),
+    ("gpt-5.5", "openai-codex"),
+])
+async def test_terminal_update_fetches_configured_subscription_usage_once(monkeypatch, model, provider):
     feishu_client = FakeFeishuClient()
     calls = []
 
@@ -2558,16 +2562,113 @@ async def test_terminal_update_fetches_configured_subscription_usage_once(monkey
         await test_client.post("/events", json=event_payload("message.started", 0))
         await test_client.post(
             "/events",
-            json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+            json=event_payload("message.completed", 1, {
+                "answer": "最终答案", "model": model, "provider": provider,
+            }),
         )
         _message_id, card = await wait_for_card_update(
             feishu_client, "5h 26% · weekly 89%"
         )
+        await test_client.post("/events", json=event_payload("message.completed", 1, {
+            "answer": "最终答案", "model": model, "provider": provider,
+        }))
     finally:
         await test_client.close()
 
     assert len(calls) == 1
     assert "最终答案" in str(card)
+
+
+@pytest.mark.parametrize("model,provider", [
+    ("MiniMax-M2.7", "minimax"),
+    ("deepseek/deepseek-v4-pro", ""),
+    ("glm-5", "zai"),
+    ("gpt-5.5", "openai"),
+    ("openrouter/openai/gpt-5.5", ""),
+    ("gpt-5.5", ""),
+    ("Unknown", ""),
+])
+async def test_terminal_update_omits_unrelated_codex_quota(monkeypatch, model, provider):
+    feishu_client = FakeFeishuClient()
+    calls = []
+
+    async def fake_fetch(hermes_root):
+        calls.append(hermes_root)
+        return "5h 26% · weekly 89%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", fake_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0, "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        await test_client.post("/events", json=event_payload("message.started", 0))
+        response = await test_client.post("/events", json=event_payload("message.completed", 1, {
+            "answer": "本轮完整答案", "model": model, "provider": provider,
+        }))
+        assert await response.json() == {"ok": True, "applied": True}
+        _message_id, card = await wait_for_card_update(feishu_client, "本轮完整答案")
+        assert "weekly" not in str(card)
+        assert "5h 26%" not in str(card)
+        assert calls == []
+    finally:
+        await test_client.close()
+
+
+async def test_switching_away_from_codex_does_not_carry_quota_to_next_turn(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    calls = []
+
+    async def fake_fetch(hermes_root):
+        calls.append(hermes_root)
+        return "5h 26% · weekly 89%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", fake_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0, "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    try:
+        for index, model in enumerate(("openai-codex/gpt-5.5", "deepseek/deepseek-v4-pro")):
+            message_id = f"quota-turn-{index}"
+            await test_client.post("/events", json=event_payload(
+                "message.started", 0, message_id=message_id,
+            ))
+            await test_client.post("/events", json=event_payload(
+                "message.completed", 1, {"answer": f"完整答案 {index}", "model": model},
+                message_id=message_id,
+            ))
+            _message_id, card = await wait_for_card_update(feishu_client, f"完整答案 {index}")
+            assert ("weekly 89%" in str(card)) is (index == 0)
+        assert len(calls) == 1
+        assert len(feishu_client.sent) == 2
+    finally:
+        await test_client.close()
+
+
+async def test_late_codex_quota_is_discarded_when_model_identity_changes(monkeypatch):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_fetch(_hermes_root):
+        started.set()
+        await release.wait()
+        return "5h 26% · weekly 89%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", delayed_fetch)
+    app = create_app(FakeFeishuClient(), card_config={"footer_fields": ["subscription_usage"]})
+    session = CardSession(conversation_id="chat-1", message_id="msg-1", chat_id="oc_abc")
+    session.status = "completed"
+    session.model = "openai-codex/gpt-5.5"
+    pending = asyncio.create_task(sidecar_server._populate_subscription_usage(app, session))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        session.model = "deepseek/deepseek-v4-pro"
+    finally:
+        release.set()
+        await pending
+    assert session.subscription_usage == ""
 
 
 async def test_late_subscription_usage_cannot_change_terminal_card_disposition(
@@ -2598,7 +2699,9 @@ async def test_late_subscription_usage_cannot_change_terminal_card_disposition(
         started_at = asyncio.get_running_loop().time()
         completed = await test_client.post(
             "/events",
-            json=event_payload("message.completed", 1, {"answer": "最终答案"}),
+            json=event_payload("message.completed", 1, {
+                "answer": "最终答案", "model": "openai-codex/gpt-5.5",
+            }),
         )
         completed_body = await completed.json()
         elapsed = asyncio.get_running_loop().time() - started_at
@@ -9209,8 +9312,11 @@ async def test_topic_second_message_started_while_active_is_ignored(client):
     assert len(feishu_client.sent) == 1
 
 
-async def test_interaction_request_renders_buttons_and_callback_resolves(client):
+@pytest.mark.parametrize("preset", ["classic", "task"])
+async def test_interaction_request_renders_buttons_and_callback_resolves(client, preset):
     test_client, feishu_client = client
+    from hermes_feishu_card.reading import expand_reading_preset
+    test_client.app[sidecar_server.BASE_CARD_CONFIG_KEY].update(expand_reading_preset({"reading_preset": preset}))
 
     await test_client.post("/events", json=event_payload("message.started", 0))
     requested = await test_client.post(
@@ -9279,6 +9385,8 @@ async def test_interaction_request_renders_buttons_and_callback_resolves(client)
     assert callback_body["card"].get("schema") is None
     assert "body" not in callback_body["card"]
     assert "已选择：允许一次" in str(callback_body["card"])
+    if preset == "task":
+        assert "选择已记录" in callback_body["card"]["header"]["title"]["content"]
     assert result.status == 200
     assert await result.json() == {
         "ok": True,
@@ -13258,7 +13366,12 @@ async def test_topic_approval_expiry_updates_current_card_without_main_stream_se
     assert all(feishu_client.sent_reply_in_thread)
     assert await sidecar_server._expire_pending_interactions(test_client.app, now=400.0) == 1
     updated_id, card = await wait_for_card_update(feishu_client, "交互已过期")
-    assert updated_id == current_card_id
+    # The independently delivered approval owns the expiry receipt. Refresh
+    # it first; only a confirmed full receipt permits removing owner duplicates.
+    assert updated_id == session.active_interaction.feishu_message_id
+    assert updated_id != current_card_id
+    owner = next(card for mid, card in reversed(feishu_client.updated) if mid == current_card_id)
+    assert "交互已过期" not in str(owner)
     assert len(feishu_client.sent) == sent_count
     assert not feishu_client.texts
     assert not interaction_buttons(card)

@@ -79,6 +79,34 @@ async def test_first_legacy_owner_retains_receipt_and_content_when_continuation_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("presentation", ["task", "classic"])
+async def test_task_code_projection_survives_legacy_owner_continuation_failure(presentation):
+    client = Client()
+    app = create_app(client, card_config={"interaction_mode": "callback", "flush_interval_ms": 0,
+                                         "reading_preset": presentation})
+    async with TestClient(TestServer(app)) as http:
+        await request_first(http, app)
+        client.fail_create = True
+        table = "| key |\n| --- |\n| TABLE_END |\n"
+        code = '```python\n\tprint("完整代码 <tag>")  '
+        source = table + code
+        expected = (table + "\n语言：python\n\n" + code.replace("```python", "```plain_text", 1)
+                    if presentation == "task" else source)
+        await post(http, "answer.delta", 3, {"text": source})
+        await asyncio.sleep(.03)
+        assert any(e.get("content", "").endswith(expected) for e in client.updated[-1][1]["elements"])
+        source += "\n```"
+        expected += "\n```"
+        await post(http, "message.completed", 4, {"answer": source})
+        card = client.updated[-1][1]
+        assert any(e.get("content", "").endswith(expected) for e in card["elements"])
+        assert all(text in str(card) for text in ["ORIGINAL_QUESTION", "ORIGINAL_CHOICE"])
+        assert not client.cross_dialect and len(client.sent) == 1
+        assert inspect_card_limits(card).safe
+        assert app[SESSIONS_KEY]["turn"].answer_text == source
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("complete", [True, False])
 async def test_legacy_owner_restart_keeps_static_receipt_without_callback_tokens(tmp_path, complete):
     client = Client()

@@ -25,6 +25,12 @@ GROUPS = {
     "process": ["tests/unit/test_process.py", "tests/integration/test_cli_process.py"],
     "docs": ["tests/unit/test_docs.py", "tests/unit/test_package_metadata.py"],
     "preflight": ["tests/unit/test_preflight.py"],
+    "appearance": ["tests/unit/test_presentation.py", "tests/unit/test_card_preview.py",
+                   "tests/unit/test_reading_presets.py", "tests/unit/test_render.py",
+                   "tests/unit/test_session_store.py", "tests/unit/test_legacy_owner_checkpoint.py",
+                   "tests/integration/test_reading_presets_http.py", "tests/integration/test_combined_stability.py"],
+    "quota": ["tests/unit/test_subscription_usage.py", "tests/unit/test_render.py",
+              "tests/integration/test_server.py"],
 }
 _PROBE = r'''
 import importlib.util, importlib.metadata, json, pathlib, sys
@@ -133,15 +139,24 @@ def select_targets(paths, modules):
     for name in paths if not modules else []:
         if re.fullmatch(r"tests/(?:unit|integration)/test_[A-Za-z0-9_]+\.py", name):
             direct.add(name)
-        elif name.startswith("docs/") or name in {"README.md", "README.en.md", "CHANGELOG.md"}:
+        elif name.startswith("docs/") or name in {"README.md", "README.en.md", "CHANGELOG.md", "AGENTS.md"}:
             groups.add("docs")
+        elif name in {"hermes_feishu_card/presentation.py", "hermes_feishu_card/preview.py",
+                      "hermes_feishu_card/preview_template.html", "hermes_feishu_card/reading.py"}:
+            groups.add("appearance")
+        elif name == "hermes_feishu_card/render_options.py":
+            groups.update({"appearance", "runtime"})
+        elif name == "hermes_feishu_card/subscription_usage.py":
+            groups.add("quota")
+        elif name in {"hermes_feishu_card/session.py", "hermes_feishu_card/session_store.py"}:
+            groups.update({"render", "appearance"})
         elif name == "tools/preflight.py":
             groups.add("preflight")
         elif name.startswith("hermes_feishu_card/install/") or name.startswith("install"):
             groups.add("install")
         elif name in {"hermes_feishu_card/hook_runtime.py", "hermes_feishu_card/server.py"}:
             groups.add("runtime")
-        elif name in {"hermes_feishu_card/render.py", "hermes_feishu_card/session.py", "hermes_feishu_card/text.py"}:
+        elif name in {"hermes_feishu_card/render.py", "hermes_feishu_card/text.py"}:
             groups.add("render")
         elif name in {"hermes_feishu_card/process.py", "hermes_feishu_card/persistent_service.py"}:
             groups.add("process")

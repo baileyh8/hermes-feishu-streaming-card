@@ -171,9 +171,15 @@ class CardSession:
     status: str = "thinking"
     display_status: str = ""
     display_status_source: str = "session"
+    # Rendering-only context, never event authority or persisted execution state.
+    presentation_state: str = ""
     last_sequence: int = -1
     thinking_text: str = ""
     answer_text: str = ""
+    # Event-sourced terminal notice when no real answer has arrived. Reasoning
+    # may be promoted for canonical/classic compatibility. Keep this field name
+    # for existing display checkpoints; never infer provenance from body text.
+    terminal_reasoning_notice: str = ""
     latest_tool_preview: str = ""
     runtime_phase_text: str = ""
     tools: Dict[str, ToolState] = field(default_factory=dict)
@@ -555,7 +561,7 @@ class CardSession:
             if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
                 self.status = "failed"
                 self.answer_text = (
-                    self._adopt_in_progress_content()
+                    self._adopt_in_progress_content(_UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome])
                     + "\n\n> "
                     + _UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome]
                 ).lstrip()
@@ -567,9 +573,13 @@ class CardSession:
             error = event.data.get("error")
             error = error if isinstance(error, str) and error.strip() else "消息处理失败"
             self._adopt_failure_metrics(event.data)
-            partial = self._adopt_in_progress_content()
+            partial = self._adopt_in_progress_content(error)
             self.answer_text = partial + "\n\n> " + error if partial else error
         if event.event in {"message.completed", "message.failed"}:
+            # A terminal execution event cannot leave an unresolved decision
+            # looking live. Preserve its scope as a failed receipt; never infer
+            # an approval or restore a paused waiter from a display checkpoint.
+            self._fail_interaction({"error": "本轮任务已结束，未提交的选择已失效。"})
             record_terminal(self, event)
         if self.display_segment and event.event in {"tool.updated", "subagent.updated"}:
             self.display_segment["has_output"] = bool(
@@ -606,7 +616,7 @@ class CardSession:
             if math.isfinite(duration) and duration > 0:
                 self.duration = duration
 
-    def _adopt_in_progress_content(self) -> str:
+    def _adopt_in_progress_content(self, terminal_notice: str = "") -> str:
         """Promote the content the user was reading, so a failure cannot erase it.
 
         Maintainer note (contract change): while a turn runs, the card streams whatever has arrived —
@@ -620,8 +630,11 @@ class CardSession:
         case that already worked: the work in progress stays where it was, and the failure text is
         appended below it as a quote.
         """
-        if not self.answer_text.strip() and self.thinking_text.strip():
-            self.answer_text = self.thinking_text.strip()
+        self.terminal_reasoning_notice = ""
+        if not self.answer_text.strip():
+            self.terminal_reasoning_notice = terminal_notice
+            if self.thinking_text.strip():
+                self.answer_text = self.thinking_text.strip()
         return self.answer_text.rstrip()
 
     def _archive_current_answer_to_reasoning(self, final_answer: str = "") -> None:

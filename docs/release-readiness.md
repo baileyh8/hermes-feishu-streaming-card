@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发布版本为 `4.6.13`；实现范围：控制凭据私有文件传递与最新 Hermes 源码验证。最终验收结果见 GitHub Release。
+当前发行版本为 `4.7.0`。2026-10-04，Bailey 确认按已验收桌面范围发布，并接受超过 5 秒取消分支仅有自动化覆盖；Android/iOS 与该真实时序分支继续标记未验证。
 
-完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发布说明](release-notes-v4.6.13.md)；平台 API 验收、真实 Gateway 执行与手机视觉验收分别记录。
+完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v4.7.0.md)和[本轮验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
 
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。
