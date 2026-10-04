@@ -21,7 +21,7 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**Version status: 4.7.0 release candidate, pending final acceptance and not yet released.** The latest stable release remains [v4.6.13](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.13). Examples pinned to `v4.7.0` are for use after publication; use `v4.6.13` for a stable installation now.
+**Release version: [v4.7.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0).** This release uses the accepted desktop scope. Real mobile devices and the actual cancellation branch exceeding five seconds remain unverified; see [release notes](docs/release-notes-v4.7.0.en.md).
 
 ## Why HFC
 
@@ -157,9 +157,9 @@ card:
 | Omitted / `classic` | Existing behavior with a collapsed process panel |
 | `focused` | Emphasize the answer; reasoning stays in the panel and successful tool rows are reduced after normal completion |
 | `detailed` | Expand reasoning and tools to follow the task |
-| `task` (4.7.0 candidate) | Clear state and activity, answer-first reading, folded process details and compact metrics |
+| `task` (4.7.0) | Clear state and activity, answer-first reading, folded process details and compact metrics |
 
-The 4.7.0 candidate adds an optional `task` layout and an offline preview of nine states; **these are not yet released**. See [task cards](docs/task-cards.md#english-quick-reference) for setup, configuration sources and rollback. Subscription quota appears only on GPT turns attributed to `openai-codex`; unrelated or unknown routes omit it.
+4.7.0 adds an optional `task` layout and an offline preview of nine states. See [task cards](docs/task-cards.md#english-quick-reference) for setup, configuration sources and rollback. Subscription quota appears only on GPT turns attributed to `openai-codex`; unrelated or unknown routes omit it.
 
 Explicit fields at the same level override presets. Copying all existing display switches may override your preset; inspect effective values with `hermes-feishu-card card-config --config <config-path>` and restart the sidecar to apply changes. See [reading presets](docs/wiki/reading-presets.md).
 
@@ -207,7 +207,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
-| [v4.7.0 candidate](docs/release-notes-v4.7.0.en.md) | Pending final acceptance: task layout, offline previews, attributed quota and interaction-state repairs |
+| [v4.7.0](docs/release-notes-v4.7.0.en.md) | Task layout, offline previews, attributed quota and interaction-state repairs |
 | [v4.6.13](docs/release-notes-v4.6.13.en.md) | Private control-token transport and current Hermes source verification |
 | [v4.6.12](docs/release-notes-v4.6.12.en.md) | Optional card width and Hermes reply-clock compatibility |
 | [v4.6.11](docs/release-notes-v4.6.11.en.md) | Bounded live thinking, observed background-task context and CodeQL update |
@@ -222,7 +222,7 @@ See [release history](docs/release-history.en.md) for earlier versions, and [CHA
 
 ## Contributors
 
-- V4.7.0 (candidate) continues the reading-experience requests from [jackwude](https://github.com/jackwude) in [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn) in [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). Commits in this release are authored by [baileyh8](https://github.com/baileyh8); all historical code, proposal and field-evidence credits remain intact.
+- V4.7.0 continues the reading-experience requests from [jackwude](https://github.com/jackwude) in [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) and [leavrcn](https://github.com/leavrcn) in [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333). Commits in this release are authored by [baileyh8](https://github.com/baileyh8); all historical code, proposal and field-evidence credits remain intact.
 
 - V4.6.13: Thanks to [ffdxdynotable](https://github.com/ffdxdynotable) for [#367](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/367), reporting control-token exposure with Termux evidence and a private-file proposal.
 

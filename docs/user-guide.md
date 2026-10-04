@@ -579,7 +579,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下 `v4.7.0` 为待最终验收的发布候选，固定 tag 示例供公开发布后使用；当前稳定安装请选 `v4.6.13`。默认 `latest` 仍解析已发布稳定版。
+以下示例固定 `v4.7.0`；默认 `latest` 解析已发布稳定版。本版的桌面验收范围及未验证项见[发行说明](release-notes-v4.7.0.md)。
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 

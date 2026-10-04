@@ -1,14 +1,15 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
-## V4.7.0：任务卡片与阅读体验（发布候选）
+## V4.7.0：任务卡片与阅读体验
 
 - [x] 可选 `task` 预设、九状态离线预览、逐角色外观配置来源与 GPT/Codex 额度归属。
-- [x] 原轮次明确中断终态、有界辅助回执展示恢复、完整参数与授权范围保留。
-- [x] `1e993bd` 阶段完整回归 4,509 passed、22 skipped；真实桌面 `/stop`、恢复和多选关键流程已有证据。
-- [ ] 最后视觉密度修复的候选安装与复验、最终 SHA 完整回归和 CI。
-- [ ] Android/iOS、深色及放大字号的独立验收；未覆盖项保持未验证。
-- [ ] 精确合并、annotated tag、资产校验、公开安装及测试残留回收。
-- 当前候选不等于已发布。见 [4.7.0 候选说明](docs/release-notes-v4.7.0.md)与[验收记录](docs/reviews/2026-10-03-task-cards-acceptance.md)。
+- [x] 明确中断终态、有界辅助回执展示恢复、完整参数与授权范围保留。
+- [x] 最终运行代码 `b3d1f04` 完整回归 4,854 passed、22 skipped，CI 14/14；最后文档提交 `1f91722` 的 CI 14/14 通过。
+- [x] 已测桌面深浅主题、窄区、放大字号、代码复制，以及长等待、停止、多选和待审批重启；按具体版本与影响范围保留证据。
+- [x] 2026-10-04 Bailey 批准按已验收桌面范围发布，接受延迟取消仅有自动化验证。
+- [ ] Android/iOS 真机及超过 5 秒取消的真实分支复验，继续明确未验证，不阻断本次已批准范围。
+- [ ] 精确合并、annotated tag、资产校验、公开安装与发布收尾；最终状态见 [Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0)。
+- 测试环境已按批次回收；发行流程新建的临时产物也须清理。见[发行说明](docs/release-notes-v4.7.0.md)与[验收记录](docs/reviews/2026-10-03-task-cards-acceptance.md)。
 
 ## V4.6.13：私有控制凭据
 

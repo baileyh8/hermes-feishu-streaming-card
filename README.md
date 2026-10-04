@@ -15,7 +15,7 @@
 
 [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**版本状态：4.7.0 发布候选，待最终验收，尚未发布。** 最新稳定版仍为 [v4.6.13](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.6.13)。本页固定 `v4.7.0` 的安装示例供发布后使用；当前稳定安装可选择 `v4.6.13`。
+**发行版本：[v4.7.0](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.0)。** 本版按已验收桌面范围发布；手机真机与超过 5 秒取消的真实分支仍未验证，详见[发行说明](docs/release-notes-v4.7.0.md)。
 
 ## 为什么使用 HFC
 
@@ -151,9 +151,9 @@ card:
 | 缺省 / `classic` | 保持现有展示方式，过程面板折叠 |
 | `focused` | 重点看答案；思考放在面板，正常完成后精简成功工具行 |
 | `detailed` | 展开思考与工具过程，便于追踪任务 |
-| `task`（4.7.0 候选） | 状态和动作集中展示，正文优先，过程折叠，统计简洁 |
+| `task`（4.7.0） | 状态和动作集中展示，正文优先，过程折叠，统计简洁 |
 
-4.7.0 候选新增可选 `task` 布局与九种状态的离线预览，**尚未发布**。启用方式、配置来源和回退见[任务卡片](docs/task-cards.md)。订阅周额度仅在实际使用 `openai-codex` 的 GPT 回合显示，其他模型或来源不明时隐藏。
+4.7.0 新增可选 `task` 布局与九种状态的离线预览。启用方式、配置来源和回退见[任务卡片](docs/task-cards.md)。订阅周额度仅在实际使用 `openai-codex` 的 GPT 回合显示，其他模型或来源不明时隐藏。
 
 同层显式字段优先于预设。若从完整示例复制了旧显示开关，预设可能被覆盖；用 `hermes-feishu-card card-config --config <配置路径>` 检查有效值，重启 sidecar 后生效。更多选项见[阅读预设](docs/wiki/reading-presets.md)。
 
@@ -201,7 +201,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
-| [v4.7.0 候选](docs/release-notes-v4.7.0.md) | 待最终验收：任务布局、离线预览、额度归属与交互状态修复 |
+| [v4.7.0](docs/release-notes-v4.7.0.md) | 任务布局、离线预览、额度归属与交互状态修复 |
 | [v4.6.13](docs/release-notes-v4.6.13.md) | 控制凭据移出命令行与最新 Hermes 源码验证 |
 | [v4.6.12](docs/release-notes-v4.6.12.md) | 可选卡片宽度与 Hermes 回复计时契约适配 |
 | [v4.6.11](docs/release-notes-v4.6.11.md) | 可选思考尾部窗口、后台任务观测信息与 CodeQL 更新 |
@@ -216,7 +216,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 ## 贡献者
 
-- V4.7.0（候选）：延续 [jackwude](https://github.com/jackwude) 在 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 和 [leavrcn](https://github.com/leavrcn) 在 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333) 提出的阅读体验需求。本轮提交作者为 [baileyh8](https://github.com/baileyh8)；保留全部历史代码作者、方案和现场证据记录。
+- V4.7.0：延续 [jackwude](https://github.com/jackwude) 在 [#328](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/328) 和 [leavrcn](https://github.com/leavrcn) 在 [#333](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/333) 提出的阅读体验需求。本轮提交作者为 [baileyh8](https://github.com/baileyh8)；保留全部历史代码作者、方案和现场证据记录。
 
 - V4.6.13: 感谢 [ffdxdynotable](https://github.com/ffdxdynotable) 在 [#367](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/367) 报告控制 token 的命令行暴露，提供 Termux 现场证据与私有文件方案。
 

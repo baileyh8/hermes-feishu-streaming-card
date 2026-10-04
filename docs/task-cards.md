@@ -1,6 +1,6 @@
-# 任务卡片与离线预览（4.7.0 发布候选）
+# 任务卡片与离线预览（4.7.0）
 
-`task` 把卡片分为状态、正文、过程和统计四个阅读区域。它沿用已有投递与权限流程，适合希望先看答案、再查看执行细节的用户。4.7.0 候选正在最终验收，尚未发布；已发布的 V4.6.13 尚不包含本页新增选项。
+`task` 把卡片分为状态、正文、过程和统计四个阅读区域。它沿用已有投递与权限流程，适合希望先看答案、再查看执行细节的用户。这些选项从 4.7.0 开始提供，保持主动启用。
 
 ## 启用与回退
 
@@ -29,7 +29,7 @@ card:
 
 模型与统计使用中性文字，状态颜色承担主要提示。过程关闭或未包含某个工具时，该工具参数仍保留在正文，避免为整洁丢失内容。短答不额外堆叠状态横幅和空区块；长内容保留完整正文。布局、字号、颜色、间距与信息密度按[视觉发布门槛](wiki/card-visual-guidelines.md)逐状态验收。
 
-任务正文中可安全识别的顶层代码块使用飞书原生 `plain_text` 显示，原语言在块外标注，改善浅色主题下部分语法颜色偏淡的问题。代码体和保存的原回答不改；其他预设、过程、审批范围及完整答案回退沿用原文。未知结构或会因显示变化而拆开长单行的代码块保留原显示。新候选的实际外观与交互结论以验收记录为准。
+任务正文中可安全识别的顶层代码块使用飞书原生 `plain_text` 显示，原语言在块外标注，改善浅色主题下部分语法颜色偏淡的问题。代码体和保存的原回答不改；其他预设、过程、审批范围及完整答案回退沿用原文。未知结构或会因显示变化而拆开长单行的代码块保留原显示。实际外观与交互的已验收范围见[验收记录](reviews/2026-10-03-task-cards-acceptance.md)。
 
 短审批选项直接显示动作名称，长选项保留完整说明与编号。新样式若让原本可发送的交互卡超过整卡容量，自动保留原布局，不截断问题或操作范围。标题颜色沿用[飞书官方标题枚举](https://open.feishu.cn/document/common-capabilities/message-card/message-cards-content/card-header)。
 
@@ -57,7 +57,7 @@ hermes-feishu-card card-config --config ~/.hermes_feishu_card/config.yaml --prev
 
 ## English quick reference
 
-This is an **unreleased 4.7.0 candidate feature**, pending final acceptance and not part of published V4.6.13. Set `card.reading_preset: task` to opt into the task layout. Explicit display values retain precedence; restart through the existing service manager after editing. Switch to `classic`, `focused` or `detailed` to revert.
+This opt-in feature is available from **4.7.0**; see the release notes for accepted desktop scope and unverified cases. Set `card.reading_preset: task` to opt into the task layout. Explicit display values retain precedence; restart through the existing service manager after editing. Switch to `classic`, `focused` or `detailed` to revert.
 
 Task cards emphasize observed state and the complete answer, keep reasoning in a collapsible process panel, retain permission scope and callback ownership, and omit unreported footer metrics. After 60 seconds without an event, one bounded update explains that execution status is unknown. Pending input and terminal states stop refreshes. Restored display does not restore execution or authorization.
 
