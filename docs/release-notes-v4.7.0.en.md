@@ -4,6 +4,8 @@ This release adds an opt-in task layout with clearer state, answer and process s
 
 ## Main changes
 
+- Fix read-only source snapshots remaining after installation or diagnostics. Cleanup preserves directory identity, symlink and hardlink protections instead of accumulating temporary source copies.
+
 - Add optional `card.reading_preset: task`. Cards present one clear state and current action, prioritize the answer, fold process details and retain attributed footer metrics. Text roles are consistent and repeated labels are reduced. Existing presets and explicit settings remain effective.
 - Extend `card-config` with effective appearance values and their sources, plus offline HTML/Card JSON previews for nine states. Reports describe the next configuration load, not the running service. Previews use built-in examples, read no conversations and send no Feishu messages.
 - Show subscription quota only on GPT turns attributed to `openai-codex`. Unrelated or unknown routes and stale queries after a model change omit it.
@@ -36,7 +38,7 @@ See [task cards](task-cards.md#english-quick-reference) and [reading presets](wi
 
 ## Validation and known boundaries
 
-- Final runtime regression: **4,854 passed, 22 skipped, 0 failed**, with all 14 CI checks passing and ordinary-wheel files matched to source. Skips concern the separate upstream matrix, Windows semantics and PowerShell, covered by their corresponding CI jobs.
+- Card-change baseline `b3d1f04` regression: **4,854 passed, 22 skipped, 0 failed**, with all 14 CI checks passing and ordinary-wheel files matched to source. Skips concern the separate upstream matrix, Windows semantics and PowerShell, covered by their corresponding CI jobs. The snapshot cleanup repair has direct failing reproductions and regressions; see the Release for full checks on the final release commit.
 - Actual desktop checks cover light/dark themes, a narrow chat area, 125% scaling, code copying, prior-answer preservation, empty-continuation STOP, Working deduplication beyond 180 seconds, multiselect and restart during pending approval. Version-specific scope, earlier failures and retests remain in the [acceptance record](reviews/2026-10-03-task-cards-acceptance.md).
 - **Release scope:** On 2026-10-04, Bailey approved publication within the accepted desktop scope. **Android/iOS devices and actual handler cancellation exceeding five seconds remain unverified.** Delayed cancellation has automated regression coverage. Narrow desktop views and offline previews do not establish mobile acceptance.
 - Actual copying preserved selected code-body lines without captions or line numbers; an unselected trailing newline is outside that conclusion. Formal numerical WCAG compliance and complete intermediate streaming-frame coverage are not claimed.

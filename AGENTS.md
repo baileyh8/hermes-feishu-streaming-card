@@ -159,6 +159,10 @@ Reuse one compatible test environment and the verified source fixture; private
 HOME/state does not require a fresh virtualenv for every candidate. Retire obsolete
 public-install environments after preserving their provenance and logs. Do not
 let completed pytest trees and source archives accumulate across release rounds.
+Check both the designated task directory and the actual OS temporary directory
+for owned HFC prefixes, including macOS `/private/tmp`. Sanitized subprocesses
+may not retain `TMPDIR`; never infer cleanup completeness from one directory.
+Inspect ownership and live references before removal; do not sweep unrelated temp files.
 
 ## Delivery and release
 

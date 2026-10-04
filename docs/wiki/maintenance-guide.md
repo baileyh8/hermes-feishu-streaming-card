@@ -85,6 +85,10 @@
 - 展示检查点最多保存一个有界、脱敏、无 token 的实际辅助回执；重启验证原 profile/bot/client 后按原方言更新，不恢复执行或授权。只有完整回执 PATCH 明确成功才精简 owner 重复范围；终态已补发或送达不确定时禁止回填旧 owner。
 - 重启临时文本的撤回遵循 [通知生命周期](notice-lifecycle.md)：精确 profile/bot/chat/thread、发送前登记代次快照、成功投递后调度、DELETE 成功后释放记录。不能用空 thread 通配其他话题、话题活动清 home、或静默替换失败的待撤回项。新增发卡入口必须传入当前 profile，更新入口通过真实消息 owner 取身份。
 
+### `hermes_feishu_card/install/native_hooks.py` 临时源码快照
+
+只读快照在能力探测结束或构建异常后必须回收。删除前只通过绑定的目录描述符恢复本目录写权限，不改文件权限、不沿符号链接进入外部目录；身份变化时保留未知路径并报告清理未完成。正常关闭、异常、重复关闭、目录重绑定、符号链接和硬链接保护见 `tests/unit/test_native_snapshot_cleanup.py`。与 `tests/unit/test_native_hook_capabilities.py`、安装检测和 CLI 安装一起验证。收尾应同时检查任务目录与实际系统临时目录，不能只看 `TMPDIR`。
+
 ### `hermes_feishu_card/install/patcher.py`
 
 职责：

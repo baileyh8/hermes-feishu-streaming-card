@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.2.0
 
 Release scope approved on 2026-10-04: verified desktop flows and visuals. Android/iOS devices and real cancellation lasting more than five seconds remain unverified; delayed cancellation has automated coverage.
 
+- Reclaim read-only native capability source snapshots on success and construction failure; keep cleanup bound to owned directories without following symlinks or changing hardlinked file permissions.
 - Add opt-in `reading_preset: task`: one clear state/action, answer-first reading, consistent type roles, folded process details and compact metrics. Preserve existing presets and explicit configuration.
 - Add offline HTML/Card JSON previews for nine scenarios and explain appearance values with their configuration sources and next-load semantics.
 - Show optional subscription quota only on completed GPT turns attributed to `openai-codex`; omit unrelated, unknown and stale model routes.
