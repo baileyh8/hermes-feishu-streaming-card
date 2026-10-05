@@ -2280,6 +2280,14 @@ def _semantic_code_value(value: Any) -> Any:
         return {"float": repr(value)}
     if isinstance(value, bytes):
         return {"bytes": value.hex()}
+    if isinstance(value, slice):
+        # Python 3.14 stores literal slices in co_consts.
+        return {
+            "slice": [
+                _semantic_code_value(item)
+                for item in (value.start, value.stop, value.step)
+            ]
+        }
     if isinstance(value, tuple):
         return {"tuple": [_semantic_code_value(item) for item in value]}
     if isinstance(value, list):
