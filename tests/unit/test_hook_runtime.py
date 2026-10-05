@@ -9403,6 +9403,75 @@ class _NativeAckAdapter:
         return self._finalize_send_result(last_response, "send failed")
 
 
+@pytest.mark.parametrize("parts", [(None, None, None), (None, 8, None), (12, 1, -2)])
+def test_semantic_code_value_slice_is_typed_and_recursive(parts):
+    encode = hook_runtime._semantic_code_value
+    value = slice(*parts)
+    expected = {"slice": [encode(part) for part in parts]}
+    assert encode(value) == expected
+    assert encode((value,)) == {"tuple": [expected]}
+    assert encode(slice(value, None, -1)) == {"slice": [expected, None, -1]}
+    assert encode(value) != encode(parts)
+    assert encode(value) != encode(None)
+    assert encode(value) != encode({"slice": list(parts)})
+
+
+@pytest.mark.parametrize("position", range(3))
+def test_semantic_code_value_slice_rejects_unknown_components(position):
+    parts = [None, 8, None]
+    parts[position] = object()
+    with pytest.raises(ValueError, match="unsupported code constant"):
+        hook_runtime._semantic_code_value(slice(*parts))
+
+
+def test_semantic_code_value_literal_slice_is_stable_across_processes():
+    import subprocess
+
+    script = (
+        "import json; from hashlib import sha256; "
+        "from hermes_feishu_card.hook_runtime import _semantic_code_value; "
+        "code = compile('def trim(text): return text[:8]', '<slice>', 'exec'); "
+        "material = json.dumps(_semantic_code_value(code), sort_keys=True); "
+        "print(sha256(material.encode()).hexdigest())"
+    )
+    digests = [
+        subprocess.check_output([sys.executable, "-c", script], text=True).strip()
+        for _ in range(2)
+    ]
+    assert len(digests[0]) == 64
+    assert digests[0] == digests[1]
+
+
+def test_native_handoff_plan_fingerprint_binds_literal_slices(monkeypatch):
+    adapter = _NativeAckAdapter()
+    assert hook_runtime.install_feishu_command_card_adapter_methods(
+        SimpleNamespace(adapters={"feishu": adapter})
+    )
+    module = sys.modules[type(adapter).__module__]
+    fingerprints = []
+    for expression in ("[:8]", "[1:8]", "[:12]", "[:8:-1]"):
+        namespace = {"__name__": module.__name__}
+        exec("def literal_slice(text):\n    return text" + expression, namespace)
+        helper = namespace["literal_slice"]
+        if sys.version_info >= (3, 14) and expression == "[:8]":
+            assert any(isinstance(value, slice) for value in helper.__code__.co_consts)
+        monkeypatch.setattr(module, "_literal_slice_probe", helper, raising=False)
+        fingerprint = hook_runtime._native_handoff_plan_fingerprint(adapter)
+        assert len(fingerprint) == 64
+        assert hook_runtime._native_handoff_plan_fingerprint(adapter) == fingerprint
+        fingerprints.append(fingerprint)
+    assert len(set(fingerprints)) == 4
+
+    # Unknown constants still disable ACK-capable handoff, including inside slices.
+    for constant in (object(), slice(None, object(), None)):
+        bad_code = helper.__code__.replace(co_consts=(None, constant))
+        monkeypatch.setattr(
+            module, "_literal_slice_probe",
+            types.FunctionType(bad_code, {"__name__": module.__name__}),
+        )
+        assert hook_runtime._native_handoff_plan_fingerprint(adapter) == ""
+
+
 def test_native_handoff_plan_fingerprint_binds_loaded_runtime_semantics(monkeypatch):
     adapter = _NativeAckAdapter()
     runner = SimpleNamespace(adapters={"feishu": adapter})
