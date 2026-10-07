@@ -6978,11 +6978,21 @@ async def test_native_descriptor_returns_before_slow_notice_and_survives_notice_
 ):
     state_root = tmp_path / "handoff-state"
     feishu = FakeFeishuClient()
-    feishu.update_delay = 0.5
+    notice_started = asyncio.Event()
+    notice_cancelled = asyncio.Event()
+    async def blocked_update(*args, **kwargs):
+        notice_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            notice_cancelled.set()
+            raise
+    feishu.update_card_message = blocked_update
     store = NativeHandoffStore(state_root)
     app = create_app(feishu, native_handoff_store=store)
     first_client = TestClient(TestServer(app))
     await first_client.start_server()
+
     generation = "7" * 32
     obligation_key = "8" * 64
     answer = "SLOW-NATIVE-" + ("密" * 40_000)
@@ -6996,8 +7006,7 @@ async def test_native_descriptor_returns_before_slow_notice_and_survives_notice_
                 message_id="message-slow-native-notice",
             ),
         )
-        started_at = asyncio.get_running_loop().time()
-        response = await first_client.post(
+        response_task = asyncio.create_task(first_client.post(
             "/events",
             json=event_payload(
                 "message.completed",
@@ -7013,12 +7022,13 @@ async def test_native_descriptor_returns_before_slow_notice_and_survives_notice_
                 message_id="message-slow-native-notice",
             ),
         )
-        elapsed = asyncio.get_running_loop().time() - started_at
+        )
+        # A blocking notice would time out; no absolute latency performance claim.
+        response = await asyncio.wait_for(response_task, timeout=5.0)
+        await asyncio.wait_for(notice_started.wait(), timeout=5.0)
         payload = await response.json()
 
         assert response.status == 200
-        assert elapsed < 0.2
-        assert elapsed < feishu.update_delay
         assert payload["applied"] is False
         assert payload["disposition"] == "native"
         descriptor = payload["native_handoff"]
@@ -7028,6 +7038,7 @@ async def test_native_descriptor_returns_before_slow_notice_and_survives_notice_
         # in flight. Shutdown cancels that in-memory task only.
         await first_client.close()
 
+    assert notice_cancelled.is_set()
     second_app = create_app(
         FakeFeishuClient(),
         native_handoff_store=NativeHandoffStore(state_root),
