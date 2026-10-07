@@ -14137,9 +14137,11 @@ async def test_group_concurrent_requesters_keep_own_final_cards(client, first_ev
         updates = [card for mid, card in feishu_client.updated if mid == f"feishu-message-{index + 1}"]
         assert f"FINAL USER {index}" in str(updates[-1])
         assert "本轮已被新对话替代" not in str(updates[-1])
-        before = len(feishu_client.updated)
+        before = len(updates)
         await test_client.post("/events", json=payload)
-        assert len(feishu_client.updated) == before
+        # Other requesters may legitimately refresh while this POST yields.
+        assert sum(mid == f"feishu-message-{index + 1}"
+                   for mid, _card in feishu_client.updated) == before
     assert len(feishu_client.sent) == 2
 
 

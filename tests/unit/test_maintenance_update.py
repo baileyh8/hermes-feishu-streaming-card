@@ -572,3 +572,15 @@ def test_unsupported_or_partial_hermes_is_refused(
     assert inspection.ready is False
     assert inspection.reason_code == "hermes_not_fully_supported"
     assert runner.commands == []
+
+
+def test_inspect_update_refuses_persistent_sidecar_before_commands(
+    clean_hermes, artifact, monkeypatch,
+):
+    import hermes_feishu_card.maintenance_update as module
+    monkeypatch.setattr(module, "persistent_sidecar_active", lambda: True, raising=False)
+    commands = CommandHarness(clean_hermes)
+    result = _inspect(clean_hermes, artifact, commands)
+    assert result.ready is False
+    assert result.reason_code == "persistent_sidecar_requires_manual_update"
+    assert commands.commands == []

@@ -22,6 +22,31 @@ Hermes 飞书流式卡片插件把 Hermes Agent Gateway 的飞书/Lark 回复变
 
 V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文展示 -> 下一段到来后归档进 timeline”的节奏收束，思考与工具在折叠区使用不同字号和灰度层级；卡片底部不再重复展示同一份工具调用摘要。
 
+## 卡片上能改什么
+
+编辑安装时实际选用的 `--config` 文件里的 `card:`。先选 `reading_preset`，再加确实需要覆盖的字段；不要整段复制示例。同层显式字段覆盖预设，配置按全局 → profile → bot 合并。
+
+| 卡片区域 / 需求 | 可以调整 | 限制 |
+| --- | --- | --- |
+| 整体阅读方式 | `reading_preset`：`classic`、`focused`、`detailed`、`task` | 未设置保持原默认；task 是已发布的可选布局 |
+| 顶栏 | `title`，支持 profile / bot 覆盖 | 状态文案、颜色和动作副标题由运行状态决定，不能自由设置 |
+| 答案正文 | `text_sizes.body` | 内容来自 Hermes，不通过外观配置改写答案 |
+| 回答前的正文思考 | `stream_thinking_to_body`；`thinking_body_tail_chars` 保留尾部 | 尾窗只作用于运行中且尚无答案的正文思考；`0` 不额外截取 |
+| 正文工具行 | `hide_completed_tool_activity` | 隐藏结束轮次的正文工具行，不删除时间线或次数；task 另保留失败/中断说明 |
+| 思考与工具面板 | `show_reasoning`、`reasoning_format`、`timeline_expanded`、`timeline_order` | 关闭 show_reasoning 会隐藏整个思考/工具区域；面板标题不能自定义 |
+| 过程信息密度 | `max_reasoning_chars`、`max_timeline_items`、`timeline_tools_per_reasoning` | 受整卡容量约束，不是无限历史；不裁剪最终答案 |
+| 审批与澄清 | `interaction_mode`、`mentions_in_cards`、`interaction_mentions` | 问题和权限由 Hermes 决定；显示设置不会恢复过期授权 |
+| 页脚统计 | `footer_fields` 决定字段和顺序；`text_sizes.footer` | 数据必须有真实来源；订阅额度只在可归属的 GPT / openai-codex 轮次显示 |
+| 宽度与字号 | `width_mode`、`text_sizes`（支持 pc / mobile） | 不设置像素高度，实际折行由客户端决定 |
+| 超长表格 | `table_overflow_mode` | `compact` 保留为字段列表；`truncate` 沿用表格截断策略 |
+| 完成提醒 | `completion_notify.enabled`、`placement`、`mention` | 默认关闭；编辑卡片里的 @ 不保证推送通知 |
+| 附件摘要 | 随附件出现 | 没有独立隐藏开关 |
+| 整个聊天不用卡片 | `bindings.native_chats` | 属于投递选择，回到 Hermes 原生回复 |
+
+字段取值与约束以 [配置示例](../config.yaml.example) 和 `card-config` 为准。`display.show_reasoning`、`display.runtime_footer` 是 Hermes 配置，不能代替 HFC 外观设置。`server`、`service`、`integrity` 管理连接和运行，不要为了调外观修改它们。
+
+改好后运行 `hermes-feishu-card card-config --config <实际配置路径>` 检查值与来源，通过原服务管理方式重启 sidecar，再发新消息验证。`card-config` 不证明运行中的进程已加载；历史终态卡片不会自动重画。离线预览见[任务卡片](task-cards.md)。
+
 ## 项目亮点
 
 - **流式卡片体验**：`thinking.delta`、`answer.delta`、`tool.updated`、`message.completed` 聚合到同一张飞书卡片，减少刷屏和上下文断裂。
@@ -579,7 +604,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下示例固定 `v4.7.1`；默认 `latest` 解析已发布稳定版。本版的桌面验收范围及未验证项见[发行说明](release-notes-v4.7.1.md)。
+以下示例固定 `v4.7.2`；默认 `latest` 解析已发布稳定版。本版的桌面验收范围及未验证项见[发行说明](release-notes-v4.7.1.md)。
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 
@@ -588,7 +613,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v4.7.1`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v4.7.2`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -596,7 +621,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.7.1
+export HFC_VERSION=v4.7.2
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

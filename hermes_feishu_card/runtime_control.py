@@ -249,6 +249,7 @@ class _RuntimeIntegrityFenceStore:
         expected_binding: RuntimeIntegrityFenceBinding,
         allow_legacy_unbound_empty_restart: bool,
         allow_same_target_plan_transition: bool,
+        rebind_from_target_identity: str,
     ) -> bool:
         with self.locked():
             state, raw = self._load_unlocked()
@@ -257,6 +258,11 @@ class _RuntimeIntegrityFenceStore:
                 raise _RuntimeIntegrityFenceStateError(
                     "runtime integrity fence changed before acknowledgement"
                 )
+            if rebind_from_target_identity and (
+                state.binding is None or not state.manual_review_required
+                or not hmac.compare_digest(state.binding.target_identity, rebind_from_target_identity)
+            ):
+                raise _RuntimeIntegrityFenceStateError("explicit old target identity does not match")
             if state.binding is None:
                 if not state.manual_review_required and raw is None:
                     return False
@@ -272,14 +278,15 @@ class _RuntimeIntegrityFenceStore:
                 if state.binding != expected_binding:
                     # The caller must independently verify the current installed
                     # plan before opting in. The store still anchors the change to
-                    # the exact old snapshot and never permits a target transition.
-                    if not (
-                        allow_same_target_plan_transition
-                        and hmac.compare_digest(
-                            state.binding.target_identity,
-                            expected_binding.target_identity,
-                        )
-                    ):
+                    # the exact old snapshot. Target transitions additionally
+                    # require an explicit matching old identity from the operator.
+                    same_target = (allow_same_target_plan_transition and hmac.compare_digest(
+                        state.binding.target_identity, expected_binding.target_identity,
+                    ))
+                    explicit_rebind = bool(rebind_from_target_identity and hmac.compare_digest(
+                        state.binding.target_identity, rebind_from_target_identity,
+                    ))
+                    if not (same_target or explicit_rebind):
                         raise _RuntimeIntegrityFenceStateError(
                             "runtime integrity fence binding changed"
                         )
@@ -326,14 +333,17 @@ def acknowledge_runtime_integrity_review(
     expected_binding: RuntimeIntegrityFenceBinding,
     allow_legacy_unbound_empty_restart: bool = False,
     allow_same_target_plan_transition: bool = False,
+    rebind_from_target_identity: str = "",
 ) -> bool:
-    """CAS-clear a review fence with explicit legacy/same-target permissions."""
+    """CAS-clear a review fence with explicit, snapshot-bound transition permissions."""
     if (
         not isinstance(expected_state_token, str)
         or _SHA256_RE.fullmatch(expected_state_token) is None
         or not isinstance(expected_binding, RuntimeIntegrityFenceBinding)
         or not isinstance(allow_legacy_unbound_empty_restart, bool)
         or not isinstance(allow_same_target_plan_transition, bool)
+        or not isinstance(rebind_from_target_identity, str)
+        or (rebind_from_target_identity != "" and _SHA256_RE.fullmatch(rebind_from_target_identity) is None)
     ):
         raise RuntimeControlValidationError(
             "runtime integrity review could not be acknowledged safely"
@@ -345,6 +355,7 @@ def acknowledge_runtime_integrity_review(
             expected_binding=expected_binding,
             allow_legacy_unbound_empty_restart=allow_legacy_unbound_empty_restart,
             allow_same_target_plan_transition=allow_same_target_plan_transition,
+            rebind_from_target_identity=rebind_from_target_identity,
         )
     except (OSError, _RuntimeIntegrityFenceStateError) as exc:
         raise RuntimeControlValidationError(

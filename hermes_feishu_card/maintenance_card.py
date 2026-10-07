@@ -57,6 +57,7 @@ _PHASE_COPY = {
 }
 
 _INSPECTION_REASON_COPY = {
+    "persistent_sidecar_requires_manual_update": "sidecar 由持久服务托管，请通过终端维护流程更新；本次不会停止 Gateway。",
     "artifact_version_mismatch": "维护包与当前 HFC 版本不一致。",
     "artifact_hash_invalid": "维护包完整性证据无效。",
     "hermes_detection_failed": "无法确认当前 Hermes 安装。",

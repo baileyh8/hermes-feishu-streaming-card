@@ -967,3 +967,62 @@ def test_runner_initialization_failure_terminalizes_job_and_releases_fence(
     assert failed.phase == "failed"
     assert failed.result["error_code"] == "runner_initialization_failed"
     assert load_active_drain_lease(maintenance_fixture.paths) is None
+
+
+@pytest.mark.parametrize("late", [False, True])
+def test_persistent_sidecar_refused_before_gateway_stop(maintenance_fixture, monkeypatch, late):
+    commands = CommandHarness(maintenance_fixture)
+    calls = []
+    def persistent():
+        calls.append(True)
+        return not late or len(calls) > 1
+    monkeypatch.setattr(maintenance_update_module, "persistent_sidecar_active", persistent, raising=False)
+    result = run_job(
+        maintenance_fixture.job.path, run=commands,
+        fetch_health=HealthHarness(commands.runtime_python, commands),
+        sleep=lambda _: None, maintenance_python=Path("/maintenance/bin/python"),
+    )
+    assert result.phase == "failed"
+    assert result.result["error_code"] == "persistent_sidecar_requires_manual_update"
+    assert commands.mutations == []
+    assert commands.external_drain_active is False
+
+
+def test_sidecar_stop_failure_recovers_unchanged_gateway(maintenance_fixture):
+    commands = CommandHarness(maintenance_fixture)
+    commands.fail_at = "sidecar-stop"
+    result = run_job(
+        maintenance_fixture.job.path, run=commands,
+        fetch_health=HealthHarness(commands.runtime_python, commands),
+        sleep=lambda _: None, maintenance_python=Path("/maintenance/bin/python"),
+    )
+    assert result.phase == "failed"
+    assert result.result["error_code"] == "sidecar_stop_failed"
+    assert commands.mutations == ["gateway-stop", "sidecar-stop", "gateway-restart"]
+    assert result.result["recovery_boundary"] == "gateway_restart_requested"
+
+
+@pytest.mark.parametrize("failure", ["head_changed", "hooks_changed", "restart_failed"])
+def test_stop_failure_recovery_does_not_start_unverified_runtime(maintenance_fixture, failure):
+    base = CommandHarness(maintenance_fixture)
+    def commands(argv, timeout, **kwargs):
+        if "hermes_feishu_card.cli" in argv and "stop" in argv:
+            base.fail_at = "sidecar-stop"
+            result = base(argv, timeout, **kwargs)
+            if failure == "head_changed":
+                base.actual_head = "f" * 40
+            elif failure == "hooks_changed":
+                maintenance_fixture.state["hook"] = "unknown"
+            else:
+                base.fail_at = "gateway-restart"
+            return result
+        return base(argv, timeout, **kwargs)
+    result = run_job(maintenance_fixture.job.path, run=commands,
+        fetch_health=HealthHarness(base.runtime_python, base), sleep=lambda _: None,
+        maintenance_python=Path("/maintenance/bin/python"))
+    assert result.phase == "failed"
+    assert result.result["error_code"] == "sidecar_stop_failed"
+    assert result.result["recovery_boundary"] == "old_hfc_or_manual"
+    assert ("gateway-restart" in base.mutations) is (failure == "restart_failed")
+    assert "hfc-restore" not in base.mutations
+    assert "hermes-update" not in base.mutations

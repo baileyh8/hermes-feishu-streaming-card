@@ -249,3 +249,18 @@ python3 -m hermes_feishu_card.cli restore --hermes-dir ~/.hermes/hermes-agent --
 ## Integrity 人工确认边界
 
 `acknowledge-review` 不是通用修复命令。只有当 doctor 同时验证 recovery state 为 `installed`、recovery actions 为空、integrity plan 为 `installed` 且 reason 为 `recovery_not_required` 时，才会建议先停止 sidecar 再确认。其他 manual-review reason 必须先修复报告中的安装状态，再重新运行 doctor。
+
+## 显式恢复孤立的身份绑定
+
+macOS 重启或卷重新挂载后，设备号可能变化，旧完整性记录仍绑定旧身份。HFC 不会自动把它认作同一安装；哈希本身也不能证明只有设备号变化。
+
+先核对目标 Hermes 目录与原配置，按原服务 owner 停止 sidecar，确认 `doctor --explain` 的安装计划可以验证。只读查看自己 state 目录下 `runtime-integrity-fence.json` 的 `target_identity`（不要编辑文件），然后显式执行：
+
+```bash
+hermes-feishu-card integrity acknowledge-review \
+  --config <实际配置路径> --hermes-dir <实际Hermes目录> \
+  --state-dir <实际sidecar状态目录> \
+  --rebind-target <旧target_identity的64位哈希> --yes
+```
+
+这表示你明确授权把这条旧记录绑定到当前已核验的安装，不表示系统自动证明目录没有被替换。旧身份必须精确匹配，当前安装计划和 sidecar 停止状态均检查两次，写入时原记录必须未变化。脏文件、无法验证的安装、运行中的 sidecar、错误旧身份及竞态都拒绝。已知的 Gateway 重启证据保留；完成后按原 owner 重启 sidecar / Gateway，再检查健康状态。普通 `acknowledge-review` 的跨目标拒绝行为不变。

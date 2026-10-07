@@ -12,6 +12,7 @@ import sys
 import time
 from typing import Callable, Mapping, Optional, Protocol, Sequence
 
+from .persistent_service import persistent_sidecar_active
 from .install.detect import detect_hermes
 from .install.recovery import plan_recovery
 from .maintenance_store import (
@@ -215,6 +216,9 @@ def inspect_update(
         return result(False, "artifact_version_mismatch")
     if not _is_sha256(artifact.sha256):
         return result(False, "artifact_hash_invalid")
+
+    if persistent_sidecar_active():
+        return result(False, "persistent_sidecar_requires_manual_update")
 
     try:
         detection = detect_hermes(root)
@@ -991,7 +995,8 @@ def _run_state_machine(
             ):
                 return _fail_job(
                     current,
-                    "preflight_evidence_changed",
+                    (inspection.reason_code if inspection.reason_code ==
+                     "persistent_sidecar_requires_manual_update" else "preflight_evidence_changed"),
                     "no_mutation",
                     publisher,
                 )
@@ -1027,6 +1032,13 @@ def _run_state_machine(
                 return current
 
         if current.phase == "restoring_hooks":
+            # Recheck after confirmation/drain: the service owner may have changed.
+            # Do not disable a persistent service or strand Gateway implicitly.
+            if persistent_sidecar_active():
+                return _fail_job(
+                    current, "persistent_sidecar_requires_manual_update",
+                    "no_mutation", publisher,
+                )
             gateway_stop = run_hermes_command(
                 binding,
                 ("gateway", "stop", "--all"),
@@ -1068,10 +1080,20 @@ def _run_state_machine(
                 60.0,
             )
             if stop.timed_out or stop.returncode != 0:
+                # No hook/upstream mutation has started. Only restart the bound
+                # Gateway if the original source and installed hooks still verify.
+                recovered = False
+                if (_git_head(current.hermes_root, runner) == current.pre_update_head
+                        and _installed_hook_verified(current.hermes_root)):
+                    restart = run_hermes_command(
+                        binding, ("gateway", "restart"), 120.0, run=runner,
+                        base_environment=base_environment,
+                        proxy_environment=proxy_environment,
+                    )
+                    recovered = not restart.timed_out and restart.returncode == 0
                 return _fail_job(
-                    current,
-                    "sidecar_stop_failed",
-                    "old_hfc_or_manual",
+                    current, "sidecar_stop_failed",
+                    "gateway_restart_requested" if recovered else "old_hfc_or_manual",
                     publisher,
                 )
             restore = runner(

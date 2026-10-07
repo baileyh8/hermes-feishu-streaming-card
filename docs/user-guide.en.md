@@ -22,6 +22,31 @@ It targets the real pain points of using Hermes inside Feishu: missing or out-of
 
 Since V3.8.2, the final answer stays in the primary content area while pre-tool answer blocks follow a "show in main body -> archive when the next block arrives" rhythm. Reasoning and tools use different text sizes and visual weight inside the collapsible auxiliary timeline, and the footer no longer repeats the same tool-call summary.
 
+## What can I change on the card?
+
+Edit `card:` in the actual file selected with `--config` during installation. Start with `reading_preset`, then add only intentional overrides. Explicit fields override the preset at the same layer; layers merge global → profile → bot. Do not copy the entire example over an existing configuration.
+
+| Visible region / need | Settings | Limits |
+| --- | --- | --- |
+| Reading style | `reading_preset`: `classic`, `focused`, `detailed`, `task` | Omission preserves defaults; task is released and opt-in |
+| Header | `title`, with profile / bot overrides | Status wording, colors and activity subtitles follow runtime state |
+| Answer | `text_sizes.body` | Hermes supplies content; appearance settings do not rewrite answers |
+| Thinking before an answer | `stream_thinking_to_body`, `thinking_body_tail_chars` | Tail window applies only to live body thinking before an answer; `0` adds no clipping |
+| Body tool activity | `hide_completed_tool_activity` | Hides terminal body tool rows, not timeline or counts; task retains failure/interruption explanations |
+| Reasoning / tool panel | `show_reasoning`, `reasoning_format`, `timeline_expanded`, `timeline_order` | Disabling show_reasoning hides the whole reasoning/tool area; panel title is fixed |
+| Process density | `max_reasoning_chars`, `max_timeline_items`, `timeline_tools_per_reasoning` | Whole-card budgets still apply; final answers are not clipped by these controls |
+| Approval / clarification | `interaction_mode`, `mentions_in_cards`, `interaction_mentions` | Hermes owns questions and permissions; expired authorization stays expired |
+| Footer | `footer_fields`, `text_sizes.footer` | Only available measurements; subscription quota requires an attributed GPT / openai-codex turn |
+| Width and type sizes | `width_mode`, `text_sizes` including pc / mobile | No pixel-height control; wrapping is client-controlled |
+| Long tables | `table_overflow_mode` | compact preserves later tables as field lists; truncate retains table truncation |
+| Completion notification | `completion_notify.enabled`, `placement`, `mention` | Off by default; an edited card mention does not guarantee push delivery |
+| Attachment summary | Appears with attachments | No separate hide switch |
+| Native replies in a chat | `bindings.native_chats` | Changes delivery, not appearance |
+
+Use the [configuration example](../config.yaml.example) and `card-config` for allowed values. Hermes `display.show_reasoning` / `display.runtime_footer` are not HFC appearance controls. `server`, `service` and `integrity` manage connections and runtime safety.
+
+Run `hermes-feishu-card card-config --config <actual-config-path>` to inspect values and sources, restart sidecar through its existing owner, then send a new message. This command does not prove a running process has reloaded configuration; historical terminal cards are not redrawn. See [task cards](task-cards.md#english-quick-reference) for offline preview.
+
 ## Project Highlights
 
 - **Streaming card UX**: `thinking.delta`, `answer.delta`, `tool.updated`, and terminal events update one Feishu card.
@@ -552,21 +577,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v4.7.1`; the default `latest` resolves the published stable release. See [release notes](release-notes-v4.7.1.en.md) for validation boundaries.
+Examples pin `v4.7.2`; the default `latest` resolves the published stable release. See [release notes](release-notes-v4.7.1.en.md) for validation boundaries.
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.7.1`.
+The Compose example defaults `HFC_VERSION` to `v4.7.2`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.7.1
+export HFC_VERSION=v4.7.2
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

@@ -247,3 +247,18 @@ If `restore` refuses to overwrite, do not force-delete a hook. Compare run, requ
 ## Integrity review acknowledgement boundary
 
 `acknowledge-review` is not a general repair command. Doctor suggests it only after verifying an `installed` recovery state with no recovery actions and an `installed` integrity plan whose reason is `recovery_not_required`. Every other manual-review reason must be repaired and diagnosed again first.
+
+## Explicit orphaned-target rebinding
+
+After a reboot/remount changes a filesystem device number, a fence may refer to an old identity. The stored hash cannot prove that only the device number changed; HFC does not automatically treat it as the same installation.
+
+Verify the intended Hermes root and configuration, stop sidecar through its service owner, and confirm the installed plan is verifiable with doctor. Read (do not edit) `target_identity` in the selected state's `runtime-integrity-fence.json`, then explicitly authorize rebinding:
+
+```bash
+hermes-feishu-card integrity acknowledge-review \
+  --config <actual-config> --hermes-dir <actual-hermes-root> \
+  --state-dir <actual-sidecar-state> \
+  --rebind-target <old-64-character-target_identity> --yes
+```
+
+This authorizes binding that exact old record to the verified current install; it does not prove that the directory was never replaced. The old identity must match, the installed plan and stopped-sidecar state are verified twice, and the write uses the unchanged record's CAS token. Dirty/unverifiable installs, a running sidecar, wrong identity or races refuse the operation. Known Gateway restart evidence remains. Restart through existing owners and check health afterwards. Ordinary acknowledgement continues to reject target changes.

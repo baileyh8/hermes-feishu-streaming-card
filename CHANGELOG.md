@@ -1,5 +1,9 @@
 # Changelog
 
+## v4.7.2 — 2026-10-07
+
+Persistent-service update guards and pre-mutation restart recovery (#375); verified SDK CARD-frame dispatch (#374); explicit orphaned integrity target rebinding (#372); card configuration map (#370); Python 3.14 slice fingerprint support (PR #373, Nevoker). See [release notes](docs/release-notes-v4.7.2.md).
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

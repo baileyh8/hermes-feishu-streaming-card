@@ -8976,11 +8976,15 @@ def _hfc_refresh_feishu_event_handler(adapter: Any) -> bool:
         processor = mapping.get("p2.card.action.trigger") if isinstance(mapping, dict) else None
         if processor is not None and hasattr(processor, "f"):
             processors.append(processor)
-    if not processors or all(processor.f == callback for processor in processors):
+    from .feishu_ws_compat import card_frame_dispatch_needs_repair, repair_card_frame_dispatch
+    transport_repair = card_frame_dispatch_needs_repair(ws_client)
+    if not transport_repair and (not processors or all(processor.f == callback for processor in processors)):
         return False
 
     def refresh_card_action_callback() -> bool:
-        refreshed = False
+        refreshed = repair_card_frame_dispatch(ws_client)
+        if refreshed:
+            _hfc_info("Feishu SDK CARD-frame dispatch repaired for this WebSocket client")
         for handler in handlers:
             processor_map = getattr(handler, "_callback_processor_map", None)
             if not isinstance(processor_map, dict):
