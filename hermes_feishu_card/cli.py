@@ -402,6 +402,11 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     integrity_acknowledge.add_argument(
+        "--rebind-target",
+        metavar="OLD_TARGET_SHA256",
+        help="explicitly bind an orphaned fence to this verified installation; requires the exact old target_identity",
+    )
+    integrity_acknowledge.add_argument(
         "--yes",
         action="store_true",
         required=True,
@@ -3193,6 +3198,13 @@ def _run_integrity_acknowledge_review(args: argparse.Namespace) -> int:
             and review.binding.target_identity == first_binding.target_identity
         ):
             acknowledgement_options["allow_same_target_plan_transition"] = True
+        rebind_target = getattr(args, "rebind_target", None)
+        if rebind_target is not None:
+            if (args.yes is not True or review.binding is None
+                    or rebind_target != review.binding.target_identity
+                    or not review.manual_review_required):
+                raise ValueError("explicit old target does not match the pending fence")
+            acknowledgement_options["rebind_from_target_identity"] = rebind_target
         changed = acknowledge_runtime_integrity_review(
             target_state,
             **acknowledgement_options,

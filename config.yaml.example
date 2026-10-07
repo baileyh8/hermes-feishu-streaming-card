@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V4.7.1 sidecar configuration
+# Hermes Feishu Streaming Card V4.7.2 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -33,7 +33,7 @@ feishu:
   timeout_seconds: 30
 
 card:
-  # Development branch (unreleased): reading_preset: task opts into task layout.
+  # Released in 4.7.0: reading_preset: task opts into task layout.
   # Check sources/preview with card-config --config <path> --preview-dir <new-dir>.
   # Global fallback title. profiles.<id>.card.title and bots.items.<id>.card.title
   # can override it; bot title wins over profile title.

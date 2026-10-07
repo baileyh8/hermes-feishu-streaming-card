@@ -458,3 +458,58 @@ def test_integrity_acknowledge_review_help_separates_env_and_state_sources():
     normalized = " ".join(result.stdout.split())
     assert "configuration loading only" in normalized
     assert "state directory must be provided with --state-dir" in normalized
+
+
+def test_explicit_rebind_recovers_device_shift_and_rejects_wrong_identity(tmp_path):
+    import hashlib
+    root, _ = _legacy_git_install(tmp_path)
+    config = tmp_path / "config.yaml"
+    config.write_text("server:\n  host: 127.0.0.1\n  port: 65531\n")
+    migrated = _run_cli("integrity", "migrate-safe", "--config", str(config),
+                        "--hermes-dir", str(root), "--yes")
+    assert migrated.returncode == 0, migrated.stderr
+    current = card_cli._verified_integrity_acknowledgement_binding(root)
+    stat = root.stat()
+    old_target = hashlib.sha256(b"hfc-hermes-target-identity-v1\0" + json.dumps(
+        {"device": stat.st_dev + 1, "inode": stat.st_ino,
+         "path": os.path.normcase(str(root.resolve()))}, sort_keys=True, separators=(",", ":")
+    ).encode()).hexdigest()
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    fence = state / "runtime-integrity-fence.json"
+    fence.write_text(json.dumps({"schema_version": "2", "restart_required": True,
+        "manual_review_required": True, "pre_repair_runtime_hash": "f" * 64,
+        "target_identity": old_target, "plan_fingerprint": current.plan_fingerprint}))
+    fence.chmod(0o600)
+    before = fence.read_bytes()
+    command = ["integrity", "acknowledge-review", "--config", str(config),
+               "--hermes-dir", str(root), "--state-dir", str(state), "--yes"]
+    assert _run_cli(*command).returncode == 1
+    assert _run_cli(*command, "--rebind-target", "a" * 64).returncode == 1
+    assert fence.read_bytes() == before
+    result = _run_cli(*command, "--rebind-target", old_target)
+    assert result.returncode == 0, result.stderr
+    after = json.loads(fence.read_text())
+    assert after["target_identity"] == current.target_identity
+    assert after["manual_review_required"] is False
+    assert after["restart_required"] is True
+    assert after["pre_repair_runtime_hash"] == "f" * 64
+
+
+@pytest.mark.parametrize("failure", ["plan_drift", "running", "wrong_old"])
+def test_rebind_checks_evidence_before_cas(tmp_path, monkeypatch, failure):
+    previous = RuntimeIntegrityFenceBinding("a" * 64, "b" * 64)
+    current = RuntimeIntegrityFenceBinding("c" * 64, "d" * 64)
+    review = RuntimeIntegrityReviewSnapshot("e" * 64, True, True, False, previous, False)
+    bindings = iter([current, previous if failure == "plan_drift" else current])
+    monkeypatch.setattr(card_cli, "_verified_integrity_acknowledgement_binding", lambda _: next(bindings))
+    monkeypatch.setattr(card_cli, "load_config", lambda *_a, **_kw: object())
+    monkeypatch.setattr(card_cli, "inspect_runtime_integrity_review", lambda _: review)
+    monkeypatch.setattr(card_cli, "_integrity_acknowledgement_process_stopped", lambda *_: failure != "running")
+    calls = []
+    monkeypatch.setattr(card_cli, "acknowledge_runtime_integrity_review", lambda *a, **kw: calls.append(kw))
+    args = SimpleNamespace(hermes_dir=tmp_path, config=tmp_path / "config", env_file=None,
+        state_dir=tmp_path / "state", yes=True,
+        rebind_target="f" * 64 if failure == "wrong_old" else previous.target_identity)
+    assert card_cli._run_integrity_acknowledge_review(args) == 1
+    assert calls == []

@@ -1523,3 +1523,27 @@ def test_bundle_returns_conservative_snapshot_after_bounded_epoch_churn(
     for lease in reversed(churn_leases):
         lease.close()
     first.close()
+
+
+@pytest.mark.parametrize("old_identity", ["a" * 64, "f" * 64])
+def test_explicit_target_rebind_is_bound_to_old_snapshot(tmp_path, old_identity):
+    state_root = tmp_path / "state"
+    previous = RuntimeIntegrityFenceBinding(target_identity="a" * 64, plan_fingerprint="b" * 64)
+    current = RuntimeIntegrityFenceBinding(target_identity="c" * 64, plan_fingerprint="d" * 64)
+    supervisor = RuntimeIntegritySupervisor(mode="safe", state_directory=state_root)
+    supervisor.mark_manual_review_required(binding=previous)
+    review = inspect_runtime_integrity_review(state_root)
+    before = (state_root / "runtime-integrity-fence.json").read_bytes()
+    kwargs = dict(expected_state_token=review.state_token, expected_binding=current,
+                  rebind_from_target_identity=old_identity)
+    if old_identity != previous.target_identity:
+        with pytest.raises(ValueError):
+            runtime_control.acknowledge_runtime_integrity_review(state_root, **kwargs)
+        assert (state_root / "runtime-integrity-fence.json").read_bytes() == before
+    else:
+        assert runtime_control.acknowledge_runtime_integrity_review(state_root, **kwargs)
+        result = inspect_runtime_integrity_review(state_root)
+        assert result.binding == current
+        assert result.manual_review_required is False
+        with pytest.raises(ValueError):
+            runtime_control.acknowledge_runtime_integrity_review(state_root, **kwargs)

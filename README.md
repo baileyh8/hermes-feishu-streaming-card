@@ -15,7 +15,7 @@
 
 [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**发行版本：[v4.7.1](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.1)。** 修复 `/new` 等命令的确认回调接管与结果卡更新，详见[发行说明](docs/release-notes-v4.7.1.md)。
+**发行版本：[v4.7.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.2)。** 修复持久服务更新停机风险、SDK 卡片帧丢弃与 Python 3.14 兼容，补充完整性恢复和配置地图。见[发行说明](docs/release-notes-v4.7.2.md)。
 
 ## 为什么使用 HFC
 
@@ -80,13 +80,15 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.1
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.2
 bash install-docker.sh
 ```
 
 默认 `HERMES_DIR=/opt/hermes`、`HFC_CONFIG=/opt/data/config.yaml`、`HFC_ENV_FILE=/opt/data/.env`。详见[容器安装](README-install.md)与 [Compose 示例](docker-compose.example.yml)；示例不是官方镜像。
 
 ## 配置方法
+
+卡片上哪些区域能改、有什么限制，见[卡片配置地图](docs/user-guide.md#卡片上能改什么)。先选阅读预设，不要整段复制示例；同层显式字段会覆盖预设。
 
 `setup` 会准备配置。需要手动调整时，参考 [config.yaml.example](config.yaml.example)，编辑安装时选中的 `--config` 文件；不要直接覆盖已有 Hermes 配置。
 
@@ -201,6 +203,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v4.7.2](docs/release-notes-v4.7.2.md) | 更新停机保护、SDK 按钮回调、完整性恢复与配置地图 |
 | [v4.7.1](docs/release-notes-v4.7.1.md) | 命令确认回调修复与结果卡刷新 |
 | [v4.7.0](docs/release-notes-v4.7.0.md) | 任务布局、离线预览、额度归属与交互状态修复 |
 | [v4.6.13](docs/release-notes-v4.6.13.md) | 控制凭据移出命令行与最新 Hermes 源码验证 |
@@ -210,11 +213,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v4.6.9](docs/release-notes-v4.6.9.md) | 群聊并发卡片隔离、紧凑单选按钮与新手 README |
 | [v4.6.8](docs/release-notes-v4.6.8.md) | macOS 安装与恢复提示，明确自主管理登录启动和未知进程归属 |
 | [v4.6.7](docs/release-notes-v4.6.7.md) | 保留可编辑心跳，紧凑审批按钮与完整正文 |
-| [v4.6.6](docs/release-notes-v4.6.6.md) | 审批回执确认后精简重复、运行工具可见与原生通知自动收尾 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V4.7.2: [Nevoker](https://github.com/Nevoker) ([PR #373](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/373)); [DaveWang888](https://github.com/DaveWang888) (#375), [ffdxdynotable](https://github.com/ffdxdynotable) (#374), [ywarmy](https://github.com/ywarmy) (#372), [jackwude](https://github.com/jackwude) (#370). 分别贡献 Python 3.14 修复、故障证据和配置引导建议；保留原提交作者。
 
 - V4.7.1：[baileyh8](https://github.com/baileyh8) 根据用户提供的日志修复命令确认回调，见 [PR #371](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/371)；报告者尚未提供可公开署名。
 

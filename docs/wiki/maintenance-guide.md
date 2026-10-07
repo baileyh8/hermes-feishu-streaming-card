@@ -291,6 +291,15 @@ Use the outbound `_delivery_adapter_for` resolver when present; None/errors are 
 受管启动只把 `--token-file` 路径传给 runner，token 存在私有 state 目录的 `sidecar-control.token`（POSIX 0600）。文件需保留供 systemd 自动重启；不可安全读写时必须失败，不回退 argv。升级后通过原服务管理入口重启 sidecar；不要手工删除仍被服务使用的文件。同用户访问与 Windows ACL 边界见 [发布说明](../release-notes-v4.6.13.md)。
 
 
-## Task presentation and preview (unreleased)
+## Task presentation and preview (V4.7.0)
 
 `presentation.py` only derives display state; `render_options.py` is the shared runtime/preview boundary. `preview.py` must stay offline and export allowlisted configuration plus synthetic examples. The task preset uses the existing animation/flush lifecycle for at most one extra silence PATCH; pending input, terminal state, owner changes and cleanup must stop it. Run `python tools/preflight.py --suite focused --module appearance --module quota --module runtime` for this boundary, then full regression for runtime changes. See [task cards](../task-cards.md).
+
+
+## V4.7.2 update, identity and SDK boundaries
+
+Persistent sidecar ownership makes card-driven `/update` unavailable before confirmation and is rechecked before Gateway stop. Use terminal maintenance through the existing service owner. If sidecar stop fails before hook mutation, only an unchanged HEAD and verified installed hook permit requesting Gateway restart; this is not a health-success claim.
+
+Orphaned integrity fences can be explicitly rebound with `integrity acknowledge-review --rebind-target OLD_TARGET_SHA256 --yes` and explicit config/Hermes/state paths. The exact old identity and CAS snapshot are required; the current installed plan and stopped sidecar are checked twice. This is operator-authorized target rebinding, not proof that only APFS device numbering changed. Existing automatic/same-target behavior stays strict and known restart evidence is retained.
+
+`feishu_ws_compat.py` repairs only the hash-verified lark-oapi 1.6.8 CARD-drop method body, on the live client's WS loop. It keeps SDK fragmentation and response encoding, changes no SDK files or global class, and leaves unknown/new implementations untouched. Test actual protobuf frames, split payloads, error ACKs, reconnect and native EVENT dispatch. HFC replaces the adapter callback: a log added only to the original Hermes callback cannot prove that the platform sent nothing.
