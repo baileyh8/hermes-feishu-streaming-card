@@ -9,6 +9,7 @@ import ast
 from functools import lru_cache
 import hashlib
 import inspect
+import sys
 import textwrap
 from types import MethodType
 from typing import Any
@@ -32,7 +33,8 @@ def _repaired_function(original: Any) -> Any:
                 or ast.dump(function.args) != ast.dump(ast.parse(
                     "async def f(self, frame: Frame): pass").body[0].args)):
             return None
-        body = "\n".join(ast.dump(n, include_attributes=False) for n in function.body)
+        dump_options = {"show_empty": True} if sys.version_info >= (3, 13) else {}
+        body = "\n".join(ast.dump(n, include_attributes=False, **dump_options) for n in function.body)
         if hashlib.sha256(body.encode()).hexdigest() != _DROP_BODY_SHA256:
             return None
         matches = [n for n in ast.walk(function) if isinstance(n, ast.If)
