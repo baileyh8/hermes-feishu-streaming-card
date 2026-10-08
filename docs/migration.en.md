@@ -262,3 +262,5 @@ hermes-feishu-card integrity acknowledge-review \
 ```
 
 This authorizes binding that exact old record to the verified current install; it does not prove that the directory was never replaced. The old identity must match, the installed plan and stopped-sidecar state are verified twice, and the write uses the unchanged record's CAS token. Dirty/unverifiable installs, a running sidecar, wrong identity or races refuse the operation. Known Gateway restart evidence remains. Restart through existing owners and check health afterwards. Ordinary acknowledgement continues to reject target changes.
+
+Rebinding updates both `target_identity` and the verified current `plan_fingerprint`. An intermediate `gateway_restart_required` means Gateway still needs a restart through its existing service owner; it does not mean rebinding failed. Confirm sidecar is actually stopped before recovery: for example, launchd `KeepAlive` may immediately relaunch it after an ordinary stop.

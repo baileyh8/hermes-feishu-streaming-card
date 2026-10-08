@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import threading
+import time
 from typing import Any, Callable
 
 from .install.detect import detect_hermes
@@ -59,6 +60,11 @@ _OPERATOR_INTEGRITY_REASONS = frozenset(
 _HERMES_TARGET_IDENTITY_DOMAIN = b"hfc-hermes-target-identity-v1\0"
 _INTEGRITY_PLAN_FINGERPRINT_DOMAIN = b"hfc-integrity-plan-fingerprint-v1\0"
 _UNAVAILABLE_PLAN_FINGERPRINT = "integrity-evidence-unavailable-v1"
+# A recent installed observation only throttles scans; it never authorizes repair.
+_INSTALLED_RECHECK_SECONDS = 300.0
+_HEARTBEAT_WAIT_REASONS = frozenset({
+    "runtime_heartbeat_waiting", "runtime_heartbeat_missing", "runtime_heartbeat_stale",
+})
 
 
 def build_runtime_integrity_fence_binding(
@@ -158,6 +164,8 @@ class RuntimeIntegrityCoordinator:
         self._planner = planner
         self._executor = executor
         self._lock = threading.Lock()
+        self._snapshot_lock = threading.Lock()
+        self._installed_recheck_at = 0.0
         self._last_evidence = ""
         self._last_refusal_evidence = ""
         self._last_status = "idle"
@@ -165,6 +173,7 @@ class RuntimeIntegrityCoordinator:
         self._repair_attempts = 0
         self._repair_successes = 0
         self._repair_refusals = 0
+        self._published_snapshot = self._snapshot_values()
 
     def check_once(self) -> dict[str, Any]:
         with self._lock:
@@ -176,6 +185,9 @@ class RuntimeIntegrityCoordinator:
         readiness = self.supervisor.snapshot()
         readiness_status = str(readiness.get("status") or "")
         readiness_reason = str(readiness.get("reason") or "")
+        heartbeat_wait = readiness_reason in _HEARTBEAT_WAIT_REASONS
+        if not heartbeat_wait:
+            self._installed_recheck_at = 0.0
         if readiness_status == "ready" or readiness_reason == "runtime_ready":
             return self._record("ready", "runtime_ready", attempted=False)
         if readiness_reason == "control_auth_unavailable":
@@ -197,6 +209,10 @@ class RuntimeIntegrityCoordinator:
                 attempted=False,
             )
 
+        if heartbeat_wait and time.monotonic() < self._installed_recheck_at:
+            return self._record("idle", "recovery_not_required", attempted=False)
+        # Never reuse a plan for mutation or after a failed/new inspection.
+        self._installed_recheck_at = 0.0
         try:
             detection = self._detector(self.hermes_root)
             plan = self._planner(detection)
@@ -212,11 +228,8 @@ class RuntimeIntegrityCoordinator:
             )
 
         if plan.state == "installed":
-            if readiness_reason in {
-                "runtime_heartbeat_waiting",
-                "runtime_heartbeat_missing",
-                "runtime_heartbeat_stale",
-            }:
+            if heartbeat_wait:
+                self._installed_recheck_at = time.monotonic() + _INSTALLED_RECHECK_SECONDS
                 return self._record(
                     "idle",
                     "recovery_not_required",
@@ -283,15 +296,20 @@ class RuntimeIntegrityCoordinator:
         return self._record("repaired", "gateway_restart_required", attempted=True)
 
     def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            return {
-                "mode": self.mode,
-                "last_status": self._last_status,
-                "last_reason": self._last_reason,
-                "repair_attempts": self._repair_attempts,
-                "repair_successes": self._repair_successes,
-                "repair_refusals": self._repair_refusals,
-            }
+        # Readers never acquire the scan/mutation lock. Publish only completed
+        # observations so counts and status describe the same check.
+        with self._snapshot_lock:
+            return dict(self._published_snapshot)
+
+    def _snapshot_values(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "last_status": self._last_status,
+            "last_reason": self._last_reason,
+            "repair_attempts": self._repair_attempts,
+            "repair_successes": self._repair_successes,
+            "repair_refusals": self._repair_refusals,
+        }
 
     def _fence_binding(
         self,
@@ -314,4 +332,6 @@ class RuntimeIntegrityCoordinator:
     ) -> dict[str, Any]:
         self._last_status = status
         self._last_reason = reason
+        with self._snapshot_lock:
+            self._published_snapshot = self._snapshot_values()
         return {"status": status, "reason": reason, "attempted": attempted}
