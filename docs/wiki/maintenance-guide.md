@@ -303,3 +303,10 @@ Persistent sidecar ownership makes card-driven `/update` unavailable before conf
 Orphaned integrity fences can be explicitly rebound with `integrity acknowledge-review --rebind-target OLD_TARGET_SHA256 --yes` and explicit config/Hermes/state paths. The exact old identity and CAS snapshot are required; the current installed plan and stopped sidecar are checked twice. This is operator-authorized target rebinding, not proof that only APFS device numbering changed. Existing automatic/same-target behavior stays strict and known restart evidence is retained.
 
 `feishu_ws_compat.py` repairs only the hash-verified lark-oapi 1.6.8 CARD-drop method body, on the live client's WS loop. It keeps SDK fragmentation and response encoding, changes no SDK files or global class, and leaves unknown/new implementations untouched. Test actual protobuf frames, split payloads, error ACKs, reconnect and native EVENT dispatch. HFC replaces the adapter callback: a log added only to the original Hermes callback cannot prove that the platform sent nothing.
+
+
+## 心跳缺失时的完整性复查
+
+完整性监视仍每轮等待 15 秒。只有完整检测得到 `installed` 且 readiness 仅为心跳等待、缺失或过期时，才延后下一次完整源码检测至本轮结束后 300 秒；期间仍检查最新 readiness，不将缺心跳改成 ready。源码变化最多延迟到下一次完整检查（另加检测时间）；离开这三种心跳状态或重启 sidecar 会清除该观察结果。检查失败及可执行修复计划不缓存，任何修复仍使用本轮新证据和原执行器校验。
+
+`/health` 和状态查询读取最后一次已完成检查的原子快照，不等待后台检测/修复锁。快照中的诊断和计数可能落后于正在运行的检查，不能作为新的安装证明或修复授权。单次源码扫描的 CPU 成本未改变；此处减少重复扫描并解除健康接口的锁等待。

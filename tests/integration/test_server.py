@@ -14238,3 +14238,39 @@ async def test_native_group_turns_use_gateway_execution_scope(client, same_scope
             ))
             mid, card = await wait_for_card_update(feishu_client, f"NATIVE FINAL {index}")
             assert mid == f"feishu-message-{index + 1}"
+
+
+async def test_health_responds_while_integrity_source_scan_is_blocked():
+    from hermes_feishu_card.integrity import RuntimeIntegrityCoordinator
+
+    entered, release = threading.Event(), threading.Event()
+    def detect(_root):
+        entered.set()
+        assert release.wait(5)
+        return object()
+
+    app = create_app(FakeFeishuClient())
+    coordinator = RuntimeIntegrityCoordinator(
+        mode="safe", hermes_root="/sanitized-in-test",
+        supervisor=SimpleNamespace(snapshot=lambda: {
+            "status": "degraded", "reason": "runtime_heartbeat_missing",
+        }),
+        detector=detect,
+        planner=lambda _: SimpleNamespace(state="installed"),
+    )
+    app[sidecar_server.RUNTIME_INTEGRITY_COORDINATOR_KEY] = coordinator
+    async with TestClient(TestServer(app)) as client:
+        check = asyncio.create_task(asyncio.to_thread(coordinator.check_once))
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            response = await asyncio.wait_for(client.get("/health"), timeout=2)
+            assert response.status == 200
+            body = await response.json()
+            assert body["integrity"]["last_status"] == "idle"
+            assert not release.is_set()
+            assert not check.done()
+        finally:
+            release.set()
+            await check
+        body = await (await client.get("/health")).json()
+        assert body["integrity"]["last_reason"] == "recovery_not_required"

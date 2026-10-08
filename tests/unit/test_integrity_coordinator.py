@@ -414,3 +414,104 @@ def test_integrity_snapshot_sanitizer_allows_only_bounded_operator_fields():
         "repair_successes": 0,
         "repair_refusals": 0,
     }
+
+
+def test_missing_heartbeat_reuses_installed_observation_but_rechecks_source(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(integrity_module.time, "monotonic", lambda: clock[0])
+    calls = []
+    plan = [_plan(executable=False, state="installed")]
+    supervisor = FakeSupervisor()
+    coordinator = RuntimeIntegrityCoordinator(
+        mode="safe", hermes_root="/sanitized-in-test", supervisor=supervisor,
+        detector=lambda root: calls.append(root), planner=lambda _: plan[0],
+    )
+    coordinator.check_once()
+    for second in range(15, 300, 15):
+        clock[0] = 100.0 + second
+        assert coordinator.check_once()["reason"] == "recovery_not_required"
+    assert len(calls) == 1
+    assert supervisor.reason == "runtime_heartbeat_missing"
+    plan[0] = _plan(executable=False)
+    clock[0] = 400.0
+    assert coordinator.check_once()["status"] == "manual_review_required"
+    assert len(calls) == 2
+    assert supervisor.manual_review_required == 1
+
+
+def test_integrity_snapshot_does_not_wait_for_source_scan():
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+
+    def detect(_root):
+        entered.set()
+        assert release.wait(5)
+        return object()
+
+    coordinator = RuntimeIntegrityCoordinator(
+        mode="safe", hermes_root="/sanitized-in-test", supervisor=FakeSupervisor(),
+        detector=detect, planner=lambda _: _plan(executable=False, state="installed"),
+    )
+    before = coordinator.snapshot()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        check = pool.submit(coordinator.check_once)
+        try:
+            assert entered.wait(5)
+            # Semantic barrier: snapshot must finish while detect remains blocked.
+            snapshot = pool.submit(coordinator.snapshot)
+            assert snapshot.result(timeout=1) == before
+            assert not check.done()
+        finally:
+            release.set()
+        assert check.result(timeout=5)["reason"] == "recovery_not_required"
+    assert coordinator.snapshot()["last_reason"] == "recovery_not_required"
+
+
+def test_installed_cooldown_never_masks_runtime_transitions(monkeypatch):
+    monkeypatch.setattr(integrity_module.time, "monotonic", lambda: 100.0)
+    for reason, expected in (
+        ("runtime_ready", "ready"),
+        ("gateway_restart_required", "restart_required"),
+        ("manual_review_required", "manual_review_required"),
+        ("control_auth_unavailable", "manual_review_required"),
+    ):
+        supervisor = FakeSupervisor()
+        calls = []
+        coordinator = RuntimeIntegrityCoordinator(
+            mode="safe", hermes_root="/sanitized-in-test", supervisor=supervisor,
+            detector=lambda root: calls.append(root),
+            planner=lambda _: _plan(executable=False, state="installed"),
+        )
+        coordinator.check_once()
+        supervisor.reason = reason
+        assert coordinator.check_once()["status"] == expected
+        assert len(calls) == 1
+        # A new outage after observing recovery/fence must inspect afresh.
+        supervisor.reason = "runtime_heartbeat_stale"
+        coordinator.check_once()
+        assert len(calls) == 2
+
+
+def test_scan_interval_starts_at_completion_and_failures_are_not_cached(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(integrity_module.time, "monotonic", lambda: clock[0])
+    calls = []
+    def detect(root):
+        calls.append(root)
+        if len(calls) > 1:
+            raise OSError("unavailable")
+        clock[0] += 20.0
+    coordinator = RuntimeIntegrityCoordinator(
+        mode="notify", hermes_root="/sanitized-in-test", supervisor=FakeSupervisor(),
+        detector=detect, planner=lambda _: _plan(executable=False, state="installed"),
+    )
+    coordinator.check_once()
+    clock[0] = 419.0
+    coordinator.check_once()
+    assert len(calls) == 1
+    clock[0] = 420.0
+    assert coordinator.check_once()["reason"] == "integrity_evidence_unavailable"
+    assert coordinator.check_once()["reason"] == "integrity_evidence_unavailable"
+    assert len(calls) == 3

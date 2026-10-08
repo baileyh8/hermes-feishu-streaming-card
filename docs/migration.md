@@ -264,3 +264,5 @@ hermes-feishu-card integrity acknowledge-review \
 ```
 
 这表示你明确授权把这条旧记录绑定到当前已核验的安装，不表示系统自动证明目录没有被替换。旧身份必须精确匹配，当前安装计划和 sidecar 停止状态均检查两次，写入时原记录必须未变化。脏文件、无法验证的安装、运行中的 sidecar、错误旧身份及竞态都拒绝。已知的 Gateway 重启证据保留；完成后按原 owner 重启 sidecar / Gateway，再检查健康状态。普通 `acknowledge-review` 的跨目标拒绝行为不变。
+
+重新绑定会同时更新 `target_identity` 和当前已核验计划的 `plan_fingerprint`。如果随后显示 `gateway_restart_required`，表示仍需按原服务 owner 重启 Gateway；这不表示重新绑定失败。确认 sidecar 真正停止后再执行恢复：例如 launchd 的 `KeepAlive` 可能在普通 stop 后立即拉起进程。
