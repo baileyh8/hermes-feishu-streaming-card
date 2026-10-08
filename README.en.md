@@ -21,7 +21,7 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**Release version: [v4.7.2](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.2).** Fixes update shutdown risk, SDK card-frame dispatch and Python 3.14 compatibility; adds explicit integrity recovery and a card configuration map. See [release notes](docs/release-notes-v4.7.2.en.md).
+**Release version: [v4.7.3](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v4.7.3).** Bounds repeated scans while heartbeats are missing, unblocks health snapshots and clarifies integrity recovery. See [release notes](docs/release-notes-v4.7.3.en.md).
 
 ## Why HFC
 
@@ -86,7 +86,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.2
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v4.7.3
 bash install-docker.sh
 ```
 
@@ -209,6 +209,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v4.7.3](docs/release-notes-v4.7.3.en.md) | Bounded heartbeat scans, responsive health snapshots and recovery guidance |
 | [v4.7.2](docs/release-notes-v4.7.2.en.md) | Update shutdown protection, SDK callbacks, integrity recovery and configuration map |
 | [v4.7.1](docs/release-notes-v4.7.1.en.md) | Slash-confirm callback repair and visible confirmation results |
 | [v4.7.0](docs/release-notes-v4.7.0.en.md) | Task layout, offline previews, attributed quota and interaction-state repairs |
@@ -218,12 +219,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v4.6.10](docs/release-notes-v4.6.10.en.md) | Hermes 0.21.5 compatibility, PM runtime installation and independent follow-up cards |
 | [v4.6.9](docs/release-notes-v4.6.9.en.md) | Independent concurrent group cards, compact single-select choices and clearer onboarding |
 | [v4.6.8](docs/release-notes-v4.6.8.en.md) | macOS setup and recovery guidance with explicit startup and ownership boundaries |
-| [v4.6.7](docs/release-notes-v4.6.7.en.md) | Preserve editable heartbeats and compact approval buttons |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
 
+- V4.7.3: [lanx214](https://github.com/lanx214) (#378), performance evidence; [ywarmy](https://github.com/ywarmy) (#372), field verification and recovery-documentation feedback.
 - V4.7.2: [Nevoker](https://github.com/Nevoker) ([PR #373](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/373)); [DaveWang888](https://github.com/DaveWang888) (#375), [ffdxdynotable](https://github.com/ffdxdynotable) (#374), [ywarmy](https://github.com/ywarmy) (#372), [jackwude](https://github.com/jackwude) (#370). Code, failure evidence and configuration-guide proposal; original commit authorship is preserved.
 
 - V4.7.1: [baileyh8](https://github.com/baileyh8) repaired slash-confirm callbacks in [PR #371](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/371), informed by user-supplied logs. No public reporter attribution was provided.

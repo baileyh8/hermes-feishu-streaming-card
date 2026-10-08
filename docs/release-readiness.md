@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-当前发行版本为 `4.7.2`。本补丁处理持久服务更新停机风险、SDK 卡片帧分发与 Python 3.14 兼容，并增加显式身份恢复和配置地图。
+当前发行版本为 `4.7.3`。本补丁减少缺心跳时的重复源码扫描，解除健康接口锁等待，并补充完整性恢复说明。
 
-完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v4.7.2.md)和[本轮验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
+完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v4.7.3.md)和[本轮验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
 
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。
