@@ -2,7 +2,7 @@
 
 [中文](README.md) | [English](README.en.md)
 
-**Release version: v4.7.2.** The default `latest` installer selects the published stable release. This patch fixes update shutdown risk, SDK card-frame dispatch and Python 3.14 compatibility; see [release notes](docs/release-notes-v4.7.2.en.md).
+**Release version: v4.7.3.** The default `latest` installer selects the published stable release. This patch bounds repeated integrity scans during missing heartbeats and unblocks health snapshots; see [release notes](docs/release-notes-v4.7.3.en.md).
 
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
@@ -351,7 +351,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.7.2
+export HFC_VERSION=v4.7.3
 bash install-docker.sh
 ```
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## v4.7.3 — 2026-10-08
+
+Bound repeated installed-state scans during missing heartbeats and publish health snapshots without waiting for source inspection (#378, PR #379). Clarify orphaned-fence recovery and its intermediate Gateway restart state (#372). Stabilize the callback-expiry regression using an explicit test clock. See [release notes](docs/release-notes-v4.7.3.md).
+
 ## v4.7.2 — 2026-10-07
 
 Persistent-service update guards and pre-mutation restart recovery (#375); verified SDK CARD-frame dispatch (#374); explicit orphaned integrity target rebinding (#372); card configuration map (#370); Python 3.14 slice fingerprint support (PR #373, Nevoker). See [release notes](docs/release-notes-v4.7.2.md).
