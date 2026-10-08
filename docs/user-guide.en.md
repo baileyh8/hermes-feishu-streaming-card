@@ -577,14 +577,14 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v4.7.2`; the default `latest` resolves the published stable release. See [release notes](release-notes-v4.7.1.en.md) for validation boundaries.
+Examples pin `v4.7.3`; the default `latest` resolves the published stable release. See [release notes](release-notes-v4.7.1.en.md) for validation boundaries.
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v4.7.2`.
+The Compose example defaults `HFC_VERSION` to `v4.7.3`.
 
 Example:
 
