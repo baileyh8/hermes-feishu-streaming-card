@@ -391,6 +391,12 @@ def _validate_service_manager(config: dict[str, Any]) -> None:
     if not isinstance(manager, str) or manager not in SERVICE_MANAGER_VALUES:
         values = ", ".join(sorted(SERVICE_MANAGER_VALUES))
         raise ValueError(f"service.manager must be one of: {values}")
+    if "python_executable" in service:
+        selected = service["python_executable"]
+        if (not isinstance(selected, str) or not selected.strip()
+                or not Path(selected).expanduser().is_absolute()):
+            raise ValueError("service.python_executable must be an absolute Python path")
+
 
 
 def _normalize_config_native_chats(config: dict[str, Any]) -> None:

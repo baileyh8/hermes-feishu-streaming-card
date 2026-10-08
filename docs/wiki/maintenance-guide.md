@@ -139,6 +139,8 @@
 - Hermes 升级可能替换 `gateway/run.py` 而保留 HFC backup/manifest；CLI `status` / `start` 必须只读识别 verified `stale_unpatched`，仅对可执行的 `accept_hermes_upgrade` plan 给出显式恢复命令。用户改动、损坏或证据不足必须 fail-closed，不得自动重写 Hermes 或自动重启 Gateway。
 - runner 必须真正读取 `setup` / `start` 显式传入的 `--env-file`。配置优先级保持 YAML < 同目录 `.env` < 显式 env file < process env；禁止为了修复 systemd 环境而隐式读取全局 `~/.hermes/.env`。
 - 升级迁移只能停止 PID/token/health 三者一致的旧进程，未知进程保持 fail-closed。
+- Hermes PM 重建会删除旧环境；独立 sidecar 不能假定长驻解释器路径永远存在。可用 `service.python_executable` 绑定独立 HFC venv；setup/start/enable 均遵守此选择，先验证 Hermes hook，再验证侧车的版本与普通 site-packages 来源。配置缺省保持原行为；指定环境失效必须拒绝启动，不静默切回 PM。
+- 旧侧车仍响应 health 不代表运行文件可用。升级后的恢复顺序是检查当前 PM 与进程来源，备份并停止侧车，通过官方 install 修复已验证的升级状态；仅 installed 且侧车停止时 acknowledge-review，再启动侧车与 Gateway。不得清除未知围栏或手工改 hook。
 - `auto` 不得探测 system bus、调用 sudo/pkexec、写 `/etc` 或静默 fallback 到 system manager；`systemd-system` 只能显式使用 transient unit。
 - macOS `enable` 不可用时只提供平台解释。自建登录 LaunchAgent 可用 `RunAtLoad=true` 一次运行会分离子进程的 `start`，不可推荐 `KeepAlive=true`。无 verified pidfile 必须先确认进程归属；只有证实自建 LaunchAgent 直接运行 runner 才提供对应 `launchctl` 停止路径，不据 pidfile 缺失推断 launchd。
 - guided `setup` 在 `service.manager=auto|systemd-user`、user manager 可用且 `loginctl ... Linger=yes` 时默认进入 persistent systemd user 路径；不可用时必须显式警告重启风险并给出精确 `enable` 命令，`--transient` 是显式 opt-out。不得自动 enable linger、调用 sudo 或进入 system manager。随后以 exact Hermes venv Python、absolute config/env/Hermes root 渲染 unit；unit 与 `persistent-service.json` 都必须为 owner-only regular file，并以 `unit_sha256` 互证。

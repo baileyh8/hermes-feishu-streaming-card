@@ -20,6 +20,9 @@ integrity:
 # otherwise detached. It never enters system systemd or invokes sudo.
 service:
   manager: auto
+  # Optional stable HFC venv, outside Hermes PM environments. Must contain the
+  # same HFC release as an ordinary install. Hooks still use Hermes Python.
+  # python_executable: /absolute/path/to/hfc-venv/bin/python
 
 # ── Single Profile (minimal) ─────────────────────────────────────────────────
 # For simple setups with one Hermes profile and optionally multiple bots.

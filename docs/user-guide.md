@@ -178,6 +178,9 @@ Issue #162 所述的多机器人群聊需要显式使用原生模式：把目标
 
 `service.manager: auto` 只选择可用的 `systemd-user`，否则使用 `detached`，从不隐式进入 `systemd-system` 或调用 sudo。`systemd-system` 仅 Linux 显式 opt-in 且只用 transient unit；Docker 保持普通容器进程与 `detached`。完整排障见 [V4.1 安全控制与排障](wiki/v4.1-safety-controls.md)。
 
+如果 Hermes 使用升级时会重建、回收的 PM 环境，可在 HFC 配置中设置 `service.python_executable: /absolute/path/to/hfc-venv/bin/python`，让侧车使用独立且长期保留的 HFC 环境。该环境必须预先普通安装与当前 CLI 相同版本的 HFC；路径须为绝对路径，不能指向会被清理的测试环境。`setup`、`start`、`enable` 都遵守此设置，仍先验证 Hermes 当前环境中的 hook。未设置时保持原解释器选择；指定环境缺失、版本不符或来自 editable/源码目录时拒绝启动，不自动安装依赖或切回 PM。修改后通过原进程所有者重启侧车；不要仅凭同版本判断旧进程已切换。这个设置隔离的是侧车依赖，不能绕过升级后的 hook 修复和完整性围栏。
+
+
 Linux 上的引导式 `setup` 会在 user manager 可用且 linger 已开启时，默认创建受 HFC ownership 保护的开机常驻 user unit；不会自行开启 linger、调用 sudo 或切换到 system manager。能力不可用时会明确警告“重启后不会存活”，临时启动现有 transient sidecar，并打印满足条件后可执行的精确 `enable` 命令。即使能力就绪，也可用 `setup --transient` 显式关闭自动常驻。独立 `start` 的默认值仍是 transient。
 
 也可以先由用户或管理员确认 linger，再显式创建常驻服务：
