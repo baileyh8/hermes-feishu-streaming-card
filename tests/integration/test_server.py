@@ -9772,20 +9772,22 @@ async def test_runtime_interaction_owner_cancellation_keeps_delivery_and_canonic
         listener.close()
 
 
-async def test_runtime_interaction_expiry_during_blocked_callback_erases_admission(client):
+async def test_runtime_interaction_expiry_during_blocked_callback_erases_admission(client, monkeypatch):
     test_client, feishu_client = client
+    clock = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
     entered = threading.Event()
     release = threading.Event()
 
     def resolve(payload):
         entered.set()
-        release.wait(timeout=1.0)
+        release.wait(timeout=5.0)
         return True
 
     listener = RuntimeInteractionListener(TRANSPORT_ROOT_SECRET, resolve)
     listener.start()
     descriptor = runtime_descriptor(listener)
-    descriptor["expires_at"] = time.time() + 0.15
+    descriptor["expires_at"] = clock[0] + 1.0
     try:
         await test_client.post(
             "/events",
@@ -9812,11 +9814,12 @@ async def test_runtime_interaction_expiry_during_blocked_callback_erases_admissi
                 },
             )
         )
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + 5.0
         while not entered.is_set() and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
         assert entered.is_set()
-        await asyncio.sleep(0.2)
+        # Expire only after the callback has entered, independent of host speed.
+        clock[0] += 2.0
         release.set()
         response = await action
         assert response.status in {409, 503}
