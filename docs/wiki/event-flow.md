@@ -327,4 +327,4 @@ Runtime control schema 3 将同一 sidecar 的进程观测分开保存。Gateway
 
 多个 Gateway 同时存活、目标不符、观测容量超过 64 个或活动计数不完整时，维护保持关闭。Desktop 的完整零计数不会使 Gateway 的完整计数来回跳变，有活动的 Desktop 则仍计入维护等待。连续两个零计数 heartbeat 必须来自同一个 Gateway，不能拼接不同进程的 sequence。
 
-正常释放最后一个 runtime lease 时发送认证 `runtime.goodbye`，释放该进程观测；退出事件保留 replay tombstone。失联进程的任务不能推断为已停止，因此 stale observer 保持 unknown 并阻止维护。此时先核实对应进程已退出、剩余进程空闲，再受控重启 sidecar 重建观测；不要通过清除 integrity fence 绕过。冲突和容量诊断不会触发源码 repair。状态只展示 hash 和有界统计，不暴露原始进程 identity 或路径。
+正常释放最后一个 runtime lease 时发送认证 `runtime.goodbye`，释放该进程观测；退出事件保留 replay tombstone。Gateway 使用 `os._exit` 时会跳过 `atexit`，因此现有启动接点还会包装已核对签名的 `_exit_after_graceful_shutdown(exit_code)`，在 Hermes 完成 teardown 后、真正退出前有界等待退出心跳；不改 Hermes 源码，不接管信号，未知退出契约保持保守。失联进程的任务不能推断为已停止，因此 stale observer 保持 unknown 并阻止维护。此时先核实对应进程已退出、剩余进程空闲，再受控重启 sidecar 重建观测；不要通过清除 integrity fence 绕过。冲突和容量诊断不会触发源码 repair。状态只展示 hash 和有界统计，不暴露原始进程 identity 或路径。

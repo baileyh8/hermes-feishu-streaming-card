@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import atexit
+import functools
+import inspect
 import hashlib
 import hmac
 import json
@@ -1242,6 +1244,53 @@ def _combined_drain_home_verified() -> bool:
     return home_verified
 
 
+def _stop_runtime_control_before_process_exit() -> None:
+    """Bounded process-exit cleanup, including hosts that bypass atexit."""
+    global _CONTROL_STOPPING
+    with _CONTROL_LOCK:
+        stop_event, thread = _CONTROL_STOP, _CONTROL_THREAD
+        _CONTROL_STOPPING = True
+        if stop_event is not None:
+            stop_event.set()
+    # The emitter may still be sampling under _CONTROL_LOCK. Never join while
+    # holding it; its final goodbye uses the last successfully delivered owner.
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=2.0)
+
+
+def _install_gateway_exit_notifier() -> bool:
+    """Wrap Hermes' explicit post-teardown exit funnel, without editing source."""
+    module = sys.modules.get("gateway.run")
+    original = getattr(module, "_exit_after_graceful_shutdown", None)
+    if getattr(original, "_hfc_runtime_exit_notifier", False):
+        return True
+    if not inspect.isfunction(original) or inspect.iscoroutinefunction(original):
+        return False
+    if getattr(original, "__module__", None) != "gateway.run":
+        return False
+    try:
+        parameters = tuple(inspect.signature(original).parameters.values())
+        if len(parameters) != 1 or parameters[0].name != "exit_code":
+            return False
+        if parameters[0].kind not in (inspect.Parameter.POSITIONAL_ONLY,
+                                     inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    @functools.wraps(original)
+    def exit_with_runtime_goodbye(exit_code):
+        try:
+            _stop_runtime_control_before_process_exit()
+        except Exception:
+            pass  # HFC cleanup must never prevent Hermes from exiting.
+        return original(exit_code)
+
+    exit_with_runtime_goodbye._hfc_runtime_exit_notifier = True
+    module._exit_after_graceful_shutdown = exit_with_runtime_goodbye
+    return True
+
+
 def start_runtime_control(
     *,
     event_url: str,
@@ -1253,6 +1302,7 @@ def start_runtime_control(
     drain_home_verified_provider: Callable[[], bool] | None = None,
 ) -> bool:
     global _LEGACY_CONTROL_LEASE
+    _install_gateway_exit_notifier()
     lease = acquire_runtime_control(
         event_url=event_url,
         package_version=package_version,

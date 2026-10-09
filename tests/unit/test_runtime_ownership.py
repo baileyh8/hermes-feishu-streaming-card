@@ -165,3 +165,97 @@ def test_malformed_owner_fields_raise_validation_error():
         payload[key] = value
         with pytest.raises(RuntimeControlValidationError):
             RuntimeControlEvent.from_dict(payload)
+
+
+def test_gateway_hard_exit_funnel_sends_goodbye_before_original_exit(monkeypatch):
+    import sys
+    from types import ModuleType
+    from hermes_feishu_card import runtime_control as rc
+    module = ModuleType('gateway.run')
+    exec('def _exit_after_graceful_shutdown(exit_code):\n return exit_code\n', module.__dict__)
+    monkeypatch.setitem(sys.modules, 'gateway.run', module)
+    calls = []
+    monkeypatch.setattr(rc, '_stop_runtime_control_before_process_exit', lambda: calls.append('goodbye'))
+    assert rc._install_gateway_exit_notifier()
+    wrapped = module._exit_after_graceful_shutdown
+    assert rc._install_gateway_exit_notifier()
+    assert module._exit_after_graceful_shutdown is wrapped
+    assert wrapped(7) == 7 and calls == ['goodbye']
+    def failed_cleanup():
+        raise RuntimeError('cleanup unavailable')
+    monkeypatch.setattr(rc, '_stop_runtime_control_before_process_exit', failed_cleanup)
+    assert wrapped(8) == 8
+
+
+def test_exit_notifier_rejects_unknown_exit_contract(monkeypatch):
+    import sys
+    from types import ModuleType
+    from hermes_feishu_card import runtime_control as rc
+    for definition in ['def _exit_after_graceful_shutdown(other): pass',
+                       'def _exit_after_graceful_shutdown(exit_code, extra): pass',
+                       'async def _exit_after_graceful_shutdown(exit_code): pass']:
+        module = ModuleType('gateway.run');exec(definition, module.__dict__)
+        original = module._exit_after_graceful_shutdown
+        monkeypatch.setitem(sys.modules, 'gateway.run', module)
+        assert not rc._install_gateway_exit_notifier()
+        assert module._exit_after_graceful_shutdown is original
+
+
+def test_process_exit_releases_snapshot_lock_before_join(monkeypatch):
+    from threading import Event, Thread
+    from hermes_feishu_card import runtime_control as rc
+    stop, completed = Event(), Event()
+    def worker():
+        stop.wait()
+        with rc._CONTROL_LOCK:
+            completed.set()
+    thread = Thread(target=worker)
+    monkeypatch.setattr(rc, '_CONTROL_STOP', stop)
+    monkeypatch.setattr(rc, '_CONTROL_THREAD', thread)
+    monkeypatch.setattr(rc, '_CONTROL_STOPPING', False)
+    thread.start()
+    rc._stop_runtime_control_before_process_exit()
+    assert completed.is_set() and not thread.is_alive()
+
+
+def test_goodbye_is_delivered_even_when_gateway_uses_os_exit(tmp_path):
+    import subprocess, sys, textwrap
+    from pathlib import Path
+    from hermes_feishu_card import runtime_control as rc
+    package_root = str(Path(rc.__file__).parent.parent)
+    output = tmp_path / 'exit-events.jsonl'
+    child = textwrap.dedent('''
+        import json, os, sys, threading
+        from types import ModuleType
+        from pathlib import Path
+        sys.path.insert(0, sys.argv[2])
+        from hermes_feishu_card import runtime_control as rc
+        module = ModuleType('gateway.run')
+        module.__file__ = str(Path(sys.argv[1]).parent / 'gateway/run.py')
+        module.os = os
+        exec('def _exit_after_graceful_shutdown(exit_code):\\n os._exit(exit_code)\\n', module.__dict__)
+        sys.modules['gateway.run'] = module
+        ready = threading.Event()
+        def post(url, body, headers, timeout):
+            row = json.loads(body)
+            with open(sys.argv[1], 'a') as f:
+                f.write(json.dumps(row) + '\\n')
+            ready.set()
+            return True
+        emitter = rc.RuntimeControlEmitter(event_url='http://127.0.0.1:1/events',
+            hook_generation=rc.RUNTIME_HOOK_GENERATION, package_version='test',
+            secret_reader=lambda:b'r'*32, poster=post,
+            runtime_snapshot_provider=lambda:(0,True,False,True,True,True))
+        stop = threading.Event()
+        thread = threading.Thread(target=emitter.run, args=(stop,60), daemon=True)
+        rc._CONTROL_STOP, rc._CONTROL_THREAD = stop, thread
+        thread.start()
+        assert ready.wait(2)
+        assert rc._install_gateway_exit_notifier()
+        module._exit_after_graceful_shutdown(0)
+    ''')
+    subprocess.run([sys.executable, '-c', child, str(output), package_root], check=True, timeout=5)
+    import json
+    events = [json.loads(line) for line in output.read_text().splitlines()]
+    assert [e['event'] for e in events] == ['runtime.hello', 'runtime.goodbye']
+    assert events[0]['runtime_id'] == events[1]['runtime_id']
