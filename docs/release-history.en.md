@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v4.7.3](release-notes-v4.7.3.en.md) | Bounded heartbeat scans, responsive health snapshots and recovery guidance |
 | [v4.7.2](release-notes-v4.7.2.en.md) | Update safety, SDK callbacks, integrity recovery / 更新与回调修复 |
 | [v4.7.1](release-notes-v4.7.1.en.md) | Slash-confirm callback repair and result-card updates |
 | [v4.7.0](release-notes-v4.7.0.en.md) | Task layout, offline previews, attributed quota and interaction-state repairs |

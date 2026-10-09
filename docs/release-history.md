@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v4.7.3](release-notes-v4.7.3.md) | 缺心跳扫描降频、健康接口响应与恢复说明 |
 | [v4.7.2](release-notes-v4.7.2.md) | Update safety, SDK callbacks, integrity recovery / 更新与回调修复 |
 | [v4.7.1](release-notes-v4.7.1.md) | 命令确认回调修复与结果卡更新 |
 | [v4.7.0](release-notes-v4.7.0.md) | 任务布局、离线预览、额度归属与交互状态修复 |

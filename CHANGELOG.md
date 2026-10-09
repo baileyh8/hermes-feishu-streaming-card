@@ -1,5 +1,9 @@
 # Changelog
 
+## v4.7.4 — 2026-10-09
+
+Keep the sidecar independent of replaceable Hermes environments; bind readiness and maintenance proofs to the Gateway owner; retain Desktop activity without overwriting Gateway identity. Notify before Gateway hard exit and reclaim authenticated local observations only after verified process exit. See [release notes](docs/release-notes-v4.7.4.md) (PR #381).
+
 ## v4.7.3 — 2026-10-08
 
 Bound repeated installed-state scans during missing heartbeats and publish health snapshots without waiting for source inspection (#378, PR #379). Clarify orphaned-fence recovery and its intermediate Gateway restart state (#372). Stabilize the callback-expiry regression using an explicit test clock. See [release notes](docs/release-notes-v4.7.3.md).

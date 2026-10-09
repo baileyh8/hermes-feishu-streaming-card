@@ -1,8 +1,15 @@
 # Hermes Feishu Streaming Card Installer
 
+V4.7.4 optionally pins the sidecar to a stable independent Python environment with
+`service.python_executable`. Install the same-version ordinary HFC package in that
+environment first; setup/start reject missing, mismatched, or editable packages.
+The default remains unchanged and Hermes hook/integrity checks still apply.
+Restart sidecar, Gateway, and Desktop after upgrading so all heartbeat producers
+load the new protocol. See the [runtime configuration guide](docs/user-guide.en.md).
+
 [中文](README.md) | [English](README.en.md)
 
-**Release version: v4.7.3.** The default `latest` installer selects the published stable release. This patch bounds repeated integrity scans during missing heartbeats and unblocks health snapshots; see [release notes](docs/release-notes-v4.7.3.en.md).
+**Release version: v4.7.4.** The default `latest` installer selects the published stable release. This patch bounds repeated integrity scans during missing heartbeats and unblocks health snapshots; see [release notes](docs/release-notes-v4.7.4.en.md).
 
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
@@ -351,7 +358,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v4.7.3
+export HFC_VERSION=v4.7.4
 bash install-docker.sh
 ```
 
