@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .process_identity import LocalProcessMonitor
+
 
 def runtime_target_identity(root: str | Path) -> str:
     canonical = os.path.normcase(str(Path(root).expanduser().resolve()))
@@ -31,6 +33,7 @@ class RuntimeOwners:
         self.records: dict[str, Observation] = {}
         self.owner_id = ''
         self.overflow = False
+        self._processes = LocalProcessMonitor()
 
     def record(self, event: Any, now: float) -> bool:
         if event.runtime_role == 'gateway' and self.target and event.target_identity != self.target:
@@ -55,6 +58,11 @@ class RuntimeOwners:
         return True
 
     def view(self, now: float) -> dict[str, Any]:
+        for row in self.records.values():
+            if not row.closed and self._processes.state(row.event.process_identity, now,
+                    check_start=now - row.received_at > self.stale_seconds) == "exited":
+                row.closed = True
+                row.received_at = now
         live_gateways = {
             key: row for key, row in self.records.items()
             if not row.closed and now - row.received_at <= self.stale_seconds

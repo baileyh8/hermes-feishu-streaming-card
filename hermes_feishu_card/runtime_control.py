@@ -24,6 +24,7 @@ from urllib import parse, request
 
 from .operations_transport import read_transport_root_secret
 from .runtime_ownership import RuntimeOwners, runtime_target_identity
+from .process_identity import current_process_identity
 
 
 RUNTIME_TIMESTAMP_HEADER = "X-HFC-Runtime-Timestamp"
@@ -384,6 +385,7 @@ class RuntimeControlEvent:
     drain_home_verified: bool | None = None
     runtime_role: str = "legacy"
     target_identity: str = ""
+    process_identity: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "RuntimeControlEvent":
@@ -395,6 +397,8 @@ class RuntimeControlEvent:
             if schema_version == "2"
             else _RUNTIME_EVENT_FIELDS
         )
+        if schema_version == "3" and "process_identity" in payload:
+            expected_fields = expected_fields | {"process_identity"}
         if set(payload) != expected_fields:
             raise RuntimeControlValidationError("invalid runtime control event")
         event = payload.get("event")
@@ -456,9 +460,20 @@ class RuntimeControlEvent:
                     raise RuntimeControlValidationError("unverified Gateway owner")
             elif target or drain_home_verified:
                 raise RuntimeControlValidationError("observer cannot claim Gateway home")
+        process_identity = payload.get("process_identity")
+        if "process_identity" in payload:
+            if (not isinstance(process_identity, dict)
+                    or set(process_identity) != {"pid", "host", "start"}
+                    or type(process_identity.get("pid")) is not int
+                    or not 0 < process_identity["pid"] <= 2**31 - 1
+                    or any(not isinstance(process_identity.get(key), str)
+                           or not _SHA256_RE.fullmatch(process_identity[key])
+                           for key in ("host", "start"))):
+                raise RuntimeControlValidationError("invalid runtime process identity")
+            process_identity = dict(process_identity)
         return cls(
             schema_version=schema_version,
-            runtime_role=role, target_identity=target,
+            runtime_role=role, target_identity=target, process_identity=process_identity,
             event=event,
             runtime_id=runtime_id,
             sequence=sequence,
@@ -494,6 +509,8 @@ class RuntimeControlEvent:
             payload["drain_home_verified"] = self.drain_home_verified
         if self.schema_version == "3":
             payload.update(runtime_role=self.runtime_role, target_identity=self.target_identity)
+            if self.process_identity is not None:
+                payload["process_identity"] = dict(self.process_identity)
         return payload
 
 
@@ -648,6 +665,8 @@ class RuntimeControlEmitter:
         self._runtime_snapshot_provider = runtime_snapshot_provider
         self._sequence = 0
         self._last_owner_fields: dict[str, Any] | None = None
+        self._process_identity_checked = False
+        self._process_identity: dict[str, Any] | None = None
         self._lock = threading.Lock()
 
     def emit_once(self, event_name: str) -> bool:
@@ -694,6 +713,12 @@ class RuntimeControlEmitter:
                 active_sessions, active_work_count_complete = self._active_work_snapshot_provider()
                 admission_draining = self._admission_draining_provider()
                 drain_home_verified = self._drain_home_verified_provider()
+            if schema == "3":
+                if not self._process_identity_checked:
+                    self._process_identity = current_process_identity()
+                    self._process_identity_checked = True
+                if self._process_identity is not None:
+                    owner_fields["process_identity"] = self._process_identity
             event = RuntimeControlEvent.from_dict({
                 "schema_version": schema, "event": event_name,
                 "runtime_id": self.runtime_id, "sequence": sequence, "created_at": created_at,
