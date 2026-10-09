@@ -35,7 +35,7 @@ def reset_runtime_control_owners():
 
 def _payload(**changes):
     payload = {
-        "schema_version": "1",
+        "schema_version": "3",
         "event": "runtime.hello",
         "runtime_id": "runtime-1234567890",
         "sequence": 1,
@@ -44,11 +44,14 @@ def _payload(**changes):
         "package_version": "4.1.0",
     }
     payload.update(changes)
-    if payload.get("schema_version") == "2":
+    if payload.get("schema_version") in {"2", "3"}:
         payload.setdefault("active_sessions", 0)
         payload.setdefault("admission_draining", False)
         payload.setdefault("active_work_count_complete", True)
         payload.setdefault("drain_home_verified", True)
+    if payload.get("schema_version") == "3":
+        payload.setdefault("runtime_role", "gateway")
+        payload.setdefault("target_identity", "a" * 64)
     return payload
 
 
@@ -304,6 +307,8 @@ def test_supervisor_has_independent_liveness_readiness_state_machine():
         "admission_draining": None,
         "active_work_count_complete": None,
         "drain_home_verified": None,
+        "owner_conflict": False, "owner_capacity_exceeded": False,
+        "observer_count": 0, "observer_active_sessions": 0, "observer_unknown_count": 0,
     }
 
     clock[0] = 31.0
@@ -332,6 +337,7 @@ def test_supervisor_requires_matching_generation_and_can_mark_restart_required()
     assert supervisor.snapshot()["reason"] == "gateway_restart_required"
 
     supervisor.mark_restart_required()
+    supervisor.record(RuntimeControlEvent.from_dict(_payload(event="runtime.goodbye", sequence=2)))
     supervisor.record(
         RuntimeControlEvent.from_dict(
             _payload(runtime_id="runtime-restarted-123", created_at=101.0)
@@ -426,6 +432,8 @@ def test_restart_fence_survives_sidecar_restart_until_different_matching_hello(
             )
         )
     )
+    assert restarted.snapshot()["owner_conflict"] is True
+    assert restarted.record(RuntimeControlEvent.from_dict(_payload(runtime_id=old_runtime_id, event="runtime.goodbye", sequence=4, created_at=105.0)))
     assert restarted.snapshot()["status"] == "ready"
 
     reloaded = RuntimeIntegritySupervisor(
@@ -1106,6 +1114,8 @@ def test_runtime_control_thread_start_failure_leaves_no_worker_or_owner(monkeypa
 def test_legacy_start_owner_survives_temporary_shared_lease_rollback(monkeypatch):
     stopped = Event()
     starts = []
+    exit_callbacks = []
+    monkeypatch.setattr(runtime_control.atexit, "register", exit_callbacks.append)
 
     class FakeEmitter:
         def __init__(self, **kwargs):
@@ -1127,8 +1137,10 @@ def test_legacy_start_owner_survives_temporary_shared_lease_rollback(monkeypatch
     assert stopped.is_set() is False
     assert len(starts) == 1
 
-    runtime_control.reset_runtime_control_for_tests()
+    assert len(exit_callbacks) == 1
+    exit_callbacks[0]()
     assert stopped.wait(timeout=0.5)
+    runtime_control.reset_runtime_control_for_tests()
 
 
 def test_shared_worker_combines_every_owner_provider_conservatively(monkeypatch):
@@ -1517,7 +1529,7 @@ def test_bundle_returns_conservative_snapshot_after_bounded_epoch_churn(
     )
     assert first is not None
 
-    assert captured["runtime_snapshot_provider"]() == (0, False, True, False)
+    assert captured["runtime_snapshot_provider"]() == (0, False, True, False, False, False)
     assert len(churn_leases) == runtime_control._CONTROL_SNAPSHOT_ATTEMPTS
 
     for lease in reversed(churn_leases):

@@ -38,7 +38,9 @@ def isolated_runtime_integrity_state(tmp_path, monkeypatch):
 
 def _payload(**changes):
     payload = {
-        "schema_version": "1",
+        "schema_version": "3", "runtime_role": "gateway", "target_identity": "a" * 64,
+        "active_sessions": 0, "admission_draining": False,
+        "active_work_count_complete": True, "drain_home_verified": True,
         "event": "runtime.hello",
         "runtime_id": "runtime-1234567890",
         "sequence": 1,
@@ -118,10 +120,12 @@ async def test_runtime_endpoint_accepts_signed_hello_and_health_becomes_ready():
         "last_seen_age_seconds": 0,
         "runtime_id_hash": "bc48bbf1d754a75633bd24699a81443cc84efba9580957897f6769f8414639fa",
         "last_sequence": 1,
-        "active_sessions": None,
-        "admission_draining": None,
-        "active_work_count_complete": None,
-        "drain_home_verified": None,
+        "active_sessions": 0,
+        "admission_draining": False,
+        "active_work_count_complete": True,
+        "drain_home_verified": True,
+        "owner_conflict": False, "owner_capacity_exceeded": False,
+        "observer_count": 0, "observer_active_sessions": 0, "observer_unknown_count": 0,
     }
     assert replay.status == 401
 
@@ -228,3 +232,29 @@ async def test_integrity_off_reports_disabled_but_still_authenticates_endpoint()
     assert response.status == 200
     assert response_body == {"ok": True, "accepted": False}
     assert health["readiness"]["status"] == "disabled"
+
+
+async def test_signed_observer_preserves_gateway_owner_and_restart_fence(tmp_path):
+    from hermes_feishu_card.runtime_ownership import runtime_target_identity
+    app = create_app(NeverCalledFeishuClient(), operations_transport_root_secret=ROOT_SECRET,
+        integrity_mode="notify", expected_runtime_package_version="4.1.0",
+        operations_hermes_root=tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        async def send(**changes):
+            body, headers = _signed_body(_payload(**changes))
+            response = await client.post('/runtime/events', data=body, headers=headers)
+            return await response.json()
+        target = runtime_target_identity(tmp_path)
+        await send(target_identity=target)
+        before = (await (await client.get('/health')).json())['readiness']
+        assert before['status'] == 'ready'
+        await send(runtime_id='desktop-runtime-001', runtime_role='observer',
+            target_identity='', drain_home_verified=False, active_sessions=2)
+        after = (await (await client.get('/health')).json())['readiness']
+        assert after['runtime_id_hash'] == before['runtime_id_hash']
+        assert after['active_sessions'] == 2
+        assert after['active_work_count_complete'] is True
+        await send(runtime_id='wrong-target-runtime', target_identity='b'*64)
+        final = (await (await client.get('/health')).json())['readiness']
+        assert final['runtime_id_hash'] == before['runtime_id_hash']
+        assert final['observer_count'] == 1

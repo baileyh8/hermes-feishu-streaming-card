@@ -88,8 +88,7 @@ services:
       - sh
       - -ec
       - |
-        /opt/hermes/venv/bin/python /src/tests/fixtures/docker_gateway_smoke.py
-        exec sleep infinity
+        exec /opt/hermes/venv/bin/python /src/tests/fixtures/docker_gateway_smoke.py --stay-alive
     healthcheck:
       test:
         - CMD-SHELL
@@ -127,8 +126,8 @@ services:
         assert receipt["response"] == "fixture answer", receipt
         assert receipt["event_response"]["ok"] is True, receipt
         assert receipt["event_response"]["disposition"] == "native", receipt
-        assert receipt["runtime_readiness"]["status"] == "ready", receipt
-        assert receipt["runtime_readiness"]["reason"] == "runtime_ready", receipt
+        assert receipt["runtime_readiness"]["status"] == "degraded", receipt
+        assert receipt["runtime_readiness"]["reason"] == "runtime_owner_unverified", receipt
         assert receipt["patched_events_before_direct"] >= 1, receipt
         assert receipt["package_location"].startswith(
             "/opt/hermes/venv/"
@@ -144,8 +143,9 @@ services:
         assert health["status"] == "degraded", health
         assert health["delivery"] == {"mode": "noop"}, health
         assert health["event_auth_required"] is True, health
-        assert health["readiness"]["status"] == "ready", health
-        assert health["readiness"]["reason"] == "runtime_ready", health
+        assert health["readiness"]["status"] == "degraded", health
+        assert health["readiness"]["reason"] == "runtime_owner_unverified", health
+        assert health["readiness"]["active_work_count_complete"] is not True, health
         assert health["metrics"]["runtime_control_events_received"] >= 1, health
         assert health["metrics"]["runtime_control_events_accepted"] >= 1, health
         assert health["metrics"]["runtime_control_auth_rejections"] == 0, health

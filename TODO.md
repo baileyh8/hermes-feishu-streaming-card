@@ -1,5 +1,10 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V4.7.4
+
+- 已实现：独立侧车解释器、Gateway/Desktop 心跳隔离、同机退出证明与残留回收（PR #381）。
+- 本机分别重启 Gateway/Desktop 验收通过；完整 CI、精确合并 SHA、资产和公开安装为发布门禁。见[发行说明](docs/release-notes-v4.7.4.md)。
+
 ## V4.7.3
 
 - 已实现：#378 心跳缺失期间的完整扫描降频和独立健康快照；#372 恢复说明补充。

@@ -343,7 +343,9 @@ def test_docker_compose_runtime_smoke_executes_patched_gateway_hook():
     assert 'health["metrics"]["runtime_control_events_accepted"] >= 1' in probe_command
     assert 'health["metrics"]["events_received"] >= 1' in probe_command
     assert 'health["metrics"]["event_auth_rejections"] == 0' in probe_command
-    assert 'health["readiness"]["status"] == "ready"' in probe_command
+    assert 'health["readiness"]["status"] == "degraded"' in probe_command
+    assert 'health["readiness"]["reason"] == "runtime_owner_unverified"' in probe_command
+    assert "--stay-alive" in "\n".join(gateway["command"])
     assert 'receipt["patched_events_before_direct"] >= 1' in probe_command
     assert 'receipt["event_response"]["disposition"] == "native"' in probe_command
     assert "sign_event_request" not in probe_command

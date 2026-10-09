@@ -270,7 +270,9 @@ def test_installed_plan_waits_for_first_heartbeat_without_persisting_fence(
         assert supervisor.record(
             RuntimeControlEvent.from_dict(
                 {
-                    "schema_version": "1",
+                    "schema_version": "3", "runtime_role": "gateway", "target_identity": "a" * 64,
+                    "active_sessions": 0, "admission_draining": False,
+                    "active_work_count_complete": True, "drain_home_verified": True,
                     "event": "runtime.hello",
                     "runtime_id": f"runtime-after-{readiness_reason}",
                     "sequence": 1,
@@ -303,7 +305,9 @@ def test_installed_plan_does_not_persist_fence_during_gateway_restart_gap(
     assert supervisor.record(
         RuntimeControlEvent.from_dict(
             {
-                "schema_version": "1",
+                "schema_version": "3", "runtime_role": "gateway", "target_identity": "a" * 64,
+                    "active_sessions": 0, "admission_draining": False,
+                    "active_work_count_complete": True, "drain_home_verified": True,
                 "event": "runtime.hello",
                 "runtime_id": "runtime-before-restart-123",
                 "sequence": 1,
@@ -344,7 +348,9 @@ def test_installed_plan_does_not_persist_fence_during_gateway_restart_gap(
     assert supervisor.record(
         RuntimeControlEvent.from_dict(
             {
-                "schema_version": "1",
+                "schema_version": "3", "runtime_role": "gateway", "target_identity": "a" * 64,
+                    "active_sessions": 0, "admission_draining": False,
+                    "active_work_count_complete": True, "drain_home_verified": True,
                 "event": "runtime.hello",
                 "runtime_id": "runtime-after-restart-456",
                 "sequence": 1,

@@ -6,7 +6,7 @@
 
 | 层 | 当前实现 | 开发规则 |
 | --- | --- | --- |
-| Runtime | Python，asyncio，aiohttp；Python floor 以 `pyproject.toml` 为准 | 复用 Hermes 的实际解释器；不要以另一个 venv 的成功代替目标环境 |
+| Runtime | Python，asyncio，aiohttp；Python floor 以 `pyproject.toml` 为准 | hook 复用 Hermes 的实际解释器；侧车可显式使用独立 HFC venv，分别校验来源，不以另一环境的成功代替目标环境 |
 | 配置与协议 | PyYAML；dataclass 与显式输入验证 | 在边界拒绝非法类型/字段；保留 schema 兼容与用户显式配置 |
 | Hermes 集成 | 原生 plugin + 精确补丁的 Hybrid 方式 | 先验证能力，再选择 producer；同一事件不能 native/legacy 双发 |
 | Feishu | HTTP client、可选 CardKit；Hermes 提供 SDK 环境 | 不在轮询诊断中安装 SDK；保留权限、限流、重试及方言边界 |

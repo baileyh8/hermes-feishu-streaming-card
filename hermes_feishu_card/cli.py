@@ -571,8 +571,8 @@ def _run_setup(args: argparse.Namespace) -> int:
     _provision_setup_maintenance(Path(args.hermes_dir).expanduser())
 
     try:
-        runtime_python, runtime_identity = _resolve_start_runtime_identity(
-            verified_hermes_root
+        runtime_python, runtime_identity = _resolve_sidecar_runtime_identity(
+            verified_hermes_root, config
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -1887,6 +1887,34 @@ def _resolve_start_runtime_identity(
     return runtime_python, python_executable_identity(runtime_python)
 
 
+def _resolve_sidecar_runtime_identity(
+    hermes_root: Path | str | None, config: dict[str, Any],
+) -> tuple[Path, str]:
+    # Hooks still have to load in the selected Hermes environment. A separate
+    # delivery process must never turn into an escape from that installation gate.
+    default = _resolve_start_runtime_identity(hermes_root)
+    selected = (config.get("service") or {}).get("python_executable")
+    if selected is None:
+        return default
+    if not isinstance(selected, str) or not selected.strip():
+        raise ValueError("service.python_executable must be an absolute Python path")
+    path = Path(selected).expanduser()
+    if not path.is_absolute() or not path.is_file():
+        raise ValueError("Sidecar configured Python is missing or not absolute")
+    # Resolve the directory, not the executable symlink: different venvs can
+    # share the same base interpreter but must retain different identities.
+    path = path.parent.resolve(strict=True) / path.name
+    report = _check_runtime_hook_import(path)
+    if (report.get("status") != "ok"
+            or report.get("version") != PACKAGE_VERSION
+            or not _runtime_report_uses_installed_package(report, path)):
+        raise ValueError(
+            "Sidecar configured Python must contain this HFC release as an "
+            "ordinary site-packages install; repair that environment before start"
+        )
+    return path, python_executable_identity(path)
+
+
 def _verified_explicit_hermes_root(
     hermes_root: Path | str,
     *,
@@ -2893,8 +2921,8 @@ def _run_enable(args: argparse.Namespace) -> int:
         return 1
     try:
         hermes_root = Path(hook_check["root"]).expanduser().resolve(strict=True)
-        runtime_python, runtime_identity = _resolve_start_runtime_identity(
-            hermes_root
+        runtime_python, runtime_identity = _resolve_sidecar_runtime_identity(
+            hermes_root, config
         )
         if persistent_sidecar_matches(
             config_path=args.config,
@@ -2998,8 +3026,8 @@ def _run_start(args: argparse.Namespace) -> int:
             )
             return 1
     try:
-        runtime_python, runtime_identity = _resolve_start_runtime_identity(
-            verified_hermes_root
+        runtime_python, runtime_identity = _resolve_sidecar_runtime_identity(
+            verified_hermes_root, config
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -3309,6 +3337,7 @@ def _run_status(args: argparse.Namespace) -> int:
             readiness_reason = str(readiness.get("reason") or "unknown")
             if readiness_reason not in {
                 "runtime_ready",
+                "runtime_owner_conflict", "runtime_owner_unverified", "runtime_owner_capacity_exceeded",
                 "runtime_heartbeat_waiting",
                 "runtime_heartbeat_missing",
                 "runtime_heartbeat_stale",
@@ -3329,6 +3358,14 @@ def _run_status(args: argparse.Namespace) -> int:
                 "gateway.restart_required: "
                 f"{'true' if restart_required else 'false'}"
             )
+            for name in ("observer_count", "observer_active_sessions", "observer_unknown_count"):
+                value = readiness.get(name)
+                if type(value) is int and value >= 0:
+                    print(f"runtime.{name}: {value}")
+            for name in ("owner_conflict", "owner_capacity_exceeded"):
+                value = readiness.get(name)
+                if type(value) is bool:
+                    print(f"runtime.{name}: {str(value).lower()}")
             readiness_degraded = readiness_status == "degraded"
         integrity = status["health"].get("integrity")
         if isinstance(integrity, dict):

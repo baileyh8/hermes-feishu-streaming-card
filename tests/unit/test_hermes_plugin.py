@@ -231,7 +231,7 @@ def test_native_bootstrap_shares_gateway_drain_proof_without_masking_busy_work(m
         native = plugin_runtime.active_plugin_runtime()
         assert native is not None
         snapshot = captured['runtime_snapshot_provider']
-        assert snapshot() == (0, False, True, False)
+        assert snapshot() == (0, False, True, False, True, False)
         draining = [False]
         home = [True]
         gateway = runtime_control.acquire_runtime_control(
@@ -242,17 +242,17 @@ def test_native_bootstrap_shares_gateway_drain_proof_without_masking_busy_work(m
             drain_home_verified_provider=lambda: home[0],
         )
         assert gateway is not None
-        assert snapshot() == (0, True, False, True)
+        assert snapshot() == (0, True, False, True, True, True)
         monkeypatch.setattr(native, 'runtime_activity_snapshot', lambda: (2, True))
         draining[0] = True
-        assert snapshot() == (2, True, True, True)
+        assert snapshot() == (2, True, True, True, True, True)
         monkeypatch.setattr(native, 'runtime_activity_snapshot', lambda: (0, False))
-        assert snapshot() == (0, False, True, True)
+        assert snapshot() == (0, False, True, True, False, True)
         monkeypatch.setattr(native, 'runtime_activity_snapshot', lambda: (0, True))
         home[0] = False
-        assert snapshot() == (0, True, True, False)
+        assert snapshot() == (0, True, True, False, True, True)
         gateway.close()
-        assert snapshot() == (0, False, True, False)
+        assert snapshot() == (0, False, True, False, True, False)
     finally:
         plugin_runtime.reset_production_plugin_runtime_for_tests()
         runtime_control.reset_runtime_control_for_tests()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import importlib.util
 import json
@@ -63,7 +64,9 @@ async def _wait_for_patched_gateway_signals(
         )
         if (
             isinstance(readiness, dict)
-            and readiness.get("status") == "ready"
+            and readiness.get("status") == "degraded"
+            and readiness.get("reason") == "runtime_owner_unverified"
+            and readiness.get("active_work_count_complete") is not True
             and isinstance(events_received, int)
             and events_received >= 1
             and auth_rejections == 0
@@ -79,7 +82,8 @@ async def _exercise_gateway() -> dict[str, object]:
     gateway, source = _load_patched_gateway()
     hooks = SmokeHooks()
     response = await gateway._handle_message_with_agent(SmokeMessage(), hooks)
-    # The installed start hook queues card events and runtime.hello.
+    # This old message-only fixture has no verified Gateway aggregate/home.
+    # Signed hook events must work, but must not claim maintenance readiness.
     event_url = os.environ["HERMES_FEISHU_CARD_EVENT_URL"]
     runtime_readiness, patched_events_before_direct = (
         await _wait_for_patched_gateway_signals(event_url)
@@ -118,11 +122,18 @@ async def _exercise_gateway() -> dict[str, object]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stay-alive", action="store_true")
+    args = parser.parse_args()
     result = asyncio.run(_exercise_gateway())
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     temporary = RESULT_PATH.with_suffix(".tmp")
     temporary.write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
     os.replace(temporary, RESULT_PATH)
+    if args.stay_alive:
+        # Keep the actual heartbeat producer alive for the separate probe.
+        while True:
+            time.sleep(60)
     return 0
 
 
