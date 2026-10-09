@@ -1549,6 +1549,7 @@ def _wait_for_drain(
 ) -> bool:
     deadline = monotonic() + max(0.0, timeout_seconds)
     zero_sequence: int | None = None
+    zero_owner: str | None = None
     while True:
         health = _safe_health(fetch)
         readiness = health.get("readiness")
@@ -1559,6 +1560,7 @@ def _wait_for_drain(
             if isinstance(readiness, dict)
             else None
         )
+        owner = readiness.get("runtime_id_hash") if isinstance(readiness, dict) else None
         gateway_active = health.get("gateway_active_sessions")
         evidence_ready = (
             isinstance(drain, dict)
@@ -1566,6 +1568,7 @@ def _wait_for_drain(
             and drain.get("valid") is True
             and isinstance(readiness, dict)
             and readiness.get("status") == "ready"
+            and isinstance(owner, str) and bool(owner)
             and isinstance(sequence, int)
             and not isinstance(sequence, bool)
             and sequence >= 1
@@ -1580,11 +1583,13 @@ def _wait_for_drain(
             and readiness.get("drain_home_verified") is True
         )
         if evidence_ready and _active_maintenance_sessions(health) == 0:
-            if zero_sequence is not None and sequence > zero_sequence:
+            if zero_sequence is not None and owner == zero_owner and sequence > zero_sequence:
                 return True
             zero_sequence = sequence
+            zero_owner = owner
         else:
             zero_sequence = None
+            zero_owner = None
         if monotonic() >= deadline:
             return False
         sleep(min(1.0, max(0.0, deadline - monotonic())))

@@ -3337,6 +3337,7 @@ def _run_status(args: argparse.Namespace) -> int:
             readiness_reason = str(readiness.get("reason") or "unknown")
             if readiness_reason not in {
                 "runtime_ready",
+                "runtime_owner_conflict", "runtime_owner_unverified", "runtime_owner_capacity_exceeded",
                 "runtime_heartbeat_waiting",
                 "runtime_heartbeat_missing",
                 "runtime_heartbeat_stale",
@@ -3357,6 +3358,14 @@ def _run_status(args: argparse.Namespace) -> int:
                 "gateway.restart_required: "
                 f"{'true' if restart_required else 'false'}"
             )
+            for name in ("observer_count", "observer_active_sessions", "observer_unknown_count"):
+                value = readiness.get(name)
+                if type(value) is int and value >= 0:
+                    print(f"runtime.{name}: {value}")
+            for name in ("owner_conflict", "owner_capacity_exceeded"):
+                value = readiness.get(name)
+                if type(value) is bool:
+                    print(f"runtime.{name}: {str(value).lower()}")
             readiness_degraded = readiness_status == "degraded"
         integrity = status["health"].get("integrity")
         if isinstance(integrity, dict):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import atexit
 import hashlib
 import hmac
 import json
@@ -11,6 +12,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -19,6 +21,7 @@ from typing import Any
 from urllib import parse, request
 
 from .operations_transport import read_transport_root_secret
+from .runtime_ownership import RuntimeOwners, runtime_target_identity
 
 
 RUNTIME_TIMESTAMP_HEADER = "X-HFC-Runtime-Timestamp"
@@ -52,6 +55,7 @@ _RUNTIME_EVENT_FIELDS_V2 = _RUNTIME_EVENT_FIELDS | {
     "active_work_count_complete",
     "drain_home_verified",
 }
+_RUNTIME_EVENT_FIELDS_V3 = _RUNTIME_EVENT_FIELDS_V2 | {"runtime_role", "target_identity"}
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _NO_PROXY_OPENER = request.build_opener(request.ProxyHandler({}))
@@ -376,6 +380,8 @@ class RuntimeControlEvent:
     admission_draining: bool | None = None
     active_work_count_complete: bool | None = None
     drain_home_verified: bool | None = None
+    runtime_role: str = "legacy"
+    target_identity: str = ""
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "RuntimeControlEvent":
@@ -383,7 +389,7 @@ class RuntimeControlEvent:
             raise RuntimeControlValidationError("invalid runtime control event")
         schema_version = payload.get("schema_version")
         expected_fields = (
-            _RUNTIME_EVENT_FIELDS_V2
+            _RUNTIME_EVENT_FIELDS_V3 if schema_version == "3" else _RUNTIME_EVENT_FIELDS_V2
             if schema_version == "2"
             else _RUNTIME_EVENT_FIELDS
         )
@@ -395,7 +401,7 @@ class RuntimeControlEvent:
         created_at = payload.get("created_at")
         hook_generation = payload.get("hook_generation")
         package_version = payload.get("package_version")
-        if schema_version not in {"1", "2"} or event not in _RUNTIME_EVENTS:
+        if not isinstance(schema_version, str) or not isinstance(event, str) or schema_version not in {"1", "2", "3"} or (event not in _RUNTIME_EVENTS and not (schema_version == "3" and event == "runtime.goodbye")):
             raise RuntimeControlValidationError("invalid runtime control event")
         if (
             not isinstance(runtime_id, str)
@@ -421,40 +427,51 @@ class RuntimeControlEvent:
             ):
                 raise RuntimeControlValidationError("invalid runtime control event")
         active_sessions = payload.get("active_sessions")
-        if schema_version == "2" and (
+        if schema_version in {"2", "3"} and (
             isinstance(active_sessions, bool)
             or not isinstance(active_sessions, int)
             or not 0 <= active_sessions <= 1_000_000
         ):
             raise RuntimeControlValidationError("invalid runtime control event")
         admission_draining = payload.get("admission_draining")
-        if schema_version == "2" and not isinstance(admission_draining, bool):
+        if schema_version in {"2", "3"} and not isinstance(admission_draining, bool):
             raise RuntimeControlValidationError("invalid runtime control event")
         active_work_count_complete = payload.get("active_work_count_complete")
-        if schema_version == "2" and not isinstance(
+        if schema_version in {"2", "3"} and not isinstance(
             active_work_count_complete, bool
         ):
             raise RuntimeControlValidationError("invalid runtime control event")
         drain_home_verified = payload.get("drain_home_verified")
-        if schema_version == "2" and not isinstance(drain_home_verified, bool):
+        if schema_version in {"2", "3"} and not isinstance(drain_home_verified, bool):
             raise RuntimeControlValidationError("invalid runtime control event")
+        role = payload.get("runtime_role", "legacy")
+        target = payload.get("target_identity", "")
+        if schema_version == "3":
+            if not isinstance(role, str) or role not in {"gateway", "observer", "unknown"} or not isinstance(target, str):
+                raise RuntimeControlValidationError("invalid runtime control owner")
+            if role == "gateway":
+                if not _SHA256_RE.fullmatch(target) or drain_home_verified is not True:
+                    raise RuntimeControlValidationError("unverified Gateway owner")
+            elif target or drain_home_verified:
+                raise RuntimeControlValidationError("observer cannot claim Gateway home")
         return cls(
             schema_version=schema_version,
+            runtime_role=role, target_identity=target,
             event=event,
             runtime_id=runtime_id,
             sequence=sequence,
             created_at=float(created_at),
             hook_generation=hook_generation,
             package_version=package_version,
-            active_sessions=(active_sessions if schema_version == "2" else None),
+            active_sessions=(active_sessions if schema_version in {"2", "3"} else None),
             admission_draining=(
-                admission_draining if schema_version == "2" else None
+                admission_draining if schema_version in {"2", "3"} else None
             ),
             active_work_count_complete=(
-                active_work_count_complete if schema_version == "2" else None
+                active_work_count_complete if schema_version in {"2", "3"} else None
             ),
             drain_home_verified=(
-                drain_home_verified if schema_version == "2" else None
+                drain_home_verified if schema_version in {"2", "3"} else None
             ),
         )
 
@@ -468,11 +485,13 @@ class RuntimeControlEvent:
             "hook_generation": self.hook_generation,
             "package_version": self.package_version,
         }
-        if self.schema_version == "2":
+        if self.schema_version in {"2", "3"}:
             payload["active_sessions"] = self.active_sessions
             payload["admission_draining"] = self.admission_draining
             payload["active_work_count_complete"] = self.active_work_count_complete
             payload["drain_home_verified"] = self.drain_home_verified
+        if self.schema_version == "3":
+            payload.update(runtime_role=self.runtime_role, target_identity=self.target_identity)
         return payload
 
 
@@ -626,44 +645,61 @@ class RuntimeControlEmitter:
         )
         self._runtime_snapshot_provider = runtime_snapshot_provider
         self._sequence = 0
+        self._last_owner_fields: dict[str, Any] | None = None
         self._lock = threading.Lock()
 
     def emit_once(self, event_name: str) -> bool:
-        if event_name not in _RUNTIME_EVENTS:
+        if event_name not in _RUNTIME_EVENTS and event_name != "runtime.goodbye":
+            return False
+        if event_name == "runtime.goodbye" and self._last_owner_fields is None:
             return False
         try:
             with self._lock:
                 self._sequence += 1
                 sequence = self._sequence
             created_at = float(self._now())
-            if self._runtime_snapshot_provider is not None:
-                (
-                    active_sessions,
-                    active_work_count_complete,
-                    admission_draining,
-                    drain_home_verified,
-                ) = self._runtime_snapshot_provider()
+            owner_fields: dict[str, Any] = {}
+            schema = "2"
+            if event_name == "runtime.goodbye":
+                cached = dict(self._last_owner_fields or {})
+                owner_fields = {key: cached[key] for key in ("runtime_role", "target_identity")}
+                active_sessions = cached["active_sessions"]
+                active_work_count_complete = cached["active_work_count_complete"]
+                admission_draining = cached["admission_draining"]
+                drain_home_verified = cached["drain_home_verified"]
+                schema = "3"
+            elif self._runtime_snapshot_provider is not None:
+                snapshot = self._runtime_snapshot_provider()
+                active_sessions, active_work_count_complete, admission_draining, drain_home_verified = snapshot[:4]
+                if len(snapshot) == 6:
+                    own_complete, gateway_present = snapshot[4:]
+                    role = "observer" if not gateway_present and own_complete else "unknown"
+                    target = ""
+                    if gateway_present and drain_home_verified:
+                        source = getattr(sys.modules.get("gateway.run"), "__file__", None)
+                        if source:
+                            target = runtime_target_identity(Path(source).resolve().parent.parent)
+                            role = "gateway"
+                    if role != "gateway":
+                        drain_home_verified = False
+                    active_work_count_complete = own_complete
+                    owner_fields = {"runtime_role": role, "target_identity": target}
+                    previous = self._last_owner_fields
+                    if previous is None or any(previous[key] != value for key, value in owner_fields.items()):
+                        event_name = "runtime.hello"
+                    schema = "3"
             else:
-                active_sessions, active_work_count_complete = (
-                    self._active_work_snapshot_provider()
-                )
+                active_sessions, active_work_count_complete = self._active_work_snapshot_provider()
                 admission_draining = self._admission_draining_provider()
                 drain_home_verified = self._drain_home_verified_provider()
-            event = RuntimeControlEvent.from_dict(
-                {
-                    "schema_version": "2",
-                    "event": event_name,
-                    "runtime_id": self.runtime_id,
-                    "sequence": sequence,
-                    "created_at": created_at,
-                    "hook_generation": self.hook_generation,
-                    "package_version": self.package_version,
-                    "active_sessions": active_sessions,
-                    "admission_draining": admission_draining,
-                    "active_work_count_complete": active_work_count_complete,
-                    "drain_home_verified": drain_home_verified,
-                }
-            )
+            event = RuntimeControlEvent.from_dict({
+                "schema_version": schema, "event": event_name,
+                "runtime_id": self.runtime_id, "sequence": sequence, "created_at": created_at,
+                "hook_generation": self.hook_generation, "package_version": self.package_version,
+                "active_sessions": active_sessions, "admission_draining": admission_draining,
+                "active_work_count_complete": active_work_count_complete,
+                "drain_home_verified": drain_home_verified, **owner_fields,
+            })
             body = json.dumps(
                 event.to_dict(),
                 ensure_ascii=False,
@@ -675,14 +711,13 @@ class RuntimeControlEmitter:
                 return False
             headers = {"Content-Type": "application/json"}
             headers.update(sign_runtime_request(secret, body, timestamp=int(created_at)))
-            return bool(
-                self._poster(
-                    self.runtime_url,
-                    body,
-                    headers,
-                    self._timeout_seconds,
-                )
-            )
+            delivered = bool(self._poster(self.runtime_url, body, headers, self._timeout_seconds))
+            if delivered and schema == "3":
+                self._last_owner_fields = {**owner_fields, "active_sessions": active_sessions,
+                    "active_work_count_complete": active_work_count_complete,
+                    "admission_draining": admission_draining, "drain_home_verified": drain_home_verified}
+            return delivered
+
         except Exception:
             return False
 
@@ -690,6 +725,7 @@ class RuntimeControlEmitter:
         self.emit_once("runtime.hello")
         while not stop_event.wait(interval_seconds):
             self.emit_once("runtime.heartbeat")
+        self.emit_once("runtime.goodbye")
 
 
 class RuntimeIntegritySupervisor:
@@ -703,6 +739,7 @@ class RuntimeIntegritySupervisor:
         startup_grace_seconds: float = 30.0,
         stale_after_seconds: float = 45.0,
         state_directory: str | Path | None = None,
+        expected_target_identity: str | None = None,
     ):
         mode = str(mode or "").strip().lower()
         if mode not in {"safe", "notify", "off"}:
@@ -750,44 +787,43 @@ class RuntimeIntegritySupervisor:
                 )
         self._control_auth_unavailable = False
         self._lock = threading.Lock()
+        self._owners = RuntimeOwners(expected_target_identity, stale_after_seconds)
 
     def record(self, event: RuntimeControlEvent) -> bool:
         if not isinstance(event, RuntimeControlEvent) or self.mode == "off":
             return False
         now = self._now()
         with self._lock:
-            if event.runtime_id == self._runtime_id and event.sequence <= self._last_sequence:
+            if not self._owners.record(event, now):
                 return False
-            self._runtime_id = event.runtime_id
-            self._last_sequence = event.sequence
-            self._last_seen_at = now
-            generation_match = bool(
-                event.hook_generation == self.expected_hook_generation
-                and (
-                    not self.expected_package_version
-                    or event.package_version == self.expected_package_version
-                )
-            )
-            self._generation_match = generation_match
-            self._active_sessions = event.active_sessions
-            self._admission_draining = event.admission_draining
-            self._active_work_count_complete = event.active_work_count_complete
-            self._drain_home_verified = event.drain_home_verified
-            if (
-                event.event == "runtime.hello"
-                and generation_match
-                and self._restart_required
-                and bool(self._pre_repair_runtime_hash)
-                and _runtime_id_hash(event.runtime_id)
-                != self._pre_repair_runtime_hash
-            ):
-                previous_hash = self._pre_repair_runtime_hash
-                self._restart_required = False
-                self._pre_repair_runtime_hash = ""
-                if not self._persist_fence_locked():
-                    self._restart_required = True
-                    self._pre_repair_runtime_hash = previous_hash
+            self._sync_owner(now)
         return True
+
+    def _sync_owner(self, now: float) -> dict[str, Any]:
+        view = self._owners.view(now)
+        owner = view["owner"]
+        if owner is None:
+            return view
+        event = owner.event
+        self._runtime_id = event.runtime_id
+        self._last_sequence = event.sequence
+        self._last_seen_at = owner.received_at
+        self._generation_match = bool(event.hook_generation == self.expected_hook_generation
+            and (not self.expected_package_version or event.package_version == self.expected_package_version))
+        self._active_sessions = view["active_sessions"]
+        self._admission_draining = event.admission_draining
+        self._active_work_count_complete = view["activity_complete"]
+        self._drain_home_verified = bool(view["owner_valid"] and event.drain_home_verified)
+        if (view["owner_valid"] and owner.gateway_hello_seen and self._generation_match
+                and self._restart_required and self._pre_repair_runtime_hash
+                and _runtime_id_hash(event.runtime_id) != self._pre_repair_runtime_hash):
+            previous_hash = self._pre_repair_runtime_hash
+            self._restart_required = False
+            self._pre_repair_runtime_hash = ""
+            if not self._persist_fence_locked():
+                self._restart_required = True
+                self._pre_repair_runtime_hash = previous_hash
+        return view
 
     def mark_restart_required(
         self,
@@ -867,6 +903,7 @@ class RuntimeIntegritySupervisor:
     def snapshot(self) -> dict[str, Any]:
         now = self._now()
         with self._lock:
+            ownership = self._sync_owner(now)
             last_seen_at = self._last_seen_at
             generation_match = self._generation_match
             restart_required = self._restart_required
@@ -891,6 +928,11 @@ class RuntimeIntegritySupervisor:
         elif restart_required:
             status = "degraded"
             reason = "gateway_restart_required"
+        elif ownership["owner_conflict"] or ownership["owner_capacity_exceeded"]:
+            status = "degraded"
+            reason = "runtime_owner_conflict" if ownership["owner_conflict"] else "runtime_owner_capacity_exceeded"
+        elif last_seen_at is None and ownership["observer_count"]:
+            status, reason = "degraded", "runtime_owner_unverified"
         elif last_seen_at is None:
             status = "starting" if now - self._started_at <= self._startup_grace_seconds else "degraded"
             reason = (
@@ -901,6 +943,9 @@ class RuntimeIntegritySupervisor:
         elif now - last_seen_at > self._stale_after_seconds:
             status = "degraded"
             reason = "runtime_heartbeat_stale"
+        elif not ownership["owner_valid"]:
+            status = "degraded"
+            reason = "runtime_owner_unverified"
         elif not generation_match:
             status = "degraded"
             reason = "gateway_restart_required"
@@ -924,6 +969,7 @@ class RuntimeIntegritySupervisor:
             "admission_draining": admission_draining,
             "active_work_count_complete": active_work_count_complete,
             "drain_home_verified": drain_home_verified,
+            **{key: ownership[key] for key in ("owner_conflict", "owner_capacity_exceeded", "observer_count", "observer_active_sessions", "observer_unknown_count")},
         }
 
 
@@ -1028,7 +1074,7 @@ def acquire_runtime_control(
                 active_work_snapshot_provider=_combined_active_work_snapshot,
                 admission_draining_provider=_combined_admission_draining,
                 drain_home_verified_provider=_combined_drain_home_verified,
-                runtime_snapshot_provider=_combined_runtime_snapshot,
+                runtime_snapshot_provider=lambda: _combined_runtime_snapshot(include_ownership=True),
             )
             stop_event = threading.Event()
             thread = threading.Thread(
@@ -1108,7 +1154,8 @@ def _evaluate_runtime_snapshot(
         ],
         ...,
     ],
-) -> tuple[int, bool, bool, bool]:
+    *, include_ownership: bool = False,
+) -> tuple:
     total = 0
     complete = bool(providers)
     gateway_aggregate_present = False
@@ -1158,24 +1205,26 @@ def _evaluate_runtime_snapshot(
                     drain_home_verified = False
             except Exception:
                 drain_home_verified = False
-    return (
+    result = (
         total,
         complete and gateway_aggregate_present,
         admission_draining or not gateway_aggregate_present,
         drain_home_verified and gateway_aggregate_present,
     )
 
+    return (*result, complete, gateway_aggregate_present) if include_ownership else result
 
-def _combined_runtime_snapshot() -> tuple[int, bool, bool, bool]:
+
+def _combined_runtime_snapshot(*, include_ownership: bool = False) -> tuple:
     for _attempt in range(_CONTROL_SNAPSHOT_ATTEMPTS):
         with _CONTROL_LOCK:
             epoch = _CONTROL_PROVIDER_EPOCH
             providers = tuple(_CONTROL_PROVIDERS.values())
-        snapshot = _evaluate_runtime_snapshot(providers)
+        snapshot = _evaluate_runtime_snapshot(providers, include_ownership=include_ownership)
         with _CONTROL_LOCK:
             if epoch == _CONTROL_PROVIDER_EPOCH:
                 return snapshot
-    return 0, False, True, False
+    return (0, False, True, False, False, False) if include_ownership else (0, False, True, False)
 
 
 def _combined_active_work_snapshot() -> tuple[int, bool]:
@@ -1218,6 +1267,7 @@ def start_runtime_control(
     with _CONTROL_LOCK:
         if _LEGACY_CONTROL_LEASE is None:
             _LEGACY_CONTROL_LEASE = lease
+            atexit.register(lease.close)
             return True
     lease.close()
     return True

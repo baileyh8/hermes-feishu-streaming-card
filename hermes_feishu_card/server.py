@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+from .runtime_ownership import runtime_target_identity
 from .bots import RouteResult
 from .card_limits import inspect_card_limits
 from .config import (
@@ -566,6 +567,7 @@ def create_app(
         expected_hook_generation=RUNTIME_HOOK_GENERATION,
         expected_package_version=expected_runtime_package_version,
         state_directory=runtime_integrity_state_directory,
+        expected_target_identity=(runtime_target_identity(operations_hermes_root) if operations_hermes_root is not None else None),
     )
     app[RUNTIME_INTEGRITY_SUPERVISOR_KEY] = runtime_supervisor
     if valid_transport_root:

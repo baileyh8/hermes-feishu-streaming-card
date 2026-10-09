@@ -190,6 +190,9 @@ class RuntimeIntegrityCoordinator:
             self._installed_recheck_at = 0.0
         if readiness_status == "ready" or readiness_reason == "runtime_ready":
             return self._record("ready", "runtime_ready", attempted=False)
+        if readiness_reason in {"runtime_owner_conflict", "runtime_owner_unverified", "runtime_owner_capacity_exceeded"}:
+            # Source patching cannot resolve a process ownership ambiguity.
+            return self._record("manual_review_required", readiness_reason, attempted=False)
         if readiness_reason == "control_auth_unavailable":
             return self._record(
                 "manual_review_required",
