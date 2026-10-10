@@ -224,6 +224,8 @@ See [release history](docs/release-history.en.md) for earlier versions, and [CHA
 
 ## Contributors
 
+- [yulong-ge](https://github.com/yulong-ge) supplied PM-managed runtime installation reproduction and diagnostics in [#382](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/382).
+
 - V4.7.3: [lanx214](https://github.com/lanx214) (#378), performance evidence; [ywarmy](https://github.com/ywarmy) (#372), field verification and recovery-documentation feedback.
 - V4.7.2: [Nevoker](https://github.com/Nevoker) ([PR #373](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/373)); [DaveWang888](https://github.com/DaveWang888) (#375), [ffdxdynotable](https://github.com/ffdxdynotable) (#374), [ywarmy](https://github.com/ywarmy) (#372), [jackwude](https://github.com/jackwude) (#370). Code, failure evidence and configuration-guide proposal; original commit authorship is preserved.
 

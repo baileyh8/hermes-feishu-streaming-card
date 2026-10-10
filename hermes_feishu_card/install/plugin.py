@@ -13,6 +13,8 @@ from typing import Mapping
 
 import yaml
 
+from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
+
 
 PLUGIN_KEY = "hermes-feishu-card"
 PLUGIN_ENTRY_POINT = "hermes_feishu_card.hermes_plugin"
@@ -113,7 +115,7 @@ def resolve_runtime_binding(
     home = _require_directory(homes[0], "Hermes home")
     config_path = _require_regular_file(home / "config.yaml", "Hermes config")
 
-    runtime_python = _runtime_launcher(root)
+    runtime_python = _runtime_launcher(root, hermes_home=home)
     launcher_metadata = runtime_python.lstat()
     if not (
         stat.S_ISREG(launcher_metadata.st_mode)
@@ -604,7 +606,13 @@ def _binding_home_candidates(
     return tuple(unique)
 
 
-def _runtime_launcher(root: Path) -> Path:
+def _runtime_launcher(root: Path, *, hermes_home: Path | None = None) -> Path:
+    try:
+        managed = pm_managed_runtime_python(root, hermes_home=hermes_home)
+    except PMRuntimeRefused as exc:
+        raise RuntimeBindingRefused(str(exc)) from exc
+    if managed is not None:
+        return managed
     candidates = (
         root / ".venv" / "bin" / "python",
         root / "venv" / "bin" / "python",
