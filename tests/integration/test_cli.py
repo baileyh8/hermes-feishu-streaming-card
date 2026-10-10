@@ -903,8 +903,8 @@ def test_runtime_python_detection_prefers_pm_managed_environment(tmp_path):
     assert detected != stale
 
 
-def test_runtime_python_detection_falls_back_when_pm_selection_fails(tmp_path):
-    """A layout whose PM selection cannot be read keeps the checkout candidates."""
+def test_runtime_python_detection_rejects_failed_pm_selection(tmp_path):
+    """An unreadable PM selection must not install into a stale checkout venv."""
     hermes_dir = tmp_path / "hermes-agent"
     stale = hermes_dir / "venv" / "bin" / "python"
     stale.parent.mkdir(parents=True)
@@ -916,10 +916,8 @@ def test_runtime_python_detection_falls_back_when_pm_selection_fails(tmp_path):
         "    raise RuntimeError('no committed selection')\n",
     )
 
-    detected = cli_module._detect_hermes_runtime_python(hermes_dir)
-
-    assert detected is not None
-    assert detected.parent.parent == (hermes_dir / "venv").resolve()
+    with pytest.raises(ValueError, match="Hermes PM"):
+        cli_module._detect_hermes_runtime_python(hermes_dir)
 
 
 def test_status_reports_cron_metrics_when_sidecar_is_running(monkeypatch, capsys):

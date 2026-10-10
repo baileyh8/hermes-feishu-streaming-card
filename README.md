@@ -218,6 +218,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 ## 贡献者
 
+- [yulong-ge](https://github.com/yulong-ge) 在 [#382](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/382) 提供 PM 托管环境安装失败的复现与诊断证据。
+
 - V4.7.3: [lanx214](https://github.com/lanx214)（#378）提供性能故障证据；[ywarmy](https://github.com/ywarmy)（#372）提供现场复测和恢复文档建议。
 - V4.7.2: [Nevoker](https://github.com/Nevoker) ([PR #373](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/373)); [DaveWang888](https://github.com/DaveWang888) (#375), [ffdxdynotable](https://github.com/ffdxdynotable) (#374), [ywarmy](https://github.com/ywarmy) (#372), [jackwude](https://github.com/jackwude) (#370). 分别贡献 Python 3.14 修复、故障证据和配置引导建议；保留原提交作者。
 

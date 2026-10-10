@@ -1043,3 +1043,9 @@ Managed launches pass only `--token-file`; the private state directory contains 
 ## Task layout and offline preview (development branch)
 
 The unreleased `reading_preset: task` and `card-config --preview-dir` provide clearer state/typography and safe configuration previews. See [task cards](task-cards.md#english-quick-reference) for scope, rollback and real-client acceptance boundaries.
+
+### PM environments and missing installation sources
+
+Hermes PM dependencies usually live outside the checkout. Use the environment selected by `committed_venv()`, rather than assuming an existing checkout `.venv` is active. If selection fails or the committed generation is missing, restore Hermes dependencies before retrying; a stale `.venv` is not a recovery path.
+
+`Hermes runtime Python cannot import ... and no install spec is available` means the runtime lacks a usable HFC package and the CLI has no installation source. This happens before hook installation. Launching an installed CLI through `uv run --frozen` does not install its package into the Gateway environment. Use the official installer linked in README, or explicitly set `HFC_INSTALL_SPEC` to a verified same-version wheel when running setup. HFC does not guess package sources or bypass version verification.

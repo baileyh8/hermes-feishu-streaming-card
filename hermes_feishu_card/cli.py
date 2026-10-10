@@ -50,6 +50,10 @@ from hermes_feishu_card.install.manifest import (
     file_sha256,
     validate_install_manifest,
 )
+from hermes_feishu_card.install.runtime_python import (
+    PMRuntimeRefused,
+    pm_managed_runtime_python as _pm_managed_runtime_python,
+)
 from hermes_feishu_card.install.plugin import (
     RuntimeBindingRefused,
     probe_plugin_entrypoint,
@@ -1611,7 +1615,10 @@ def _doctor_streaming_report(hermes_root: Path) -> dict[str, str]:
 
 
 def _doctor_runtime_import_report(detection: HermesDetection) -> dict[str, Any]:
-    runtime_python = _detect_hermes_runtime_python(detection.root)
+    try:
+        runtime_python = _detect_hermes_runtime_python(detection.root)
+    except PMRuntimeRefused as exc:
+        return {"checked": True, "status": "failed", "message": str(exc)}
     if runtime_python is None:
         return {
             "checked": False,
@@ -1633,7 +1640,10 @@ def _doctor_feishu_sdk_report(detection: HermesDetection) -> dict[str, Any]:
                 "Hermes Feishu adapter does not require the extra_ua_tags SDK capability."
             ),
         }
-    runtime_python = _detect_hermes_runtime_python(detection.root)
+    try:
+        runtime_python = _detect_hermes_runtime_python(detection.root)
+    except PMRuntimeRefused as exc:
+        return {"checked": True, "status": "failed", "message": str(exc)}
     if runtime_python is None:
         return {
             "checked": False,
@@ -1768,59 +1778,6 @@ def _append_runtime_import_recommendation(
             ),
         }
     )
-
-
-#: A PM-managed Hermes (0.21.4+) keeps its dependency environment outside the checkout:
-#: ``hermes_bootstrap.activate_dependencies`` selects ``pm.environments.committed_venv(root)``
-#: at process boot and replaces every ``site-packages`` entry on ``sys.path`` with that
-#: venv's. The checkout's own ``venv/`` then belongs to an earlier release and is *not* the
-#: runtime, so a package installed there is invisible to the gateway: every hook seam fails
-#: on import and a fail-open hook swallows the error, leaving the card degraded with no
-#: user-visible error. Resolve the selection through the same helper the runtime uses. It is
-#: imported in a subprocess so this CLI never imports Hermes modules into its own process.
-_PM_RUNTIME_PROBE = (
-    "import sys\n"
-    "sys.path.insert(0, sys.argv[1])\n"
-    "from pathlib import Path\n"
-    "from pm.environments import committed_venv\n"
-    "venv = committed_venv(Path(sys.argv[1]))\n"
-    "print(str(venv) if venv else '')\n"
-)
-
-_PM_RUNTIME_PROBE_TIMEOUT_SECONDS = 30.0
-
-
-def _pm_managed_runtime_python(hermes_root: Path) -> Path | None:
-    """Interpreter a PM-managed Hermes boots with, or None on any other layout."""
-    try:
-        completed = subprocess.run(
-            [sys.executable, "-I", "-c", _PM_RUNTIME_PROBE, str(hermes_root)],
-            capture_output=True,
-            text=True,
-            timeout=_PM_RUNTIME_PROBE_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.returncode != 0:
-        return None
-    lines = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
-    if not lines:
-        return None
-    venv = Path(lines[-1])
-    if not venv.is_absolute():
-        return None
-    for candidate in (
-        venv / "bin" / "python",
-        venv / "bin" / "python3",
-        venv / "Scripts" / "python.exe",
-    ):
-        try:
-            if candidate.is_file():
-                return candidate.parent.resolve(strict=True) / candidate.name
-        except (OSError, RuntimeError):
-            continue
-    return None
 
 
 def _detect_hermes_runtime_python(hermes_root: Path | str) -> Path | None:

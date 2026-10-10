@@ -311,3 +311,28 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
 
     with pytest.raises(plugin.PluginConfigRefused, match="changed"):
         plugin.restore_plugin_config(binding, preimage, ownership)
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_runtime_binding_uses_pm_committed_venv_with_real_child(tmp_path, legacy):
+    import subprocess
+    import sys
+
+    checkout, home = _checkout(tmp_path)
+    if not legacy:
+        (checkout / ".venv" / "bin" / "python").unlink()
+    managed = tmp_path / "managed environment" / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(managed)], check=True)
+    pm = checkout / "pm"
+    pm.mkdir()
+    (pm / "__init__.py").write_text("")
+    (pm / "environments.py").write_text(
+        "from pathlib import Path\n"
+        f"def committed_venv(root): return Path({str(managed)!r})\n"
+    )
+    binding = plugin.resolve_runtime_binding(
+        checkout_root=checkout, hermes_home=home, profile_id=None,
+    )
+    assert binding.runtime_python == managed / "bin" / "python"
+    assert binding.purelib.is_relative_to(managed)
+    assert binding.hermes_home == home
