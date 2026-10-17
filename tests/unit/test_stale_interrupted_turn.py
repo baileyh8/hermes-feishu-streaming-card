@@ -33,11 +33,14 @@ def stop_source(*, pinned_channel=False):
         ).replace("source=source, session_key=session_key", "source=_turn_source, session_key=session_key"
         ).replace("event_message_id=self._reply_anchor_for_event(event))",
                   "event_message_id=self._reply_anchor_for_event(event), channel_prompt=_turn_channel_prompt)")
+    if pinned_channel == "inherit":
+        source = source.replace("internal=event.internal)",
+                                'internal=event.internal or getattr(event, "inherit_channel_pin", False))')
     return source
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("pinned_channel", [False, True])
+@pytest.mark.parametrize("pinned_channel", [False, True, "inherit"])
 @pytest.mark.parametrize("result,expected", [
     ({"interrupted": True, "completed": False}, 1),
     ({"failed": True}, 0),
@@ -92,7 +95,7 @@ def test_stale_interrupted_anchor_drift_is_refused(old, new):
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
-@pytest.mark.parametrize("pinned_channel", [False, True])
+@pytest.mark.parametrize("pinned_channel", [False, True, "inherit"])
 def test_stale_interrupted_patch_roundtrip(newline, pinned_channel):
     source = stop_source(pinned_channel=pinned_channel).replace("\n", newline)
     patched = patcher.apply_gateway_fragment(source, "gateway/run_turn.py")

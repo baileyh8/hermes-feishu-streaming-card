@@ -95,7 +95,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
-          ref: 0e427d788d253630d38a3a51cd76849e73cd6925 # main observed 2026-10-14
+          ref: 0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3 # main observed 2026-10-17
           path: .upstream/latest_main
       - name: Checkout reported Hermes issue 428 revision 297552
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

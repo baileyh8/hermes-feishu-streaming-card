@@ -28,6 +28,14 @@ python tools/preflight.py --suite full
 
 ## 单元测试
 
+Hermes main 兼容矩阵现固定到 `0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3`
+（2026-10-17）。`994df5e6de` 起，channel pin 的 `internal` 参数还接受
+`event.internal or getattr(event, "inherit_channel_pin", False)`；安装器只接受
+这条已核验表达式及原表达式，仍拒绝来源重绑定、缺失 tuple 和未知继承条件。
+`tests/fixtures/hermes_upstream_sources.json` 记录完整拆分文件的摘要；CI 对该
+固定源码执行安装、重复安装、诊断及逐字节卸载恢复。此矩阵不代表真实
+Gateway/model 执行或飞书客户端验收。
+
 ```bash
 python3 -m pytest tests/unit -q
 ```

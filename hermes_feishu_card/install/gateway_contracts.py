@@ -59,12 +59,20 @@ def find_stale_interrupted_location(
         # Verified main c8301ea6 pins channel inputs before execution. Accept
         # only that exact tuple binding from this event/session/source; an
         # arbitrary alias or reassignment must not broaden turn ownership.
-        pin = ast.parse(
+        pin_text = (
             "_turn_channel_prompt, _turn_source = self._pinned_channel_inputs("
             "session_key, event.channel_prompt, source, internal=event.internal)"
-        ).body[0]
+        )
+        # 994df5e6de also inherits pins for synthetic continuation events.
+        # Keep both verified expressions exact; arbitrary truthy flags remain unsafe.
+        pin_variants = [ast.parse(text).body[0] for text in (
+            pin_text,
+            pin_text.replace("internal=event.internal)",
+                             'internal=event.internal or getattr(event, "inherit_channel_pin", False))'),
+        )]
         before_run = preceding[:preceding.index(assignment)]
-        pins = [node for node in before_run if ast.dump(node) == ast.dump(pin)]
+        pins = [node for node in before_run
+                if any(ast.dump(node) == ast.dump(pin) for pin in pin_variants)]
         pin_stores = [node for statement in before_run for node in ast.walk(statement)
                       if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
                       and node.id in {"_turn_channel_prompt", "_turn_source"}]

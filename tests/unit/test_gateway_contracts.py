@@ -72,6 +72,21 @@ def test_pinned_source_requires_original_complete_preceding_tuple(mutation):
         locate(body)
 
 
-def test_complete_pinned_tuple_accepts_only_exact_bindings():
+@pytest.mark.parametrize('internal', [
+    'event.internal',
+    'event.internal or getattr(event, "inherit_channel_pin", False)',
+])
+def test_complete_pinned_tuple_accepts_only_exact_bindings(internal):
     run = RUN.replace('source=source', 'source=_turn_source').replace('event))','event), channel_prompt=_turn_channel_prompt)')
-    assert locate(PIN+'\n'+run+'\n'+GUARD) == (4, '        ')
+    assert locate(PIN.replace('event.internal)', internal+')')+'\n'+run+'\n'+GUARD) == (4, '        ')
+
+
+@pytest.mark.parametrize('internal', [
+    'True', 'event.internal or other',
+    'event.internal or getattr(event, "inherit_channel_pin", True)',
+    'getattr(event, "inherit_channel_pin", False)',
+])
+def test_unknown_pin_inheritance_is_rejected(internal):
+    run = RUN.replace('source=source', 'source=_turn_source')
+    with pytest.raises(ValueError, match='pinned source binding changed'):
+        locate(PIN.replace('event.internal)', internal+')')+'\n'+run+'\n'+GUARD)
