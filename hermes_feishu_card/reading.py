@@ -130,7 +130,7 @@ def explain_reading_config(
     fields = resolved.get("footer_fields")
     if not isinstance(fields, list):
         fields = DEFAULT_CONFIG["card"]["footer_fields"]
-    allowed_fields = {"duration", "model", "input_tokens", "output_tokens", "context", "subscription_usage"}
+    allowed_fields = {"duration", "model", "input_tokens", "output_tokens", "context", "subscription_usage", "output_rate"}
     resolved["footer_fields"] = [key for key in fields if isinstance(key, str) and key in allowed_fields]
     mode = resolved.get("interaction_mode", "auto")
     mode = mode.strip().lower() if isinstance(mode, str) else "callback"

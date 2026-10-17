@@ -144,7 +144,10 @@ card:
       - when it arrives
       - when ready
   # Footer fields and order. Supported values:
-  # duration, model, input_tokens, output_tokens, context, subscription_usage
+  # duration, model, input_tokens, output_tokens, context, subscription_usage, output_rate
+  # output_rate is opt-in: exact output tokens per model generation second, summed over
+  # this turn's invocations ("42 tok/s"; "~42 tok/s (含TTFT)" when a call was not streamed).
+  # Hidden when any invocation lacks usage/timing, or the sample is too small.
   # subscription_usage is opt-in and uses Hermes native Codex account usage.
   # Only shown for GPT turns attributed to openai-codex; other/unknown routes omit it.
   footer_fields:

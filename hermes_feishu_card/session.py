@@ -68,6 +68,19 @@ def _exact_feishu_open_id(value: object) -> str:
     )
 
 
+def _completion_output_rate(value: Any) -> Optional[tuple]:
+    """Validate an optional per-invocation output rate from turn metrics."""
+    if not isinstance(value, dict):
+        return None
+    rate = value.get("output_tps")
+    basis = value.get("basis")
+    if type(rate) not in (int, float) or basis not in ("decode", "request"):
+        return None
+    rate = float(rate)
+    if not math.isfinite(rate) or not 0 < rate < 1_000_000:
+        return None
+    return rate, basis
+
 @dataclass
 class ToolState:
     tool_id: str
@@ -559,6 +572,12 @@ class CardSession:
                 self.reply_to_message_id = reply_to_message_id
             tokens = event.data.get("tokens", {})
             self.tokens = dict(tokens) if isinstance(tokens, dict) else {}
+            self.tokens.pop("output_tps", None)
+            self.tokens.pop("rate_basis", None)
+            rate = _completion_output_rate(event.data.get("rate"))
+            if rate is not None and self.tokens.get("output_tokens"):
+                # Kept inside the persisted tokens mapping so checkpoints keep their schema.
+                self.tokens["output_tps"], self.tokens["rate_basis"] = rate
             model = event.data.get("model")
             self.model = model if isinstance(model, str) and model.strip() else "Unknown"
             provider = event.data.get("provider")

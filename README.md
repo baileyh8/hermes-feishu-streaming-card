@@ -239,7 +239,7 @@ V5 可追加 `--running` 核对进程已加载值，或用 `--minimal-yaml` 生�
 | 实时思考不进入正文 | `card.stream_thinking_to_body: false` |
 | 正文只看最新思考 | `card.thinking_body_tail_chars: 2400`（默认 `0` 不截断） |
 | 完成后精简成功工具行 | `card.hide_completed_tool_activity: true`，保留异常工具 |
-| 字号、页脚与订阅额度 | `card.text_sizes`、`card.footer_fields`；可选 `subscription_usage` |
+| 字号、页脚与订阅额度 | `card.text_sizes`、`card.footer_fields`；可选 `subscription_usage`、`output_rate` |
 | 指定会话使用原生回复 | `bindings.native_chats` 精确匹配；多 profile 在对应 profile 下配置 |
 | 多机器人、群聊与 profile | [配置与路由](docs/user-guide.md#配置) |
 | 可选 CardKit 流式更新 | [开关与权限要求](docs/wiki/cardkit-streaming.md) |

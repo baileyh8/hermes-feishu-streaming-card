@@ -808,7 +808,9 @@ card:
   footer_fields: [duration, model, input_tokens, output_tokens, context]
 ```
 
-多 Profile 模式下，`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不会覆盖 profile 内的 `feishu` 配置。`footer_fields` 支持 `duration`、`model`、`input_tokens`、`output_tokens`、`context`、`subscription_usage`。其中 `subscription_usage` 默认关闭；显式加入后，仅在本轮 GPT 模型明确归属 `openai-codex` 时，通过 Hermes runtime 的 `fetch_account_usage("openai-codex")` 显示 `5h 26% · weekly 89%` 风格的剩余额度。归属来自本轮 `provider` 或 `openai-codex/gpt-…` 模型标识；只知道裸 GPT 名称不足以区分订阅与 API key。非 GPT、其他 provider、未知模型/归属都不查询、不显示这份额度，切换模型不会沿用上一轮额度。旧 Hermes 未报告归属、未登录、网络错误或超时会静默跳过。
+多 Profile 模式下，`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 不会覆盖 profile 内的 `feishu` 配置。`footer_fields` 支持 `duration`、`model`、`input_tokens`、`output_tokens`、`context`、`subscription_usage`、`output_rate`。其中 `subscription_usage` 默认关闭；显式加入后，仅在本轮 GPT 模型明确归属 `openai-codex` 时，通过 Hermes runtime 的 `fetch_account_usage("openai-codex")` 显示 `5h 26% · weekly 89%` 风格的剩余额度。归属来自本轮 `provider` 或 `openai-codex/gpt-…` 模型标识；只知道裸 GPT 名称不足以区分订阅与 API key。非 GPT、其他 provider、未知模型/归属都不查询、不显示这份额度，切换模型不会沿用上一轮额度。旧 Hermes 未报告归属、未登录、网络错误或超时会静默跳过。
+
+`output_rate` 同样默认关闭，仅显示在完成卡片页脚。数值为本轮各次模型调用的实际 `output_tokens` 之和除以各次生成窗口之和：流式调用取首个流式 chunk 到响应结束（显示 `42 tok/s`）；没有首 chunk 时间的调用退回整次请求耗时，此时显示 `~42 tok/s (含TTFT)`。调用之间的工具执行与等待时间不计入，同一 `api_request_id` 重复上报只计一次。任一调用缺少 usage 或有效时间、MoA 聚合调用（usage 不含各 advisor）、输出少于 20 tokens 或生成时间不足 0.3 秒时不显示，也不会用文本长度估算。数据来自 Hermes `post_api_request` 的 `usage`、`ended_at`、`first_chunk_at`、`api_duration`；运行中的实时速率不在此范围内。
 
 ### 卡片宽度
 

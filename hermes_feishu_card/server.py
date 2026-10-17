@@ -938,7 +938,13 @@ async def _health(request: web.Request) -> web.Response:
         "package_version": request.app[PACKAGE_VERSION_KEY],
         "python_identity": request.app[PYTHON_IDENTITY_KEY],
         "metrics": metrics.snapshot(),
-        "timing": timing_summary(session.observation for session in sessions.values()),
+        "timing": timing_summary(
+            (session.observation for session in sessions.values()),
+            rate_samples=sum(
+                1 for session in sessions.values()
+                if isinstance(session.tokens, dict) and "output_tps" in session.tokens
+            ),
+        ),
         "reply_index": {
             "entries": len(request.app[CARD_SUMMARIES_KEY]),
             "last_lookup": _sanitize_health_diagnostics(diagnostics.get("last_reply_lookup", {})),

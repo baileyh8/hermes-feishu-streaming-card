@@ -3124,3 +3124,37 @@ def test_requester_mentions_preserve_existing_at_markup_and_plain_urls():
     session = CardSession('c', 'm', 'oc', sender_open_id='ou_requester', sender_name='牟勇')
     original = '<at id="ou_requester">@牟勇</at> https://example.com/@牟勇 `@牟勇'
     assert _render_known_requester_mentions(original, session) == original
+
+
+def test_output_rate_is_registered_but_not_a_default_footer_field():
+    from hermes_feishu_card.config_rules import DEFAULT_CONFIG
+    from hermes_feishu_card.reading import explain_reading_config
+    from hermes_feishu_card.render import DEFAULT_FOOTER_FIELDS
+
+    assert "output_rate" not in DEFAULT_FOOTER_FIELDS
+    assert "output_rate" not in DEFAULT_CONFIG["card"]["footer_fields"]
+    explained = explain_reading_config({"card": {"footer_fields": ["duration", "output_rate", "bogus"]}})
+    assert explained["values"]["footer_fields"] == ["duration", "output_rate"]
+
+
+@pytest.mark.parametrize(
+    "tokens,expected",
+    [
+        ({"output_tokens": 300, "output_tps": 41.6, "rate_basis": "decode"}, "42 tok/s"),
+        ({"output_tokens": 300, "output_tps": 0.2, "rate_basis": "decode"}, "1 tok/s"),
+        ({"output_tokens": 300, "output_tps": 41.6, "rate_basis": "request"}, "~42 tok/s (含TTFT)"),
+        ({"output_tps": 41.6, "rate_basis": "decode"}, None),
+        ({"output_tokens": 300, "output_tps": 41.6}, None),
+    ],
+)
+def test_output_rate_footer_formatting(tokens, expected):
+    session = CardSession(conversation_id="c", message_id="m", chat_id="synthetic-chat")
+    session.status = "completed"
+    session.duration = 3.0
+    session.tokens = dict(tokens)
+    raw = str(render_card(session, footer_fields=["duration", "output_rate"]))
+    if expected is None:
+        assert "tok/s" not in raw
+    else:
+        assert expected in raw
+    assert "tok/s" not in str(render_card(session))

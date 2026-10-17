@@ -245,7 +245,7 @@ In V5, add `--running` to verify loaded defaults, or use `--minimal-yaml` to pri
 | Keep live thinking out of the answer area | `card.stream_thinking_to_body: false` |
 | Show only the latest live-thinking text | `card.thinking_body_tail_chars: 2400` (default `0`: unlimited) |
 | Reduce successful tool rows after completion | `card.hide_completed_tool_activity: true`, retaining unsuccessful tools |
-| Text sizes, footer and subscription quota | `card.text_sizes`, `card.footer_fields`; optional `subscription_usage` |
+| Text sizes, footer and subscription quota | `card.text_sizes`, `card.footer_fields`; optional `subscription_usage`, `output_rate` |
 | Native replies in selected chats | Exact matches in `bindings.native_chats`; configure within each profile when using multiple profiles |
 | Multiple bots, groups and profiles | [Configuration and routing](docs/user-guide.en.md) |
 | Optional CardKit entity streaming | [Settings and permissions](docs/wiki/cardkit-streaming.md) |

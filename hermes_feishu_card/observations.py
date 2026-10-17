@@ -56,7 +56,8 @@ class TurnObservation:
         return result
 
 
-def timing_summary(observations: Iterable[TurnObservation]) -> dict[str, Any]:
+def timing_summary(observations: Iterable[TurnObservation], *, rate_samples: int = 0) -> dict[str, Any]:
+    """Sidecar event timing; ``rate_samples`` counts cards with an exact per-invocation rate."""
     first: list[int] = []
     completed: list[int] = []
     starts = 0
@@ -78,6 +79,12 @@ def timing_summary(observations: Iterable[TurnObservation]) -> dict[str, Any]:
         "first_answer_total_ms": sum(first),
         "completed_samples": len(completed),
         "observed_turn_total_ms": sum(completed),
-        "token_rate_status": "unavailable",
-        "token_rate_reason": "model_invocation_scope_missing",
+        **token_rate_status(rate_samples),
     }
+
+
+def token_rate_status(rate_samples: object) -> dict[str, Any]:
+    if type(rate_samples) is int and rate_samples > 0:
+        return {"token_rate_status": "available", "token_rate_reason": "per_invocation",
+                "token_rate_samples": rate_samples}
+    return {"token_rate_status": "unavailable", "token_rate_reason": "model_invocation_scope_missing"}

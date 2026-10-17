@@ -165,3 +165,28 @@ def test_support_timing_rejects_non_integer_and_negative_counts(bad_count):
     source = {"runtime": {"timing": {"scope": "sidecar_accepted_events", "window": "retained_session_memory", "first_answer_total_ms": bad_count}}}
     report = build_support_report(source)
     assert "first_answer_total_ms" not in report["diagnostics"]["runtime"]["timing"]
+
+
+def test_timing_summary_reports_per_invocation_rate_only_with_samples():
+    assert timing_summary([], rate_samples=0)["token_rate_reason"] == "model_invocation_scope_missing"
+    for bad in (True, -1, 1.5, "2"):
+        assert timing_summary([], rate_samples=bad)["token_rate_status"] == "unavailable"
+    summary = timing_summary([], rate_samples=2)
+    assert summary["token_rate_status"] == "available"
+    assert summary["token_rate_reason"] == "per_invocation"
+    assert summary["token_rate_samples"] == 2
+    report = build_support_report({"runtime": {"timing": summary}})
+    exported = report["diagnostics"]["runtime"]["timing"]
+    assert exported["token_rate_status"] == "available"
+    assert exported["token_rate_reason"] == "per_invocation"
+    assert exported["token_rate_samples"] == 2
+
+
+@pytest.mark.parametrize("samples", [0, -1, True, "PRIVATE_TIMING_SECRET", None])
+def test_support_timing_rejects_unproven_rate_availability(samples):
+    timing = {"scope": "sidecar_accepted_events", "window": "retained_session_memory",
+              "token_rate_status": "available", "token_rate_reason": "per_invocation",
+              "token_rate_samples": samples}
+    exported = build_support_report({"runtime": {"timing": timing}})["diagnostics"]["runtime"]["timing"]
+    assert exported["token_rate_status"] == "unavailable"
+    assert "token_rate_samples" not in exported

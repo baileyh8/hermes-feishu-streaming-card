@@ -15,6 +15,7 @@ from .install.integrity import (
     integrity_acknowledgement_eligible,
 )
 from .install.recovery import RecoveryPlan, sanitize_recovery_plan
+from .observations import token_rate_status
 from .profile_sources import PROFILE_SOURCES
 
 
@@ -1462,10 +1463,15 @@ def _card_safe_runtime(value: object) -> dict[str, object]:
         result["metrics"] = safe_metrics
     timing = _mapping(data.get("timing"))
     if timing.get("scope") == "sidecar_accepted_events" and timing.get("window") == "retained_session_memory":
+        rate_samples = timing.get("token_rate_samples")
+        per_invocation = (
+            timing.get("token_rate_status") == "available"
+            and timing.get("token_rate_reason") == "per_invocation"
+            and type(rate_samples) is int and rate_samples > 0
+        )
         safe_timing: dict[str, object] = {
             "scope": "sidecar_accepted_events", "window": "retained_session_memory",
-            "clock": "monotonic", "token_rate_status": "unavailable",
-            "token_rate_reason": "model_invocation_scope_missing",
+            "clock": "monotonic", **token_rate_status(rate_samples if per_invocation else 0),
         }
         for key in ("started_samples", "first_answer_samples", "first_answer_total_ms", "completed_samples", "observed_turn_total_ms"):
             _copy_nonnegative_int(safe_timing, timing, key)

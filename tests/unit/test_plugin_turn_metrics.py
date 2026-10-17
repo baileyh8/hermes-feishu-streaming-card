@@ -822,3 +822,210 @@ def test_known_context_limit_without_reported_prompt_is_not_zero_percent():
     finally:
         runtime.close()
         assert hook_runtime.clear_canonical_turn_id(token)
+
+
+# --- #392 phase 1: exact per-invocation output rate -------------------------
+
+from hermes_feishu_card.turn_metrics import TurnMetrics  # noqa: E402
+
+
+def api_values(request_id="rate-api-1", output=100, *, started=100.0, first=100.5,
+               ended=102.5, duration=None, usage=True, **extra):
+    values = {
+        "api_request_id": request_id,
+        "started_at": started,
+        "ended_at": ended,
+        "first_chunk_at": first,
+        "api_duration": ended - started if duration is None else duration,
+        "usage": normalized_usage(output_tokens=output) if usage else None,
+    }
+    values.update(extra)
+    return values
+
+
+def test_rate_single_streamed_call_uses_decode_window():
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values(output=100))  # 2.0 s from first chunk to end
+    assert metrics.payload(10.0)["rate"] == {"output_tps": 50.0, "basis": "decode"}
+
+
+def test_rate_multi_call_is_token_weighted_and_excludes_tool_gaps():
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values("a", 30, started=100.0, first=100.2, ended=101.2))
+    # A long tool gap (101.2 -> 160.0) between invocations never counts.
+    metrics.observe_api(api_values("b", 90, started=160.0, first=161.0, ended=164.0))
+    rate = metrics.payload(200.0)["rate"]
+    assert rate == {"output_tps": 120 / 4.0, "basis": "decode"}
+
+
+def test_rate_without_first_chunk_falls_back_to_request_duration():
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values(output=60, first=None, ended=103.0))
+    assert metrics.payload(10.0)["rate"] == {"output_tps": 20.0, "basis": "request"}
+
+
+def test_rate_mixed_basis_reports_request_basis():
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values("a", 50, first=101.0, ended=102.0))
+    metrics.observe_api(api_values("b", 50, first=None, started=110.0, ended=111.0))
+    assert metrics.payload(200.0)["rate"] == {"output_tps": 50.0, "basis": "request"}
+
+
+@pytest.mark.parametrize("broken", ["usage", "output", "timing", "request_id", "moa"])
+def test_rate_any_unknown_invocation_hides_rate(broken):
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values("good", 100))
+    if broken == "usage":
+        metrics.observe_api(api_values("bad", usage=False))
+    elif broken == "output":
+        bad = api_values("bad")
+        bad["usage"] = {"prompt_tokens": 5}
+        metrics.observe_api(bad)
+    elif broken == "timing":
+        metrics.observe_api(api_values("bad", first=None, ended=None, duration="slow"))
+    elif broken == "request_id":
+        metrics.observe_api(api_values(None))
+    else:
+        metrics.observe_api(api_values("bad", moa_references=[{"model": "advisor"}]))
+    assert "rate" not in metrics.payload(10.0)
+
+
+def test_rate_duplicate_request_id_is_not_double_counted():
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values("same", 100))
+    metrics.observe_api(api_values("same", 900, first=100.0, ended=100.4))
+    assert metrics.payload(10.0)["rate"] == {"output_tps": 50.0, "basis": "decode"}
+    assert metrics.payload(10.0)["tokens"]["output_tokens"] == 100
+
+
+@pytest.mark.parametrize(
+    "timing",
+    [
+        {"first": float("nan")},
+        {"ended": float("inf")},
+        {"first": 103.0},  # first chunk after end
+        {"first": 102.5},  # zero window
+        {"first": None, "ended": None, "duration": 3600.0},
+        {"first": None, "ended": None, "duration": -1.0},
+        {"first": None, "ended": None, "duration": True},
+        {"first": "100.5"},
+    ],
+)
+def test_rate_nonfinite_or_out_of_range_timing_hides_rate(timing):
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values(**timing))
+    assert "rate" not in metrics.payload(10.0)
+    assert metrics.payload(10.0)["tokens"]["output_tokens"] == 100
+
+
+@pytest.mark.parametrize("output,first", [(19, 100.5), (100, 102.3)])
+def test_rate_below_sample_threshold_is_hidden(output, first):
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values(output=output, first=first))
+    assert "rate" not in metrics.payload(10.0)
+
+
+def rate_session(rate, output_tokens=100):
+    session = CardSession(conversation_id="c", message_id="m", chat_id="synthetic-chat")
+    data = {"answer": "SYNTHETIC_ANSWER", "model": "synthetic-model", "duration": 5.0,
+            "tokens": {"input_tokens": 10, "output_tokens": output_tokens}}
+    if rate is not None:
+        data["rate"] = rate
+    assert session.apply(SidecarEvent.from_dict({
+        "schema_version": "1", "event": "message.completed", "conversation_id": "c",
+        "message_id": "m", "chat_id": "synthetic-chat", "platform": "feishu",
+        "sequence": 1, "created_at": 1.0, "data": data,
+    }))
+    return session
+
+
+def test_default_footer_does_not_show_output_rate():
+    session = rate_session({"output_tps": 42.4, "basis": "decode"})
+    for presentation in ("classic", "task"):
+        raw = json.dumps(render_card(session, presentation=presentation), ensure_ascii=False)
+        assert "tok/s" not in raw and "↓100" in raw
+
+
+@pytest.mark.parametrize("basis,text", [("decode", "42 tok/s"), ("request", "~42 tok/s (含TTFT)")])
+def test_opt_in_footer_shows_output_rate(basis, text):
+    session = rate_session({"output_tps": 42.4, "basis": basis})
+    fields = ["duration", "output_tokens", "output_rate"]
+    for presentation in ("classic", "task"):
+        raw = json.dumps(
+            render_card(session, presentation=presentation, footer_fields=fields), ensure_ascii=False
+        )
+        assert text in raw
+        if basis == "decode":
+            assert "含TTFT" not in raw
+
+
+@pytest.mark.parametrize(
+    "rate",
+    [None, {}, {"output_tps": float("nan"), "basis": "decode"}, {"output_tps": -1, "basis": "decode"},
+     {"output_tps": True, "basis": "decode"}, {"output_tps": 40, "basis": "estimate"}, "40 tok/s"],
+)
+def test_opt_in_footer_hides_missing_or_invalid_rate(rate):
+    session = rate_session(rate)
+    raw = json.dumps(render_card(session, footer_fields=["output_tokens", "output_rate"]), ensure_ascii=False)
+    assert "tok/s" not in raw
+
+
+def test_rate_without_output_tokens_is_not_adopted():
+    session = rate_session({"output_tps": 42.0, "basis": "decode"}, output_tokens=0)
+    assert "output_tps" not in session.tokens
+
+
+HOOK_CONTRACT_SHAS = {
+    "v0.22.2": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "main": "ecac27c0af86064c40eeb8097cc20377cf2eee12",
+}
+
+
+@pytest.mark.parametrize("ref", sorted(HOOK_CONTRACT_SHAS))
+def test_upstream_post_api_request_kwargs_feed_exact_rate(ref):
+    """Evaluate the real v0.22.2/main ``post_api_request`` call against the runtime.
+
+    Opt-in: HFC_UPSTREAM_HOOK_CONTRACT_ROOT names a Hermes Git checkout holding both commits.
+    """
+    configured = os.environ.get("HFC_UPSTREAM_HOOK_CONTRACT_ROOT")
+    if not configured:
+        pytest.skip("Hermes Git checkout with v0.22.2/main hook sources not supplied")
+    sha = HOOK_CONTRACT_SHAS[ref]
+    source = subprocess.check_output(
+        ["git", "show", f"{sha}:agent/turn_response_intake.py"], cwd=configured
+    )
+    calls = [
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "_invoke_hook" and node.args
+        and isinstance(node.args[0], ast.Constant) and node.args[0].value == "post_api_request"
+    ]
+    assert len(calls) == 1
+    keywords = {keyword.arg for keyword in calls[0].keywords}
+    assert {"api_request_id", "api_duration", "ended_at", "first_chunk_at", "usage",
+            "moa_references"} <= keywords
+    runtime, posted = active_runtime()
+    agent = synthetic_agent()
+    try:
+        invoke_original(runtime, "pre_llm_call", agent)
+        agent._usage_summary_for_api_request_hook = lambda response: normalized_usage(output_tokens=80)
+        agent._last_api_first_chunk_at = 100.4
+        agent.client = SimpleNamespace(last_reference_metrics=lambda: None)
+        values = dict(
+            agent=agent, effective_task_id="synthetic-task", turn_id="synthetic-turn",
+            api_request_id="synthetic-api-1", api_call_count=1, api_duration=2.4,
+            api_start_time=100.0, finish_reason="stop", api_messages=[],
+            response=SimpleNamespace(model="synthetic-response-model"),
+            assistant_message=SimpleNamespace(content="SYNTHETIC_ANSWER", tool_calls=[]),
+            _moa_reference_metrics_for_hook=lambda a: a.client.last_reference_metrics(),
+            _invoke_hook=lambda hook_name, **kwargs: getattr(runtime, "handle_" + hook_name)(**kwargs),
+        )
+        eval(compile(ast.Expression(calls[0]), "<upstream-post-api-request>", "eval"), values)
+        finish(runtime, agent)
+        payload, session = terminal_session(posted)
+        assert payload["data"]["rate"]["basis"] == "decode"
+        assert payload["data"]["rate"]["output_tps"] == pytest.approx(40.0)
+        raw = json.dumps(render_card(session, footer_fields=["output_rate"]), ensure_ascii=False)
+        assert "40 tok/s" in raw
+    finally:
+        runtime.close()
