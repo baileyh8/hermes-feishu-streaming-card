@@ -245,6 +245,69 @@ async def test_second_question_failure_updates_its_receipt_and_keeps_answer(mode
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["clarify", "approval"])
+async def test_expired_interaction_continues_below_the_native_fallback(kind):
+    # An unanswered card expires and Hermes re-asks natively below it; the agent's
+    # work after that reply must not land in the card above the native question.
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "answer.delta", 1, {"text": "BEFORE_QUESTION"})
+        await post(http, "interaction.requested", 2, {
+            "interaction_id": "expired_question", "kind": kind, "prompt": "Choose fixture",
+            "options": [{"label": "Continue", "value": "once"}],
+            "reply_to_message_id": "om_fixture_anchor", "reply_in_thread": True,
+        })
+        before = len(client.sent)
+        expired = {"interaction_id": "expired_question", "error": "交互已过期"}
+        await post(http, "interaction.failed", 3, expired)
+        await post(http, "interaction.failed", 3, expired)
+        # A click that lands after expiry cannot reopen the question.
+        await post(http, "interaction.completed", 4, {
+            "interaction_id": "expired_question", "choice": "once", "choice_label": "Continue",
+        })
+        await asyncio.sleep(.02)
+        assert len(client.sent) == before, "no empty card merely for expiring"
+        session = app[SESSIONS_KEY]["turn_fixture"]
+        assert session.active_interaction.status == "failed"
+        generation = session.display_segment["generation"]
+        await post(http, "answer.delta", 5, {"text": "AFTER_NATIVE_REPLY"})
+        await post(http, "answer.delta", 6, {"text": "MORE_AFTER_REPLY"})
+        await asyncio.sleep(.02)
+        assert len(client.sent) == before + 1
+        assert session.display_segment["generation"] == generation + 1
+        mid, card, route = client.sent[-1]
+        assert "AFTER_NATIVE_REPLY" in str(card)
+        assert "BEFORE_QUESTION" not in str(card.get("body", {}).get("elements", [])[:1])
+        assert route.get("reply_to_message_id") == "om_fixture_anchor"
+        assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] == mid
+        await post(http, "message.completed", 7, {"answer": "FINAL_ANSWER"})
+        await asyncio.sleep(.02)
+        assert len(client.sent) == before + 1
+        assert client.updated[-1][0] == mid
+        assert "FINAL_ANSWER" in str(client.updated[-1][1])
+        assert not client.cross_dialect
+
+
+@pytest.mark.asyncio
+async def test_terminal_closing_an_open_interaction_creates_no_continuation():
+    client = Client()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await post(http, "interaction.requested", 1, {
+            "interaction_id": "open_question", "kind": "clarify", "prompt": "Choose fixture",
+            "options": [{"label": "Continue", "value": "once"}],
+            "reply_to_message_id": "om_fixture_anchor", "reply_in_thread": True,
+        })
+        before = len(client.sent)
+        await post(http, "message.completed", 2, {"answer": "FINAL_ANSWER"})
+        await asyncio.sleep(.02)
+        assert len(client.sent) == before
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('terminal', [False, True])
 async def test_confirmed_handoff_freezes_old_card_without_claiming_turn_success(terminal):
     client = Client()

@@ -497,7 +497,10 @@ class CardSession:
         elif event.event == "interaction.completed":
             self._complete_interaction(event.data)
         elif event.event == "interaction.failed":
-            self._fail_interaction(event.data)
+            # Hermes re-asks a failed or expired interaction natively below this
+            # card, so the rest of the turn continues below that question too.
+            if self._fail_interaction(event.data):
+                begin_continuation(self)
         elif event.event == "system.notice":
             title = str(event.data.get("title") or "运行提示").strip() or "运行提示"
             is_runtime_phase = (
@@ -721,17 +724,19 @@ class CardSession:
 
         begin_continuation(self)
 
-    def _fail_interaction(self, data: dict[str, Any]) -> None:
+    def _fail_interaction(self, data: dict[str, Any]) -> bool:
+        """Mark the active interaction failed; False when it was not the open one."""
         interaction_id = str(data.get("interaction_id") or "").strip()
         if self.active_interaction is None or (
             interaction_id and interaction_id != self.active_interaction.interaction_id
         ):
-            return
+            return False
         if self.active_interaction.status not in {"pending", "paused"}:
-            return
+            return False
         self.active_interaction.status = "failed"
         self.active_interaction.error = str(data.get("error") or "交互请求失败").strip()
         self.active_interaction.runtime_admission = None
+        return True
 
 
 def _interaction_from_event_data(

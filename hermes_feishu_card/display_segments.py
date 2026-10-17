@@ -103,7 +103,11 @@ def display_view(session):
     if not state:
         return session
     interaction = session.active_interaction
-    if interaction is not None and interaction.status in {"pending", "paused", "failed"}:
+    if interaction is not None and (
+        interaction.status in {"pending", "paused"}
+        # A failure only continues below when it opened this segment itself.
+        or (interaction.status == "failed" and state["interaction_id"] != interaction.interaction_id)
+    ):
         return session
     if state.get("failed"):
         view = copy.copy(session)
