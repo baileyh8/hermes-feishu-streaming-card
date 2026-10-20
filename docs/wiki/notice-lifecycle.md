@@ -22,7 +22,7 @@ Hermes 开启 `display.language: zh` 后，原有英文判定无法识别中文 
 
 自动化使用含 SHA 与文件摘要的最小上游源码切片，执行实际 compose 方法和已生成的 busy send hook，并覆盖 adapter 原生文本出口、真实回环 HTTP 调度、重复登记、路由与失败。固定片段测试不代表完整该版 Hermes/Gateway 执行；尚无真实飞书、桌面或移动端验收。
 
-## 压缩通知复测（#434，开发分支）
+## 压缩通知复测（#434，V5.0.4）
 
 Timeral 在 HFC 5.0.2、Hermes `e06df9c2eae6901f4c88f464e0ae6e753c0428b8` 的复测中确认中文 busy 回执会撤回，但真正发送的 Preflight 和压缩完成提示未调度撤回；5.0.3 的判定没有变化。本次只把两种完整原生模板接入现有 15 秒策略：`📦 Preflight compression: ~{tokens:,} tokens >= {threshold:,} threshold. This may take a moment.` 与 `✓ Context compaction complete — continuing turn...`。数字遵循 Python 原生非负整数千位分组格式，额外正文、换行、未知翻译和未知标点仍保留。
 

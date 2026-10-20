@@ -2,7 +2,7 @@
 
 [中文](upgrade-v4-to-v5.md) · [Back to README](../README.en.md)
 
-This guide targets existing HFC installations and pins `v5.0.3`. Run it after that version appears in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). Updating HFC neither updates Hermes nor requires a new Feishu bot. Compatibility depends on actual source, capabilities and installation provenance; arbitrary old or manually modified installations are not guaranteed an in-place upgrade.
+This guide targets existing HFC installations and pins `v5.0.4`. Run it after that version appears in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). Updating HFC neither updates Hermes nor requires a new Feishu bot. Compatibility depends on actual source, capabilities and installation provenance; arbitrary old or manually modified installations are not guaranteed an in-place upgrade.
 
 ## Identify the current installation
 
@@ -35,7 +35,7 @@ Replace all three paths with your existing installation paths. For split HOME, a
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.3/install.sh | bash -s -- --version v5.0.3 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.4/install.sh | bash -s -- --version v5.0.4 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 Keep the same `--profile-id` when upgrading a profile-specific installation. Do not switch configuration or credentials files just to upgrade.
@@ -48,16 +48,16 @@ Reuse the existing paths and set `$env:HERMES_HOME` first if the installation us
 $env:HERMES_DIR = Join-Path $HOME ".hermes/hermes-agent"
 $HfcConfig = Join-Path $HOME ".hermes/config.yaml"
 $HfcEnvFile = Join-Path $HOME ".hermes/.env"
-$HfcInstaller = Join-Path $env:TEMP "hfc-install-v5.0.3.ps1"
-Invoke-WebRequest "https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.3/install.ps1" -OutFile $HfcInstaller
-& $HfcInstaller -Version v5.0.3 -Config $HfcConfig -EnvFile $HfcEnvFile
+$HfcInstaller = Join-Path $env:TEMP "hfc-install-v5.0.4.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.4/install.ps1" -OutFile $HfcInstaller
+& $HfcInstaller -Version v5.0.4 -Config $HfcConfig -EnvFile $HfcEnvFile
 ```
 
 Retain `-ProfileId` where applicable. No machine-wide execution-policy change is required; follow your existing local administration procedure if policy blocks execution.
 
 ### Docker / NAS
 
-Pin `HFC_VERSION=v5.0.3` in your existing image build or container installation flow. Keep `HERMES_DIR`, `HFC_CONFIG`, `HFC_ENV_FILE`, HOME and persistent volumes unchanged. Run `install-docker.sh` as described in the [installation guide](../README-install.md), then rebuild/restart through the existing orchestrator. Do not copy host paths into a container or delete volumes to remove an old installation. The [Compose example](../docker-compose.example.yml) is a reference topology, not an official image or a replacement for your configuration.
+Pin `HFC_VERSION=v5.0.4` in your existing image build or container installation flow. Keep `HERMES_DIR`, `HFC_CONFIG`, `HFC_ENV_FILE`, HOME and persistent volumes unchanged. Run `install-docker.sh` as described in the [installation guide](../README-install.md), then rebuild/restart through the existing orchestrator. Do not copy host paths into a container or delete volumes to remove an old installation. The [Compose example](../docker-compose.example.yml) is a reference topology, not an official image or a replacement for your configuration.
 
 ### When installation is refused
 

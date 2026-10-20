@@ -2,11 +2,11 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.3`，是否已发行以 GitHub Release 的标签和资产为准。原生表格默认关闭，超长单元格整表回退 Markdown；无法拆分的 Markdown 表格保留完整原文，由共享容量与完整内容交接门禁处理。
+本分支目标版本为 `5.0.4`，是否已发行以 GitHub Release 的标签和资产为准。原生表格默认关闭，超长单元格整表回退 Markdown；无法拆分的 Markdown 表格保留完整原文，由共享容量与完整内容交接门禁处理。
 
-本轮整合 #438 的 Hermes 频道继承兼容、#436 的可选逐调用生成速率和 #430 的过期交互续答，并补齐异常数据与侧车先过期回归。精确候选、完整自动化、跨平台 CI、普通 wheel、公开安装与资产仍按发布门禁逐项核验；真实 Gateway/model、桌面及移动端结果分别记录。
+本轮整合 #442 的 legacy 生成速率与受控配置恢复、#444 的精确压缩提示撤回、#445 的 Session Authority 跨 Task 完成卡。组合候选的完整自动化、跨平台 CI、普通 wheel、真实 Feishu API、公开安装与资产逐项核验；真实 Gateway/model、桌面及 Android 视觉/点击未验证，iOS 与新用户试用不纳入本次范围。
 
-完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v5.0.3.md)和[本轮验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
+完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v5.0.4.md)和[本轮验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
 
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。

@@ -351,7 +351,7 @@ Hermes 对已启用的插件可只更新 `allow_tool_override: false`，不排�
 
 ## 官方插件的本轮 footer 指标
 
-开发分支的 legacy `output_rate` 由 observe-only 插件供数，legacy 仍是唯一事件 producer。`install/legacy_observer.py` 管理 checkout 下 `.hermes_feishu_card_observer.json`（协议 `hfc-legacy-observer-v1`），绑定精确 HOME、runtime Python identity 和官方 config preimage/journal；它与原 v1/v2/v4 源码 manifest 分开版本化，不改写旧 manifest 语义。旧安装无此记录时重新 install 可迁移；重复 install 验证现有记录，不重复 enable 或覆盖 preimage。不要手工创建记录或修改 Hermes config。
+V5.0.4 的 legacy `output_rate` 由 observe-only 插件供数，legacy 仍是唯一事件 producer。`install/legacy_observer.py` 管理 checkout 下 `.hermes_feishu_card_observer.json`（协议 `hfc-legacy-observer-v1`），绑定精确 HOME、runtime Python identity 和官方 config preimage/journal；它与原 v1/v2/v4 源码 manifest 分开版本化，不改写旧 manifest 语义。旧安装无此记录时重新 install 可迁移；重复 install 验证现有记录，不重复 enable 或覆盖 preimage。不要手工创建记录或修改 Hermes config。
 
 配置写入走 `install/plugin.py` 的官方 enable，源码写入仍由既有 patcher/事务拥有。新增 enable/marker 在源码事务之前完成；已核验归属的普通失败按逆序回滚配置和 PM registration；未知配置保留并拒绝继续。doctor/repair 拒绝配置或记录漂移，未知版本、非普通文件和不可检查 metadata 均不猜测。restore/uninstall 先核验并恢复配置原始字节，再恢复源码，成功后删除观察记录与 preimage；源码恢复失败时保留记录供重试，不重新启用插件。Windows 的 decomposed 源码恢复仍受原 POSIX dirfd 门禁限制；配置恢复成功不能称为 hooks 卸载成功。降级旧 HFC 前先用当前版本 restore，旧版本不知道此 companion ownership。
 

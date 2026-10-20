@@ -1,6 +1,6 @@
 # 观测耗时与 token 速率口径
 
-## Legacy 安装的数据源（开发分支）
+## Legacy 安装的数据源（V5.0.4）
 
 Hermes 0.22.x 的 legacy completion 原先只有 token 数、没有逐调用计时，因此选择 `output_rate` 也不显示。安装器先核验 v0.22.2 `post_api_request` helper 的 AST 指纹，确认逐调用 usage、时间窗口、身份和参数绑定，以及 response intake 在 provider projection 之后的唯一直接调用。核验通过后，再通过官方 plugin enable 流程写入独立的 `hfc-legacy-observer-v1` ownership 记录。只有记录与当前 source/HOME、配置 preimage/journal 匹配时才进入 observe-only。确定没有该记录的 Hybrid 路径保持原行为；marker 的 metadata 权限、I/O 或目录错误进入 disabled，不把不可检查当作不存在。
 
@@ -8,7 +8,7 @@ Hermes 0.22.x 的 legacy completion 原先只有 token 数、没有逐调用计�
 
 completion preview 只检查正文和附件，不读取或消费速率。正式终局 payload 构建时用 `agent_result.session_id` 一次性取回速率和原始输出 token 合计；本轮 `agent_result.api_calls` 必须是有效正整数，零调用或未知时丢弃旧样本并隐藏速率，避免压缩前失败借用同 session 上轮观测。正向速率仅依据逐调用 usage 完整、精确输出 token 达到既有阈值、单模型/provider 和有效窗口采用。v0.22.2 缓存 Agent 的 completion token 可为会话累计值，因此不与页脚 token 比较；现有页脚计数和估算规则保持不变。页脚 `output_tokens` 可能仍显示 legacy 的会话累计值，而 `output_rate` 仅反映本轮逐调用观测，两者统计范围可能不同。跨模型/provider、usage/时序缺失、session 不匹配、插件未加载或 host 隔离均隐藏；异常不阻断正文投递。默认配置、持久化 schema 和已有速率阈值不变。
 
-正式 payload 沿现有 exact Base stage 和终局传输重试复用；重试不再次取样，迟到或重复观测不能恢复已消费 turn。此边界不增加 metrics registry 或执行 owner。
+正式 payload 沿现有 exact Base stage（包括已核验 Session Authority 的单用跨 Task display handoff）和终局传输重试复用；重试不再次取样，迟到或重复观测不能恢复已消费 turn。此边界不增加 metrics registry 或执行 owner。
 
 验收覆盖独立缓存、legacy completion 到 footer、零插件事件、官方 PluginManager 加载和配置逐字恢复。真实上游加载测试通过 `HFC_LEGACY_PLUGIN_SOURCE_ROOT` 指定只读 Hermes v0.22.2 checkout；未设置时显式 skip，需要该源码的 Python 依赖。测试使用私有 HOME，不执行模型或真实飞书调用；这些测试不代表桌面/Android/iOS 验收。
 

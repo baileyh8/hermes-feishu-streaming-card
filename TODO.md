@@ -2,6 +2,13 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
+## V5.0.4
+
+- #441 / #442：legacy 保持唯一 producer，可选逐调用 rate；preview/正式消费、配置字节归属及未知 marker 拒绝保持边界。
+- #434 / #444：精确 Preflight 与压缩完成通知沿既有 owner 在 15 秒后撤回，持续心跳和未知文案保留。
+- #443 / #445：已核验 5fc490e 原生 admission/waiter 跨 Task 收尾，保留原 execution claim、Base ledger、媒体/TTS 和未知源码原生兜底。
+- 组合候选的 floor/focused/full、CI、普通 wheel、真实 Feishu API、tag/资产与公开安装分别核验；桌面/Android 视觉及实际点击未验证，iOS/新用户试用不纳入本次范围。不宣称真实 Gateway/model 执行。
+
 ## V5.0.3
 
 - #437 / #438：只接受已核验的新旧 channel-pin AST 表达式，保留未知源码拒绝安装与完整还原。

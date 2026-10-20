@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v5.0.4 — 2026-10-20
 
 - Keep completion preview read-only so legacy and queued terminal payloads retain observed rates; reuse the frozen payload for exact Base staging and terminal transport retries. Reject changed observation bindings/call sites through the pinned v0.22.2 AST contract.
 - Supply opt-in `output_rate` on eligible legacy Hermes installs through an observe-only official plugin. Legacy remains the sole event producer; rates use exact per-invocation usage independently of cumulative legacy footer counts. Bound observations by TTL/capacity, reclaim consumed entries under pressure, and hide unknown, mixed-route or isolated-host samples.
@@ -11,6 +11,8 @@
 - Thanks to JohnZhong505 for the #443 report/evidence and Lite-G for additional source analysis; these acknowledgements are separate from repair code authorship. All previous credits remain intact.
 
 - Preserve exact completion across the verified Session Authority admission/waiter Task boundary (#443), including drain-owned delivery after native extraction. Retain the original execution claim, Base ledger, native media/TTS and unknown-topology fallback.
+
+See [Chinese release notes](docs/release-notes-v5.0.4.md) and [English release notes](docs/release-notes-v5.0.4.en.md) for scope and verification limits.
 
 ## v5.0.3 — 2026-10-19
 

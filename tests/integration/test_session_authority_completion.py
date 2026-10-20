@@ -137,6 +137,7 @@ def harness(tmp_path, monkeypatch):
         fail_attachments=False,
         tts=False,
         tts_calls=[],
+        api_calls=1,
         real_post=h._post_json_ordered_response,
     )
     h.reset_runtime_state()
@@ -305,6 +306,7 @@ def harness(tmp_path, monkeypatch):
                 {
                     "final_response": result.body,
                     "completed": True,
+                    "api_calls": result.api_calls,
                     "session_id": "physical-session",
                 },
                 [],
@@ -924,3 +926,79 @@ async def test_owner_changes_during_terminal_http_ack_preserve_native(
     await deliver(harness)
     assert harness.native == ["complete answer"]
     assert harness.ledger[-1] == ("final", "ingress-a", True)
+
+
+@pytest.mark.parametrize("waiter", [True, False])
+@pytest.mark.parametrize("api_calls", [0, 1])
+@pytest.mark.parametrize("post_failure", [False, True])
+async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
+    harness, monkeypatch, waiter, api_calls, post_failure
+):
+    """Combine observer consumption with actual rendered cross-Task delivery.
+
+    The native DB/model ports remain fake; the plugin cache, admission/waiter,
+    extraction and Base ledger entrypoints are real. No plugin events are sent.
+    """
+    from hermes_feishu_card.hermes_plugin_runtime import PluginRuntime
+
+    plugin_posts = []
+    runtime = PluginRuntime(post=lambda *args: plugin_posts.append(args), observe_only=True)
+    monkeypatch.setattr(h, "_plugin_runtime", lambda: runtime)
+    harness.api_calls = api_calls
+    observed = dict(
+        session_id="physical-session", turn_id="observed-turn", platform="feishu",
+        api_request_id="observed-request", model="synthetic-model",
+        provider="synthetic-provider", usage={"input_tokens": 10, "output_tokens": 80},
+        api_duration=2.0,
+    )
+    runtime.handle_pre_llm_call(**observed)
+    runtime.handle_post_api_request(**observed)
+    takes = []
+    original_take = runtime.take_observed_rate
+
+    def take(session_id):
+        takes.append(session_id)
+        return original_take(session_id)
+
+    monkeypatch.setattr(runtime, "take_observed_rate", take)
+    original_build = h.build_event
+    previews = []
+
+    def build(name, values, **kwargs):
+        if name == "message.completed" and not kwargs.get("preview"):
+            previews.append(original_build(name, values, preview=True))
+            assert takes == []
+        return original_build(name, values, **kwargs)
+
+    monkeypatch.setattr(h, "build_event", build)
+    attempts = []
+
+    async def post(url, payload, timeout):
+        attempts.append(payload)
+        if post_failure:
+            runtime.handle_post_api_request(**observed)  # late duplicate
+            raise TimeoutError("lost synthetic terminal ACK")
+        harness.posts.append(payload)
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(h, "_post_json_ordered_response", post)
+    try:
+        await deliver(harness, waiter=waiter)
+        assert harness.staged == [True]
+        assert len(previews) == 1 and "rate" not in previews[0]["data"]
+        assert takes == ["physical-session"]
+        assert len(attempts) == 1
+        assert len(harness.posts) == (0 if post_failure else 1)
+        if api_calls:
+            assert attempts[0]["data"]["rate"] == {
+                "output_tps": 40.0, "basis": "request"
+            }
+        else:
+            assert "rate" not in attempts[0]["data"]
+        assert original_take("physical-session") is None
+        assert harness.native == (["complete answer"] if post_failure else [])
+        assert harness.ledger[-1] == ("final", "ingress-a", True)
+        assert plugin_posts == []
+        assert runtime.runtime_activity_snapshot() == (0, True)
+    finally:
+        runtime.close()
