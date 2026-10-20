@@ -5,6 +5,7 @@ A real Session Authority SQLite test is separate from this call-chain harness.
 
 import ast
 import asyncio
+import builtins
 from contextlib import nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -37,6 +38,9 @@ def load_sources():
 
 
 def functions(raw, names, namespace, filename):
+    # Match normal module execution. Python 3.9 FunctionType globals need
+    # explicit builtins even when no default expression has called eval().
+    namespace.setdefault("__builtins__", builtins.__dict__)
     nodes = [
         n
         for n in ast.walk(ast.parse(raw))
