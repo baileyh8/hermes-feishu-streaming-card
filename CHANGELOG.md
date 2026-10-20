@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Recall the exact native preflight-compression and compaction-complete notices after 15 seconds (#434, reported by Timeral). Preserve native send results, route ownership, compression heartbeats, Working updates, failure warnings and unknown text.
+
 ## v5.0.3 — 2026-10-19
 
 - Accept only the verified old/new Hermes channel-pin inheritance expressions while retaining strict binding, ordering and restore checks (#437, PR #438). Pin the compatibility matrix to main `0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3`.

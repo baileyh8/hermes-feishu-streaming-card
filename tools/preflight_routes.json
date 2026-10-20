@@ -130,7 +130,9 @@
       "tests/unit/test_localized_transient_notices.py",
       "tests/unit/test_busy_recall_patcher.py",
       "tests/unit/test_long_running_recall_patch.py",
-      "tests/unit/test_issue326_boundaries.py"
+      "tests/unit/test_issue326_boundaries.py",
+      "tests/unit/test_compression_notice_templates.py",
+      "tests/integration/test_compression_notice_egress.py"
     ],
     "ownership": [
       "tests/unit/test_runtime_ownership.py",
