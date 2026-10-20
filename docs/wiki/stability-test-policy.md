@@ -27,7 +27,7 @@
 
 ## 本地与 CI
 
-先按维护指南跑相关模块，再执行 `python -m pytest -q` 和 `git diff --check`。
+本地先按维护指南跑相关模块和 `git diff --check`。候选的完整回归可由同一精确提交的完整 CI 矩阵提供，不要求再重复运行本地全量；没有完整 CI 证据时，仍需执行等价全量。回归范围、隔离分片及覆盖核对见 [CI 回归分级](regression-ci.md)。
 全量依赖的固定 Hermes 源码通过 `HFC_FIXED_TAG_SOURCE_ROOT` 提供，内容必须通过现有 SHA256 校验；不可指向任意本机生产源码充数。CI 的各平台/SDK/安装器门禁仍然必需。
 
 人工验收遵循 [飞书验收](feishu-acceptance.md)，发布遵循 [发布手册](release-playbook.md)。真实边界缺失时可以交付候选修复，但不能宣称已完成生产修复或关闭未验证的用户问题。

@@ -38,7 +38,11 @@ def test_github_actions_runs_full_pytest_matrix():
     assert "pytest-windows:" in text
     assert "pytest-macos:" in text
     assert "runs-on: macos-latest" in text
-    assert text.count("python -m pytest -q") >= 3
+    jobs = yaml.safe_load(text)["jobs"]
+    assert "python -m tools.ci_run" in str(jobs["pytest-shards"])
+    assert "python -m tools.ci_run" in str(jobs["macos-shards"])
+    assert "tools.ci_shard" in str(jobs["pytest"])
+    assert "tools.ci_shard" in str(jobs["pytest-macos"])
 
 
 def test_windows_gate_runs_fixed_portable_runtime_core_without_exclusions():
@@ -152,7 +156,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         f".upstream/{baseline}": evidence["commit"]
         for baseline, evidence in sources.items()
     }
-    steps = workflow["jobs"]["upstream-hermes-compat"]["steps"]
+    steps = workflow["jobs"]["upstream-shards"]["steps"]
     source_step = next(step for step in steps if "test_upstream_hermes_compat.py" in step.get("run", ""))
     for baseline in sources:
         assert source_step["env"][f"HFC_UPSTREAM_{baseline.upper()}_ROOT"] == (
