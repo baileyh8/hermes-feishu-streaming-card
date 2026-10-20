@@ -19,7 +19,36 @@ concurrency:
 env:
   HFC_FIXED_TAG_COMMIT: 3c27eb6234bf91b8ceee9e9071591b31e9b148cb
 
+permissions:
+  contents: read
+
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      pytest_matrix: ${{ steps.plan.outputs.pytest_matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          fetch-depth: 0
+      - name: Choose conservative regression scope
+        id: plan
+        env:
+          FORCE_FULL: ${{ inputs.checkout_ref != '' }}
+        run: |
+          if [ "$FORCE_FULL" = true ]; then
+            python tools/ci_plan.py --full --output ci-plan.json
+          else
+            python tools/ci_plan.py --output ci-plan.json
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-plan
+          path: ci-plan.json
+          retention-days: 3
+
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -36,13 +65,16 @@ jobs:
       - name: Type-check extracted boundaries
         run: python -m mypy
 
-  upstream-hermes-compat:
-    needs: fixed-hermes-fixture
+  upstream-shards:
+    needs: [plan, fixed-hermes-fixture]
+    if: needs.plan.outputs.mode == 'full'
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
+        slice: [0, 1]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -142,49 +174,41 @@ jobs:
           python -m venv --system-site-packages "$RUNNER_TEMP/hfc-official-runtime"
           "$RUNNER_TEMP/hfc-official-runtime/bin/python" -m pip install --force-reinstall --no-deps "$HFC_TEST_WHEEL"
           printf 'HFC_LEGACY_PLUGIN_PYTHON=%s\n' "$RUNNER_TEMP/hfc-official-runtime/bin/python" >> "$GITHUB_ENV"
-      - name: Verify exact config writer bytes before official enable
+      - name: Verify pinned upstream install, plugin, rate and PM contracts
         env:
-          HFC_LEGACY_PLUGIN_SOURCE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
-          HFC_UPSTREAM_LATEST_MAIN_ROOT: ${{ github.workspace }}/.upstream/latest_main
+          HFC_UPSTREAM_LATEST_STABLE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
+          HFC_UPSTREAM_LATEST_MAIN_ROOT: "${{ github.workspace }}/.upstream/latest_main"
+          HFC_UPSTREAM_STABLE_ROOT: "${{ github.workspace }}/.upstream/stable"
+          HFC_UPSTREAM_MAIN_ROOT: "${{ github.workspace }}/.upstream/main"
+          HFC_UPSTREAM_PRODUCTION_ROOT: "${{ github.workspace }}/.upstream/production"
+          HFC_UPSTREAM_HISTORICAL_ROOT: "${{ github.workspace }}/.upstream/historical"
+          HFC_UPSTREAM_IMAGE_ROOT: "${{ github.workspace }}/.upstream/image"
+          HFC_UPSTREAM_EXTRACTED_ROOT: "${{ github.workspace }}/.upstream/extracted"
+          HFC_UPSTREAM_ISSUE428_297552_ROOT: "${{ github.workspace }}/.upstream/issue428_297552"
+          HFC_UPSTREAM_ISSUE428_7BDA2A_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
+          HFC_LEGACY_PLUGIN_SOURCE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
           HFC_REQUIRE_CONFIG_WRITER_CONTRACT: "1"
-        run: >-
-          python -m pytest tests/integration/test_official_plugin_config_bytes.py
-          --basetemp=${{ runner.temp }}/hfc-config-writer-pytest -q -s
-      - name: Verify pinned official plugin enable, discovery and exact legacy recovery
-        env:
-          HFC_LEGACY_PLUGIN_SOURCE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
-          HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
-        run: >-
-          python -m pytest tests/integration/test_legacy_observer_install.py
-          --basetemp=${{ runner.temp }}/hfc-legacy-official-pytest -q -s
-      - name: Verify pinned low-level plugin loader compatibility
-        env:
-          HFC_LEGACY_PLUGIN_SOURCE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
-        run: python -m pytest tests/unit/test_legacy_observed_rate.py -k real_v0222_plugin_manager_load -q
-      - name: Verify source-only install, repeat, diagnosis and exact restore
-        env:
-          HFC_UPSTREAM_LATEST_STABLE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
-          HFC_UPSTREAM_LATEST_MAIN_ROOT: ${{ github.workspace }}/.upstream/latest_main
-          HFC_UPSTREAM_STABLE_ROOT: ${{ github.workspace }}/.upstream/stable
-          HFC_UPSTREAM_MAIN_ROOT: ${{ github.workspace }}/.upstream/main
-          HFC_UPSTREAM_PRODUCTION_ROOT: ${{ github.workspace }}/.upstream/production
-          HFC_UPSTREAM_HISTORICAL_ROOT: ${{ github.workspace }}/.upstream/historical
-          HFC_UPSTREAM_IMAGE_ROOT: ${{ github.workspace }}/.upstream/image
-          HFC_UPSTREAM_EXTRACTED_ROOT: ${{ github.workspace }}/.upstream/extracted
-          HFC_UPSTREAM_ISSUE428_297552_ROOT: ${{ github.workspace }}/.upstream/issue428_297552
-          HFC_UPSTREAM_ISSUE428_7BDA2A_ROOT: ${{ github.workspace }}/.upstream/issue428_7bda2a
-        run: python -m pytest tests/integration/test_upstream_hermes_compat.py -q
-      - name: Verify pinned per-invocation rate and stream timestamp contracts
-        env:
-          HFC_UPSTREAM_LATEST_STABLE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
-          HFC_UPSTREAM_LATEST_MAIN_ROOT: ${{ github.workspace }}/.upstream/latest_main
           HFC_REQUIRE_UPSTREAM_RATE_CONTRACT: "1"
-        run: python -m pytest tests/unit/test_plugin_turn_metrics.py -k "upstream_post_api_request or upstream_rate_timestamps" -q
-      - name: Verify ordinary wheel survives real upstream PM generations
-        env:
-          HFC_UPSTREAM_PM_ROOT: ${{ github.workspace }}/.upstream/issue428_7bda2a
-        run: python -m pytest tests/integration/test_pm_generation.py -q
+          HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
+        run: >-
+          python -m tools.ci_run --group upstream-${{ matrix.python-version }}
+          --shards 6 --workers 3 --offset $(( ${{ matrix.slice }} * 3 ))
+          --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
+          tests/integration/test_official_plugin_config_bytes.py
+          tests/integration/test_legacy_observer_install.py
+          tests/unit/test_legacy_observed_rate.py
+          tests/integration/test_upstream_hermes_compat.py
+          tests/unit/test_plugin_turn_metrics.py
+          tests/integration/test_pm_generation.py
+      - name: Preserve upstream reports and slow-test timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: regression-upstream-${{ matrix.python-version }}-${{ matrix.slice }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: error
+          retention-days: 3
 
   fixed-hermes-fixture:
     runs-on: ubuntu-latest
@@ -215,13 +239,13 @@ jobs:
           compression-level: 0
           retention-days: 1
 
-  pytest:
-    needs: fixed-hermes-fixture
+  pytest-shards:
+    needs: [plan, fixed-hermes-fixture]
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+      matrix: ${{ fromJSON(needs.plan.outputs.pytest_matrix) }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -251,8 +275,29 @@ jobs:
           printf 'HFC_FIXED_TAG_SOURCE_ROOT=%s\n' "$fixed_root" >> "$GITHUB_ENV"
       - name: Install
         run: python -m pip install -e ".[test]"
-      - name: Test
-        run: python -m pytest -q
+      - name: Download chosen regression scope
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-plan
+          path: ${{ runner.temp }}/plan
+      - name: Test isolated duration-balanced shards
+        env:
+          REGRESSION_MODE: ${{ needs.plan.outputs.mode }}
+        run: |
+          shards=6
+          if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
+          python -m tools.ci_run --group linux-${{ matrix.python-version }} \
+            --shards "$shards" --workers 3 --offset $(( ${{ matrix.slice }} * 3 )) \
+            --plan "$RUNNER_TEMP/plan/ci-plan.json" \
+            --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers"
+      - name: Preserve regression reports and slow-test timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: regression-linux-${{ matrix.python-version }}-${{ matrix.slice }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: error
+          retention-days: 3
 
   pytest-windows:
     runs-on: windows-latest
@@ -297,8 +342,14 @@ jobs:
           tests/integration/test_hook_runtime_integration.py
           tests/integration/test_server.py
 
-  pytest-macos:
-    needs: fixed-hermes-fixture
+  macos-shards:
+    needs: [plan, fixed-hermes-fixture]
+    if: needs.plan.outputs.mode == 'full'
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [0, 1]
     runs-on: macos-latest
 
     steps:
@@ -329,8 +380,19 @@ jobs:
           printf 'HFC_FIXED_TAG_SOURCE_ROOT=%s\n' "$fixed_root" >> "$GITHUB_ENV"
       - name: Install
         run: python -m pip install -e ".[test]"
-      - name: Test
-        run: python -m pytest -q
+      - name: Test isolated duration-balanced shards
+        run: >-
+          python -m tools.ci_run --group macos
+          --shards 6 --workers 3 --offset $(( ${{ matrix.slice }} * 3 ))
+          --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers"
+      - name: Preserve macOS reports and slow-test timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: regression-macos-${{ matrix.slice }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: error
+          retention-days: 3
 
   feishu-sdk-compat:
     runs-on: ubuntu-latest
@@ -436,3 +498,101 @@ jobs:
           python -m pytest tests/integration/test_cli_install.py
           -k "manifestless or portable_windows_exclusive_handle or portable_existing_write"
           -q
+
+  pytest:
+    needs: [plan, pytest-shards]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - name: Download executed regression evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: regression-linux-${{ needs.plan.outputs.mode == 'full' && matrix.python-version || '3.12' }}-*
+          path: ${{ runner.temp }}/evidence
+      - name: Verify every planned case finished exactly once
+        env:
+          PRODUCER_RESULT: ${{ needs.pytest-shards.result }}
+          REGRESSION_MODE: ${{ needs.plan.outputs.mode }}
+        run: |
+          test "$PRODUCER_RESULT" = success
+          version="${{ matrix.python-version }}"
+          shards=6
+          if [ "$REGRESSION_MODE" != full ]; then version=3.12; fi
+          if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
+          python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "linux-$version" --count "$shards"
+          printf 'Regression mode: %s\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
+
+  pytest-macos:
+    needs: [plan, macos-shards]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - name: Download complete evidence
+        if: needs.plan.outputs.mode == 'full'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: regression-macos-*
+          path: ${{ runner.temp }}/evidence
+      - name: Verify complete regression or record focused scope
+        env:
+          PRODUCER_RESULT: ${{ needs.macos-shards.result }}
+          REGRESSION_MODE: ${{ needs.plan.outputs.mode }}
+        run: |
+          if [ "$REGRESSION_MODE" = full ]; then
+            test "$PRODUCER_RESULT" = success
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "macos" --count 6
+          else
+            printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  upstream-hermes-compat:
+    needs: [plan, upstream-shards]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pytest
+      - name: Download complete evidence
+        if: needs.plan.outputs.mode == 'full'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: regression-upstream-${{ matrix.python-version }}-*
+          path: ${{ runner.temp }}/evidence
+      - name: Verify complete regression or record focused scope
+        env:
+          PRODUCER_RESULT: ${{ needs.upstream-shards.result }}
+          REGRESSION_MODE: ${{ needs.plan.outputs.mode }}
+        run: |
+          if [ "$REGRESSION_MODE" = full ]; then
+            test "$PRODUCER_RESULT" = success
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 6
+          else
+            printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
+          fi

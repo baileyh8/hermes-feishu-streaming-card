@@ -229,6 +229,11 @@
     "loaded_config": [
       "tests/unit/test_config_snapshot.py",
       "tests/integration/test_running_card_config.py"
+    ],
+    "ci": [
+      "tests/unit/test_ci_workflow.py",
+      "tests/unit/test_ci_regression.py",
+      "tests/unit/test_preflight.py"
     ]
   },
   "sources": {
@@ -650,6 +655,21 @@
     ],
     "hermes_feishu_card/install/admission_extraction.py": [
       "install"
+    ],
+    "tools/ci_plan.py": [
+      "ci"
+    ],
+    "tools/ci_run.py": [
+      "ci"
+    ],
+    "tools/ci_shard.py": [
+      "ci"
+    ],
+    "tools/ci_durations.json": [
+      "ci"
+    ],
+    ".github/workflows/tests.yml": [
+      "ci"
     ]
   }
 }

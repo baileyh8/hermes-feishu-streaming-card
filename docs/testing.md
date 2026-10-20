@@ -2,6 +2,10 @@
 
 [中文](testing.md) | [English](testing.en.md)
 
+## CI 回归范围与耗时
+
+普通 PR 按改动选择 docs、focused 或 full；main 和发布 gate 始终跑 full。完整矩阵保留 Linux Python 3.9–3.14 和 macOS 的全部用例，按耗时分成六片并核对覆盖。单轮目标为 20 分钟内，以实际 workflow 用时为准。隔离方式、required check 和报告说明见[CI 回归分级](wiki/regression-ci.md)。
+
 ## 提交前检查（Issue #330）
 
 在当前 checkout 根目录，用实际准备跑测试的 Python 执行：

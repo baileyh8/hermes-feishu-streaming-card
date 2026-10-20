@@ -160,6 +160,11 @@ link/contract checks; they do not require a new product release or a redundant
 local full run. Runtime/stability changes need meaningful failing reproduction,
 normal/failure/duplicate/late-event assertions and the affected integration paths.
 Run full regression before release, broad runtime claims or substantial refactors.
+Full regression may be supplied by the complete CI matrix on the exact commit;
+do not repeat an identical local full run after that evidence passes. Ordinary PRs
+use the conservative scope and isolated sharding in
+[regression CI policy](docs/wiki/regression-ci.md). Focused checks do not count as
+a full Python/platform pass. Keep all supported versions at the release gate.
 
 Full runs require `HFC_FIXED_TAG_SOURCE_ROOT` pointing to the verified clean Git
 fixture described in `docs/testing.md`; never substitute production or an archive
