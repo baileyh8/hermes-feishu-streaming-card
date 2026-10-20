@@ -22,6 +22,14 @@ Hermes 开启 `display.language: zh` 后，原有英文判定无法识别中文 
 
 自动化使用含 SHA 与文件摘要的最小上游源码切片，执行实际 compose 方法和已生成的 busy send hook，并覆盖 adapter 原生文本出口、真实回环 HTTP 调度、重复登记、路由与失败。固定片段测试不代表完整该版 Hermes/Gateway 执行；尚无真实飞书、桌面或移动端验收。
 
+## 压缩通知复测（#434，V5.0.4）
+
+Timeral 在 HFC 5.0.2、Hermes `e06df9c2eae6901f4c88f464e0ae6e753c0428b8` 的复测中确认中文 busy 回执会撤回，但真正发送的 Preflight 和压缩完成提示未调度撤回；5.0.3 的判定没有变化。本次只把两种完整原生模板接入现有 15 秒策略：`📦 Preflight compression: ~{tokens:,} tokens >= {threshold:,} threshold. This may take a moment.` 与 `✓ Context compaction complete — continuing turn...`。数字遵循 Python 原生非负整数千位分组格式，额外正文、换行、未知翻译和未知标点仍保留。
+
+该上游的 FeishuAdapter 与 BasePlatformAdapter 没有 `send_or_update_status`，Gateway 的同名分流函数在飞书逐条调用 `send`；PRE 为 `lifecycle`，DONE 为 `compacted`。这些消息没有持续编辑目标，上游终局清理只保存待 DELETE 的消息 ID。撤回不会清除未来编辑所需的缓存；晚到的原生清理可以再次尝试 DELETE，失败仍按上游规则吞掉。`🗜️ Compacting context` START/HEARTBEAT、`⏳ Working`、失败警告和排队指南未加入本次匹配，不改原有编辑或收尾生命周期。
+
+固定片段与完整文件 SHA 位于 `tests/fixtures/compression_status_e06df9c.json`。回归执行真实 Gateway egress 函数与 HFC send wrapper，经回环 HTTP 交给现有 recall owner，并覆盖原文及返回对象、profile/chat/thread、pending 去重、晚到 owner 保护、原生终局清理与删除失败。平台发送及删除使用测试端口；不代表真实 Gateway/model、飞书 API 或客户端验收。
+
 ## 身份、期限和失败边界
 
 重启账本从 V4.6.5 起位于私有 `restart-notices-v1/owned.json`，记录实际 profile/bot/chat/thread、应用摘要、message ID、代次、创建与重试时间，不保存正文。V4.6.6 使用已有创建时间恢复 15 秒期限；无需有人再次发言。普通短提示计时仍为进程内 best-effort。

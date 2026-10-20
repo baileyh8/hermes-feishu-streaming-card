@@ -47,6 +47,21 @@ _STATUS_PATTERNS = tuple(re.compile(pattern) for pattern in (
 ))
 
 
+# Hermes e06df9c conversation_compression.py:106/78. Feishu has no
+# send_or_update_status: each confirmed PRE/DONE send is a separate message.
+# Native {:,} nonnegative integers use ASCII digits and groups of three; reject
+# guessed punctuation, translations, progress heartbeats and appended guidance.
+_NATIVE_GROUPED_INTEGER = r"(?:0|[1-9][0-9]{0,2}(?:,[0-9]{3})*)"
+_COMPRESSION_NOTICE_PATTERNS = (
+    re.compile(
+        r"📦 Preflight compression: ~" + _NATIVE_GROUPED_INTEGER
+        + r" tokens >= " + _NATIVE_GROUPED_INTEGER
+        + r" threshold\. This may take a moment\."
+    ),
+    re.compile(re.escape("✓ Context compaction complete — continuing turn...")),
+)
+
+
 def is_transient_busy_ack(content: object) -> bool:
     """Recognize a complete receipt; prefix similarity never authorizes recall."""
     return isinstance(content, str) and any(pattern.fullmatch(content) for pattern in _BUSY_PATTERNS)
@@ -60,6 +75,8 @@ def transient_notice_recall_seconds(content: object) -> float | None:
     """
     if is_transient_busy_ack(content):
         return BUSY_REDIRECT_ACK_RECALL_SECONDS
-    if isinstance(content, str) and any(pattern.fullmatch(content) for pattern in _STATUS_PATTERNS):
+    if isinstance(content, str) and any(
+        pattern.fullmatch(content) for pattern in (*_STATUS_PATTERNS, *_COMPRESSION_NOTICE_PATTERNS)
+    ):
         return STATUS_NOTICE_RECALL_SECONDS
     return None

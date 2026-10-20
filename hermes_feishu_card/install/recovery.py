@@ -1683,6 +1683,14 @@ def plan_recovery(
     *,
     accept_hermes_upgrade: bool = False,
 ) -> RecoveryPlan:
+    from .legacy_observer import inspect as inspect_observer
+    try:
+        inspect_observer(detection.root)
+    except (OSError, ValueError, UnicodeError):
+        return RecoveryPlan(detection.root, "refused", False,
+                            sha256(b"unsafe legacy observer evidence").hexdigest(), (),
+                            (RecoveryFinding("user_modified", "error",
+                                             "Legacy observer ownership cannot be verified."),))
     if detection.decomposed or decomposed_ownership.is_managed(detection.root):
         return _plan_decomposed_recovery(detection, accept_hermes_upgrade=accept_hermes_upgrade)
     return _plan_from_evidence(
@@ -2712,6 +2720,8 @@ def _deduplicate_findings(findings) -> Tuple[RecoveryFinding, ...]:
 
 def _plan_decomposed_recovery(detection, *, accept_hermes_upgrade=False):
     try:
+        from .legacy_observer import inspect as inspect_observer
+        inspect_observer(detection.root)
         snapshot, _, _, state = decomposed_ownership._inspect(detection.root)
         fingerprint = decomposed_ownership._fingerprint(snapshot)
         executable = state == "owned_incomplete" or (state in decomposed_ownership.EXPLICIT_UPGRADE_STATES and accept_hermes_upgrade and detection.supported)

@@ -2075,17 +2075,23 @@ async def stage_message_completed_from_hermes_locals_async(
             task = asyncio.current_task()
         except RuntimeError:
             task = None
-        _HFC_EXACT_COMPLETION_STAGE.set(
-            {
-                "payload": payload,
-                "event_url": config.event_url,
-                "timeout_seconds": _timeout_for_event(
-                    config,
-                    "message.completed",
-                ),
-                "task_id": id(task) if task is not None else None,
-            }
-        )
+        stage = {
+            "payload": payload,
+            "event_url": config.event_url,
+            "timeout_seconds": _timeout_for_event(config, "message.completed"),
+            "task_id": id(task) if task is not None else None,
+        }
+        admission_mode = admission_completion_mode(local_vars)
+        if admission_mode == "native":
+            return False
+        if admission_mode == "handoff":
+            from .admission_completion import prepare
+            offer = prepare(local_vars, stage, _finish_admission_delivery)
+            if offer is None:
+                _hfc_warn("admission completion retains native: unverified-admission-identity")
+                return False
+            stage["_admission_offer"] = offer
+        _HFC_EXACT_COMPLETION_STAGE.set(stage)
         return True
     except Exception:
         _HFC_EXACT_COMPLETION_STAGE.set(None)
@@ -2104,6 +2110,15 @@ def _exact_completion_stage_for_current_task() -> dict[str, Any] | None:
     if owner is not None and (task is None or id(task) != owner):
         _HFC_EXACT_COMPLETION_STAGE.set(None)
         return None
+    offer = stage.get("_admission_offer")
+    if offer is not None and not (offer.state == "prepared" and offer.fresh()):
+        _HFC_EXACT_COMPLETION_STAGE.set(None)
+        return None
+    if "_admission_claim" in stage:
+        from .admission_completion import valid_consumed
+        if not valid_consumed(stage):
+            _HFC_EXACT_COMPLETION_STAGE.set(None)
+            return None
     if not isinstance(stage.get("payload"), dict):
         _HFC_EXACT_COMPLETION_STAGE.set(None)
         return None
@@ -2514,6 +2529,50 @@ async def _recover_exact_terminal_native_handoff(
     return False
 
 
+def admission_completion_mode(local_vars: dict[str, Any]) -> str:
+    from .admission_completion import extractor_available, mode, unsupported_reason
+    value = mode(local_vars)
+    if value == "native":
+        _hfc_warn("admission completion retains native: " + unsupported_reason())
+    if value == "handoff":
+        runner = local_vars.get("self")
+        try:
+            adapter = runner._adapter_for_source(local_vars.get("source"))
+            available = extractor_available(adapter)
+        except Exception:
+            available = False
+        if not available:
+            _hfc_warn("admission completion retains native: missing-or-unverified-extraction-seam")
+            return "native"
+    return value
+
+
+def capture_admission_base_extraction(local_vars: dict[str, Any]) -> None:
+    from .admission_completion import consume_extracted
+    event = local_vars.get("event")
+    profile, _ = _profile_identity({}, getattr(event, "source", None), None)
+    stage = consume_extracted(local_vars, profile)
+    if stage is not None:
+        _HFC_EXACT_COMPLETION_STAGE.set(stage)
+
+
+async def _finish_admission_delivery(event: Any, succeeded: bool) -> None:
+    stage = _exact_completion_stage_for_current_task()
+    if stage is None or stage.get("_admission_event") is not event:
+        return
+    try:
+        if succeeded:
+            # The original no-waiter function has finished attachments.
+            # A missing standalone send carries no native-text ACK.
+            await finalize_exact_base_no_text({
+                **stage.get("base_context", {}), "event": event,
+                "content": stage.get("_admission_text") or "",
+                "metadata": {"thread_id": stage.get("payload", {}).get("thread_id", "")},
+            })
+    finally:
+        _HFC_EXACT_COMPLETION_STAGE.set(None)
+
+
 def capture_decomposed_base_context(local_vars: dict[str, Any]) -> None:
     """Carry extracted attachments across Base's helper call in this exact turn."""
     stage = _exact_completion_stage_for_current_task()
@@ -2595,6 +2654,10 @@ async def prepare_exact_base_final_delivery(
                     timeout=timeout,
                 )
             return fallback
+        if "_admission_claim" in stage:
+            from .admission_completion import valid_consumed
+            if not valid_consumed(stage):
+                return fallback
         applied = _event_was_applied(result, strict=True)
         if ack_capable and not applied:
             registered = _register_native_handoff_descriptor(payload, result)
@@ -9999,7 +10062,7 @@ def _build_event(
     sequence = (
         _peek_next_sequence(sequence_id) if preview else _next_sequence(sequence_id)
     )
-    event_data = _event_data(event_name, local_vars, source_obj, message_obj)
+    event_data = _event_data(event_name, local_vars, source_obj, message_obj, preview=preview)
     if thread_id:
         event_data.setdefault("thread_id", thread_id)
     payload = {
@@ -10405,7 +10468,8 @@ def _resolved_target_thread_id(targets: list[dict[str, Any]], platform: str) -> 
 
 
 def _event_data(
-    event_name: str, local_vars: dict[str, Any], source_obj: Any, message_obj: Any
+    event_name: str, local_vars: dict[str, Any], source_obj: Any, message_obj: Any,
+    *, preview: bool = False,
 ) -> dict[str, Any]:
     profile_id, profile_source = _profile_identity(local_vars, source_obj, message_obj)
     data: dict[str, Any] = {
@@ -10597,6 +10661,11 @@ def _event_data(
             "tokens": _completion_tokens(local_vars, answer),
             "context": _completion_context(local_vars),
         })
+        # Preview checks body/media only; the actual terminal payload consumes
+        # observations once and is reused by exact staging and transport retries.
+        rate = None if preview else _completion_observed_rate(local_vars)
+        if rate is not None:
+            data["rate"] = rate
         delivery_kind = _first_string(local_vars, ("delivery_kind",))
         if delivery_kind:
             data["delivery_kind"] = delivery_kind
@@ -11347,6 +11416,37 @@ def effective_response_model(agent: Any) -> str:
         if not model.startswith(provider + "/"):
             return f"{provider}/{model}"
     return model
+
+
+def _completion_observed_rate(local_vars):
+    """Consume display observations without making delivery depend on the plugin."""
+    try:
+        from .turn_metrics import RATE_MIN_OUTPUT_TOKENS, completion_output_rate, metric_count
+        result = local_vars.get("agent_result")
+        if type(result) is not dict:
+            return None
+        runtime = _plugin_runtime()
+        if runtime is None:
+            return None
+        observed = runtime.take_observed_rate(result.get("session_id"))
+        # A preflight/early return can reuse the session without ever calling
+        # pre_llm_call. Consume and discard unowned old observations unless the
+        # actual result proves this invocation made at least one API request.
+        api_calls = metric_count(result.get("api_calls"))
+        if observed is None or api_calls is None or api_calls == 0:
+            return None
+        rate, count = observed
+        # Legacy footer counts can be session-cumulative on cached agents.
+        # Only the independently validated per-invocation observations qualify.
+        exact = metric_count(count)
+        if exact is None or exact < RATE_MIN_OUTPUT_TOKENS:
+            return None
+        validated = completion_output_rate(rate)
+        if validated is None:
+            return None
+        return {"output_tps": validated[0], "basis": validated[1]}
+    except Exception:
+        return None
 
 
 def _completion_tokens(local_vars: dict[str, Any], answer: str) -> dict[str, int]:

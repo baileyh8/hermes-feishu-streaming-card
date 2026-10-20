@@ -346,10 +346,20 @@ Orphaned integrity fences can be explicitly rebound with `integrity acknowledge-
 
 官方 enable 命令失败与配置所有权拒绝分别呈现：preimage 后配置漂移、官方命令修改无关配置保留各自固定错误原因，便于定位。未知异常仍只显示 `official plugin enable failed`，不转发任意异常文本。原始异常通过 cause 保留供受控排查，配置恢复、prepared manifest 和源码写入门禁不变。
 
-Hermes 对已启用的插件可只更新 `allow_tool_override: false`，不排序启用列表，也不补写缺失的 `plugins.disabled`。安装器只在 preimage 已启用 HFC 时接受这个精确分支，同时保留原列表规范化分支；两种期望均在运行官方命令前从 preimage 派生。其他插件条目和非插件配置仍须完全一致，拒绝时仍逐字恢复配置，不能通过忽略整个 `plugins` 区域或预先改写用户配置规避检查。
+Hermes 对已启用的插件可只更新 `allow_tool_override: false`，不排序启用列表，也不补写缺失的 `plugins.disabled`。安装器只在 preimage 已启用 HFC 时接受这个精确分支，同时保留原列表规范化分支；两种期望均在运行官方命令前从 preimage 派生。其他插件条目和非插件配置仍须完全一致。命令异常或非零退出时，只对从 preimage 精确派生并核验的官方 postimage 逐字回滚；未知、损坏或并发编辑的配置保留原字节和 preimage，拒绝继续源码写入。`install/plugin_config_bytes.py` 在执行官方 enable 前，用受检 fixed、v0.22.2 PM、pinned main 的真实 helper 和 serializer，在 0700 私有 HOME 中规划精确 postimage bytes；配置输入为 0600，结束即清理。成功出口、异常及非零出口都只能认领这些预期字节，YAML mapping 相等、注释/CRLF 等格式变化或新读出的 hash 均不能证明所有权。writer 源码、调用分支或间接 serializer 未知时拒绝。规划不启动 PM resolver 或插件；仅在受检 config import 的可选 setup 提示元数据路径临时拒绝 provider metadata，真实官方 CLI 不替换。真实 CLI 与规划的逐字对照覆盖三个固定源码族及 fresh、already-enabled、canonical-disabled 分支；该证据不覆盖上游命令自身读写之间已经丢失的并发编辑。读取当前 hash 只证明读取结果，不能据此认领配置。不能通过忽略整个 `plugins` 区域或预先改写用户配置规避检查。
 
 
 ## 官方插件的本轮 footer 指标
+
+V5.0.4 的 legacy `output_rate` 由 observe-only 插件供数，legacy 仍是唯一事件 producer。`install/legacy_observer.py` 管理 checkout 下 `.hermes_feishu_card_observer.json`（协议 `hfc-legacy-observer-v1`），绑定精确 HOME、runtime Python identity 和官方 config preimage/journal；它与原 v1/v2/v4 源码 manifest 分开版本化，不改写旧 manifest 语义。旧安装无此记录时重新 install 可迁移；重复 install 验证现有记录，不重复 enable 或覆盖 preimage。不要手工创建记录或修改 Hermes config。
+
+配置写入走 `install/plugin.py` 的官方 enable，源码写入仍由既有 patcher/事务拥有。新增 enable/marker 在源码事务之前完成；已核验归属的普通失败按逆序回滚配置和 PM registration；未知配置保留并拒绝继续。doctor/repair 拒绝配置或记录漂移，未知版本、非普通文件和不可检查 metadata 均不猜测。restore/uninstall 先核验并恢复配置原始字节，再恢复源码，成功后删除观察记录与 preimage；源码恢复失败时保留记录供重试，不重新启用插件。Windows 的 decomposed 源码恢复仍受原 POSIX dirfd 门禁限制；配置恢复成功不能称为 hooks 卸载成功。降级旧 HFC 前先用当前版本 restore，旧版本不知道此 companion ownership。
+
+`plugins.isolation: host` 不提供进程内指标，也不改变隔离设置。插件启动只读取记录；不补装、不修复、不发送 hello/heartbeat，不新增 sidecar runtime owner。具体计量、容量与失败显示规则见[观测耗时](observed-timing.md)。
+
+固定 `v0.22.2`（`d923a5eb487a17c0a68801bba9ef0f56c81040a8`）的必跑 CI 复用 latest_stable checkout，以普通 wheel 的独立 Python 子进程执行真实 `hermes plugins enable`，再用公开 discovery/hook API 加载观察器；不强制 observe 模式。新装、旧 V4 迁移、重复安装、doctor、restore/uninstall 均经过真实源码事务，核对配置原始字节和所有受管源码恢复。运行时探针拒绝网络连接并记录任何 HFC secret/hello/heartbeat/listener/transport 启动尝试。PM 仅注入现成 uv/Python 和隔离的最小 virtual project；admission、resolver、配置发布仍执行固定上游源码。这不是完整 Hermes dependency closure、PM worker transport、Gateway/model 或真人客户端验收。配置使用该固定版本当前 schema；上游命令附带的未知配置迁移仍按漂移拒绝。缺少 fixture、普通 wheel 或解释器时，必跑任务失败；常规平台未提供这些输入时显式 skip。
+
+Doctor JSON 的 `install_state.legacy_observer` 只读报告 `active`、`disabled`（含 reason）或 `not_installed`；active 仅表示安装准入证据有效，不证明进程已加载插件。仅确认 marker 缺失时保留 Hybrid 路径；metadata 不可检查时返回 disabled。共享配置事务的异常回滚与 Windows 私有原子写兼容同时适用于 legacy 和 v3。
 
 `post_api_request` 只接收已绑定 turn/session/platform 的归一化 usage、模型名及 request id；不保存原始 response 或 provider URL。每轮最多记录 256 个 request id，重放不重复累计，缺失任一次 usage 或超出上限时省略本轮 token 合计。上下文使用量只取最新独立请求的实际 prompt token；该请求 usage 缺失时清空旧值，不把上一请求当作最新值。容量通过既有 canonical turn carrier 的弱引用读取当前 `context_compressor.context_length`；同线程/task、当前 turn 不匹配或容量未知时不显示虚构的零值。耗时从本轮 pre-LLM 观察开始计算，不把工具等待时间称为模型推理时间。
 
@@ -378,3 +388,8 @@ Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431
 普通安装失败会撤回本次新增 selection，并恢复本次替换前的 owned dependency source。PM 是否已提交不能确认时，保留 source 与诊断材料，不把超时当成未安装。`restore` 只恢复 hooks，保留依赖；`uninstall` 在 hooks 恢复后通过同一 admission API 移除 HFC 自己新增的 selection 和未修改的 owned source，不认领用户预先登记的依赖。旧版非 PM 的 pip 安装路径保持独立。
 
 验证分层：离线 fixture 覆盖漂移拒绝、旧布局、V4 扩展迁移及逐字 restore；两个固定 SHA 另跑真实源码安装矩阵和原审批 queue/controls。PM 集成测试在私有 HOME 的最小 project 中执行固定上游的真实 dependency engine，注入现成 uv/Python 仅用于供应工具；A→B 两代均通过独立子进程从普通 wheel 导入，并检查唯一 entry point。portable 分支在本机做故障注入，尚未执行 Windows 主机验收。它没有运行完整 Hermes dependency closure、PM worker transport、生产 updater、实际 Gateway/model 或真实飞书客户端。全量 preflight 仍使用固定 `v2026.8.3` Git fixture；不能用其通过替代上述 pinned 检查。
+
+
+### Session Authority completion compatibility
+
+跨 Task completion 当前只接纳 Hermes `5fc490e2b34123212d73ef316086f939567a725a` 的完整 `session_ingress.py` / `session_authority.py` 源 SHA 与实际 loaded code，以及完整受检 Base 提取后 seam。其他 revision、未知 loaded topology 或缺少 seam 保留原生回复；不能从文件存在或版本字符串推断支持。每次完成尝试至多调用一次对应 fallback 诊断（固定 `unsupported-source` / `unsupported-loaded-topology` / `missing-or-unverified-extraction-seam` / `unverified-admission-identity` 类别），不记录 IDs、HOME、payload 或正文，不新增 registry 或诊断 owner。`admission_completion.py` 借原 row/marker maps，测试路由为 runtime/delivery；`install/admission_extraction.py` 归 install。普通旧版同 Task Base 路径保持既有支持面。

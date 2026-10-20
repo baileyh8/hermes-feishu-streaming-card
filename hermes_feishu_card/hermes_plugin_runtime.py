@@ -645,6 +645,7 @@ class PluginRuntime:
         observer_timeout_seconds: float = 0.8,
         terminal_timeout_seconds: float = DEFAULT_TERMINAL_TIMEOUT_SECONDS,
         max_pending_observers: int = 64,
+        observe_only: bool = False,
     ) -> None:
         if not callable(post) or not callable(now):
             raise ValueError("post and now must be callable")
@@ -655,6 +656,11 @@ class PluginRuntime:
         ):
             raise ValueError("max_pending_observers is invalid")
         self._post = post
+        self.observe_only = observe_only
+        from .observed_rate import ObservedRates
+        self._observed_rates = ObservedRates()
+        if observe_only:
+            self._post = lambda *_args: None
         self._now = now
         self._observer_timeout_seconds = max(0.0, float(observer_timeout_seconds))
         self._terminal_timeout_seconds = max(0.0, float(terminal_timeout_seconds))
@@ -700,6 +706,8 @@ class PluginRuntime:
         reply_to_message_id: object,
         thread_id: object,
     ) -> bool:
+        if self.observe_only:
+            return False
         binding = IngressBinding(
             profile_id=profile_id,
             profile_source=profile_source,
@@ -994,6 +1002,8 @@ class PluginRuntime:
             return None
 
     def start_runtime_interaction_listener(self, secret: object) -> bool:
+        if self.observe_only:
+            return False
         if type(secret) is not bytes or len(secret) != 32:
             return False
         candidate: RuntimeInteractionListener | None = None
@@ -1618,6 +1628,10 @@ class PluginRuntime:
         ).hexdigest()
 
     def handle_pre_llm_call(self, **kwargs: object) -> None:
+        if self.observe_only:
+            if not self._closed:
+                self._observed_rates.start(kwargs)
+            return None
         session_id = kwargs.get("session_id")
         turn_id = kwargs.get("turn_id")
         if type(kwargs.get("platform")) is not str or kwargs.get("platform") != "feishu":
@@ -1698,6 +1712,10 @@ class PluginRuntime:
         return None
 
     def handle_post_api_request(self, **kwargs: object) -> None:
+        if self.observe_only:
+            if not self._closed:
+                self._observed_rates.observe(kwargs)
+            return None
         turn_id = kwargs.get("turn_id")
         if not self._exact_nonblank(turn_id) or kwargs.get("platform") != "feishu":
             return None
@@ -1708,6 +1726,11 @@ class PluginRuntime:
                     or kwargs.get("session_id") != turn.ingress.session_id):
                 return None
             turn.metrics.observe_api(kwargs)
+        return None
+
+    def take_observed_rate(self, session_id: object):
+        if self.observe_only and not self._closed:
+            return self._observed_rates.take(session_id)
         return None
 
     def handle_post_llm_call(self, **kwargs: object) -> None:
@@ -2135,6 +2158,7 @@ class PluginRuntime:
             return min(len(self._turns), self._MAX_ENTRIES), True
 
     def close(self) -> None:
+        self._observed_rates.clear()
         with self._close_lock:
             if self._close_started:
                 wait_for_close = True
@@ -2986,7 +3010,7 @@ class _ProductionBootstrap:
     context: object
     gate: _ContextGate
     runtime: PluginRuntime
-    lease: RuntimeControlLease
+    lease: RuntimeControlLease | None
     config: ProductionRuntimeConfig
     _closed: bool = False
 
@@ -3035,6 +3059,28 @@ def bootstrap_plugin_runtime(ctx: Any) -> None:
                         return None
                 gate.set_runtime(None)
                 _PRODUCTION_BOOTSTRAP = None
+                return None
+            from .install.legacy_observer import process_observer_mode
+            observer_mode = process_observer_mode()
+            if observer_mode != "hybrid":
+                gate = _ensure_context_gate(ctx)
+                if (observer_mode == "observe" and current is not None
+                        and current.context is ctx and current.runtime.observe_only):
+                    return None
+                if current is not None and not current.close():
+                    return None
+                gate.set_runtime(None)
+                _PRODUCTION_BOOTSTRAP = None
+                if observer_mode != "observe" or not gate.registration_complete:
+                    return None
+                runtime = PluginRuntime(post=lambda *_args: None, observe_only=True)
+                if not _ATEXIT_REGISTERED:
+                    atexit.register(_close_process_plugin_runtime)
+                    _ATEXIT_REGISTERED = True
+                with _ACTIVE_RUNTIME_LOCK:
+                    _ACTIVE_RUNTIME = runtime
+                    gate.set_runtime(runtime)
+                _PRODUCTION_BOOTSTRAP = _ProductionBootstrap(ctx, gate, runtime, None, config)
                 return None
             secret = read_transport_root_secret()
             if type(secret) is not bytes or len(secret) != 32:

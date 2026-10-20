@@ -7,6 +7,7 @@
 | Feishu/CardKit 传输错误、重试与不确定结果字段 | `delivery.FeishuAPIError` | client 与 CardKit 引用同一个错误 class；client 旧公开入口直接重导出，CardKit 不反向导入 client。重试顺序与发送逻辑仍由原 owner 持有 |
 | 终态 PATCH、有限重试、一次补发的顺序 | `terminal_delivery`；结果类型在 `delivery` | server 冻结目标，注入 I/O，核对 generation 后提交回执/通知/检查点 |
 | 事件路由、reply alias、独立通知归属及交互回复位置 | `event_rules` | server 在原锁域读取状态并写入 alias；交互状态、runtime reservation 与直接发卡复用一次 thread/anchor 决策，纯规则不发送消息 |
+| Session Authority 跨 Task terminal display carrier | `admission_completion` | 仅借原 event/marker maps；完整源与 loaded code 绑定、单用 TTL、原 row/epoch 与 route 校验；Base ledger/执行 claim 不迁移 |
 | native terminal admission、重复终态与持久 fence 衔接 | `native_admission` | 只依赖原始事件、owner 快照与四方法 store port；server 保留 policy、cache 提交、HTTP/指标与 repair 调度 |
 | 原 Hermes resolver 的单次认证 HTTP 请求 | `interaction_resolver` | server 在原锁内验证 owner、锁外请求、重新入锁校验对象/token/descriptor，再应用结果；指标与 HTTP 回执仍由 server 管理 |
 | 选择值与表单解析 | `interaction_input` | server/SDK 继续负责身份、过期、claim 和原 Hermes resolver |
