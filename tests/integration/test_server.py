@@ -5026,8 +5026,11 @@ async def test_changed_recheck_creates_one_fresh_successor_and_moves_delivery_on
     }
 
 
+@pytest.mark.parametrize(
+    "repeat_after_completion", [False, True], ids=["preparing", "diagnosed"]
+)
 async def test_full_capacity_repeated_recheck_returns_same_successor_and_moves_delivery_once(
-    monkeypatch,
+    monkeypatch, repeat_after_completion,
 ):
     feishu_client = FakeFeishuClient()
     report = operations_report()
@@ -5038,6 +5041,22 @@ async def test_full_capacity_repeated_recheck_returns_same_successor_and_moves_d
             report,
             SimpleNamespace(root=Path("/private/hermes")),
         ),
+    )
+    recheck_started = asyncio.Event()
+    release_recheck = asyncio.Event()
+    original_report = sidecar_server._bounded_operations_report
+    report_calls = 0
+
+    async def controlled_report(*args, **kwargs):
+        nonlocal report_calls
+        report_calls += 1
+        if report_calls > 1:
+            recheck_started.set()
+            await release_recheck.wait()
+        return await original_report(*args, **kwargs)
+
+    monkeypatch.setattr(
+        sidecar_server, "_bounded_operations_report", controlled_report
     )
     app = create_app(feishu_client)
     store = OperationStore(secret=b"store", max_records=2)
@@ -5084,15 +5103,34 @@ async def test_full_capacity_repeated_recheck_returns_same_successor_and_moves_d
         )
         first_response = await test_client.post("/card/actions", json=payload)
         first_body = await first_response.json()
+        await asyncio.wait_for(recheck_started.wait(), timeout=5)
+
+        def recheck_completed():
+            current = store.current_successor(first_body["operation_id"])
+            return current is not None and current.state == "diagnosed"
+
+        assert transfer_calls == [(original_id, first_body["operation_id"])]
+        if repeat_after_completion:
+            release_recheck.set()
+            await _wait_until(recheck_completed, attempts=500)
         repeated_response = await test_client.post("/card/actions", json=payload)
         repeated_body = await repeated_response.json()
+        if not repeat_after_completion:
+            assert repeated_body["operation_id"] == first_body["operation_id"]
+            assert transfer_calls == [(original_id, first_body["operation_id"])]
+        release_recheck.set()
+        await _wait_until(recheck_completed, attempts=500)
     finally:
+        release_recheck.set()
         await test_client.close()
 
     assert first_body["ok"] is True
     assert repeated_body["ok"] is True
     current = store.current_successor(first_body["operation_id"])
     assert current is not None
+    assert current.state == "diagnosed"
+    assert current.operation_id != first_body["operation_id"]
+    assert report_calls == 2
     assert store.current_successor(repeated_body["operation_id"]) is current
     assert "正在重新检测" in str(first_body["card"])
     assert any(
