@@ -1,4 +1,5 @@
 """Optional, exact post-extraction display seam for the pinned admission topology."""
+from __future__ import annotations
 
 import ast
 from hashlib import sha256
