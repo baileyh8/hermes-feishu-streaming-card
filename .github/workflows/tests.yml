@@ -122,7 +122,46 @@ jobs:
           ref: 7bda2a3368024f7ae1c70cef16583e7c2c891674
           path: .upstream/issue428_7bda2a
       - name: Install test dependencies
-        run: python -m pip install -e ".[test]" "uv==0.11.7" ruamel.yaml tomli-w packaging wheel
+        run: python -m pip install -e ".[test]" "uv==0.11.7" ruamel.yaml tomli-w packaging wheel rich python-dotenv requests prompt_toolkit "cryptography==48.0.0"
+      - name: Prepare ordinary wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/hfc-pm-wheel" .
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          wheel, = (Path(os.environ["RUNNER_TEMP"]) / "hfc-pm-wheel").glob("*.whl")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"HFC_TEST_WHEEL={wheel}\n")
+          PY
+      - name: Prepare reusable ordinary-wheel official CLI runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv --system-site-packages "$RUNNER_TEMP/hfc-official-runtime"
+          "$RUNNER_TEMP/hfc-official-runtime/bin/python" -m pip install --force-reinstall --no-deps "$HFC_TEST_WHEEL"
+          printf 'HFC_LEGACY_PLUGIN_PYTHON=%s\n' "$RUNNER_TEMP/hfc-official-runtime/bin/python" >> "$GITHUB_ENV"
+      - name: Verify exact config writer bytes before official enable
+        env:
+          HFC_LEGACY_PLUGIN_SOURCE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
+          HFC_UPSTREAM_LATEST_MAIN_ROOT: ${{ github.workspace }}/.upstream/latest_main
+          HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
+          HFC_REQUIRE_CONFIG_WRITER_CONTRACT: "1"
+        run: >-
+          python -m pytest tests/integration/test_official_plugin_config_bytes.py
+          --basetemp=${{ runner.temp }}/hfc-config-writer-pytest -q -s
+      - name: Verify pinned official plugin enable, discovery and exact legacy recovery
+        env:
+          HFC_LEGACY_PLUGIN_SOURCE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
+          HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
+        run: >-
+          python -m pytest tests/integration/test_legacy_observer_install.py
+          --basetemp=${{ runner.temp }}/hfc-legacy-official-pytest -q -s
+      - name: Verify pinned low-level plugin loader compatibility
+        env:
+          HFC_LEGACY_PLUGIN_SOURCE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
+        run: python -m pytest tests/unit/test_legacy_observed_rate.py -k real_v0222_plugin_manager_load -q
       - name: Verify source-only install, repeat, diagnosis and exact restore
         env:
           HFC_UPSTREAM_LATEST_STABLE_ROOT: ${{ github.workspace }}/.upstream/latest_stable
@@ -142,18 +181,6 @@ jobs:
           HFC_UPSTREAM_LATEST_MAIN_ROOT: ${{ github.workspace }}/.upstream/latest_main
           HFC_REQUIRE_UPSTREAM_RATE_CONTRACT: "1"
         run: python -m pytest tests/unit/test_plugin_turn_metrics.py -k "upstream_post_api_request or upstream_rate_timestamps" -q
-      - name: Prepare ordinary wheel
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/hfc-pm-wheel" .
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          wheel, = (Path(os.environ["RUNNER_TEMP"]) / "hfc-pm-wheel").glob("*.whl")
-          with open(os.environ["GITHUB_ENV"], "a") as output:
-              output.write(f"HFC_TEST_WHEEL={wheel}\n")
-          PY
       - name: Verify ordinary wheel survives real upstream PM generations
         env:
           HFC_UPSTREAM_PM_ROOT: ${{ github.workspace }}/.upstream/issue428_7bda2a

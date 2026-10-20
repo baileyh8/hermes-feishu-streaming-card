@@ -266,6 +266,20 @@ def test_recovery_not_required_suggests_acknowledgement_only_when_verified(
     assert "acknowledge-review" in finding.actions[0]
 
 
+@pytest.mark.parametrize("status", ["active", "disabled", "not_installed"])
+def test_doctor_json_preserves_read_only_observer_state(tmp_path, status):
+    observer = {"status": status, "reason": "observer_evidence_invalid"}
+    report = build_diagnostic_report(
+        tmp_path / "config.yaml",
+        {"server": {"host": "127.0.0.1", "port": 8765}},
+        _detection(tmp_path),
+        _recovery_plan(tmp_path),
+        health={"install_state": {"status": "installed", "legacy_observer": observer}},
+    )
+    payload = cli_module._doctor_json_output_payload(report.to_dict())
+    assert payload["install_state"]["legacy_observer"] == observer
+
+
 def test_doctor_json_actions_do_not_expose_local_paths(tmp_path):
     recovery = _recovery_plan(tmp_path)
     report = build_diagnostic_report(

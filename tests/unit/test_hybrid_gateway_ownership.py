@@ -589,6 +589,11 @@ def test_exact_historical_504_install_remains_inspectable_and_restorable(
     monkeypatch.setattr(
         fixtures.plugin, "_run_official_enable", fixtures._official_enable
     )
+    from types import SimpleNamespace
+    import yaml
+    monkeypatch.setattr(fixtures.plugin, "_plan_enabled_config_bytes",
+        lambda b, p, raw, desired, enabled: SimpleNamespace(
+            postimage=yaml.safe_dump(desired).encode(), verify_source=lambda: None))
     with monkeypatch.context() as initial:
         initial.setattr(v3, "HYBRID_PATCH_REGISTRY", old_registry)
         initial.setattr(patcher, "HYBRID_PATCH_REGISTRY", old_registry)

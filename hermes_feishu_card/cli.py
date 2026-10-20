@@ -1397,6 +1397,8 @@ def _build_doctor_report(
             integrity_plan = plan_integrity_repair(detection)
         except (IntegrityRepairRefused, OSError, RuntimeError, ValueError):
             integrity_plan = None
+    from .install.legacy_observer import observer_status
+    install_state["legacy_observer"] = observer_status(detection.root)
     profile_id = str(getattr(args, "_profile_id", "") or "")
     route = _diagnostic_route(config, profile_id)
     try:
@@ -2234,6 +2236,13 @@ def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:
 
 
 def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
+    from .install import legacy_observer
+    try:
+        legacy_observer.inspect(detection.root)
+    except (OSError, UnicodeError, ValueError):
+        return {"checked": True, "status": "refused", "manual_action_required": True,
+                "automatic_repair_available": False,
+                "message": "Legacy observer config ownership requires review"}
     from .install import decomposed_ownership
     from .install import recovery as recovery_owner
     if detection.decomposed or decomposed_ownership.is_managed(detection.root):
@@ -3756,11 +3765,11 @@ def _run_install(args: argparse.Namespace) -> int:
     try:
         result = _run_install_core(args, registrations)
     except BaseException:
-        for registration in registrations:
+        for registration in reversed(registrations):
             registration.rollback()
         raise
     try:
-        for registration in registrations:
+        for registration in (registrations if result == 0 else reversed(registrations)):
             if result == 0:
                 registration.finish()
             else:
@@ -3801,6 +3810,22 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
     if fixed_tag_result is not None:
         return fixed_tag_result
 
+    from .install import legacy_observer
+    observer_registration = None
+    try:
+        if legacy_observer.available(detection.root):
+            binding = resolve_runtime_binding(
+                checkout_root=detection.root,
+                hermes_home=getattr(args, "hermes_home", None),
+                profile_id=getattr(args, "profile_id", None),
+            )
+            observer_registration = legacy_observer.prepare(binding)
+            if observer_registration is not None:
+                registrations.append(observer_registration)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     if detection.decomposed:
         from .install.recovery import install_decomposed
         try:
@@ -3811,7 +3836,7 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         print("install ok" if changed else "install ok (already installed)")
-        if changed:
+        if changed or observer_registration is not None:
             print("gateway.restart_required: hermes gateway start")
         return 0
 
@@ -3998,7 +4023,7 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
             else None
         )
         gateway_restart_required = bool(
-            patched != original
+            observer_registration is not None or patched != original
             or (
                 cron_patched is not None
                 and cron_original is not None
@@ -4247,7 +4272,9 @@ def _run_restore(args: argparse.Namespace) -> int:
     if fixed_tag_result is not None:
         return fixed_tag_result
     try:
-        _restore(Path(args.hermes_dir))
+        _restore(Path(args.hermes_dir), **(
+            {"hermes_home": Path(args.hermes_home)} if getattr(args, "hermes_home", None) else {}
+        ))
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -4261,7 +4288,9 @@ def _run_uninstall(args: argparse.Namespace) -> int:
     if fixed_tag_result is not None:
         return fixed_tag_result
     try:
-        _restore(Path(args.hermes_dir))
+        _restore(Path(args.hermes_dir), **(
+            {"hermes_home": Path(args.hermes_home)} if getattr(args, "hermes_home", None) else {}
+        ))
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -4317,6 +4346,8 @@ def _repair_install_state(
     dry_run: bool = False,
     accept_hermes_upgrade: bool = False,
 ) -> list[str]:
+    from .install import legacy_observer
+    legacy_observer.inspect(detection.root)
     plan = plan_recovery(
         detection,
         accept_hermes_upgrade=accept_hermes_upgrade,
@@ -4391,7 +4422,26 @@ def _repair_action_message(action: str) -> str:
     return messages[action]
 
 
-def _restore(hermes_root: Path) -> None:
+def _restore(hermes_root: Path, *, hermes_home: Path | None = None) -> None:
+    from .install import legacy_observer
+    # Validate config ownership before touching source. Restore the config first:
+    # if the source transaction then fails, its still-owned marker is retained
+    # and a retry can finish safely without enabling a second event producer.
+    evidence = legacy_observer.inspect(hermes_root, home=hermes_home)
+    if evidence is not None:
+        record, _, preimage, ownership, config = evidence
+        binding = resolve_runtime_binding(
+            checkout_root=hermes_root, hermes_home=record["home"], profile_id=None)
+        if binding.python_identity != record["python_identity"]:
+            raise ValueError("legacy observer runtime binding changed")
+        from .install import plugin
+        if plugin._sha256(config) != ownership.pre_sha256:
+            plugin.restore_plugin_config(binding, preimage, ownership)
+    _restore_legacy_sources(hermes_root)
+    legacy_observer.restore(hermes_root)
+
+
+def _restore_legacy_sources(hermes_root: Path) -> None:
     from .install import decomposed_ownership
     from .install import recovery as recovery_owner
     detection = detect_hermes(hermes_root)

@@ -298,22 +298,26 @@ def enable_plugin(
         if enabled_before
         else expected
     )
+    desired = already_enabled_expected if enabled_before else expected
+    plan = _plan_enabled_config_bytes(binding, preimage, before_bytes, desired, enabled_before)
+    if _load_config_mapping(plan.postimage) not in (expected, already_enabled_expected):
+        raise PluginConfigRefused("official config byte plan changed unrelated config")
+    if _read_bound_config(binding) != before_bytes:
+        raise PluginConfigRefused("Hermes config changed after preimage")
+    _verify_config_plan_source(plan)
     try:
         return_code = _run_official_enable(binding)
     except Exception as exc:
+        _verify_config_plan_source(plan)
+        _rollback_verified_enable(binding, before_bytes, plan.postimage)
         raise PluginConfigRefused("official plugin enable failed") from exc
+    _verify_config_plan_source(plan)
     after_bytes = _read_bound_config(binding)
-    after_sha256 = _sha256(after_bytes)
+    after_sha256 = _sha256(plan.postimage)
     if return_code != 0:
-        _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256)
+        _rollback_verified_enable(binding, before_bytes, plan.postimage)
         raise PluginConfigRefused("official plugin enable failed")
-    try:
-        after = _load_config_mapping(after_bytes)
-    except PluginConfigRefused:
-        _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256)
-        raise
-    if after != expected and after != already_enabled_expected:
-        _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256)
+    if after_bytes != plan.postimage:
         raise PluginConfigRefused("official plugin enable changed unrelated config")
     added_by_hfc = after_bytes != before_bytes
     ownership = PluginOwnership(
@@ -324,8 +328,44 @@ def enable_plugin(
         config_backup_id=preimage.config_backup_id,
         backup_sha256=preimage.backup_sha256,
     )
-    _rewrite_private_journal(preimage, phase="plugin_enabled", ownership=ownership)
+    try:
+        _rewrite_private_journal(preimage, phase="plugin_enabled", ownership=ownership)
+    except Exception:
+        _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256)
+        raise
     return ownership
+
+
+def _plan_enabled_config_bytes(binding, preimage, before, desired, enabled_before):
+    from .plugin_config_bytes import ConfigBytesRefused, plan_enabled_bytes
+    try:
+        return plan_enabled_bytes(root=binding.checkout_root, python=binding.runtime_python,
+            home=binding.hermes_home, state_dir=preimage.state_dir, before=before,
+            desired=desired, enabled_before=enabled_before)
+    except ConfigBytesRefused as exc:
+        raise PluginConfigRefused("official config byte plan failed") from exc
+
+
+def _verify_config_plan_source(plan):
+    from .plugin_config_bytes import ConfigBytesRefused
+    try:
+        plan.verify_source()
+    except ConfigBytesRefused as exc:
+        raise PluginConfigRefused("official config writer contract is unknown") from exc
+
+
+def _rollback_verified_enable(
+    binding: HermesRuntimeBinding,
+    before_bytes: bytes,
+    planned_postimage: bytes,
+) -> None:
+    """Only restore the exact postimage planned before official enable ran."""
+    current = _read_bound_config(binding)
+    if current == before_bytes:
+        return
+    if current != planned_postimage:
+        raise PluginConfigRefused("official plugin enable config is unknown; preserved for review")
+    _restore_exact_config(binding, before_bytes, expected_sha256=_sha256(planned_postimage))
 
 
 def restore_plugin_config(
@@ -425,7 +465,7 @@ def _expected_enabled_config(
     if not (preserve_enabled_lists and enabled_before):
         plugins["enabled"] = sorted(set(enabled) | {PLUGIN_KEY})
         plugins["disabled"] = sorted(
-            set(disabled) - {PLUGIN_KEY, "hermes_feishu_card"}
+            set(disabled) - {PLUGIN_KEY}
         )
     entry = entries.get(PLUGIN_KEY)
     if entry is None:
@@ -575,7 +615,12 @@ def _atomic_replace_bytes(path: Path, value: bytes, mode: int) -> None:
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary_path = Path(temporary)
     try:
-        os.fchmod(descriptor, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            # mkstemp created this private regular file exclusively; Windows
+            # exposes chmod by path, not by descriptor.
+            temporary_path.chmod(mode)
         with os.fdopen(descriptor, "wb", closefd=False) as file:
             file.write(value)
             file.flush()

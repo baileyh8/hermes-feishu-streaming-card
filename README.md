@@ -248,6 +248,8 @@ V5 可追加 `--running` 核对进程已加载值，或用 `--minimal-yaml` 生�
 | 多机器人、群聊与 profile | [配置与路由](docs/user-guide.md#配置) |
 | 可选 CardKit 流式更新 | [开关与权限要求](docs/wiki/cardkit-streaming.md) |
 
+开发分支：Hermes 0.22.x legacy 安装在核验逐调用 hook 后，通过官方流程启用只观察指标的插件；旧安装需重新执行 HFC install 并重启 Gateway 才获得此数据源。`output_rate` 仍默认关闭，仅依赖完整、精确的逐调用观测，与可能为会话累计值的 legacy 页脚 token 数独立；插件未加载、`plugins.isolation: host`、usage/计时不完整、混合模型/provider 或同 session 轮次归属不明确时隐藏。Hybrid 行为不变。口径与恢复边界见[观测耗时](docs/wiki/observed-timing.md)。
+
 旧配置缺少 `integrity` 时保持 `notify`，不会静默开启自动修复。完整配置及边界见[安全控制与排障](docs/wiki/v4.1-safety-controls.md)。
 
 ## 日常使用与排障

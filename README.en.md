@@ -254,6 +254,8 @@ In V5, add `--running` to verify loaded defaults, or use `--minimal-yaml` to pri
 | Multiple bots, groups and profiles | [Configuration and routing](docs/user-guide.en.md) |
 | Optional CardKit entity streaming | [Settings and permissions](docs/wiki/cardkit-streaming.md) |
 
+Development branch: eligible Hermes 0.22.x legacy installs enable the official plugin solely to observe invocation metrics. Existing installs need HFC install again and a Gateway restart for this data source. `output_rate` stays off by default and depends only on complete, exact per-invocation observations, independently of the possibly session-cumulative legacy footer token figure. An unloaded plugin, `plugins.isolation: host`, incomplete usage/timing, mixed model/provider routes or ambiguous same-session turns hide it. Hybrid behavior is unchanged. See [observed timing](docs/wiki/observed-timing.md) for measurement and restore boundaries.
+
 Existing configs without `integrity` retain `notify` behavior; automatic repair is not silently enabled. See [safety controls and troubleshooting](docs/wiki/v4.1-safety-controls.md).
 
 ## Everyday use and troubleshooting
