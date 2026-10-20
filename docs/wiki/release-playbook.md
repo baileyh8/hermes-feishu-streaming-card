@@ -54,7 +54,7 @@ git diff --check
 - Feishu SDK compatibility、PowerShell installer 与 Docker Compose runtime smoke。
 - CodeQL Python analysis。
 
-完整 pytest 和上游兼容矩阵使用按用例耗时均衡的六片并行，保留全部测试与既有 required check 名称。结果核对任务确认每个用例完成一次，并核对实际 commit；缺片或混入其他提交的报告会阻断。单轮 CI 目标为 20 分钟内，以 GitHub 实测为准。
+完整 pytest 和上游兼容矩阵按用例耗时并行：Linux 与上游各八片，macOS 六片，保留全部测试与既有 required check 名称。结果核对任务确认每个用例完成一次，并核对实际 commit；缺片或混入其他提交的报告会阻断。单轮 CI 目标为 20 分钟内，以 GitHub 实测为准。
 
 本地先完成失败复现和受影响的聚焦检查。同一精确提交已有完整 CI 证据时，不强制再跑一套重复的本地全量；真实平台、普通安装包与公开安装验收仍独立执行。
 

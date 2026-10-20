@@ -19,6 +19,12 @@ def digest(nodes):
     return hashlib.sha256(json.dumps(sorted(nodes), ensure_ascii=True).encode()).hexdigest()
 
 
+def profile_weights(data, profile):
+    # Upstream fixtures turn skipped source contracts into expensive real work.
+    # Their timings must not inherit the ordinary full-suite skip costs.
+    return data.get("upstream_seconds", {}) if profile == "upstream" else data["seconds"]
+
+
 def partition(nodes, count, weights):
     if count < 1 or len(set(nodes)) != len(nodes):
         raise ValueError("invalid shard count or duplicate node IDs")
@@ -39,6 +45,7 @@ def pytest_addoption(parser):
     group.addoption("--hfc-shard-index", type=int)
     group.addoption("--hfc-shard-count", type=int, default=1)
     group.addoption("--hfc-shard-report")
+    group.addoption("--hfc-shard-profile", choices=("full", "upstream"), default="full")
 
 
 @pytest.hookimpl(trylast=True)
@@ -51,13 +58,14 @@ def pytest_collection_modifyitems(config, items):
         raise pytest.UsageError("invalid HFC shard index/count")
     nodes = [item.nodeid for item in items]
     weights_path = Path(__file__).with_name("ci_durations.json")
-    weights = json.loads(weights_path.read_text())["seconds"]
+    profile = config.getoption("--hfc-shard-profile")
+    weights = profile_weights(json.loads(weights_path.read_text()), profile)
     buckets, loads = partition(nodes, count, weights)
     selected = set(buckets[index])
     excluded = [item for item in items if item.nodeid not in selected]
     items[:] = [item for item in items if item.nodeid in selected]
     config.hfc_shard = {
-        "schema": 1, "index": index, "count": count,
+        "schema": 1, "index": index, "count": count, "profile": profile,
         "collection_count": len(nodes), "collection_sha256": digest(nodes),
         "selected": sorted(selected), "estimated_seconds": loads[index],
         "completed": [],
@@ -94,6 +102,8 @@ def verify(reports, count, expected_commit=None, expected_python=None, expected_
         raise ValueError("shards collected different test suites")
     if len({r.get("commit") for r in reports}) != 1:
         raise ValueError("shards tested different commits")
+    if len({r.get("profile") for r in reports}) != 1:
+        raise ValueError("shards used different timing profiles")
     if expected_commit is not None and any(r.get("commit") != expected_commit for r in reports):
         raise ValueError("evidence does not match checked-out commit")
     if expected_python is not None and any(r.get("python") != expected_python for r in reports):

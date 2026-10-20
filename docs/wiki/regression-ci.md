@@ -20,19 +20,21 @@
 
 保留 Linux Python 3.9–3.14 各版本的全部 pytest；macOS 3.12 仍运行全部 pytest。Windows portable、SDK、PowerShell、Docker 和 CodeQL 门禁保持原覆盖。
 
-每个 Linux 版本及 macOS 套件分成六片，由两个独立 runner 各运行三个 pytest 进程。各进程使用独立 Git clone、HOME、HFC state、TMPDIR 和 pytest basetemp；安装测试构建 wheel、写源码和元数据时不会竞争同一个 checkout。只借用 CI 准备的只读固定源码，以及预先构建的普通 wheel/runtime。
+每个 Linux 版本分成八片，由两个独立 runner 各运行四个 pytest 进程；macOS 保持六片，两个 runner 各运行三个进程。各进程使用独立 Git clone、HOME、HFC state、TMPDIR 和 pytest basetemp；安装测试构建 wheel、写源码和元数据时不会竞争同一个 checkout。只借用 CI 准备的只读固定源码，以及预先构建的普通 wheel/runtime。
 
-Hermes 3.12/3.13 兼容矩阵同样各拆六片。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
+Hermes 3.12/3.13 兼容矩阵同样各拆八片。公开仓库的 Ubuntu runner 有 4 核、macOS arm64 有 3 核，进程数按[官方资源规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)分配，不增加付费 runner。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
 
 `tools/ci_shard.py` 按收集到的完整 node ID 集合分配用例，使用 `tools/ci_durations.json` 中的历史耗时做均衡。耗时文件仅影响调度，不是测试白名单。新增和参数化用例自动进入集合，未登记耗时的用例也会运行。慢用例拆到不同进程，保留每个用例内部的完整安装、故障注入与恢复断言。
 
-原有 `pytest (3.9)` 等 required check 名称保留，由结果核对任务产出。核对要求六片都完成并成功，collection hash 一致，selected 与 completed 相同，分片之间不重复，合起来覆盖完整集合，且每片 commit 与当前 checkout 一致。缺报告、早退、失败或混入另一提交的证据都会阻断。
+`full` 与 `upstream` 使用独立耗时数据。普通 full 中缺少上游 fixture 而跳过的用例，在 upstream 中会执行真实安装，不能沿用它的跳过耗时。尚无 upstream 数据时先均匀分配用例，再用该组实际 JUnit 耗时校准；不混用不同环境下同名用例的耗时。
+
+原有 `pytest (3.9)` 等 required check 名称保留，由结果核对任务产出。核对要求全部计划分片都完成并成功，collection hash 一致，selected 与 completed 相同，分片之间不重复，合起来覆盖完整集合，且每片 commit 与当前 checkout 一致。缺报告、早退、失败或混入另一提交的证据都会阻断。
 
 ## 测量与调优
 
 每片保留 JUnit、完整日志、实际耗时和最慢 20 个用例，作为保留三天的 Actions artifact。汇总结果输出最慢分片耗时；同时看 workflow 总用时和排队时间，不能只展示最快的 runner。
 
-初始耗时数据来自提交 `c78edde08e103d4efe74415d8e63d00ff6ecf664` 的 Python 3.12 完整回归，原始 JUnit SHA256 记录在耗时文件中。它用于初始分配，不能当成优化后 CI 的实测速度，也不能把本机与 GitHub runner 的秒数直接等同。
+最初的耗时提示来自提交 `c78edde08e103d4efe74415d8e63d00ff6ecf664` 的本地完整回归，随后用 [CI 39388642766](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/39388642766) 的六片 macOS 实测数据校准 full 调度。六片覆盖 7,075 个已收集用例，最慢测试进程约 17 分 56 秒，整组从第一个 runner 开始到最后一个结束约 18 分 37 秒。完整 workflow 仍有排队，不能把这个数字写成整轮 CI 用时；这也不是调度校准后的最终实测。源码提交与各 JUnit SHA256 记录在耗时文件中。
 
 若连续运行超过 20 分钟，先根据 artifact 判断是排队、单片偏重、单个用例过慢还是 runner 内 CPU/内存争用，再调整分配或优化重复准备步骤。不得通过删断言、缩短必要超时、跳过真实安装恢复或把失败标为允许失败来达标。
 

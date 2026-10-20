@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from tools.ci_plan import ROOT, select
-from tools.ci_shard import digest, partition, verify
+from tools.ci_shard import digest, partition, profile_weights, verify
 
 
 def evidence(nodes, count):
@@ -55,6 +55,18 @@ def test_gate_rejects_incomplete_or_mixed_test_evidence(damage):
 
 def test_gate_accepts_exact_disjoint_union():
     assert verify(evidence(["a", "b", "c"], 2), 2)["tests"] == 3
+
+
+def test_upstream_installers_do_not_inherit_full_suite_skip_costs():
+    metrics = [f"metrics-{index}" for index in range(3)]
+    installs = [f"source-install-{index:02}" for index in range(12)]
+    data = {"seconds": dict(zip(metrics, [6.0, 5.0, 4.0]))}
+    full, _ = partition(metrics + installs, 6, profile_weights(data, "full"))
+    upstream, _ = partition(metrics + installs, 6, profile_weights(data, "upstream"))
+    assert any(not set(bucket) & set(installs) for bucket in full)
+    assert all(len(set(bucket) & set(installs)) == 2 for bucket in upstream)
+    data["upstream_seconds"] = {node: 100.0 for node in installs}
+    assert profile_weights(data, "upstream") == data["upstream_seconds"]
 
 
 @pytest.mark.parametrize("key,value", [("python", "3.10"), ("platform", "win32")])
@@ -101,7 +113,8 @@ def test_full_jobs_keep_all_versions_and_stable_required_contexts():
     assert jobs["macos-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
 
 
-def test_real_parallel_runner_isolates_source_home_state_and_temp(tmp_path):
+@pytest.mark.parametrize("profile", ["full", "upstream"])
+def test_real_parallel_runner_isolates_source_home_state_and_temp(tmp_path, profile):
     root = tmp_path / "fixture-repo"
     (root / "tools").mkdir(parents=True)
     (root / "tests").mkdir()
@@ -134,12 +147,14 @@ def test_private_worker(case):
     env.pop("PYTHONPATH", None)
     result = subprocess.run([
         sys.executable, "-m", "tools.ci_run", "--group", "probe", "--shards", "2", "--workers", "2",
+        "--profile", profile,
         "--results", str(tmp_path / "results"), "--scratch", str(tmp_path / "scratch"),
         "--", "tests/test_isolation.py",
     ], check=False, cwd=root, env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     reports = [json.loads(p.read_text()) for p in (tmp_path / "results").glob("probe-*.json")]
     assert verify(reports, 2)["tests"] == 2
+    assert {report["profile"] for report in reports} == {profile}
     assert not (root / "exclusive").exists()
 
 

@@ -48,6 +48,7 @@ def run_worker(index, args, targets, fixture):
     command = [
         sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "tools.ci_shard",
         "--hfc-shard-index", str(index), "--hfc-shard-count", str(args.shards),
+        "--hfc-shard-profile", args.profile,
         "--hfc-shard-report", str(args.results / f"{stem}.json"),
         "--basetemp", str(private / "pytest"), "--junitxml", str(args.results / f"{stem}.xml"),
         "--durations=20", "--durations-min=1.0", *targets,
@@ -78,6 +79,7 @@ def main():
     parser.add_argument("--shards", type=int, required=True)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--profile", choices=("full", "upstream"), default="full")
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--scratch", type=Path, required=True)

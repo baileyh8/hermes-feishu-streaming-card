@@ -198,8 +198,8 @@ jobs:
           HFC_REQUIRE_UPSTREAM_RATE_CONTRACT: "1"
           HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
         run: >-
-          python -m tools.ci_run --group upstream-${{ matrix.python-version }}
-          --shards 6 --workers 3 --offset $(( ${{ matrix.slice }} * 3 ))
+          python -m tools.ci_run --group upstream-${{ matrix.python-version }} --profile upstream
+          --shards 8 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))
           --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
           tests/integration/test_official_plugin_config_bytes.py
           tests/integration/test_legacy_observer_install.py
@@ -292,10 +292,11 @@ jobs:
         env:
           REGRESSION_MODE: ${{ needs.plan.outputs.mode }}
         run: |
-          shards=6
-          if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
+          shards=8
+          workers=4
+          if [ "$REGRESSION_MODE" = docs ]; then shards=3; workers=3; fi
           python -m tools.ci_run --group linux-${{ matrix.python-version }} \
-            --shards "$shards" --workers 3 --offset $(( ${{ matrix.slice }} * 3 )) \
+            --shards "$shards" --workers "$workers" --offset $(( ${{ matrix.slice }} * workers )) \
             --plan "$RUNNER_TEMP/plan/ci-plan.json" \
             --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers"
       - name: Preserve regression reports and slow-test timings
@@ -537,7 +538,7 @@ jobs:
         run: |
           test "$PRODUCER_RESULT" = success
           version="${{ matrix.python-version }}"
-          shards=6
+          shards=8
           if [ "$REGRESSION_MODE" != full ]; then version=3.12; fi
           if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
           python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "linux-$version" --count "$shards" --python-version "$version" --platform linux
@@ -602,7 +603,7 @@ jobs:
         run: |
           if [ "$REGRESSION_MODE" = full ]; then
             test "$PRODUCER_RESULT" = success
-            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 6 --python-version "${{ matrix.python-version }}" --platform linux
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 8 --python-version "${{ matrix.python-version }}" --platform linux
           else
             printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
           fi
