@@ -8,6 +8,9 @@
 - Own legacy plugin enablement in a versioned companion record using the official configuration preimage/restore flow; preserve reinstall idempotence and verified failure rollback. Support the config writer on Windows without weakening the existing POSIX source-recovery gate.
 - Thanks to @Lite-G for the report in #441 and the original implementation in #442.
 - Recall the exact native preflight-compression and compaction-complete notices after 15 seconds (#434, reported by Timeral). Preserve native send results, route ownership, compression heartbeats, Working updates, failure warnings and unknown text.
+- Thanks to JohnZhong505 for the #443 report/evidence and Lite-G for additional source analysis; these acknowledgements are separate from repair code authorship. All previous credits remain intact.
+
+- Preserve exact completion across the verified Session Authority admission/waiter Task boundary (#443), including drain-owned delivery after native extraction. Retain the original execution claim, Base ledger, native media/TTS and unknown-topology fallback.
 
 ## v5.0.3 — 2026-10-19
 

@@ -388,3 +388,8 @@ Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431
 普通安装失败会撤回本次新增 selection，并恢复本次替换前的 owned dependency source。PM 是否已提交不能确认时，保留 source 与诊断材料，不把超时当成未安装。`restore` 只恢复 hooks，保留依赖；`uninstall` 在 hooks 恢复后通过同一 admission API 移除 HFC 自己新增的 selection 和未修改的 owned source，不认领用户预先登记的依赖。旧版非 PM 的 pip 安装路径保持独立。
 
 验证分层：离线 fixture 覆盖漂移拒绝、旧布局、V4 扩展迁移及逐字 restore；两个固定 SHA 另跑真实源码安装矩阵和原审批 queue/controls。PM 集成测试在私有 HOME 的最小 project 中执行固定上游的真实 dependency engine，注入现成 uv/Python 仅用于供应工具；A→B 两代均通过独立子进程从普通 wheel 导入，并检查唯一 entry point。portable 分支在本机做故障注入，尚未执行 Windows 主机验收。它没有运行完整 Hermes dependency closure、PM worker transport、生产 updater、实际 Gateway/model 或真实飞书客户端。全量 preflight 仍使用固定 `v2026.8.3` Git fixture；不能用其通过替代上述 pinned 检查。
+
+
+### Session Authority completion compatibility
+
+跨 Task completion 当前只接纳 Hermes `5fc490e2b34123212d73ef316086f939567a725a` 的完整 `session_ingress.py` / `session_authority.py` 源 SHA 与实际 loaded code，以及完整受检 Base 提取后 seam。其他 revision、未知 loaded topology 或缺少 seam 保留原生回复；不能从文件存在或版本字符串推断支持。每次完成尝试至多调用一次对应 fallback 诊断（固定 `unsupported-source` / `unsupported-loaded-topology` / `missing-or-unverified-extraction-seam` / `unverified-admission-identity` 类别），不记录 IDs、HOME、payload 或正文，不新增 registry 或诊断 owner。`admission_completion.py` 借原 row/marker maps，测试路由为 runtime/delivery；`install/admission_extraction.py` 归 install。普通旧版同 Task Base 路径保持既有支持面。

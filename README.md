@@ -299,6 +299,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 ## 贡献者
 
+- #443：感谢 [JohnZhong505](https://github.com/JohnZhong505) 提供 [Session Authority completion 问题证据](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/443)，以及 [Lite-G](https://github.com/Lite-G) 的补充源码分析。这些是问题报告与分析署名，独立于本轮修复代码作者；全部历史贡献记录保留。
+
 - V5.0.3：感谢 [Lite-G](https://github.com/Lite-G) 在 [PR #436](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/436) 贡献逐调用生成速率，并在 [#437](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/437) / [PR #438](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/438) 提供 Hermes 兼容修复；感谢 [Thxzzzzz](https://github.com/Thxzzzzz) 在 [PR #430](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/430) 贡献交互过期后续答修复；感谢 Dependabot 的 #388、#389、#390、#439。保留原始提交作者和全部历史署名。
 
 - V5.0.2：感谢 [Timeral](https://github.com/Timeral) 在 [#434](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/434) 提供复现与源码定位。

@@ -1,0 +1,24 @@
+{
+  "commit": "5fc490e2b34123212d73ef316086f939567a725a",
+  "archive_sha256": "4ae2f5824577b1acfdb5513db37bae5aaabc333062fd123a9b0573858c46ee1c",
+  "files": {
+    "cron/scheduler.py": "824a062db736650bb4de1f88ac5e5abf17aaa2aa244153571682dacca664aff5",
+    "cron/scheduler_delivery.py": "7078145d9f66bbf21dd59de03f5a3e5987d6b01996bb179624c942c0ae1536bb",
+    "gateway/platforms/base.py": "e2ab51d8ae41933741644d65b87bdeabbf20a641d218b055f681ea96d245340e",
+    "gateway/run.py": "ad8e017ab49075f33f5659dfefe547ecb73467dd139e80e3fec39182393045f4",
+    "gateway/run_busy.py": "8f071467b91930dbdcdcaa5d808c9315dee3b07b5d2ae033ca9faf15dc4d52d5",
+    "gateway/run_inbound.py": "09a85f137ff26b3b1eaea986e92dc6d3f627f0dca58330984fdbc483ce0920fa",
+    "gateway/run_notifications.py": "9209c033bb834ec9b3355d4b84d74ae29f899bf5abcbfaf112a1d43116b47490",
+    "gateway/run_startup.py": "108a658cac645fa0800f93d1b27a79a0285828cc0ec7ab90241a65becb5223ff",
+    "gateway/run_turn.py": "c546b5cbc19bfb28606dee9d25e46f6bf0fc6bde03f2695d6b1f5ade755d4566",
+    "gateway/run_turn_hygiene.py": "de22242a30fd948693b0b09170e25530f7bc3cbd70ef4ded1621a860e3aa01ed",
+    "gateway/run_turn_persistence.py": "6325c450d3356cc0f56f3f337ac424c524ea06fdd27a8c4879f317447a5218e1",
+    "gateway/run_turn_prepare.py": "65248e221c23286f390fe81fb322f7de29e26075be9556ecbe9b6a7e3d90f79c",
+    "gateway/run_turn_runner.py": "6cf9f1acdd64d69f5c613be214695b33dafe215eeced68cebe53f5d0c5e4cbc9",
+    "gateway/session_authority.py": "e5f3f9b24ccb765dc7fccb98d9c61bed359e3b1da3a73c855c713be425df5d7c",
+    "gateway/session_ingress.py": "fc8b666f74aa430c832c973e64a6b6332ae8c0c43ac5d3b69766debf31fb8dd4"
+  },
+  "source_url": "https://github.com/NousResearch/hermes-agent/tree/5fc490e2b34123212d73ef316086f939567a725a",
+  "license": "session_authority_5fc490e.LICENSE",
+  "description": "Unmodified upstream source; all original copyright/comments retained in deterministic gzip. DB/model/I/O ports in AST mechanism tests are explicit; actual SQLite acceptance is separate."
+}

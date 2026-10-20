@@ -4,7 +4,9 @@
     "runtime": [
       "tests/unit/test_hook_runtime.py",
       "tests/integration/test_server.py",
-      "tests/unit/test_legacy_observed_rate.py"
+      "tests/unit/test_legacy_observed_rate.py",
+      "tests/integration/test_session_authority_completion.py",
+      "tests/unit/test_admission_completion_state.py"
     ],
     "render": [
       "tests/unit/test_render.py",
@@ -38,7 +40,8 @@
       "tests/unit/test_pm_dependency.py",
       "tests/unit/test_decomposed_patcher.py",
       "tests/unit/test_extracted_clarify_patcher.py",
-      "tests/unit/test_legacy_observed_rate.py"
+      "tests/unit/test_legacy_observed_rate.py",
+      "tests/integration/test_session_authority_completion.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -104,7 +107,9 @@
       "tests/unit/test_terminal_delivery.py",
       "tests/unit/test_terminal_transport.py",
       "tests/unit/test_native_admission.py",
-      "tests/unit/test_existing_owner_projection.py"
+      "tests/unit/test_existing_owner_projection.py",
+      "tests/integration/test_session_authority_completion.py",
+      "tests/unit/test_admission_completion_state.py"
     ],
     "interaction": [
       "tests/unit/test_card_action_admission.py",
@@ -637,6 +642,13 @@
     ],
     "hermes_feishu_card/install/plugin_config_bytes.py": [
       "plugin",
+      "install"
+    ],
+    "hermes_feishu_card/admission_completion.py": [
+      "runtime",
+      "delivery"
+    ],
+    "hermes_feishu_card/install/admission_extraction.py": [
       "install"
     ]
   }

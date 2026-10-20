@@ -54,6 +54,7 @@ Python 3.9 runtime coverage remains separate from this development-tool runtime.
 | Presentation and payload budgets | `card_view.py`, `content_plan.py`, `render.py`, `presentation.py`, `reading.py`, `render_options.py`, `card_limits.py` |
 | Feishu I/O and CardKit sequencing | `feishu_client.py`, `cardkit.py` |
 | Per-turn display metrics and bounded request deduplication | `turn_metrics.py`; official plugin observations feed display only, canonical carrier borrows the Agent through a weak reference |
+| Session Authority cross-Task terminal display handoff | `admission_completion.py`; single-use event carrier borrows native admission/marker maps and exact post-extraction Base seam; no execution registry |
 | Canonical turn carrier and borrowed metrics context | `canonical_turn.py`; one thread/task registry, hook compatibility exports and plugin metrics share it without adapter cycles |
 | Pure config values, presets, validation and merge | `config_rules.py`; config/reading/runtime policy consume the same rules without reverse imports |
 | Config, installation and safe recovery | `config.py`, `cli.py`, `install/`; read-only source ownership in `install/decomposed_ownership.py`, family transactions in `install/recovery.py` |
