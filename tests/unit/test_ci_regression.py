@@ -1,11 +1,11 @@
 """Regression selection must be complete, deterministic and fail closed."""
-from copy import deepcopy
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 import yaml
@@ -16,9 +16,9 @@ from tools.ci_shard import digest, partition, verify
 
 def evidence(nodes, count):
     buckets, _ = partition(nodes, count, {})
-    return [dict(index=index, count=count, collection_count=len(nodes),
-                 collection_sha256=digest(nodes), selected=bucket, completed=bucket,
-                 exit_code=0, commit="a" * 40)
+    return [{"index": index, "count": count, "collection_count": len(nodes),
+             "collection_sha256": digest(nodes), "selected": bucket, "completed": bucket,
+             "exit_code": 0, "commit": "a" * 40}
             for index, bucket in enumerate(buckets)]
 
 
@@ -55,6 +55,17 @@ def test_gate_rejects_incomplete_or_mixed_test_evidence(damage):
 
 def test_gate_accepts_exact_disjoint_union():
     assert verify(evidence(["a", "b", "c"], 2), 2)["tests"] == 3
+
+
+@pytest.mark.parametrize("key,value", [("python", "3.10"), ("platform", "win32")])
+def test_gate_checks_actual_python_and_platform(key, value):
+    reports = evidence(["a", "b", "c"], 2)
+    for report in reports:
+        report.update(python="3.9", platform="linux")
+    assert verify(reports, 2, expected_python="3.9", expected_platform="linux")
+    reports[0][key] = value
+    with pytest.raises(ValueError):
+        verify(reports, 2, expected_python="3.9", expected_platform="linux")
 
 
 @pytest.mark.parametrize("paths,mode", [
@@ -125,7 +136,7 @@ def test_private_worker(case):
         sys.executable, "-m", "tools.ci_run", "--group", "probe", "--shards", "2", "--workers", "2",
         "--results", str(tmp_path / "results"), "--scratch", str(tmp_path / "scratch"),
         "--", "tests/test_isolation.py",
-    ], cwd=root, env=env, capture_output=True, text=True, timeout=60)
+    ], check=False, cwd=root, env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
     reports = [json.loads(p.read_text()) for p in (tmp_path / "results").glob("probe-*.json")]
     assert verify(reports, 2)["tests"] == 2
@@ -148,7 +159,7 @@ def test_case(case):
             sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "tools.ci_shard",
             "--hfc-shard-index", str(index), "--hfc-shard-count", "2",
             "--hfc-shard-report", str(path), "test_nodes.py",
-        ], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+        ], check=False, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
         codes.append(result.returncode)
         reports.append(json.loads(path.read_text()))
     assert sorted(codes) == [0, 1]

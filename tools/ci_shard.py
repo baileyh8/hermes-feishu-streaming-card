@@ -9,8 +9,8 @@ import argparse
 import hashlib
 import json
 import math
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -86,7 +86,7 @@ def pytest_sessionfinish(session, exitstatus):
         Path(path).write_text(json.dumps(report, indent=2) + "\n")
 
 
-def verify(reports, count, expected_commit=None):
+def verify(reports, count, expected_commit=None, expected_python=None, expected_platform=None):
     if len(reports) != count or {r["index"] for r in reports} != set(range(count)):
         raise ValueError("missing or duplicate shard")
     collections = {(r["collection_count"], r["collection_sha256"]) for r in reports}
@@ -96,6 +96,10 @@ def verify(reports, count, expected_commit=None):
         raise ValueError("shards tested different commits")
     if expected_commit is not None and any(r.get("commit") != expected_commit for r in reports):
         raise ValueError("evidence does not match checked-out commit")
+    if expected_python is not None and any(r.get("python") != expected_python for r in reports):
+        raise ValueError("evidence does not match required Python")
+    if expected_platform is not None and any(r.get("platform") != expected_platform for r in reports):
+        raise ValueError("evidence does not match required platform")
     selected = []
     for report in reports:
         if report["count"] != count or report["exit_code"] != 0:
@@ -117,10 +121,12 @@ def main():
     parser.add_argument("directory", type=Path)
     parser.add_argument("--group", required=True)
     parser.add_argument("--count", type=int, required=True)
+    parser.add_argument("--python-version", required=True)
+    parser.add_argument("--platform", required=True)
     args = parser.parse_args()
     reports = [json.loads(path.read_text()) for path in args.directory.rglob(f"{args.group}-*.json")]
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    print(json.dumps(verify(reports, args.count, commit)))
+    print(json.dumps(verify(reports, args.count, commit, args.python_version, args.platform)))
 
 
 if __name__ == "__main__":

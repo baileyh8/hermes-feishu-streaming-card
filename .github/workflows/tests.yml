@@ -47,6 +47,7 @@ jobs:
         with:
           name: ci-plan
           path: ci-plan.json
+          overwrite: true
           retention-days: 3
 
   quality:
@@ -62,6 +63,11 @@ jobs:
         run: python -m pip install -e ".[test,quality]"
       - name: Lint extracted boundaries
         run: python -m ruff check
+      - name: Lint regression planner and worker boundary
+        run: >-
+          python -m ruff check --isolated --target-version py39
+          tools/ci_plan.py tools/ci_run.py tools/ci_shard.py
+          tests/unit/test_ci_regression.py
       - name: Type-check extracted boundaries
         run: python -m mypy
 
@@ -208,6 +214,7 @@ jobs:
           name: regression-upstream-${{ matrix.python-version }}-${{ matrix.slice }}
           path: ${{ runner.temp }}/results/
           if-no-files-found: error
+          overwrite: true
           retention-days: 3
 
   fixed-hermes-fixture:
@@ -237,6 +244,7 @@ jobs:
           path: ${{ runner.temp }}/hermes-v2026.8.3-fixed-tag.tar.gz
           if-no-files-found: error
           compression-level: 0
+          overwrite: true
           retention-days: 1
 
   pytest-shards:
@@ -297,6 +305,7 @@ jobs:
           name: regression-linux-${{ matrix.python-version }}-${{ matrix.slice }}
           path: ${{ runner.temp }}/results/
           if-no-files-found: error
+          overwrite: true
           retention-days: 3
 
   pytest-windows:
@@ -392,6 +401,7 @@ jobs:
           name: regression-macos-${{ matrix.slice }}
           path: ${{ runner.temp }}/results/
           if-no-files-found: error
+          overwrite: true
           retention-days: 3
 
   feishu-sdk-compat:
@@ -530,7 +540,7 @@ jobs:
           shards=6
           if [ "$REGRESSION_MODE" != full ]; then version=3.12; fi
           if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
-          python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "linux-$version" --count "$shards"
+          python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "linux-$version" --count "$shards" --python-version "$version" --platform linux
           printf 'Regression mode: %s\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
 
   pytest-macos:
@@ -558,7 +568,7 @@ jobs:
         run: |
           if [ "$REGRESSION_MODE" = full ]; then
             test "$PRODUCER_RESULT" = success
-            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "macos" --count 6
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "macos" --count 6 --python-version 3.12 --platform darwin
           else
             printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -592,7 +602,7 @@ jobs:
         run: |
           if [ "$REGRESSION_MODE" = full ]; then
             test "$PRODUCER_RESULT" = success
-            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 6
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 6 --python-version "${{ matrix.python-version }}" --platform linux
           else
             printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
           fi

@@ -4,9 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LOW_RISK_GROUPS = {"docs", "render", "appearance", "quota", "config"}

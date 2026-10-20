@@ -7,17 +7,16 @@ HOME, state, TMPDIR and basetemp. No additional parallel-test dependency is used
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from tools.preflight import child_environment, cleanup_scratch
-
 
 ROOT = Path(__file__).resolve().parents[1]
 FORWARD = {
@@ -55,13 +54,14 @@ def run_worker(index, args, targets, fixture):
     ]
     started = time.monotonic()
     with log.open("w") as output:
-        result = subprocess.run(command, cwd=source, env=env, stdout=output, stderr=subprocess.STDOUT)
+        result = subprocess.run(command, check=False, cwd=source, env=env, stdout=output, stderr=subprocess.STDOUT)
     seconds = round(time.monotonic() - started, 2)
     print(f"{stem}: exit={result.returncode}, seconds={seconds}", flush=True)
     report_path = args.results / f"{stem}.json"
     if report_path.is_file():
         report = json.loads(report_path.read_text())
-        report.update(commit=commit, seconds=seconds)
+        report.update(commit=commit, seconds=seconds,
+                      python=".".join(map(str, sys.version_info[:2])), platform=sys.platform)
         report_path.write_text(json.dumps(report, indent=2) + "\n")
     if result.returncode:
         print("\n".join(log.read_text(errors="replace").splitlines()[-70:]), flush=True)
