@@ -303,6 +303,8 @@ See [release history](docs/release-history.en.md) for earlier versions, and [CHA
 
 ## Contributors
 
+- #443: thanks to [JohnZhong505](https://github.com/JohnZhong505) for the [Session Authority completion report and evidence](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/443), and [Lite-G](https://github.com/Lite-G) for additional source analysis. These credits acknowledge issue evidence and analysis, separately from this repair's code authorship; all historical credits remain intact.
+
 - V5.0.3: [Lite-G](https://github.com/Lite-G) contributed per-invocation output rate in [PR #436](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/436) and the Hermes compatibility report/fix in [#437](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/437) / [PR #438](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/438). [Thxzzzzz](https://github.com/Thxzzzzz) contributed expired-interaction continuation in [PR #430](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/430). Thanks to Dependabot for #388, #389, #390 and #439. Original commit authors and all historical credits are retained.
 
 - V5.0.2: thanks to [Timeral](https://github.com/Timeral) for the reproduction and source analysis in [#434](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/434).

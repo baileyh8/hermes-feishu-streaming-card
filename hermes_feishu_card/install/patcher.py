@@ -6,7 +6,7 @@ from .source_layout import (
     DECOMPOSED_GATEWAY_TARGETS as DECOMPOSED_GATEWAY_TARGETS,
     DECOMPOSED_TARGETS as DECOMPOSED_TARGETS,
 )
-from . import stop_cancellation
+from . import admission_extraction, stop_cancellation
 from .gateway_contracts import find_stale_interrupted_location
 from .cron_contracts import (
     find_cron_deliver_body_location as _find_cron_deliver_body_location,
@@ -341,7 +341,7 @@ def apply_base_patch(
             no_text_location=no_text_location,
             final_location=final_location,
         )
-        return stop_cancellation.apply(content)
+        return admission_extraction.apply(stop_cancellation.apply(content))
 
     newline = _detect_newline(content)
     no_text_index, no_text_indent = no_text_location
@@ -364,12 +364,12 @@ def apply_base_patch(
     # block. Both anchors are guaranteed to belong to the same exact pipeline.
     for index, hook in sorted(((final_index, final_hook), (no_text_index, no_text_hook)), reverse=True):
         lines[index:index] = hook
-    return stop_cancellation.apply("".join(lines))
+    return admission_extraction.apply(stop_cancellation.apply("".join(lines)))
 
 
 def remove_base_patch(content: str) -> str:
     """Strictly remove exact BasePlatformAdapter hooks owned by this project."""
-    content = stop_cancellation.remove(content)
+    content = stop_cancellation.remove(admission_extraction.remove(content))
     owned = _find_owned_exact_base_blocks(content, strict=True)
     if owned is None:
         return content
@@ -387,7 +387,7 @@ def remove_base_patch(content: str) -> str:
 
 def remove_base_patch_lenient(content: str) -> str:
     """Remove owned Base hooks while accepting older generated block bodies."""
-    content = stop_cancellation.remove(content)
+    content = stop_cancellation.remove(admission_extraction.remove(content))
     owned = _find_owned_exact_base_blocks(content, strict=False)
     if owned is None:
         return content
@@ -2784,9 +2784,15 @@ def _render_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}if _hfc_queued_preview and _hfc_queued_preview.get(\"data\", {{}}).get(\"native_delivery\") == \"required\":{newline}",
         f"{deepest_indent}return _hfc_media_only(response){newline}",
         f"{deeper_indent}return None{newline}",
+        f"{inner_indent}from hermes_feishu_card.hook_runtime import admission_completion_mode as _hfc_admission_mode{newline}",
+        f"{inner_indent}_hfc_admission = _hfc_admission_mode(_hfc_completed_locals){newline}",
+        f"{inner_indent}if _hfc_admission == \"native\":{newline}",
+        f"{deeper_indent}return response{newline}",
         f"{inner_indent}_hfc_exact_staged = False{newline}",
         f"{inner_indent}if _hfc_can_stage_exact(_hfc_completed_locals):{newline}",
         f"{deeper_indent}_hfc_exact_staged = await _hfc_stage_exact(_hfc_completed_locals){newline}",
+        f"{inner_indent}if _hfc_admission == \"handoff\" and not _hfc_exact_staged:{newline}",
+        f"{deeper_indent}return response{newline}",
         f"{inner_indent}if not _hfc_exact_staged:{newline}",
         f"{deeper_indent}_hfc_completed_event = _hfc_build_event(\"message.completed\", _hfc_completed_locals, preview=True){newline}",
         f"{deeper_indent}_hfc_attachments = []{newline}",

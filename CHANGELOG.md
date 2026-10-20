@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Thanks to JohnZhong505 for the #443 report/evidence and Lite-G for additional source analysis; these acknowledgements are separate from repair code authorship. All previous credits remain intact.
+
+- Preserve exact completion across the verified Session Authority admission/waiter Task boundary (#443), including drain-owned delivery after native extraction. Retain the original execution claim, Base ledger, native media/TTS and unknown-topology fallback.
+
 ## v5.0.3 — 2026-10-19
 
 - Accept only the verified old/new Hermes channel-pin inheritance expressions while retaining strict binding, ordering and restore checks (#437, PR #438). Pin the compatibility matrix to main `0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3`.
