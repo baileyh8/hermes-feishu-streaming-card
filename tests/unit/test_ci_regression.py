@@ -32,6 +32,15 @@ def test_duration_balancing_preserves_every_case_and_is_order_independent():
     assert partition(list(reversed(nodes)), 6, weights) == (buckets, loads)
 
 
+def test_shared_runtime_has_one_process_owner_without_losing_cases():
+    nodes = [f"case-{index}" for index in range(30)]
+    resources = {node: "official_runtime" for node in nodes[:12]}
+    parts, _ = partition(nodes, 8, {}, resources)
+    assert len([part for part in parts if set(part) & set(resources)]) == 1
+    assert sorted(node for part in parts for node in part) == sorted(nodes)
+    assert partition(list(reversed(nodes)), 8, {}, resources)[0] == parts
+
+
 @pytest.mark.parametrize("damage", ["missing", "duplicate", "coverage", "unfinished", "failure", "collection", "commit"])
 def test_gate_rejects_incomplete_or_mixed_test_evidence(damage):
     reports = deepcopy(evidence(["a", "b", "c", "d"], 2))
@@ -111,6 +120,10 @@ def test_full_jobs_keep_all_versions_and_stable_required_contexts():
         assert "test \"$PRODUCER_RESULT\" = success" in str(jobs[name])
     assert jobs["upstream-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
     assert jobs["macos-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
+    assert {"upstream-hermes-compat", "quality", "feishu-sdk-compat-python314"} <= set(jobs["pytest"]["needs"])
+    gate = str(jobs["pytest"])
+    for variable in ("UPSTREAM_RESULT", "QUALITY_RESULT", "SDK314_RESULT"):
+        assert f'test "${variable}" = success' in gate
 
 
 @pytest.mark.parametrize("profile", ["full", "upstream"])
@@ -156,6 +169,57 @@ def test_private_worker(case):
     assert verify(reports, 2)["tests"] == 2
     assert {report["profile"] for report in reports} == {profile}
     assert not (root / "exclusive").exists()
+
+
+def test_parallel_shared_wheel_fixture_keeps_its_write_guard(tmp_path):
+    root = tmp_path / "fixture-repo"
+    (root / "tools").mkdir(parents=True)
+    (root / "tests").mkdir()
+    for name in ("ci_run.py", "ci_shard.py", "ci_durations.json", "preflight.py", "preflight_routes.json"):
+        shutil.copyfile(ROOT / "tools" / name, root / "tools" / name)
+    fixture = '''
+import os, time
+from pathlib import Path
+import pytest
+
+@pytest.fixture(scope="module")
+def official_runtime():
+    sensor = Path(os.environ["CI_TEST_SHARED_RUNTIME"])/"sitecustomize.py"
+    with sensor.open("x") as output:
+        output.write("preserve caller customization guard")
+    try:
+        yield sensor
+    finally:
+        sensor.unlink()
+
+def test_official(official_runtime):
+    assert official_runtime.is_file()
+    time.sleep(0.2)
+'''
+    for name in ("test_official_a.py", "test_official_b.py"):
+        (root / "tests" / name).write_text(fixture)
+    (root / "tests/test_plain.py").write_text("def test_a(): pass\ndef test_b(): pass\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "shared fixture guard"], cwd=root, check=True)
+    shared = tmp_path / "shared-runtime"
+    shared.mkdir()
+    env = dict(os.environ, CI_TEST_SHARED_RUNTIME=str(shared),
+               HFC_FIXED_TAG_SOURCE_ROOT=str(tmp_path / "fixed-read-only"))
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run([
+        sys.executable, "-m", "tools.ci_run", "--group", "upstream-probe", "--profile", "upstream",
+        "--shards", "2", "--workers", "2", "--results", str(tmp_path / "results"),
+        "--scratch", str(tmp_path / "scratch"), "--", "tests",
+    ], check=False, cwd=root, env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    reports = [json.loads(p.read_text()) for p in (tmp_path / "results").glob("upstream-probe-*.json")]
+    assert verify(reports, 2)["tests"] == 4
+    owners = [report for report in reports
+              if any("test_official" in node for node in report["selected"])]
+    assert len(owners) == 1
+    assert not (shared / "sitecustomize.py").exists()
 
 
 def test_pytest_plugin_reports_actual_completion_and_preserves_failure(tmp_path):

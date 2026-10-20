@@ -28,7 +28,11 @@ Hermes 3.12/3.13 兼容矩阵同样各拆八片。公开仓库的 Ubuntu runner 
 
 `full` 与 `upstream` 使用独立耗时数据。普通 full 中缺少上游 fixture 而跳过的用例，在 upstream 中会执行真实安装，不能沿用它的跳过耗时。尚无 upstream 数据时先均匀分配用例，再用该组实际 JUnit 耗时校准；不混用不同环境下同名用例的耗时。
 
+共享可写 fixture 必须保持一个进程所有者。`official_runtime` 会向预建的普通 wheel 环境写入 sensor 和 `.pth`，其全部消费者作为一组分配到同一片，模块结束后仍由原 fixture 清理。其他用例继续并行；不会删除“拒绝覆盖调用者 customization”的保护断言来换取通过。
+
 原有 `pytest (3.9)` 等 required check 名称保留，由结果核对任务产出。核对要求全部计划分片都完成并成功，collection hash 一致，selected 与 completed 相同，分片之间不重复，合起来覆盖完整集合，且每片 commit 与当前 checkout 一致。缺报告、早退、失败或混入另一提交的证据都会阻断。
+
+这些既有 required check 也等待上游矩阵、quality 和 Python 3.14 SDK 检查成功，避免出现 Linux 全量通过、上游已经失败但 required check 仍为绿色的情况；不需要修改分支保护名称。
 
 ## 测量与调优
 

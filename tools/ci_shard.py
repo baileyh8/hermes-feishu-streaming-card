@@ -25,18 +25,27 @@ def profile_weights(data, profile):
     return data.get("upstream_seconds", {}) if profile == "upstream" else data["seconds"]
 
 
-def partition(nodes, count, weights):
+def partition(nodes, count, weights, resources=None):
     if count < 1 or len(set(nodes)) != len(nodes):
         raise ValueError("invalid shard count or duplicate node IDs")
-    loads = [0.0] * count
-    buckets = [[] for _ in range(count)]
-    for node in sorted(nodes, key=lambda node: (-weights.get(node, 0.05), node)):
+    resources = resources or {}
+    bundles = {}
+    costs = {}
+    for node in nodes:
         weight = weights.get(node, 0.05)
         if not math.isfinite(weight) or weight < 0:
             raise ValueError("invalid duration weight")
+        costs[node] = max(weight, 0.001)
+        key = ("resource", resources[node]) if node in resources else ("node", node)
+        bundles.setdefault(key, []).append(node)
+    loads = [0.0] * count
+    buckets = [[] for _ in range(count)]
+    ordered = sorted((sorted(bundle) for bundle in bundles.values()),
+                     key=lambda bundle: (-sum(costs[n] for n in bundle), min(bundle)))
+    for bundle in ordered:
         index = min(range(count), key=lambda index: (loads[index], index))
-        buckets[index].append(node)
-        loads[index] += max(weight, 0.001)
+        buckets[index].extend(sorted(bundle))
+        loads[index] += sum(costs[node] for node in bundle)
     return buckets, loads
 
 
@@ -60,7 +69,12 @@ def pytest_collection_modifyitems(config, items):
     weights_path = Path(__file__).with_name("ci_durations.json")
     profile = config.getoption("--hfc-shard-profile")
     weights = profile_weights(json.loads(weights_path.read_text()), profile)
-    buckets, loads = partition(nodes, count, weights)
+    # This fixture writes a sensor and .pth into one borrowed ordinary-wheel
+    # runtime. Its imports in other test modules must have the same
+    # process owner; the fixture's existing refusal/restore checks stay intact.
+    resources = {item.nodeid: "official_runtime" for item in items
+                 if "official_runtime" in getattr(item, "fixturenames", ())}
+    buckets, loads = partition(nodes, count, weights, resources)
     selected = set(buckets[index])
     excluded = [item for item in items if item.nodeid not in selected]
     items[:] = [item for item in items if item.nodeid in selected]

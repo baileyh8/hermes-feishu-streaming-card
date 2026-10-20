@@ -203,9 +203,10 @@ jobs:
           --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
           tests/integration/test_official_plugin_config_bytes.py
           tests/integration/test_legacy_observer_install.py
-          tests/unit/test_legacy_observed_rate.py
+          tests/unit/test_legacy_observed_rate.py::test_real_v0222_plugin_manager_load
           tests/integration/test_upstream_hermes_compat.py
-          tests/unit/test_plugin_turn_metrics.py
+          tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
+          tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning
           tests/integration/test_pm_generation.py
       - name: Preserve upstream reports and slow-test timings
         if: always()
@@ -511,7 +512,7 @@ jobs:
           -q
 
   pytest:
-    needs: [plan, pytest-shards]
+    needs: [plan, pytest-shards, upstream-hermes-compat, quality, feishu-sdk-compat-python314]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-latest
     strategy:
@@ -534,9 +535,15 @@ jobs:
       - name: Verify every planned case finished exactly once
         env:
           PRODUCER_RESULT: ${{ needs.pytest-shards.result }}
+          UPSTREAM_RESULT: ${{ needs.upstream-hermes-compat.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SDK314_RESULT: ${{ needs.feishu-sdk-compat-python314.result }}
           REGRESSION_MODE: ${{ needs.plan.outputs.mode }}
         run: |
           test "$PRODUCER_RESULT" = success
+          test "$UPSTREAM_RESULT" = success
+          test "$QUALITY_RESULT" = success
+          test "$SDK314_RESULT" = success
           version="${{ matrix.python-version }}"
           shards=8
           if [ "$REGRESSION_MODE" != full ]; then version=3.12; fi
