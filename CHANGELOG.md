@@ -7,6 +7,7 @@
 - Roll back only verified official plugin-enable postimages for both legacy and Hybrid v3; preserve unknown or concurrently edited config bytes and recovery evidence. Support private atomic writes without `os.fchmod` on Windows. Preserve Hybrid bootstrap only when the observer marker is confirmed absent; disable admission on uninspectable metadata.
 - Own legacy plugin enablement in a versioned companion record using the official configuration preimage/restore flow; preserve reinstall idempotence and verified failure rollback. Support the config writer on Windows without weakening the existing POSIX source-recovery gate.
 - Thanks to @Lite-G for the report in #441 and the original implementation in #442.
+- Recall the exact native preflight-compression and compaction-complete notices after 15 seconds (#434, reported by Timeral). Preserve native send results, route ownership, compression heartbeats, Working updates, failure warnings and unknown text.
 
 ## v5.0.3 — 2026-10-19
 
