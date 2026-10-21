@@ -29,6 +29,10 @@ jobs:
       mode: ${{ steps.plan.outputs.mode }}
       pytest_matrix: ${{ steps.plan.outputs.pytest_matrix }}
     steps:
+      - name: Acceptance probe - intentionally fail plan
+        run: |
+          echo "::error::Intentional plan failure for merge-protection acceptance. Do not merge."
+          exit 97
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
