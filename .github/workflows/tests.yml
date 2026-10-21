@@ -29,9 +29,11 @@ jobs:
       mode: ${{ steps.plan.outputs.mode }}
       pytest_matrix: ${{ steps.plan.outputs.pytest_matrix }}
     steps:
-      - name: Acceptance probe - intentionally fail plan
+      - name: Acceptance probe - wait for controlled cancellation
         run: |
-          echo "::error::Intentional plan failure for merge-protection acceptance. Do not merge."
+          echo "Controlled plan-cancellation acceptance probe. Do not merge."
+          sleep 600
+          echo "::error::Cancellation probe was not cancelled within its bounded window."
           exit 97
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
