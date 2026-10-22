@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 from pathlib import Path
 
@@ -69,11 +70,12 @@ def pytest_collection_modifyitems(config, items):
     weights_path = Path(__file__).with_name("ci_durations.json")
     profile = config.getoption("--hfc-shard-profile")
     weights = profile_weights(json.loads(weights_path.read_text()), profile)
-    # This fixture writes a sensor and .pth into one borrowed ordinary-wheel
-    # runtime. Its imports in other test modules must have the same
-    # process owner; the fixture's existing refusal/restore checks stay intact.
+    # Borrowed mutable runtimes retain one process owner. ci_run may remove
+    # that constraint only after installing the wheel in a new worker prefix;
+    # a failed preparation does not run pytest with another partition.
     resources = {item.nodeid: "official_runtime" for item in items
-                 if "official_runtime" in getattr(item, "fixturenames", ())}
+                 if "official_runtime" in getattr(item, "fixturenames", ())
+                 and os.environ.get("HFC_CI_PRIVATE_OFFICIAL_RUNTIME") != "1"}
     buckets, loads = partition(nodes, count, weights, resources)
     selected = set(buckets[index])
     excluded = [item for item in items if item.nodeid not in selected]

@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from copy import deepcopy
 from pathlib import Path
 
@@ -76,6 +77,24 @@ def test_upstream_installers_do_not_inherit_full_suite_skip_costs():
     assert all(len(set(bucket) & set(installs)) == 2 for bucket in upstream)
     data["upstream_seconds"] = {node: 100.0 for node in installs}
     assert profile_weights(data, "upstream") == data["upstream_seconds"]
+
+
+def test_measured_upstream_budget_covers_all_pinned_sources_without_duplicates():
+    data = json.loads((ROOT / "tools/ci_durations.json").read_text())
+    weights = profile_weights(data, "upstream")
+    sources = json.loads((ROOT / "tests/fixtures/hermes_upstream_sources.json").read_text())
+    for baseline in sources:
+        assert ("tests/integration/test_upstream_hermes_compat.py::"
+                f"test_pinned_upstream_install_repeat_doctor_restore[{baseline}]") in weights
+    buckets, loads = partition(list(weights), 8, weights)
+    selected = [node for bucket in buckets for node in bucket]
+    assert sorted(selected) == sorted(weights)
+    assert len(selected) == len(set(selected))
+    assert max(loads) < 900
+    # The first measured setup used five minutes. Include that preparation in
+    # the twenty-minute target; this is a scheduling estimate, not a CI pass.
+    assert max(loads) + 300 < 1200
+    assert partition(list(reversed(weights)), 8, weights) == (buckets, loads)
 
 
 @pytest.mark.parametrize("key,value", [("python", "3.10"), ("platform", "win32")])
@@ -215,7 +234,8 @@ def test_official(official_runtime):
     shared = tmp_path / "shared-runtime"
     shared.mkdir()
     env = dict(os.environ, CI_TEST_SHARED_RUNTIME=str(shared),
-               HFC_FIXED_TAG_SOURCE_ROOT=str(tmp_path / "fixed-read-only"))
+               HFC_FIXED_TAG_SOURCE_ROOT=str(tmp_path / "fixed-read-only"),
+               HFC_CI_PRIVATE_OFFICIAL_RUNTIME="1")  # Caller cannot forge the proof.
     env.pop("PYTHONPATH", None)
     result = subprocess.run([
         sys.executable, "-m", "tools.ci_run", "--group", "upstream-probe", "--profile", "upstream",
@@ -229,6 +249,121 @@ def test_official(official_runtime):
               if any("test_official" in node for node in report["selected"])]
     assert len(owners) == 1
     assert not (shared / "sitecustomize.py").exists()
+    assert not any(report["private_official_runtime"] for report in reports)
+
+
+def test_real_parallel_workers_get_distinct_wheel_prefix_and_customization(tmp_path):
+    root = tmp_path / "fixture-repo"
+    (root / "tools").mkdir(parents=True)
+    (root / "tests").mkdir()
+    for name in ("ci_run.py", "ci_shard.py", "ci_durations.json", "preflight.py", "preflight_routes.json"):
+        shutil.copyfile(ROOT / "tools" / name, root / "tools" / name)
+    wheel = tmp_path / "hfc_ci_runtime_probe-0.0.0-py3-none-any.whl"
+    info = "hfc_ci_runtime_probe-0.0.0.dist-info"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("ci_runtime_probe.py", "VALUE = 'ordinary-wheel'\n")
+        archive.writestr(info + "/METADATA", "Metadata-Version: 2.1\nName: hfc-ci-runtime-probe\nVersion: 0.0.0\n")
+        archive.writestr(info + "/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+        archive.writestr(info + "/RECORD", "")
+    fixture = r'''
+import json, os, subprocess, time
+from pathlib import Path
+import pytest
+
+@pytest.fixture(scope="module")
+def official_runtime():
+    python = Path(os.environ["HFC_LEGACY_PLUGIN_PYTHON"])
+    probe = json.loads(subprocess.check_output([str(python), "-I", "-c",
+        "import json,sys,sysconfig,ci_runtime_probe as p;"
+        "print(json.dumps([sys.prefix,sysconfig.get_paths()['purelib'],p.__file__,p.VALUE]))"], text=True))
+    prefix, site, origin = map(Path, probe[:3])
+    assert probe[3] == "ordinary-wheel"
+    assert prefix != Path(os.environ["CI_TEST_BORROWED_PREFIX"])
+    assert prefix in site.parents and site in origin.parents
+    assert "site-packages" in origin.parts
+    sensor, pth = site/"sitecustomize.py", site/"hfc-ci-probe.pth"
+    tag = str(os.getpid())
+    with sensor.open("x") as output:
+        output.write("OWNER = " + repr(tag) + "\n")
+    with pth.open("x") as output:
+        output.write("import os; os.environ['HFC_CI_PTH_OWNER'] = " + repr(tag) + "\n")
+    capture = Path(os.environ["CI_TEST_CAPTURE"])
+    (capture/(tag + ".json")).write_text(json.dumps(dict(prefix=str(prefix), site=str(site), origin=str(origin))))
+    try:
+        deadline = time.monotonic() + 30
+        while len(list(capture.glob("*.json"))) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(list(capture.glob("*.json"))) == 2, "both worker runtimes must coexist"
+        result = json.loads(subprocess.check_output([str(python), "-I", "-c",
+            "import json,os,sitecustomize;print(json.dumps([sitecustomize.OWNER,os.environ['HFC_CI_PTH_OWNER']]))"], text=True))
+        assert result == [tag, tag]
+        yield prefix
+    finally:
+        sensor.unlink()
+        pth.unlink()
+
+def test_official(official_runtime):
+    assert official_runtime.is_dir()
+'''
+    for name in ("test_official_a.py", "test_official_b.py"):
+        (root / "tests" / name).write_text(fixture)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "private ordinary runtime fixture"], cwd=root, check=True)
+    capture = tmp_path / "capture"
+    capture.mkdir()
+    env = dict(os.environ, HFC_LEGACY_PLUGIN_PYTHON=sys.executable, HFC_TEST_WHEEL=str(wheel),
+               HFC_FIXED_TAG_SOURCE_ROOT=str(tmp_path / "fixed-read-only"),
+               CI_TEST_BORROWED_PREFIX=sys.prefix, CI_TEST_CAPTURE=str(capture))
+    env.pop("PYTHONPATH", None)
+    import sysconfig
+    site = Path(sysconfig.get_paths()["purelib"])
+    protected = [site / "sitecustomize.py", site / "hfc-ci-probe.pth"]
+    before = {path: path.read_bytes() if path.exists() else None for path in protected}
+    result = subprocess.run([
+        sys.executable, "-m", "tools.ci_run", "--group", "private-probe", "--profile", "upstream",
+        "--shards", "2", "--workers", "2", "--results", str(tmp_path / "results"),
+        "--scratch", str(tmp_path / "scratch"), "--", "tests",
+    ], check=False, cwd=root, env=env, capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    reports = [json.loads(p.read_text()) for p in (tmp_path / "results").glob("private-probe-*.json")]
+    assert verify(reports, 2)["tests"] == 2
+    assert all(report["private_official_runtime"] for report in reports)
+    assert all(len(report["selected"]) == 1 for report in reports)
+    observations = [json.loads(path.read_text()) for path in capture.glob("*.json")]
+    assert len({item["prefix"] for item in observations}) == 2
+    assert len({item["site"] for item in observations}) == 2
+    assert {path: path.read_bytes() if path.exists() else None for path in protected} == before
+
+
+def test_missing_private_runtime_wheel_blocks_every_worker_before_collection(tmp_path):
+    root = tmp_path / "fixture-repo"
+    (root / "tools").mkdir(parents=True)
+    (root / "tests").mkdir()
+    for name in ("ci_run.py", "ci_shard.py", "ci_durations.json", "preflight.py", "preflight_routes.json"):
+        shutil.copyfile(ROOT / "tools" / name, root / "tools" / name)
+    (root / "tests/test_forbidden.py").write_text("raise AssertionError('must not collect after preparation failure')\n")
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "failed runtime preparation fixture"], cwd=root, check=True)
+    env = dict(os.environ, HFC_LEGACY_PLUGIN_PYTHON=sys.executable,
+               HFC_FIXED_TAG_SOURCE_ROOT=str(tmp_path / "fixed-read-only"))
+    env.pop("HFC_TEST_WHEEL", None)
+    env.pop("PYTHONPATH", None)
+    results = tmp_path / "results"
+    result = subprocess.run([
+        sys.executable, "-m", "tools.ci_run", "--group", "blocked", "--profile", "upstream",
+        "--shards", "2", "--workers", "2", "--results", str(results),
+        "--scratch", str(tmp_path / "scratch"), "--", "tests",
+    ], check=False, cwd=root, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode != 0
+    assert result.stdout.count("private ordinary-wheel runtime preparation failed: ValueError") == 2
+    assert not list(results.glob("*.json"))
+    assert not list(results.glob("*.xml"))
+    with pytest.raises(ValueError, match="missing or duplicate shard"):
+        verify([], 2)
 
 
 def test_pytest_plugin_reports_actual_completion_and_preserves_failure(tmp_path):

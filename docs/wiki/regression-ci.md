@@ -20,15 +20,15 @@
 
 保留 Linux Python 3.9–3.14 各版本的全部 pytest；macOS 3.12 仍运行全部 pytest。Windows portable、SDK、PowerShell、Docker 和 CodeQL 门禁保持原覆盖。
 
-每个 Linux 版本分成八片，由两个独立 runner 各运行四个 pytest 进程；macOS 保持六片，两个 runner 各运行三个进程。各进程使用独立 Git clone、HOME、HFC state、TMPDIR 和 pytest basetemp；安装测试构建 wheel、写源码和元数据时不会竞争同一个 checkout。只借用 CI 准备的只读固定源码，以及预先构建的普通 wheel/runtime。
+每个 Linux 版本分成八片，由两个独立 runner 各运行四个 pytest 进程；macOS 保持六片，两个 runner 各运行三个进程。各进程使用独立 Git clone、HOME、HFC state、TMPDIR 和 pytest basetemp；安装测试构建 wheel、写源码和元数据时不会竞争同一个 checkout。只借用 CI 准备的只读固定源码、普通 wheel 和用于创建独立环境的 Python。上游 worker 在自己的私有目录新建 venv，以 `--no-index --no-deps` 安装同一 wheel，不复制旧 prefix 的 launchers，也不写回借用环境。`--system-site-packages` 复用 setup-python base 中已安装的测试依赖；它不继承任意外层 venv 的独有依赖。
 
 Hermes 3.12/3.13 兼容矩阵同样各拆八片。公开仓库的 Ubuntu runner 有 4 核、macOS arm64 有 3 核，进程数按[官方资源规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)分配，不增加付费 runner。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
 
 `tools/ci_shard.py` 按收集到的完整 node ID 集合分配用例，使用 `tools/ci_durations.json` 中的历史耗时做均衡。耗时文件仅影响调度，不是测试白名单。新增和参数化用例自动进入集合，未登记耗时的用例也会运行。慢用例拆到不同进程，保留每个用例内部的完整安装、故障注入与恢复断言。
 
-`full` 与 `upstream` 使用独立耗时数据。普通 full 中缺少上游 fixture 而跳过的用例，在 upstream 中会执行真实安装，不能沿用它的跳过耗时。尚无 upstream 数据时先均匀分配用例，再用该组实际 JUnit 耗时校准；不混用不同环境下同名用例的耗时。
+`full` 与 `upstream` 使用独立耗时数据。普通 full 中缺少上游 fixture 而跳过的用例，在 upstream 中会执行真实安装，不能沿用它的跳过耗时。upstream 已按 [CI 39729191204](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/39729191204) 的 Linux Python 3.12 JUnit 校准；缺失的 33 例使用同集合已完成的 Python 3.13 耗时乘 1.7 估计，并在耗时文件中单列来源、node ID 和摘要。这些估计只影响调度，不能视为测试通过。
 
-共享可写 fixture 必须保持一个进程所有者。`official_runtime` 会向预建的普通 wheel 环境写入 sensor 和 `.pth`，其全部消费者作为一组分配到同一片，模块结束后仍由原 fixture 清理。其他用例继续并行；不会删除“拒绝覆盖调用者 customization”的保护断言来换取通过。
+共享可写 fixture 必须保持一个进程所有者。`official_runtime` 会写入 sensor 和 `.pth`：只有 `ci_run` 成功为每个 worker 创建独立普通 wheel prefix 后，才解除消费者的整组分配。内部标志不接受调用者转发；缺少 wheel 或环境创建失败会阻断该 worker，不以共享 runtime 或另一种分片方式继续。未建立独立环境时保留原 bundle。模块结束后仍由原 fixture 清理，普通 wheel 的逐资源字节与来源核验、拒绝覆盖 customization 的断言保持不变。
 
 原有 `pytest (3.9)` 等 required check 名称保留，由结果核对任务产出。核对要求全部计划分片都完成并成功，collection hash 一致，selected 与 completed 相同，分片之间不重复，合起来覆盖完整集合，且每片 commit 与当前 checkout 一致。缺报告、早退、失败或混入另一提交的证据都会阻断。
 

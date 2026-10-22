@@ -29,6 +29,37 @@ FORWARD = {
 }
 
 
+def prepare_private_runtime(env, private, output):
+    """Create a new prefix; never copy launchers or modify the borrowed venv."""
+    if not env.get("HFC_LEGACY_PLUGIN_PYTHON"):
+        return False
+    wheel = env.get("HFC_TEST_WHEEL")
+    if not wheel or not Path(wheel).is_file():
+        raise ValueError("ordinary wheel required for private official runtime")
+    runtime = private / "official-runtime"
+    subprocess.run([
+        env["HFC_LEGACY_PLUGIN_PYTHON"], "-I", "-B", "-m", "venv", "--without-pip",
+        "--system-site-packages", str(runtime),
+    ], check=True, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=60)
+    python = runtime / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    subprocess.run([
+        sys.executable, "-I", "-B", "-m", "pip", "--python", str(python), "install",
+        "--no-index", "--no-deps", "--force-reinstall", wheel,
+    ], check=True, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=90)
+    prefix, site = json.loads(subprocess.check_output([
+        str(python), "-I", "-B", "-c",
+        "import json,sys,sysconfig;print(json.dumps([sys.prefix,sysconfig.get_paths()['purelib']]))",
+    ], env=env, text=True, timeout=20))
+    if Path(prefix).resolve() != runtime.resolve() or runtime.resolve() not in Path(site).resolve().parents:
+        raise ValueError("private ordinary runtime prefix mismatch")
+    env["HFC_LEGACY_PLUGIN_PYTHON"] = str(python)
+    # This internal flag is deliberately absent from FORWARD. Every successful
+    # worker follows the same split; provisioning failure never falls back to
+    # a shared runtime or a different collection partition.
+    env["HFC_CI_PRIVATE_OFFICIAL_RUNTIME"] = "1"
+    return True
+
+
 def run_worker(index, args, targets, fixture):
     private = Path(tempfile.mkdtemp(prefix="hfc-ci-", dir=args.scratch)).resolve()
     original = private.stat()
@@ -58,14 +89,22 @@ def run_worker(index, args, targets, fixture):
     ]
     started = time.monotonic()
     with log.open("w") as output:
-        result = subprocess.run(command, check=False, cwd=source, env=env, stdout=output, stderr=subprocess.STDOUT)
+        try:
+            runtime_isolated = prepare_private_runtime(env, private, output)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            output.write(f"private ordinary-wheel runtime preparation failed: {type(exc).__name__}\n")
+            runtime_isolated = False
+            result = subprocess.CompletedProcess(command, 2)
+        else:
+            result = subprocess.run(command, check=False, cwd=source, env=env, stdout=output, stderr=subprocess.STDOUT)
     seconds = round(time.monotonic() - started, 2)
     print(f"{stem}: exit={result.returncode}, seconds={seconds}", flush=True)
     report_path = args.results / f"{stem}.json"
     if report_path.is_file():
         report = json.loads(report_path.read_text())
         report.update(commit=commit, seconds=seconds,
-                      python=".".join(map(str, sys.version_info[:2])), platform=sys.platform)
+                      python=".".join(map(str, sys.version_info[:2])), platform=sys.platform,
+                      private_official_runtime=runtime_isolated)
         report_path.write_text(json.dumps(report, indent=2) + "\n")
     if result.returncode:
         print("\n".join(log.read_text(errors="replace").splitlines()[-70:]), flush=True)
