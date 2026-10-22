@@ -2,12 +2,28 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.4`; published availability is determined by the GitHub Release tag and assets. Opt-in native tables preserve oversized cells via Markdown fallback; indivisible Markdown tables retain their full source for the shared payload/handoff gate.
+This branch targets `5.0.5`; published availability is determined by the GitHub Release tag and assets. Opt-in native tables preserve oversized cells via Markdown fallback; indivisible Markdown tables retain their full source for the shared payload/handoff gate.
 
-This batch integrates #442 legacy observed rates and config ownership, #444 exact compression notice recall, and #445 Session Authority cross-Task completion. Combined full regression, platform CI, ordinary wheels, real Feishu API, public installation and assets are separate release gates. Actual Gateway/model execution and desktop/Android visuals/clicks remain unverified; iOS and new-user trials are outside this release scope.
+This batch contains PR #448/#449 CI improvements, the #451 compatibility repair in PR #452, and independent ordinary-wheel upstream workers. It retains earlier source baselines and the full matrix. Combined full regression, platform CI, ordinary wheels, real Feishu API, public installation and assets are separate release gates. Actual Gateway/model execution and desktop/Android visuals/clicks remain unverified; iOS and new-user trials are outside this release scope.
 
-Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v5.0.4.en.md) and the [acceptance record](reviews/2026-10-03-task-cards-acceptance.md). Platform API smoke, real Gateway execution, desktop visuals and Android/iOS acceptance are separate evidence; missing coverage is not a pass.
+Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v5.0.5.en.md) and the [historical task-card acceptance record](reviews/2026-10-03-task-cards-acceptance.md). Platform API smoke, real Gateway execution, desktop visuals and Android/iOS acceptance are separate evidence; missing coverage is not a pass.
 
+
+## V5.0.5 acceptance record
+
+These are the checks for this release. Actual results belong to the exact-version [v5.0.5 GitHub Release acceptance record](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.5). The October 3 task-card visual record does not establish acceptance for this release.
+
+| Field | Status |
+| --- | --- |
+| Version/documentation focused checks | `129 passed` (docs, metadata, release gate and CI contracts); `v5.0.5 --metadata-only` passed; not full CI |
+| Full repair-candidate CI | Both 117-case upstream groups passed at `69cbf66`; an existing asynchronous recheck assertion failed, so the full run was not accepted. See the Release record for the final corrected candidate |
+| Exact v5.0.5 commit CI / CodeQL | Check candidate/merge SHA and actual run; results in the Release acceptance record |
+| Real Feishu API | Independent smoke for this release; results in the Release acceptance record |
+| v5.0.5 ordinary packages / public installation | Check ordinary-wheel provenance, public-tag installation and restore; results in the Release acceptance record |
+| Annotated tag / assets | Check exact commit, release CI, three-platform packages and checksums; results in the Release acceptance record |
+| Actual Gateway/model / #451 tool-heavy environment | Unverified; original reporter environment not retested |
+| Desktop / Android visuals and clicks | Unverified, independently of API smoke |
+| iOS / new-user trials | Outside this release scope |
 
 V3.9.0 was released on 2026-07-11, and V3.9.1 was released on 2026-07-11. The V4.0.13 all-command lifecycle remains intact; V4.2.0 narrows only a private-chat bare `/update` into the stricter dedicated maintenance card.
 

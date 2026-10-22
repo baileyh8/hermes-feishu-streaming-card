@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.0.5 — 2026-10-22
+
+- Accept the reviewed admission source cohorts at cf4f3a7, rc.2-v0.22.3, v0.22.4 and pinned main 4e58c72. Verify full source/loaded topology and complete admission identity before accepting legitimate source reconstruction; preserve old source behavior, single-use completion and native fallback for unknown admission paths (#451, PR #452).
+- Verify readiness at the existing policy boundary before first card admission, including notice/interaction first events. Preserve already-pinned ordinary contexts, independent plugin owners, terminal ownership and failure behavior. Expose admission completion as a separate compatibility capability.
+- Add reviewed official config-writer families for those snapshots. Retain exact config-byte planning, prior families, drift rejection, PM generation wheel provenance and byte-for-byte recovery.
+- Include PR #448/#449 regression scope selection, complete duration-balanced shards and synchronized gates. Give upstream workers independent ordinary-wheel prefixes and measured timing weights to remove shared-runtime contention without dropping cases, platforms, required checks or the 25-minute timeout. Synchronize the changed-recheck test with actual diagnosis/publication before teardown; no runtime change.
+- Keep old d923/0ab compatibility baselines while pinning current stable/main independently. Preserve all earlier release history and credits.
+- Repairs and CI maintenance are authored by @baileyh8. Thanks to @coytus for #451 field evidence and @Lite-G for source analysis, credited separately from code authorship.
+
+See [Chinese release notes](docs/release-notes-v5.0.5.md) and [English release notes](docs/release-notes-v5.0.5.en.md). Exact release CI, Feishu API, package/public installation and asset acceptance are tracked separately; actual Gateway/model, reporter tool-heavy reproduction and desktop/Android visual/click acceptance remain unverified.
+
 ## v5.0.4 — 2026-10-20
 
 - Keep completion preview read-only so legacy and queued terminal payloads retain observed rates; reuse the frozen payload for exact Base staging and terminal transport retries. Reject changed observation bindings/call sites through the pinned v0.22.2 AST contract.
