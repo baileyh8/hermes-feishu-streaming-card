@@ -16,12 +16,29 @@ from hermes_feishu_card import cli
 from hermes_feishu_card.install import pm_dependency as pm
 
 
-@pytest.mark.skipif(not os.environ.get('HFC_UPSTREAM_PM_ROOT'), reason='pinned PM checkout not supplied')
-def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch):
-    upstream = Path(os.environ['HFC_UPSTREAM_PM_ROOT'])
+PM_ROOTS = {
+    "previous": ("HFC_UPSTREAM_PM_ROOT", "7bda2a3368024f7ae1c70cef16583e7c2c891674"),
+    "0224": ("HFC_CONFIG_WRITER_0224_ROOT", "4d04303818b61bf3aa09278af48356315515965b"),
+    "main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
+}
+
+
+@pytest.mark.parametrize("snapshot", PM_ROOTS)
+def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapshot):
+    variable, expected_head = PM_ROOTS[snapshot]
+    configured = os.environ.get(variable)
+    if not configured or not os.environ.get("HFC_TEST_WHEEL"):
+        message = "pinned PM source or ordinary wheel missing: " + variable
+        if os.environ.get("HFC_REQUIRE_PM_GENERATION") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
+    upstream = Path(configured)
     head = subprocess.run(['git', '-C', str(upstream), 'rev-parse', 'HEAD'],
                           check=True, text=True, capture_output=True, timeout=10).stdout.strip()
-    assert head == '7bda2a3368024f7ae1c70cef16583e7c2c891674'
+    assert head == expected_head
+    clean = subprocess.run(['git', '-C', str(upstream), 'status', '--porcelain'],
+                           check=True, text=True, capture_output=True, timeout=10)
+    assert not clean.stdout.strip(), 'pinned PM fixture must be clean'
     uv = shutil.which('uv')
     assert uv
     wheel = Path(os.environ['HFC_TEST_WHEEL'])
