@@ -2,6 +2,13 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
+## V5.0.5
+
+- #451 / #452：核验 cf4、rc.2、v0.22.4 与固定 main 的 admission 来源，允许同一 admission 的合法 source 重建，保留身份、代次、单次终局和原生回退边界。
+- 官方配置 writer 新增受检源码族，保留旧族、准确字节规划、漂移拒绝、PM A→B 普通 wheel 来源与逐字恢复。
+- #448 / #449 与 #452 后续：保留完整平台矩阵，按实际耗时分片；上游 worker 独占普通 wheel runtime，缺环境或缺报告继续阻断，保留 25 分钟超时。
+- v5.0.5 发布验收包括精确提交 CI、真实 Feishu API、普通包/公开安装、tag 与资产；实际结果见精确版本 [GitHub Release 验收记录](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.5)。真实 Gateway/model、报告者工具密集现场、桌面及 Android 视觉/点击未验证。iOS 与新用户试用不纳入本次范围。见[发布准备](docs/release-readiness.md)。
+
 ## V5.0.4
 
 - #441 / #442：legacy 保持唯一 producer，可选逐调用 rate；preview/正式消费、配置字节归属及未知 marker 拒绝保持边界。

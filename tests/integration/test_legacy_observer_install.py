@@ -188,7 +188,7 @@ def test_official_enable_legacy_install_repeat_doctor_exact_restore(official_run
     (home / "hfc-pm-tools.json").write_text(json.dumps({"uv": uv, "python": str(python), "project": str(project)}))
     from hermes_feishu_card.install import legacy_observer
     assert legacy_observer.available(root)
-    sources = json.loads((Path(__file__).parents[1] / "fixtures/hermes_upstream_sources.json").read_text())["latest_stable"]["sha256"]
+    sources = json.loads((Path(__file__).parents[1] / "fixtures/hermes_upstream_sources.json").read_text())["baseline_0222"]["sha256"]
     before = {name: (root / name).read_bytes() for name in sources}
     if migrate:
         _run(python, root, home, r'''

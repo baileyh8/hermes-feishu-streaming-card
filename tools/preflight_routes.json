@@ -6,7 +6,8 @@
       "tests/integration/test_server.py",
       "tests/unit/test_legacy_observed_rate.py",
       "tests/integration/test_session_authority_completion.py",
-      "tests/unit/test_admission_completion_state.py"
+      "tests/unit/test_admission_completion_state.py",
+      "tests/unit/test_admission_completion_detection.py"
     ],
     "render": [
       "tests/unit/test_render.py",
@@ -41,7 +42,8 @@
       "tests/unit/test_decomposed_patcher.py",
       "tests/unit/test_extracted_clarify_patcher.py",
       "tests/unit/test_legacy_observed_rate.py",
-      "tests/integration/test_session_authority_completion.py"
+      "tests/integration/test_session_authority_completion.py",
+      "tests/unit/test_admission_completion_detection.py"
     ],
     "process": [
       "tests/unit/test_process.py",

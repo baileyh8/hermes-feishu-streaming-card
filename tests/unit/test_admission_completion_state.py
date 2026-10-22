@@ -236,6 +236,82 @@ def test_full_module_compiler_keeps_import_symbol_table_contract():
     assert ac._shape(first) != ac._shape(altered)
 
 
+def test_native_source_copy_compares_every_declared_field_including_noncompare(monkeypatch):
+    import ast
+    from dataclasses import dataclass, field, fields, replace
+    import gzip
+    import json
+    from pathlib import Path
+    import sys
+
+    archive = Path(__file__).parents[1] / "fixtures/session_authority_0224.json.gz"
+    raw = json.loads(gzip.decompress(archive.read_bytes()))["files"][
+        "gateway/session.py"
+    ]
+    node = next(
+        n for n in ast.parse(raw).body
+        if isinstance(n, ast.ClassDef) and n.name == "SessionSource"
+    )
+    module = ModuleType("native_source_copy_port")
+    module.__dict__.update(dataclass=dataclass, field=field)
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    future = ast.ImportFrom(
+        module="__future__", names=[ast.alias(name="annotations")], level=0
+    )
+    tree = ast.Module(body=[future, node], type_ignores=[])
+    exec(
+        compile(ast.fix_missing_locations(tree), "native-source.py", "exec"),
+        module.__dict__,
+    )
+    source = module.SessionSource(platform="feishu", chat_id="chat", user_id="sender")
+    assert ac._same_source(source, replace(source))
+    source._hfc_turn_id = "display-only-turn"
+    assert ac._same_source(source, replace(source))
+    for declared in fields(source):
+        copied = replace(source)
+        current = getattr(copied, declared.name)
+        setattr(
+            copied, declared.name,
+            not current if isinstance(current, bool) else "changed",
+        )
+        assert not ac._same_source(source, copied), declared.name
+    copied = replace(source, profile_route_rejected=True)
+    assert source == copied  # Native dataclass eq explicitly excludes this field.
+    assert not ac._same_source(source, copied)
+    source.is_bot = True
+    copied = replace(source, is_bot=1)
+    assert source == copied
+    assert not ac._same_source(source, copied)
+    assert not ac._same_source(source, SimpleNamespace(**source.__dict__))
+
+
+@pytest.mark.parametrize("disposition", ["card", "native"])
+def test_admission_readiness_never_rewrites_existing_turn_policy(
+    monkeypatch, disposition
+):
+    from hermes_feishu_card import hook_runtime as h
+    event = Box(
+        source=Box(platform="feishu", chat_id="chat", user_id="sender"),
+        message_id="message",
+    )
+    values = {"event": event, "source": event.source}
+    config = Box(event_url="http://127.0.0.1:1/events", timeout_seconds=0.2)
+    h.reset_runtime_state()
+    try:
+        identity = h._policy_identity(config, values, "answer.delta")
+        assert identity is not None
+        h._pin_policy_disposition(identity, disposition)
+        def unexpected(*args):
+            raise AssertionError("existing policy must remain pinned")
+        monkeypatch.setattr(h, "admission_completion_mode", unexpected)
+        monkeypatch.setattr(h, "_fetch_delivery_policy_sync", unexpected)
+        assert h._policy_gate_sync(config, values, "answer.delta").card is (
+            disposition == "card"
+        )
+    finally:
+        h.reset_runtime_state()
+
+
 def test_live_group_route_keeps_first_sender_but_row_owns_current_sender(state):
     state.source.user_id = "ou_first-group-sender"
     assert ac._authority_current(state.offer, started=False)

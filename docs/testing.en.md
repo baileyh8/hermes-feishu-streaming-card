@@ -30,6 +30,30 @@ If test dependencies are missing, run `python -m pip install -e ".[test]"` in yo
 
 ## Unit Tests
 
+The pinned upstream matrix was refreshed on 2026-10-22 to Hermes `v0.22.4`
+(`4d04303818b61bf3aa09278af48356315515965b`) and main
+(`4e58c721c8cf9b51c46636ea84ea6a5cb540880a`). Issue #451 also retains
+`cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe` and `rc.2-v0.22.3`
+(`f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68`) as independent inputs.
+The source manifest binds every relevant file hash, including the new persistence,
+prepare and hygiene fragments. CI runs install, repeat install, diagnosis and
+byte-for-byte restore against these sources.
+
+The earlier `v0.22.2` (`d923a5eb487a17c0a68801bba9ef0f56c81040a8`)
+and main (`0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3`) remain
+`baseline_0222` and `baseline_main_0ab`. Legacy observer, writer and rate
+contracts continue using those inputs when latest changes. The verified channel
+pin expression accepting `inherit_channel_pin` remains supported; rebinding,
+missing tuples and unknown inheritance conditions still fail closed.
+
+Ordinary-wheel child processes compare exact configuration bytes with the official
+writer. PM A-to-B generation tests cover the earlier `7bda2a`, v0.22.4 and new
+main, checking effective imports from `site-packages`.
+`HFC_REQUIRE_CONFIG_WRITER_CONTRACT=1` and `HFC_REQUIRE_PM_GENERATION=1`
+make missing required fixtures, wheel or interpreter fail. Only named fixture
+variables reach isolated workers. These source and child-process checks do not
+establish actual Gateway/model execution, Feishu API or client acceptance.
+
 ```bash
 python3 -m pytest tests/unit -q
 ```

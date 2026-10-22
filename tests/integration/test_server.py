@@ -4985,6 +4985,30 @@ async def test_changed_recheck_creates_one_fresh_successor_and_moves_delivery_on
             report_marker="report-b", recovery_fingerprint="recovery-b"
         ), detection),
     )
+    recheck_started = asyncio.Event()
+    release_recheck = asyncio.Event()
+    recheck_published = asyncio.Event()
+    original_report = sidecar_server._bounded_operations_report
+    report_calls = 0
+
+    async def controlled_report(*args, **kwargs):
+        nonlocal report_calls
+        report_calls += 1
+        if report_calls > 1:
+            recheck_started.set()
+            await release_recheck.wait()
+        return await original_report(*args, **kwargs)
+
+    original_publish = sidecar_server._publish_operations_card
+
+    async def track_publish(app, report, operation):
+        updated = await original_publish(app, report, operation)
+        if updated and operation.state == "diagnosed":
+            recheck_published.set()
+        return updated
+
+    monkeypatch.setattr(sidecar_server, "_bounded_operations_report", controlled_report)
+    monkeypatch.setattr(sidecar_server, "_publish_operations_card", track_publish)
     app = create_app(feishu_client)
     test_client = TestClient(TestServer(app))
     await test_client.start_server()
@@ -5009,7 +5033,28 @@ async def test_changed_recheck_creates_one_fresh_successor_and_moves_delivery_on
         second = await test_client.post("/card/actions", json=payload)
         first_body = await first.json()
         second_body = await second.json()
+        await _wait_until(recheck_started.is_set)
+        store = app[sidecar_server.OPERATIONS_STORE_KEY]
+        preparing = store.current_successor(first_body["operation_id"])
+        assert preparing is not None and preparing.state == "preparing"
+        assert second_body["operation_id"] == first_body["operation_id"]
+        assert preparing.recovery_fingerprint == "recovery-a"
+        deliveries = app[sidecar_server.OPERATIONS_DELIVERIES_KEY]
+        assert original_id not in deliveries
+        assert set(deliveries) == {preparing.operation_id}
+
+        def recheck_completed():
+            current = store.current_successor(first_body["operation_id"])
+            return (
+                current is not None
+                and current.state == "diagnosed"
+                and recheck_published.is_set()
+            )
+
+        release_recheck.set()
+        await _wait_until(recheck_completed)
     finally:
+        release_recheck.set()
         await test_client.close()
 
     assert first_body["ok"] is True
@@ -5020,6 +5065,7 @@ async def test_changed_recheck_creates_one_fresh_successor_and_moves_delivery_on
     assert successor is not None
     assert store.current_successor(second_body["operation_id"]) is successor
     assert successor.recovery_fingerprint == "recovery-b"
+    assert report_calls == 2
     assert original_id not in app[sidecar_server.OPERATIONS_DELIVERIES_KEY]
     assert set(app[sidecar_server.OPERATIONS_DELIVERIES_KEY]) == {
         successor.operation_id

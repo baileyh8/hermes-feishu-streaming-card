@@ -23,10 +23,15 @@ ROOTS = {
     "fixed": ("HFC_FIXED_TAG_SOURCE_ROOT", "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"),
     "pm": ("HFC_LEGACY_PLUGIN_SOURCE_ROOT", "d923a5eb487a17c0a68801bba9ef0f56c81040a8"),
     "pm-main": (
-        "HFC_UPSTREAM_LATEST_MAIN_ROOT",
+        "HFC_CONFIG_WRITER_PM_MAIN_ROOT",
         "0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3",
     ),
+    "reported-cf4": ("HFC_CONFIG_WRITER_CF4_ROOT", "cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe"),
+    "rc2": ("HFC_CONFIG_WRITER_RC2_ROOT", "f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68"),
+    "pm-0224": ("HFC_CONFIG_WRITER_0224_ROOT", "4d04303818b61bf3aa09278af48356315515965b"),
+    "pm-main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
+EXPECTED_FAMILIES = {"reported-cf4": "pm-0223", "rc2": "pm-0223"}
 
 
 def _run_with_failure_diagnostic(run, *args, **kwargs):
@@ -118,14 +123,19 @@ def test_official_failure_diagnostic_redacts_real_child_output(capsys, missing):
     }
 
 
-@pytest.mark.parametrize("family", ROOTS)
-@pytest.mark.parametrize("selection", ["fresh", "already", "disabled-canonical"])
+@pytest.mark.parametrize("family,selection,failure", [
+    (family, selection, None)
+    for family in ROOTS
+    for selection in ("fresh", "already", "disabled-canonical", "explicit-values")
+] + [("pm-0224", "fresh", outcome) for outcome in ("nonzero", "exception", "journal")])
 def test_private_plan_equals_real_official_writer_and_exact_restore(
     official_runtime,
     official_enable_diagnostics,
     tmp_path,
     family,
     selection,
+    failure,
+    monkeypatch,
 ):
     _, python, prefix, path_file = official_runtime
     variable, expected_head = ROOTS[family]
@@ -167,6 +177,13 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
         f"  disabled: {disabled}\r\n  isolation: in_process\r\n"
         'agent:\r\n  max_turns: 100\r\nother: "keep"\r\n_config_version: 50\r\n'
     ).encode()
+    if selection == "explicit-values":
+        original = original.replace(
+            b"  isolation: in_process\r\n",
+            b"  isolation: in_process\r\n  entries:\r\n"
+            b"    hermes-feishu-card:\r\n      allow_tool_override: true\r\n"
+            b"    keep-plugin:\r\n      enabled: false\r\n      scopes: []\r\n",
+        )
     (home / "config.yaml").write_bytes(original)
     if family != "fixed":
         uv = shutil.which("uv")
@@ -206,9 +223,30 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
         desired=desired,
         enabled_before=enabled_before,
     )
-    assert plan.family == family
+    assert plan.family == EXPECTED_FAMILIES.get(family, family)
     assert (home / "config.yaml").read_bytes() == original
     assert not list(preimage.state_dir.glob("hfc-config-plan-*"))
+    if failure is not None:
+        with monkeypatch.context() as fault:
+            if failure == "journal":
+                def fail_journal(*args, **kwargs):
+                    raise OSError("injected private journal failure")
+                fault.setattr(plugin, "_rewrite_private_journal", fail_journal)
+                expected_error = OSError
+            else:
+                official = plugin._run_official_enable
+                def fail_after_real_enable(candidate):
+                    assert official(candidate) == 0
+                    assert candidate.config_path.read_bytes() == plan.postimage
+                    if failure == "exception":
+                        raise OSError("injected failure after official write")
+                    return 1
+                fault.setattr(plugin, "_run_official_enable", fail_after_real_enable)
+                expected_error = plugin.PluginConfigRefused
+            with pytest.raises(expected_error):
+                plugin.enable_plugin(binding, preimage)
+        assert (home / "config.yaml").read_bytes() == original
+        assert preimage.backup_path.read_bytes() == original
     ownership = plugin.enable_plugin(binding, preimage)
     assert (home / "config.yaml").read_bytes() == plan.postimage
     assert (
@@ -223,3 +261,45 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     shutil.rmtree(root)
     if family != "fixed":
         shutil.rmtree(home / "pm-project")
+
+
+@pytest.mark.parametrize("snapshot", ["reported-cf4", "rc2", "pm-0224", "pm-main-4e58"])
+@pytest.mark.parametrize("changed", [
+    "hermes_cli/plugins_cmd.py", "hermes_cli/config_worker_save.py",
+    "hermes_cli/config_defaults.py", "hermes_cli/plugins_admission.py",
+    "pm/publication.py", "utils.py", "agent/safe_worker_policy.py",
+    "hermes_cli/moa_config.py",
+])
+def test_new_writer_drift_refuses_before_child_and_preserves_config(
+    tmp_path, monkeypatch, snapshot, changed
+):
+    variable, _ = ROOTS[snapshot]
+    configured = os.environ.get(variable)
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: " + variable)
+        pytest.skip("pinned writer source missing: " + variable)
+    source = Path(configured)
+    family = EXPECTED_FAMILIES.get(snapshot, snapshot)
+    root, home, state = tmp_path / "source", tmp_path / "home", tmp_path / "state"
+    home.mkdir()
+    state.mkdir()
+    for name in plugin_config_bytes.FAMILIES[family]:
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / name, target)
+    plugin_config_bytes.verify_family(root, family)
+    target = root / changed
+    target.write_bytes(target.read_bytes() + b"\n# unverified local writer change\n")
+    original = b"# original bytes\r\nplugins: {}\r\n"
+    (home / "config.yaml").write_bytes(original)
+    def forbidden(*args, **kwargs):
+        pytest.fail("drifted writer must not start any child")
+    monkeypatch.setattr(plugin_config_bytes.subprocess, "run", forbidden)
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused, match="contract is unknown"):
+        plugin_config_bytes.plan_enabled_bytes(
+            root=root, python=Path(sys.executable), home=home, state_dir=state,
+            before=original, desired={}, enabled_before=False,
+        )
+    assert (home / "config.yaml").read_bytes() == original
+    assert not list(state.iterdir())

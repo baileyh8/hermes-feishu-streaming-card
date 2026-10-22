@@ -1,4 +1,4 @@
-"""Precompute exact official-enable bytes using two pinned upstream writer families.
+"""Precompute exact official-enable bytes using pinned upstream writer families.
 
 This is a private-copy writer adapter, not a YAML merge implementation. Unknown
 source, bindings, serializer paths or side effects refuse before real enable.
@@ -62,6 +62,63 @@ FAMILIES: dict[str, dict[str, str]] = {
         "hermes_cli/left_core_migration.py": "78ae5dd2b5320a8402d5bb7f2bf29dfc7b2f3291d363ca425d77cafaccf972bb",
         "hermes_cli/config_worker_save.py": "d998581d802deb67eeef32d3fcbd7696f9d4a7a6c83f2bc83d6c8881c5d7dcf2",
     },
+}
+
+
+# Reviewed newer command topology: cmd_enable -> _activate_key ->
+# plugins_admission/PM PluginSelection, then _enable_consent -> entry flag ->
+# config.save_config -> config_worker_save -> utils round-trip serializer.
+# HFC declares no capabilities or toolset; activation cannot add another config
+# branch. Keep all prior families unchanged: the newer defaults and worker-save
+# implementation are independent source contracts, even where output is equal.
+# cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe and
+# f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68 share pm-0223.
+# 4d04303818b61bf3aa09278af48356315515965b: pm-0224.
+# 4e58c721c8cf9b51c46636ea84ea6a5cb540880a: pm-main-4e58.
+_PM_0224_WRITER = {
+    'hermes_cli/plugins_cmd.py': 'ee3a38990478ca1e69666a126648be1d91bbe02891f5a8c405c543bfee30462d',
+    'hermes_cli/config.py': '68239827c32c60114cc01d03a2c29f872c91d2114a3f0c1d1094de49980d0d2e',
+    'utils.py': '9c4751dc9fbcbfe7e16d9e0cc5fb25566517c4927d2dc84061d4cac993a98445',
+    'hermes_yaml.py': 'f97f0f08b6474c52434d0cffaa7ba0ecaa5b9279c4abcbb35c11d15f9c89db76',
+    'hermes_cli/plugins_cmd_capabilities.py': '1322530460936f794e0b36cba11bafc87f592b7b0a9d713bb22bca9eb06d35f6',
+    'hermes_cli/plugin_capabilities.py': '35cbdea310ceeb69829693f5077e30eafc739ade1923fc88fc9a06c66e56ab3e',
+    'providers/__init__.py': '89cb97d8fcb0ddcf97e47709d478bb49c959bb38e84dcfbe6a4f64ba58d44e5a',
+    'hermes_cli/version_info.py': '2a422bbd2b32691d871b4fe550cd687be0bbb49989a76fedda8c00432d4944a9',
+    'pm/publication.py': '4f707e2a2d927c7e96a0327dadfe8af80c811dc288b7d992d2bc683e17860c2b',
+    'pm/workspace.py': 'a1a69386b2b7cc4eb2fd06d2f2c39a520913cadfee92fa282f1b25de0c1a58a2',
+    'pm/plugins_state.py': 'e4300eac3c00155b85cf6aba3c7b40faea05c67dde99385ff254a1345bebb5af',
+    'hermes_cli/left_core_migration.py': '78ae5dd2b5320a8402d5bb7f2bf29dfc7b2f3291d363ca425d77cafaccf972bb',
+    'hermes_cli/config_worker_save.py': 'a12df826b8d5b10c978ccaf45d59f11513852764b10eb07ace3d5a314c9a4f9b',
+    'hermes_cli/plugins_admission.py': '57426311fb5a6dce6b785f3ca5bd15823f394bde7480212dc5bbc1b30278efbe',
+    'pm/plugin_inputs.py': '5804dec5716ef7763aef37dab96183aca236500254cb574c0f591f167db430e2',
+    'hermes_cli/config_defaults.py': '93c989bcd0a4c3aff116ad2534375ece02bce4b79b9e9166dfacf834f09bc63b',
+    'hermes_cli/config_providers.py': '9fb0cab242c7d76c878a9c1fec238c8247567b1d027a71f34a326197268cd075',
+    'hermes_cli/config_read_errors.py': '1a623d28712f7f264af2bed8c132f642f7e96a67def3c6380fc1df316d91de7b',
+    'hermes_cli/config_version_stamp.py': '4cf5c3b74f429424fd1284a31de586669518c783d6cc0889562044df53d7046d',
+    'hermes_cli/managed_scope.py': 'd048bb14fae4517d9c0dc90255c9b495fdba3bbf5311a50aa5108b43c724874d',
+    'hermes_constants.py': '870ad9935a62968636d6a14d160c0269dfbefd8091ab3cb71be78b30bef6360f',
+    'hermes_cli/route_identity.py': '26030db2efe4c4566a9276c1aaf5b31ed67d0e6734f0b2b53985d612d13c36d2',
+    'hermes_cli/relay_plugin_cutover.py': '2e52dd1aab1e2dabe8ccac9e7cc58d15d4813cc1ee494884b1c3b30e7329863a',
+    'hermes_cli/plugins_activation.py': '72f6bc206eadec58c922156cd35a8b8dd13eb0d1da9bcca6c61e1230b06d4349',
+    'agent/safe_worker_policy.py': 'f0759f0868f402d5aff6007303ad503e3d3d92999ed01693037bc8f07b4a2738',
+    'agent/secret_scope.py': 'dce64ce99a6966836108e202e1db41c4be97bd3dad41a79e357f39b8d7e90dec',
+    'hermes_cli/config_defaults_env.py': '1fb00b0930722327b35d37312894decfca0a9f9db2e55d5391cf0305f5cd3829',
+    'hermes_cli/moa_config.py': 'e75d7d6f1c4f56c5add9c0b9055596e0d95c769fa58364e5f2e364d67780c0df',
+    'hermes_cli/config_home.py': '4d196f99c7e64518283df4d49baa9a46f47727aaf9b9c54b96c56734e6528dae',
+    'hermes_cli/config_backups.py': 'a6bf35432765b3281bc19f0d400b81b4fe1f34a0b83e9c7cebde0aa7946dc516',
+    'hermes_dir_acl.py': 'd978e1fbddffd05f4506e9c6d80a279ac9d5fea799d9a3174b260a7ff02bb50e',
+    'hermes_cli/observability/shared_metrics_disabled.py': '35ea0f819ececf5471795a9af3124f14e0d6316b6683ef97823167857e2de663',
+    'hermes_cli/toolset_validation.py': '417def17fc7bbed252b388840d85519474250c6d8c92fd071463035c2e830df4',
+
+}
+FAMILIES["pm-0223"] = {
+    **_PM_0224_WRITER,
+    "hermes_cli/config_defaults.py": "615284fcd701fa88d684852a365cc06755e9e348576dd00f83a258e8addee316",
+}
+FAMILIES["pm-0224"] = dict(_PM_0224_WRITER)
+FAMILIES["pm-main-4e58"] = {
+    **_PM_0224_WRITER,
+    "hermes_cli/left_core_migration.py": "a1a67f61f5d264d5cf935f8acb2a14967ad06f4efca3ce3441f4c676950b25dc",
 }
 
 

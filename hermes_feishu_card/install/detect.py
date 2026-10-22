@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from hashlib import sha256
 from pathlib import Path
 import re
+import stat
 import subprocess
 
 from . import patcher
@@ -271,6 +273,14 @@ def detect_hermes(root: str | Path) -> HermesDetection:
         capability_locations = {key: ((cron_py.relative_to(hermes_root).as_posix(),) if key == "cron_delivery" and _find_deliver_result_in_contents(cron_contents) else ("gateway/run.py",)) for key, found in capabilities.items() if found}
     capability_locations["exact_base_delivery"] = ("gateway/platforms/base.py",) if exact_base_delivery else ()
     capabilities["exact_base_delivery"] = exact_base_delivery
+    admission = _detect_admission_completion(hermes_root, base_contents)
+    if admission is not None:
+        admission_ok, admission_reason = admission
+        capabilities["admission_completion"] = admission_ok
+        capability_locations["admission_completion"] = (
+            "gateway/session_ingress.py", "gateway/session_authority.py",
+            "gateway/platforms/base.py",
+        ) if admission_ok else ()
     core_ok = all(capabilities.get(name, False) for name in CORE_CAPABILITIES)
     optional_ok = all(capabilities.get(name, False) for name in OPTIONAL_CAPABILITIES)
     if core_ok and optional_ok:
@@ -279,6 +289,8 @@ def detect_hermes(root: str | Path) -> HermesDetection:
         compatibility = "partial"
     else:
         compatibility = "unsupported"
+    if admission is not None and not admission[0] and core_ok:
+        compatibility = "partial"
     if not core_ok:
         return result(
             False,
@@ -325,7 +337,8 @@ def detect_hermes(root: str | Path) -> HermesDetection:
 
     return result(
         True,
-        "supported",
+        ("supported; admission completion unavailable: " + admission_reason
+         if admission is not None and not admission[0] else "supported"),
         hook_strategy=hook_strategy,
         compatibility=compatibility,
         capabilities=capabilities,
@@ -334,6 +347,43 @@ def detect_hermes(root: str | Path) -> HermesDetection:
             "exact_base_delivery" if exact_base_delivery else ""
         ),
     )
+
+
+def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | None:
+    """Source capability only; the runtime separately verifies actual loaded code."""
+    from ..admission_completion import SOURCE_COHORTS, SOURCE_HASHES
+    from . import admission_extraction
+
+    hashes = {}
+    missing = 0
+    for name in SOURCE_HASHES:
+        path = root / (name.replace(".", "/") + ".py")
+        try:
+            before = path.lstat()
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 256 * 1024:
+                return False, "unsupported-source"
+            raw = path.read_bytes()
+            after = path.lstat()
+            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+            ):
+                return False, "unsupported-source"
+            hashes[name] = sha256(raw).hexdigest()
+        except FileNotFoundError:
+            missing += 1
+        except OSError:
+            return False, "unsupported-source"
+    if missing == len(SOURCE_HASHES):
+        return None  # Old Hermes has no admission path requiring this capability.
+    if hashes not in SOURCE_COHORTS:
+        return False, "unsupported-source"
+    try:
+        seam = admission_extraction.apply(base)
+        if admission_extraction.BEGIN not in seam:
+            return False, "missing-or-unverified-extraction-seam"
+    except (SyntaxError, ValueError):
+        return False, "missing-or-unverified-extraction-seam"
+    return True, "verified-source-cohort"
 
 
 def _has_exact_delivery_ledger_signals(contents: str) -> bool:

@@ -21,7 +21,7 @@ def test_current_release_markers_are_consistent():
     compose = (ROOT / "docker-compose.example.yml").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
 
-    assert expected == "5.0.4"
+    assert expected == "5.0.5"
     assert f'version = "{expected}"' in pyproject
     assert f"V{expected} sidecar configuration" in config.splitlines()[0]
     assert f'HFC_VERSION: "${{HFC_VERSION:-v{expected}}}"' in compose

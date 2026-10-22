@@ -2,12 +2,28 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.4`，是否已发行以 GitHub Release 的标签和资产为准。原生表格默认关闭，超长单元格整表回退 Markdown；无法拆分的 Markdown 表格保留完整原文，由共享容量与完整内容交接门禁处理。
+本分支目标版本为 `5.0.5`，是否已发行以 GitHub Release 的标签和资产为准。原生表格默认关闭，超长单元格整表回退 Markdown；无法拆分的 Markdown 表格保留完整原文，由共享容量与完整内容交接门禁处理。
 
-本轮整合 #442 的 legacy 生成速率与受控配置恢复、#444 的精确压缩提示撤回、#445 的 Session Authority 跨 Task 完成卡。组合候选的完整自动化、跨平台 CI、普通 wheel、真实 Feishu API、公开安装与资产逐项核验；真实 Gateway/model、桌面及 Android 视觉/点击未验证，iOS 与新用户试用不纳入本次范围。
+本轮包含 #448/#449 的 CI 改进、#451 / PR #452 的新 Hermes 兼容修复及上游 worker 普通 wheel 环境隔离，保留旧来源和完整矩阵。组合候选的完整自动化、跨平台 CI、普通 wheel、真实 Feishu API、公开安装与资产逐项核验；真实 Gateway/model、桌面及 Android 视觉/点击未验证，iOS 与新用户试用不纳入本次范围。
 
-完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v5.0.4.md)和[本轮验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
+完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v5.0.5.md)和[任务卡片历史验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
 
+
+## V5.0.5 本轮验收记录
+
+以下列出本轮验收项；实际结果见精确版本 [v5.0.5 GitHub Release 验收记录](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.5)。10-03 的任务卡片视觉历史不代表本轮通过。
+
+| 字段 | 状态 |
+| --- | --- |
+| 版本与文档定向检查 | `129 passed`（文档、metadata、release gate 与 CI 契约）；`v5.0.5 --metadata-only` 通过；不是完整 CI |
+| 修复候选完整 CI | `69cbf66` 两组上游各 117 项通过；既有 recheck 异步断言失败，不记为完整通过。修正版最终结果见 Release 验收记录 |
+| v5.0.5 精确提交 CI / CodeQL | 核对候选、合并 SHA 与实际 run；实际结果见 Release 验收记录 |
+| 真实 Feishu API | 本轮独立 smoke；实际结果见 Release 验收记录 |
+| v5.0.5 普通包与公开安装 | 核对普通 wheel 来源、公开 tag 安装与恢复；实际结果见 Release 验收记录 |
+| Annotated tag / 资产 | 核对精确 commit、release CI、三平台安装包与 checksums；实际结果见 Release 验收记录 |
+| 真实 Gateway/model / #451 工具密集现场 | 未验证；报告者原场景未复测 |
+| 桌面及 Android 视觉/实际点击 | 未验证，独立于 API smoke |
+| iOS / 新用户试用 | 本轮范围外 |
 
 V3.9.0 和 V3.9.1 已于 2026-07-11 发布。V4.0.13 的通用命令链仍保持“重启前反馈进入命令卡”的历史契约；V4.2.0 只把私聊裸 `/update` 收束到更严格的专用维护卡。
 

@@ -166,6 +166,19 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
     assert "ruamel.yaml" in before_source
     pm_step = next(step for step in steps if "test_pm_generation.py" in step.get("run", ""))
     assert pm_step["env"]["HFC_UPSTREAM_PM_ROOT"] == "${{ github.workspace }}/.upstream/issue428_7bda2a"
+    assert pm_step["env"]["HFC_REQUIRE_PM_GENERATION"] == "1"
+    assert source_step["env"]["HFC_LEGACY_PLUGIN_SOURCE_ROOT"] == "${{ github.workspace }}/.upstream/baseline_0222"
+    for family, baseline in {
+        "PM_MAIN": "baseline_main_0ab", "CF4": "issue451_cf4", "RC2": "issue451_rc2",
+        "0224": "latest_stable", "MAIN_4E58": "latest_main",
+    }.items():
+        assert source_step["env"][f"HFC_CONFIG_WRITER_{family}_ROOT"] == (
+            "${{ github.workspace }}/.upstream/" + baseline
+        )
+    assert sources["latest_stable"]["commit"] == "4d04303818b61bf3aa09278af48356315515965b"
+    assert sources["latest_main"]["commit"] == "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"
+    assert sources["baseline_0222"]["commit"] == "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
+    assert sources["baseline_main_0ab"]["commit"] == "0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3"
     preparation = "\n".join(step.get("run", "") for step in steps[:steps.index(pm_step)])
     assert 'HFC_TEST_WHEEL=' in preparation
     assert "pip wheel --no-deps --wheel-dir" in preparation
