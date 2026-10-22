@@ -1174,21 +1174,29 @@ def _policy_gate_sync(
         with query_lock:
             disposition = _pinned_policy_disposition(identity)
             if disposition is None:
-                cached = _cached_policy_disposition(identity)
-                if cached is None:
-                    payload = _policy_payload(identity)
-                    try:
-                        fetched = _fetch_delivery_policy_sync(
-                            f"{_summary_base_url(config.event_url)}/delivery/policy",
-                            payload,
-                            min(config.timeout_seconds, POLICY_QUERY_TIMEOUT_SECONDS),
-                        )
-                    except Exception:
-                        fetched = None
-                    disposition, ttl_seconds = _normalize_policy_response(fetched)
-                    _cache_policy_disposition(identity, disposition, ttl_seconds)
+                if (
+                    event_name in SUPPORTED_RUNTIME_EVENTS
+                    and admission_completion_mode(local_vars) == "native"
+                ):
+                    # Refuse before any card event claims this turn. The
+                    # existing turn policy owns this decision, never the chat.
+                    disposition = "native"
                 else:
-                    disposition = cached
+                    cached = _cached_policy_disposition(identity)
+                    if cached is None:
+                        payload = _policy_payload(identity)
+                        try:
+                            fetched = _fetch_delivery_policy_sync(
+                                f"{_summary_base_url(config.event_url)}/delivery/policy",
+                                payload,
+                                min(config.timeout_seconds, POLICY_QUERY_TIMEOUT_SECONDS),
+                            )
+                        except Exception:
+                            fetched = None
+                        disposition, ttl_seconds = _normalize_policy_response(fetched)
+                        _cache_policy_disposition(identity, disposition, ttl_seconds)
+                    else:
+                        disposition = cached
                 _pin_policy_disposition(identity, disposition)
     result = _PolicyGateResult(disposition == "card", identity)
     if not result.card:

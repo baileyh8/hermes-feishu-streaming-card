@@ -24,11 +24,12 @@ from hermes_feishu_card.install.decomposed_ownership import render
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/session_authority_5fc490e.json"
+NEW_FIXTURE = FIXTURE.with_name("session_authority_0224.json")
 
 
-def load_sources():
-    manifest = json.loads(FIXTURE.read_text())
-    compressed = FIXTURE.with_suffix(".json.gz").read_bytes()
+def load_sources(fixture=FIXTURE):
+    manifest = json.loads(fixture.read_text())
+    compressed = fixture.with_suffix(".json.gz").read_bytes()
     assert hashlib.sha256(compressed).hexdigest() == manifest["archive_sha256"]
     files = json.loads(gzip.decompress(compressed))["files"]
     assert {
@@ -105,8 +106,8 @@ async def noop(*args, **kwargs):
     pass
 
 
-@pytest.fixture
-def harness(tmp_path, monkeypatch):
+@pytest.fixture(params=[FIXTURE, NEW_FIXTURE], ids=["5fc", "0224"])
+def harness(tmp_path, monkeypatch, request):
     from hermes_feishu_card import admission_completion as ac
 
     private_home = tmp_path / "private-home"
@@ -114,7 +115,7 @@ def harness(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(private_home))
     monkeypatch.setenv("HERMES_HOME", str(private_home / ".hermes"))
     monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(tmp_path / "sidecar-state"))
-    files = load_sources()
+    files = load_sources(request.param)
     for path, raw in files.items():
         dest = tmp_path / path
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +139,11 @@ def harness(tmp_path, monkeypatch):
         tts=False,
         tts_calls=[],
         api_calls=1,
+        rebuild_source=False,
+        mutate_source=lambda source: None,
+        before_response=noop,
         real_post=h._post_json_ordered_response,
+        real_gate=h._policy_gate_async,
     )
     h.reset_runtime_state()
     monkeypatch.setattr(
@@ -296,10 +301,15 @@ def harness(tmp_path, monkeypatch):
         _clear_durable_active_turn = noop
 
         async def _handle_message(self, event):
+            source = event.source
+            if result.rebuild_source:
+                event.source = replace(source)
+                result.mutate_source(event.source)
+            await result.before_response(self, event, source)
             reply = await globs["_hmwa_deliver_turn_response"](
                 self,
                 event,
-                event.source,
+                source,
                 SimpleNamespace(session_id="physical-session"),
                 "route-key",
                 101,
@@ -555,6 +565,76 @@ async def deliver(harness, *, waiter=False, event=None):
 
 
 @pytest.mark.parametrize("waiter", [True, False])
+async def test_reconstructed_source_keeps_full_admission_identity(harness, waiter):
+    harness.rebuild_source = True
+    await deliver(harness, waiter=waiter)
+    assert harness.staged == [True]
+    assert len(harness.posts) == 1
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("field", ["chat_id", "thread_id", "user_id", "profile_id", "chat_type"])
+async def test_reconstructed_source_field_change_cannot_claim_completion(harness, field):
+    harness.rebuild_source = True
+    harness.mutate_source = lambda source: setattr(source, field, "different")
+    await deliver(harness)
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("failure", ["source", "loaded", "seam"])
+async def test_unknown_admission_is_native_before_first_card_event(harness, monkeypatch, failure):
+    if failure == "source":
+        Path(harness.ingress.__file__).write_text("# unsupported source")
+    elif failure == "loaded":
+        # A helper drift leaves execution usable but must fail the loaded gate.
+        harness.ingress.deliver_settled = noop
+    else:
+        harness.adapter._extract_response_content = noop
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    queries = []
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: queries.append(a))
+
+    async def started(runner, event, source):
+        assert not await h.emit_from_hermes_locals_async(
+            {"self": runner, "event": event, "source": source}, "message.started"
+        )
+    harness.before_response = started
+    if failure in {"loaded", "seam"}:
+        # Verify the pre-admission decision without executing the deliberately
+        # broken delivery/extractor port afterwards.
+        async def stop(runner, event, source):
+            await started(runner, event, source)
+            raise asyncio.CancelledError
+        harness.before_response = stop
+        with pytest.raises(asyncio.CancelledError):
+            await deliver(harness)
+    else:
+        await deliver(harness)
+        assert harness.native == ["complete answer"]
+    assert harness.posts == [] and queries == []
+
+
+@pytest.mark.parametrize("first_event", ["system.notice", "interaction.requested"])
+async def test_unknown_admission_notice_or_interaction_cannot_pin_card_first(
+    harness, monkeypatch, first_event
+):
+    Path(harness.ingress.__file__).write_text("# unsupported source")
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    queries = []
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: queries.append(a))
+    async def before(runner, event, source):
+        values = {"self": runner, "event": event, "source": source}
+        config = h.load_runtime_config()
+        assert not (await harness.real_gate(config, values, first_event)).card
+        assert not await h.emit_from_hermes_locals_async(values, "message.started")
+    harness.before_response = before
+    await deliver(harness)
+    assert harness.posts == [] and queries == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("waiter", [True, False])
 @pytest.mark.parametrize("kind", ["media", "images", "files"])
 async def test_native_actual_extraction_attachment_only_completes_without_text_ack(
     harness, waiter, kind
@@ -642,6 +722,53 @@ async def test_duplicate_and_late_original_delivery_do_not_replay_card(harness):
     assert h._exact_completion_stage_for_current_task() is None
 
 
+async def test_two_turns_and_cancelled_turn_do_not_reuse_previous_completion(harness):
+    await deliver(harness)
+    async def cancel(*args):
+        raise asyncio.CancelledError
+    harness.before_response = cancel
+    with pytest.raises(asyncio.CancelledError):
+        await deliver(harness, event=Event(message_id="ingress-cancelled"))
+    harness.before_response = noop
+    harness.body = "next answer"
+    await deliver(harness, waiter=True, event=Event(message_id="ingress-next"))
+    assert [(p["turn_id"], p["data"]["answer"]) for p in harness.posts] == [
+        ("ingress-a", "complete answer"), ("ingress-next", "next answer")
+    ]
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("waiter", [True, False])
+async def test_candidate_multi_api_and_synthetic_tool_events_finish_once(harness, waiter):
+    """A candidate scenario; does not reproduce the reporter's real tool failure."""
+    harness.api_calls = 3
+    async def tools(runner, event, source):
+        for phase in ("running", "completed"):
+            assert await h.emit_from_hermes_locals_async({
+                "self": runner, "event": event, "source": source,
+                "tool_name": "synthetic_tool", "tool_call_id": "synthetic-call",
+                "tool_status": phase,
+            }, "tool.updated")
+    harness.before_response = tools
+    await deliver(harness, waiter=waiter)
+    assert [p["event"] for p in harness.posts] == [
+        "tool.updated", "tool.updated", "message.completed"
+    ]
+    assert harness.native == []
+    assert harness.staged == [True]
+
+
+def test_mixed_known_source_files_are_not_a_supported_cohort(harness):
+    from hermes_feishu_card import admission_completion as ac
+    current = Path(sys.modules["gateway.session_authority"].__file__)
+    # Choose the opposite source family using the current file's digest.
+    old = hashlib.sha256(current.read_bytes()).hexdigest() == ac.SOURCE_HASHES["gateway.session_authority"]
+    files = load_sources(NEW_FIXTURE if old else FIXTURE)
+    current.write_text(files["gateway/session_authority.py"])
+    assert ac._verified() is None
+    assert ac.unsupported_reason() == "unsupported-source"
+
+
 @pytest.mark.parametrize(
     "module,function",
     [
@@ -669,10 +796,11 @@ def test_same_file_loaded_topology_drift_is_rejected(harness, module, function):
         setattr(owner, function, original)
 
 
-def test_full_official_family_idempotence_and_original_bytes_restore():
+@pytest.mark.parametrize("fixture", [FIXTURE, NEW_FIXTURE], ids=["5fc", "0224"])
+def test_full_official_family_idempotence_and_original_bytes_restore(fixture):
     from hermes_feishu_card.install import patcher
 
-    files = load_sources()
+    files = load_sources(fixture)
     raw = files["gateway/platforms/base.py"]
     patched = patcher.apply_base_patch(raw)
     assert patched.count("capture_admission_base_extraction(locals())") == 1
@@ -929,7 +1057,7 @@ async def test_owner_changes_during_terminal_http_ack_preserve_native(
 
 
 @pytest.mark.parametrize("waiter", [True, False])
-@pytest.mark.parametrize("api_calls", [0, 1])
+@pytest.mark.parametrize("api_calls", [0, 1, 3])
 @pytest.mark.parametrize("post_failure", [False, True])
 async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
     harness, monkeypatch, waiter, api_calls, post_failure

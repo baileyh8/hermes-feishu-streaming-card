@@ -1,0 +1,31 @@
+{
+  "commit": "4d04303818b61bf3aa09278af48356315515965b",
+  "archive_sha256": "3e78b7e2751d6be46f36fa36bd2c796b35089239dba15163405841c714d570a7",
+  "files": {
+    "cron/scheduler.py": "f2cec77cbdba95534f82644b3242a108a92672bc63cd6b4d65005782bb2853d7",
+    "cron/scheduler_delivery.py": "7078145d9f66bbf21dd59de03f5a3e5987d6b01996bb179624c942c0ae1536bb",
+    "gateway/platforms/base.py": "e2ab51d8ae41933741644d65b87bdeabbf20a641d218b055f681ea96d245340e",
+    "gateway/run.py": "a98407aeb888003a2dcb75287291ecc33c8509a24ff8ef6576c00bca4e28de9c",
+    "gateway/run_busy.py": "d44fc0b16445ba46692058f40228bc8f4b78a23f6f54b23155aed770db9c2b68",
+    "gateway/run_inbound.py": "e1148cc822a69802c60c07c03afea08a3661975e6d16d57798673e1e87937d60",
+    "gateway/run_notifications.py": "1a137001275d29aa14f637e4f2e11ad316233f9a11b86ed159f9d35a89df02b1",
+    "gateway/run_startup.py": "108a658cac645fa0800f93d1b27a79a0285828cc0ec7ab90241a65becb5223ff",
+    "gateway/run_turn.py": "323b21f4878623bac8764c14f9abc530e16b452a747769c6a0171889a8428167",
+    "gateway/run_turn_hygiene.py": "de22242a30fd948693b0b09170e25530f7bc3cbd70ef4ded1621a860e3aa01ed",
+    "gateway/run_turn_persistence.py": "6325c450d3356cc0f56f3f337ac424c524ea06fdd27a8c4879f317447a5218e1",
+    "gateway/run_turn_prepare.py": "d78059989e24fc3c15f282c41bccd3e07913dde3f0ad457b0d7117e6b084e9d6",
+    "gateway/run_turn_runner.py": "6cf9f1acdd64d69f5c613be214695b33dafe215eeced68cebe53f5d0c5e4cbc9",
+    "gateway/session_authority.py": "7c48eb3639cc37121fd1b6f48cdad862f013396080a900c39dd4f7fbf18249a7",
+    "gateway/session_ingress.py": "65013d22cda6f8d8ced1be8634b03ba38ea44c3381e3bf2cf41830e19cfdd5ad",
+    "gateway/session.py": "ed560fb1b416e1bc111ed9c1e20945238fc2632c60121852a428b4ec02b60d5c"
+  },
+  "source_url": "https://github.com/NousResearch/hermes-agent/tree/4d04303818b61bf3aa09278af48356315515965b",
+  "license": "session_authority_5fc490e.LICENSE",
+  "description": "Unmodified upstream source. Complete native admission files match cf4f3a7396, rc.2-v0.22.3 and main 4e58c721c8cf9b51c46636ea84ea6a5cb540880a. Full-module compiled functions run with explicit DB/model/I/O ports; not live Gateway acceptance.",
+  "admission_cohort_commits": {
+    "reported-cf4": "cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe",
+    "rc2": "f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68",
+    "stable-0224": "4d04303818b61bf3aa09278af48356315515965b",
+    "main-4e58": "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"
+  }
+}

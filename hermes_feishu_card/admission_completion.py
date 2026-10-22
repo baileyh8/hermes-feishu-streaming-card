@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from functools import wraps
 from hashlib import sha256
 import importlib
@@ -29,6 +29,16 @@ SOURCE_HASHES: dict[str, str] = {
     "gateway.session_ingress": "fc8b666f74aa430c832c973e64a6b6332ae8c0c43ac5d3b69766debf31fb8dd4",
     "gateway.session_authority": "e5f3f9b24ccb765dc7fccb98d9c61bed359e3b1da3a73c855c713be425df5d7c",
 }
+# Whole-file cohorts, never independent per-file allowlists. The second pair is
+# byte-identical at cf4f3a7396, rc.2-v0.22.3, v0.22.4 (4d04303818b6), and
+# main 4e58c721c8cf. Loaded functions are still checked against these exact bytes.
+SOURCE_COHORTS: tuple[dict[str, str], ...] = (
+    SOURCE_HASHES,
+    {
+        "gateway.session_ingress": "65013d22cda6f8d8ced1be8634b03ba38ea44c3381e3bf2cf41830e19cfdd5ad",
+        "gateway.session_authority": "7c48eb3639cc37121fd1b6f48cdad862f013396080a900c39dd4f7fbf18249a7",
+    },
+)
 Finish = Callable[[Any, bool], Awaitable[None]]
 
 
@@ -75,6 +85,7 @@ def _original(function: Any) -> Any:
 
 def _verified() -> tuple[ModuleType, ModuleType] | None:
     modules = []
+    cohorts = SOURCE_COHORTS
     root = None
     for name, functions in (
         (
@@ -119,7 +130,9 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
                 after.st_mtime_ns,
             ):
                 return None
-            if sha256(raw).hexdigest() != SOURCE_HASHES[name]:
+            digest = sha256(raw).hexdigest()
+            cohorts = tuple(cohort for cohort in cohorts if cohort[name] == digest)
+            if not cohorts:
                 return None
             current_root = path.resolve().parent.parent
             if root is not None and current_root != root:
@@ -469,6 +482,27 @@ def _route_source(source: Any, message_id: str, profile: str) -> tuple[str, ...]
     return _route(SimpleNamespace(source=source, message_id=message_id), profile)
 
 
+def _same_source(source: Any, current: Any) -> bool:
+    """Accept a native dataclass copy, including fields excluded from its __eq__.
+
+    This is only a presentation check inside the verified execute_admission
+    frame. The original claim, durable row, epoch and adapter remain mandatory.
+    Dynamic HFC display attributes are not native source authority.
+    """
+    if source is current:
+        return True
+    if type(source) is not type(current) or not is_dataclass(source):
+        return False
+    try:
+        return all(
+            type(getattr(source, field.name)) is type(getattr(current, field.name))
+            and getattr(source, field.name) == getattr(current, field.name)
+            for field in fields(source)
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def prepare(
     values: dict[str, Any], stage: dict[str, Any], finish: Finish
 ) -> Completion | None:
@@ -499,7 +533,8 @@ def prepare(
     response = values.get("response")
     if (
         route is None
-        or source is not getattr(event, "source", None)
+        or not _same_source(source, getattr(event, "source", None))
+        or _route_source(source, route[-1], profile) != route
         or payload.get("turn_id") != route[-1]
         or payload.get("chat_id") != route[1]
         or type(owner) is not tuple
@@ -525,6 +560,7 @@ def prepare(
         adapter = runner._adapter_for_source(source)
         if (
             _text(getattr(adapter, "_app_id", None)) is None
+            or runner._adapter_for_source(getattr(event, "source", None)) is not adapter
             or _base_extractor(adapter) is None
         ):
             return None
@@ -808,7 +844,8 @@ def valid_consumed(stage: dict[str, Any]) -> bool:
 
 def unsupported_reason() -> str:
     """Fixed diagnostic categories only; never return filenames or identity values."""
-    for name, digest in SOURCE_HASHES.items():
+    hashes = {}
+    for name in SOURCE_HASHES:
         try:
             filename = getattr(sys.modules.get(name), "__file__", None)
             if not isinstance(filename, str):
@@ -817,11 +854,14 @@ def unsupported_reason() -> str:
             info = path.lstat()
             if not stat.S_ISREG(info.st_mode) or info.st_size > 256 * 1024:
                 return "unsupported-source"
-            if sha256(path.read_bytes()).hexdigest() != digest:
-                return "unsupported-source"
+            hashes[name] = sha256(path.read_bytes()).hexdigest()
         except OSError:
             return "unsupported-source"
-    return "unsupported-loaded-topology"
+    return (
+        "unsupported-loaded-topology"
+        if hashes in SOURCE_COHORTS
+        else "unsupported-source"
+    )
 
 
 def extractor_available(adapter: Any) -> bool:
