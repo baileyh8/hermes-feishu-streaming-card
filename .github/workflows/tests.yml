@@ -139,13 +139,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
-          ref: d923a5eb487a17c0a68801bba9ef0f56c81040a8 # v0.22.2
+          ref: 4d04303818b61bf3aa09278af48356315515965b # v0.22.4
           path: .upstream/latest_stable
       - name: Checkout pinned Hermes latest_main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
-          ref: 0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3 # main observed 2026-10-17
+          ref: 4e58c721c8cf9b51c46636ea84ea6a5cb540880a # main observed 2026-10-22
           path: .upstream/latest_main
       - name: Checkout reported Hermes issue 428 revision 297552
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,6 +159,30 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: 7bda2a3368024f7ae1c70cef16583e7c2c891674
           path: .upstream/issue428_7bda2a
+      - name: Checkout Hermes retained v0.22.2 baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: d923a5eb487a17c0a68801bba9ef0f56c81040a8
+          path: .upstream/baseline_0222
+      - name: Checkout Hermes retained main baseline
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3
+          path: .upstream/baseline_main_0ab
+      - name: Checkout Hermes issue 451 reported revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe
+          path: .upstream/issue451_cf4
+      - name: Checkout Hermes rc.2-v0.22.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68
+          path: .upstream/issue451_rc2
       - name: Install test dependencies
         run: python -m pip install -e ".[test]" "uv==0.11.7" ruamel.yaml tomli-w packaging wheel rich python-dotenv requests prompt_toolkit "cryptography==48.0.0"
       - name: Prepare ordinary wheel
@@ -192,11 +216,21 @@ jobs:
           HFC_UPSTREAM_EXTRACTED_ROOT: "${{ github.workspace }}/.upstream/extracted"
           HFC_UPSTREAM_ISSUE428_297552_ROOT: "${{ github.workspace }}/.upstream/issue428_297552"
           HFC_UPSTREAM_ISSUE428_7BDA2A_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
-          HFC_LEGACY_PLUGIN_SOURCE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
+          HFC_LEGACY_PLUGIN_SOURCE_ROOT: "${{ github.workspace }}/.upstream/baseline_0222"
           HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
           HFC_REQUIRE_CONFIG_WRITER_CONTRACT: "1"
           HFC_REQUIRE_UPSTREAM_RATE_CONTRACT: "1"
           HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
+          HFC_UPSTREAM_BASELINE_0222_ROOT: "${{ github.workspace }}/.upstream/baseline_0222"
+          HFC_UPSTREAM_BASELINE_MAIN_0AB_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
+          HFC_UPSTREAM_ISSUE451_CF4_ROOT: "${{ github.workspace }}/.upstream/issue451_cf4"
+          HFC_UPSTREAM_ISSUE451_RC2_ROOT: "${{ github.workspace }}/.upstream/issue451_rc2"
+          HFC_CONFIG_WRITER_PM_MAIN_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
+          HFC_CONFIG_WRITER_CF4_ROOT: "${{ github.workspace }}/.upstream/issue451_cf4"
+          HFC_CONFIG_WRITER_RC2_ROOT: "${{ github.workspace }}/.upstream/issue451_rc2"
+          HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
+          HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
+          HFC_REQUIRE_PM_GENERATION: "1"
         run: >-
           python -m tools.ci_run --group upstream-${{ matrix.python-version }} --profile upstream
           --shards 8 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))

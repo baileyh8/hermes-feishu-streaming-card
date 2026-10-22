@@ -143,6 +143,11 @@ def test_private_worker(case):
     assert "FEISHU_APP_SECRET" not in os.environ
     assert "HERMES_HOME" not in os.environ
     assert "HFC_CONTROL_TOKEN" not in os.environ
+    assert "HFC_CONFIG_WRITER_SECRET" not in os.environ
+    assert "HFC_CONFIG_WRITER_PRODUCTION_ROOT" not in os.environ
+    for suffix in ("PM_MAIN", "CF4", "RC2", "0224", "MAIN_4E58"):
+        assert os.environ["HFC_CONFIG_WRITER_" + suffix + "_ROOT"] == "/immutable-fixture/" + suffix
+    assert os.environ["HFC_REQUIRE_PM_GENERATION"] == "1"
     assert Path.home() != Path(os.environ["FORBIDDEN_HOME"])
     for path in (Path("exclusive"), Path.home()/"exclusive",
                  Path(os.environ["TMPDIR"])/"exclusive",
@@ -157,6 +162,10 @@ def test_private_worker(case):
     env = dict(os.environ, HFC_FIXED_TAG_SOURCE_ROOT=str(tmp_path / "fixed-read-only"),
                FORBIDDEN_HOME=str(Path.home()), FEISHU_APP_SECRET="secret-canary",
                HERMES_HOME="/do-not-touch-production", HFC_CONTROL_TOKEN="token-canary")
+    env.update({"HFC_CONFIG_WRITER_" + suffix + "_ROOT": "/immutable-fixture/" + suffix
+                for suffix in ("PM_MAIN", "CF4", "RC2", "0224", "MAIN_4E58")})
+    env.update(HFC_REQUIRE_PM_GENERATION="1", HFC_CONFIG_WRITER_SECRET="must-not-leak",
+               HFC_CONFIG_WRITER_PRODUCTION_ROOT="/do-not-forward-production")
     env.pop("PYTHONPATH", None)
     result = subprocess.run([
         sys.executable, "-m", "tools.ci_run", "--group", "probe", "--shards", "2", "--workers", "2",

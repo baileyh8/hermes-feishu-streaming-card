@@ -993,7 +993,7 @@ RATE_SOURCE_HASHES = {
 
 @lru_cache(maxsize=8)
 def rate_contract_source(ref, path):
-    name = "HFC_UPSTREAM_LATEST_STABLE_ROOT" if ref == "v0.22.2" else "HFC_UPSTREAM_LATEST_MAIN_ROOT"
+    name = "HFC_UPSTREAM_BASELINE_0222_ROOT" if ref == "v0.22.2" else "HFC_UPSTREAM_BASELINE_MAIN_0AB_ROOT"
     configured = os.environ.get(name) or os.environ.get("HFC_UPSTREAM_HOOK_CONTRACT_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_UPSTREAM_RATE_CONTRACT") == "1":

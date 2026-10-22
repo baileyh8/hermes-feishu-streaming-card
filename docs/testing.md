@@ -32,18 +32,28 @@ python tools/preflight.py --suite full
 
 ## 单元测试
 
-Hermes main 兼容矩阵现固定到 `0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3`
-（2026-10-17）。`994df5e6de` 起，channel pin 的 `internal` 参数还接受
-`event.internal or getattr(event, "inherit_channel_pin", False)`；安装器只接受
-这条已核验表达式及原表达式，仍拒绝来源重绑定、缺失 tuple 和未知继承条件。
-`tests/fixtures/hermes_upstream_sources.json` 记录完整拆分文件的摘要；CI 对该
-固定源码执行安装、重复安装、诊断及逐字节卸载恢复。此矩阵不代表真实
-Gateway/model 执行或飞书客户端验收。
+固定上游矩阵在 2026-10-22 更新到 Hermes `v0.22.4`
+（`4d04303818b61bf3aa09278af48356315515965b`）与 main
+（`4e58c721c8cf9b51c46636ea84ea6a5cb540880a`）。Issue #451 的
+`cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe` 和 `rc.2-v0.22.3`
+（`f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68`）也单独保留。
+`tests/fixtures/hermes_upstream_sources.json` 逐文件登记摘要，CI 执行安装、
+重复安装、诊断及逐字恢复；新快照须包含 persistence、prepare、hygiene
+拆分文件，不能复用旧稳定版的文件集合。
 
-稳定版矩阵固定到 Hermes `v0.22.2` 的
-`d923a5eb487a17c0a68801bba9ef0f56c81040a8`。该版仍保留原 `run_turn.py`
-布局，因此 fixture 包含 12 个相关源码文件；main 的 persistence、prepare、hygiene
-拆分文件另外核验，不能把 main 的文件集合直接套用到稳定版。
+原 `v0.22.2`（`d923a5eb487a17c0a68801bba9ef0f56c81040a8`）与 main
+（`0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3`）分别保留为
+`baseline_0222` / `baseline_main_0ab`。旧 observer、writer 和 rate 契约继续
+绑定这些来源；刷新 latest 不得隐式替换旧测试。channel pin 的已核验
+`event.internal or getattr(event, "inherit_channel_pin", False)` 表达式仍保留，
+来源重绑定、缺失 tuple 和未知继承条件仍拒绝。
+
+CI 的普通 wheel 子进程对照官方 writer 的准确配置字节，并在旧 `7bda2a`、
+v0.22.4 与新 main 上验证 PM A→B 重建及 `site-packages` 来源。
+`HFC_REQUIRE_CONFIG_WRITER_CONTRACT=1` 和 `HFC_REQUIRE_PM_GENERATION=1`
+使缺失的指定来源、普通 wheel 或解释器成为失败；测试只转发列出的 fixture
+变量。这里的源码、私有 HOME 和本机子进程验证不代表真实 Gateway/model、
+飞书 API 或客户端验收。
 
 ```bash
 python3 -m pytest tests/unit -q

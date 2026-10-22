@@ -21,7 +21,7 @@ SOURCES = json.loads(
 )
 
 
-@pytest.mark.parametrize("baseline", ["stable", "main", "production", "historical", "image", "extracted", "latest_stable", "latest_main", "issue428_297552", "issue428_7bda2a"])
+@pytest.mark.parametrize("baseline", list(SOURCES))
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):
     configured = os.environ.get(f"HFC_UPSTREAM_{baseline.upper()}_ROOT")
     if not configured:
@@ -48,6 +48,8 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     detection = detect_hermes(target)
     assert detection.supported, detection.reason
+    if "gateway/session_ingress.py" in expected["sha256"]:
+        assert detection.capabilities["admission_completion"], detection.reason
     assert detection.version == expected.get("version", "0.21.0")
     assert detection.decomposed == expected.get("decomposed", baseline in {"main", "extracted"})
     assert cli.main(["install", "--hermes-dir", str(target), "--yes"]) == 0
@@ -60,6 +62,8 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     assert installed == {name: (target / name).read_bytes() for name in originals}
     detection = detect_hermes(target)
     assert detection.supported, detection.reason
+    if "gateway/session_ingress.py" in expected["sha256"]:
+        assert detection.capabilities["admission_completion"], detection.reason
     assert cli._diagnose_install_state(detection)["status"] == "installed"
     integrity = plan_integrity_repair(detection)
     assert integrity.reason == "recovery_not_required", integrity
@@ -155,7 +159,7 @@ async def test_actual_upstream_redirect_keeps_original_callbacks_on_new_card(tmp
         assert not hasattr(incoming_source, '_hfc_turn_id')
 
 
-@pytest.mark.parametrize('baseline', ['latest_stable', 'latest_main'])
+@pytest.mark.parametrize('baseline', ['baseline_0222', 'baseline_main_0ab', 'latest_stable', 'latest_main', 'issue451_cf4', 'issue451_rc2'])
 @pytest.mark.parametrize('success', [True, False])
 @pytest.mark.parametrize('obligation_id', ['fixture-obligation', None])
 async def test_current_upstream_generated_ledger_executes_in_order(
