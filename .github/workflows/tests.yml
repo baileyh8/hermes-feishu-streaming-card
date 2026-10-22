@@ -394,7 +394,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slice: [0, 1]
+        slice: [0, 1, 2, 3, 4]
     runs-on: macos-latest
 
     steps:
@@ -428,7 +428,7 @@ jobs:
       - name: Test isolated duration-balanced shards
         run: >-
           python -m tools.ci_run --group macos
-          --shards 6 --workers 3 --offset $(( ${{ matrix.slice }} * 3 ))
+          --shards 10 --workers 2 --offset $(( ${{ matrix.slice }} * 2 ))
           --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers"
       - name: Preserve macOS reports and slow-test timings
         if: always()
@@ -610,7 +610,7 @@ jobs:
         run: |
           if [ "$REGRESSION_MODE" = full ]; then
             test "$PRODUCER_RESULT" = success
-            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "macos" --count 6 --python-version 3.12 --platform darwin
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "macos" --count 10 --python-version 3.12 --platform darwin
           else
             printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
           fi

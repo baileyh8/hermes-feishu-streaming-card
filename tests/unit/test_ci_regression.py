@@ -1,6 +1,7 @@
 """Regression selection must be complete, deterministic and fail closed."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -138,11 +139,59 @@ def test_full_jobs_keep_all_versions_and_stable_required_contexts():
         assert "tools.ci_shard" in str(jobs[name])
         assert "test \"$PRODUCER_RESULT\" = success" in str(jobs[name])
     assert jobs["upstream-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
-    assert jobs["macos-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
+    assert jobs["macos-shards"]["strategy"]["matrix"]["slice"] == [0, 1, 2, 3, 4]
     assert {"upstream-hermes-compat", "quality", "feishu-sdk-compat-python314"} <= set(jobs["pytest"]["needs"])
     gate = str(jobs["pytest"])
     for variable in ("UPSTREAM_RESULT", "QUALITY_RESULT", "SDK314_RESULT"):
         assert f'test "${variable}" = success' in gate
+
+
+def test_macos_slice_offsets_cover_ten_workers_once_and_keep_the_gate():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    producer = jobs["macos-shards"]
+    command = next(step["run"] for step in producer["steps"]
+                   if step.get("name") == "Test isolated duration-balanced shards")
+    count, workers, stride = map(int, re.search(
+        r"--shards (\d+) --workers (\d+) --offset .*\* (\d+) \)\)", command,
+    ).groups())
+    indexes = [index for part in producer["strategy"]["matrix"]["slice"]
+               for index in range(part * stride, part * stride + workers)]
+    assert count == 10 and workers == 2
+    assert sorted(indexes) == list(range(count))
+    assert producer["timeout-minutes"] == 25
+    gate = jobs["pytest-macos"]
+    assert "macos-shards" in gate["needs"]
+    assert '--group "macos" --count 10 --python-version 3.12 --platform darwin' in str(gate)
+    assert 'test "$PRODUCER_RESULT" = success' in str(gate)
+
+
+@pytest.mark.parametrize("damage", [None, "old-six", "missing", "duplicate"])
+def test_macos_ten_shard_gate_requires_the_complete_disjoint_union(damage):
+    reports = evidence([f"case-{index}" for index in range(101)], 10)
+    if damage == "old-six":
+        reports = evidence([f"case-{index}" for index in range(101)], 6)
+    elif damage == "missing":
+        reports.pop()
+    elif damage == "duplicate":
+        reports[-1] = deepcopy(reports[0])
+    if damage is None:
+        assert verify(reports, 10)["tests"] == 101
+    else:
+        with pytest.raises(ValueError, match="missing or duplicate shard"):
+            verify(reports, 10)
+
+
+def test_full_timing_refresh_includes_admission_work_without_losing_cases():
+    data = json.loads((ROOT / "tools/ci_durations.json").read_text())
+    weights = profile_weights(data, "full")
+    assert weights[("tests/integration/test_session_authority_completion.py::"
+                    "test_unknown_admission_is_native_before_first_card_event[0224-seam]")] > 1
+    nodes = list(weights) + ["tests/new_case.py::test_without_a_timing_hint"]
+    buckets, loads = partition(nodes, 10, weights)
+    assert sorted(node for bucket in buckets for node in bucket) == sorted(nodes)
+    assert len({node for bucket in buckets for node in bucket}) == len(nodes)
+    assert partition(list(reversed(nodes)), 10, weights) == (buckets, loads)
+    assert max(loads) - min(loads) < 1
 
 
 @pytest.mark.parametrize("profile", ["full", "upstream"])
