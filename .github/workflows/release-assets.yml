@@ -108,26 +108,7 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
         run: |
           set -euo pipefail
-          NAME="hermes-feishu-card-${RELEASE_TAG}"
-          mkdir -p dist pkg/macos pkg/linux pkg/windows
-
-          COMMON_FILES=(
-            README-install.md
-            config.yaml.example
-            README.md
-            README.en.md
-            CHANGELOG.md
-            LICENSE
-          )
-
-          cp install.sh install-docker.sh docker-compose.example.yml "${COMMON_FILES[@]}" pkg/macos/
-          cp install.sh install-docker.sh docker-compose.example.yml "${COMMON_FILES[@]}" pkg/linux/
-          cp install.ps1 install-docker.sh docker-compose.example.yml "${COMMON_FILES[@]}" pkg/windows/
-
-          (cd pkg/macos && tar -czf "../../dist/${NAME}-macos.tar.gz" .)
-          (cd pkg/linux && tar -czf "../../dist/${NAME}-linux.tar.gz" .)
-          (cd pkg/windows && zip -qr "../../dist/${NAME}-windows.zip" .)
-          (cd dist && shasum -a 256 * > "${NAME}-checksums.txt")
+          python scripts/release_archives.py build --tag "$RELEASE_TAG" --output dist
 
       - name: Reverify tag immediately before upload
         shell: bash
@@ -145,6 +126,11 @@ jobs:
             --expected-commit "$RELEASE_COMMIT" \
             --require-main-ancestor
 
+      - name: Validate actual assets immediately before upload
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        run: python scripts/release_archives.py validate --tag "$RELEASE_TAG" --output dist
+
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,5 +142,5 @@ jobs:
             gh release upload "$RELEASE_TAG" dist/* --clobber
           else
             gh release create "$RELEASE_TAG" dist/* \
-              --title "$RELEASE_TAG" --generate-notes
+              --title "$RELEASE_TAG" --generate-notes --draft
           fi

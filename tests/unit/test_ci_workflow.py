@@ -100,8 +100,8 @@ def test_release_assets_workflow_supports_manual_package_dry_run():
     assert "tag_ref:" in text
     assert "Build install packages" in text
     assert "gh release upload" in text
-    assert "install-docker.sh" in text
-    assert "docker-compose.example.yml" in text
+    assert "python scripts/release_archives.py build" in text
+    assert "python scripts/release_archives.py validate" in text
 
 
 def test_release_workflow_packages_only_after_reusable_test_gate():
@@ -288,6 +288,7 @@ def test_release_package_reruns_full_gate_after_exact_checkout():
     assert checkout_index < verifier_positions[0] < build_index
     assert build_index < verifier_positions[1] < upload_index
     assert package.count("--require-main-ancestor") == 2
+    assert '--title "$RELEASE_TAG" --generate-notes --draft' in package
 
 
 def test_release_dispatch_accepts_only_full_semver_tag_ref():
@@ -384,3 +385,17 @@ def test_docker_compose_runtime_smoke_executes_patched_gateway_hook():
     assert "sign_event_request" not in probe_command
     assert config["feishu"] == {"app_id": "", "app_secret": ""}
     assert config["integrity"] == {"mode": "safe"}
+
+
+def test_archive_safety_gate_preserves_real_platform_and_root_coverage():
+    jobs = yaml.safe_load((ROOT / '.github/workflows/tests.yml').read_text())['jobs']
+    job = jobs['release-archive-safety']
+    assert job['timeout-minutes'] == 25
+    assert job['strategy']['matrix']['os'] == ['ubuntu-latest', 'macos-latest']
+    step = next(step for step in job['steps'] if step.get('name') == 'Verify actual archive construction and extraction')
+    assert step['env']['HFC_ARCHIVE_ROOT_TEST'] == "${{ runner.os == 'Linux' && '1' || '0' }}"
+    assert 'tests/unit/test_release_archives.py' in step['run']
+    assert 'HFC_ARCHIVE_EVIDENCE_DIR' in step['run']
+    assert '--junitxml' in step['run']
+    workflow = (ROOT / '.github/workflows/release-assets.yml').read_text()
+    assert workflow.index('release_archives.py build') < workflow.index('release_archives.py validate') < workflow.index('gh release upload')
