@@ -247,7 +247,11 @@ def test_real_tar_preserves_destination_and_sentinels(
             capture_output=True,
         )
         assert snapshot(negative) != prior
-        assert stat.S_IMODE(negative.stat().st_mode) == 0o755
+        # GNU tar without -p retains the existing sticky bit for non-root.
+        expected_negative_mode = 0o755
+        if sys.platform == "linux" and not as_root and not preserve:
+            expected_negative_mode |= mode & stat.S_ISVTX
+        assert stat.S_IMODE(negative.stat().st_mode) == expected_negative_mode
         if as_root:
             assert negative.stat().st_uid == negative.stat().st_gid == 4242
         evidence_dir = os.environ.get("HFC_ARCHIVE_EVIDENCE_DIR")
