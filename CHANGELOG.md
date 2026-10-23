@@ -1,5 +1,14 @@
 # Changelog
 
+## v5.0.6 — 2026-10-23
+
+- Put each Linux/macOS tarball and Windows ZIP under its matching `hermes-feishu-card-v5.0.6-{linux,macos,windows}/` directory. Remove the extraction-target `.` entry; normalize tar uid/gid to 0, directories and shell installers to 0755, and other regular files to 0644 (#454).
+- Share archive construction and validation, requiring the exact nine-file inventory and byte contents. Reject unsafe paths, links, special files, duplicate entries and unexpected metadata. Actual extraction gates check the destination inode/uid/gid/mode and sentinels for 0700/1777 targets, with an old-layout negative control.
+- After unpacking an installer asset, enter its versioned platform directory before running `./install.sh` or `.\install.ps1`. Existing published tags/assets and historical release records are retained.
+- Thanks to @leavrcn for #454 and reproduction evidence, credited separately from code authorship. All prior credits remain intact.
+
+Local macOS evidence reproduced target-mode rewriting with the old archive under `tar -p`; Linux GNU tar/root acceptance, exact-commit full CI/CodeQL and public assets/install remain pending in the [readiness record](docs/release-readiness.md). See [Chinese](docs/release-notes-v5.0.6.md) and [English](docs/release-notes-v5.0.6.en.md) release notes.
+
 ## v5.0.5 — 2026-10-22
 
 - Accept the reviewed admission source cohorts at cf4f3a7, rc.2-v0.22.3, v0.22.4 and pinned main 4e58c72. Verify full source/loaded topology and complete admission identity before accepting legitimate source reconstruction; preserve old source behavior, single-use completion and native fallback for unknown admission paths (#451, PR #452).

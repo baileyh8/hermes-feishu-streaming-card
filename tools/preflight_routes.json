@@ -236,6 +236,9 @@
       "tests/unit/test_ci_workflow.py",
       "tests/unit/test_ci_regression.py",
       "tests/unit/test_preflight.py"
+    ],
+    "archives": [
+      "tests/unit/test_release_archives.py"
     ]
   },
   "sources": {
@@ -671,6 +674,13 @@
       "ci"
     ],
     ".github/workflows/tests.yml": [
+      "ci"
+    ],
+    "scripts/release_archives.py": [
+      "archives"
+    ],
+    ".github/workflows/release-assets.yml": [
+      "archives",
       "ci"
     ]
   }

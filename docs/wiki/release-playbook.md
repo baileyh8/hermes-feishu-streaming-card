@@ -87,6 +87,12 @@ main 应启用 PR-only branch protection，并要求 tests 与 CodeQL 的实际 
 - `hermes-feishu-card-vX.Y.Z-windows.zip`
 - `hermes-feishu-card-vX.Y.Z-checksums.txt`
 
+自 v5.0.6 起，每个平台资产必须仅含一个与资产名匹配的顶层目录，例如 `hermes-feishu-card-v5.0.6-linux/`；macOS 与 Windows 分别使用 `macos` 和 `windows`。目录内仍是九个发行文件。tar uid/gid 归一为 0，目录和 shell 安装器为 0755，其余普通文件为 0644；ZIP 使用相同目录和 mode 约定。禁止 `.` / 绝对或上级路径、链接、特殊文件与重复条目。构建和验收复用共享脚本，不再通过 `tar ... .` 打包解压目标目录本身。
+
+发行前核验 Linux GNU tar 非 root/root 和 macOS 的实际解压，分别在独占 scratch 内设 0700/1777 目标，检查 inode/uid/gid/mode、哨兵、文件字节与 executable mode；旧布局负向控制须能抓到改写。root 检查只在核验归属的 CI 专属树内运行，不操作共享 `/tmp`。公开下载后复核 checksums、完整清单和实际解压元数据，不能只看归档文件字节。
+
+用户解压后须先 `cd hermes-feishu-card-vX.Y.Z-<platform>` 再调用安装器。同步 README-install、双语 README 与发行说明，明确旧 flat 布局到新目录的变化。保留已发表的 v5.0.5 及之前 tag/资产，不替换旧文件。发布 workflow 先保持 draft，精确 tag 门禁、资产及普通包验收完成后再公开；待验不能提前写为通过。
+
 随后用自定义 notes 覆盖自动 body：
 
 ```bash

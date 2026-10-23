@@ -68,8 +68,63 @@ jobs:
           python -m ruff check --isolated --target-version py39
           tools/ci_plan.py tools/ci_run.py tools/ci_shard.py
           tests/unit/test_ci_regression.py
+          scripts/release_archives.py tests/unit/test_release_archives.py
       - name: Type-check extracted boundaries
         run: python -m mypy
+
+  release-archive-safety:
+    name: release-archive-safety (${{ matrix.os }})
+    timeout-minutes: 25
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.9"
+      - run: python -m pip install pytest
+      - name: Verify actual archive construction and extraction
+        shell: bash
+        env:
+          HFC_ARCHIVE_ROOT_TEST: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          scratch="$(mktemp -d "$RUNNER_TEMP/hfc-archive-safety.XXXXXXXX")"
+          printf 'HFC_ARCHIVE_SCRATCH=%s\n' "$scratch" >> "$GITHUB_ENV"
+          mkdir "$scratch/home" "$scratch/evidence"
+          export HOME="$scratch/home"
+          export HFC_ARCHIVE_EVIDENCE_DIR="$scratch/evidence"
+          git rev-parse HEAD > "$scratch/evidence/commit.txt"
+          tar --version > "$scratch/evidence/tar-version.txt"
+          python -m pytest -q tests/unit/test_release_archives.py \
+            --basetemp "$scratch/pytest" --junitxml "$scratch/evidence/results.xml" \
+            2>&1 | tee "$scratch/evidence/pytest.log"
+      - name: Retain archive extraction evidence
+        if: always() && env.HFC_ARCHIVE_SCRATCH != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-archive-safety-${{ matrix.os }}
+          path: ${{ env.HFC_ARCHIVE_SCRATCH }}/evidence
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove owned archive scratch
+        if: always() && env.HFC_ARCHIVE_SCRATCH != ''
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import os, pathlib, shutil
+          scratch = pathlib.Path(os.environ['HFC_ARCHIVE_SCRATCH'])
+          parent = pathlib.Path(os.environ['RUNNER_TEMP']).resolve()
+          assert scratch.parent.resolve() == parent
+          assert scratch.name.startswith('hfc-archive-safety.') and not scratch.is_symlink()
+          assert scratch.stat().st_uid == os.getuid()
+          shutil.rmtree(scratch)
+          PYCODE
 
   upstream-shards:
     needs: [plan, fixed-hermes-fixture]
@@ -490,7 +545,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.5
+          HFC_VERSION: v5.0.6
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-

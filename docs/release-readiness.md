@@ -2,12 +2,23 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.5`，是否已发行以 GitHub Release 的标签和资产为准。原生表格默认关闭，超长单元格整表回退 Markdown；无法拆分的 Markdown 表格保留完整原文，由共享容量与完整内容交接门禁处理。
+本分支目标版本为 `5.0.6`，是否已发行以 GitHub Release 的标签和资产为准。本轮处理 #454 的归档解压元数据问题，并同步版本化安装包目录的使用说明。见[发行说明](release-notes-v5.0.6.md)。
 
-本轮包含 #448/#449 的 CI 改进、#451 / PR #452 的新 Hermes 兼容修复及上游 worker 普通 wheel 环境隔离，保留旧来源和完整矩阵。组合候选的完整自动化、跨平台 CI、普通 wheel、真实 Feishu API、公开安装与资产逐项核验；真实 Gateway/model、桌面及 Android 视觉/点击未验证，iOS 与新用户试用不纳入本次范围。
+## V5.0.6 本轮验收记录
 
-完整测试、精确合并 CI、资产校验与公开 tag 安装仍为发布门禁。见[发行说明](release-notes-v5.0.5.md)和[任务卡片历史验收记录](reviews/2026-10-03-task-cards-acceptance.md)；平台 API、真实 Gateway、桌面视觉及 Android/iOS 验收分别记录，未验证项不能写为通过。
+| 字段 | 状态 |
+| --- | --- |
+| 旧包本地复现 | 非 root macOS bsdtar 的 `-p` 将 0700/1777 目标改为 0755；本机默认解压保留原 mode。仅归零 owner 仍改写 mode，版本化目录原型保留目标元数据 |
+| 环境准备 | 已有 `.venv` 为 Python 3.12.13；check-only 报 `incomplete`、固定 Git fixture `missing`、pytest `not_run`，不记测试通过 |
+| 最终文档/metadata 聚焦检查 | 已有 Python 3.12.13 `.venv` 运行 `preflight --suite focused --module docs`：102 passed、0 skipped；diff-check 通过。固定 Git fixture 缺失，整体状态 `partial`；不记为完整回归 |
+| 最终归档清单/元数据与实际解压 | 待最终候选检查；要求九文件字节、版本化顶层路径、tar uid/gid 0、规定 mode、安全路径/类型及重复拒绝 |
+| Linux GNU tar 非 root/root 与 macOS | 待 CI；要求 0700/1777 目标 inode/uid/gid/mode、哨兵和可执行 mode 保留，旧布局负向控制有效。root 仅在核验归属的 CI scratch 内运行 |
+| 精确候选/merge/tag 完整 CI 与 CodeQL | 待验；保留完整支持矩阵，核对实际 run commit |
+| 普通 wheel / 公开安装 | 待最终包来源与真实子进程检查 |
+| 公开资产/checksums/匿名下载 | 待正式资产及实际解压元数据验收；保留旧 v5.0.5 资产和 tag |
+| 报告者现场恢复 / 真实 Gateway/model / 客户端 | 本轮未新增验收；Linux 宿主服务恢复、Gateway/model 和真实客户端证据分别登记 |
 
+以下保留此前版本验收记录及其限制，不能用作 v5.0.6 的通过证明。
 
 ## V5.0.5 本轮验收记录
 

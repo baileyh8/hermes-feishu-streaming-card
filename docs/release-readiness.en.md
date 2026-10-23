@@ -2,12 +2,23 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.5`; published availability is determined by the GitHub Release tag and assets. Opt-in native tables preserve oversized cells via Markdown fallback; indivisible Markdown tables retain their full source for the shared payload/handoff gate.
+This branch targets `5.0.6`; published availability is determined by the GitHub Release tag and assets. This batch addresses #454 archive extraction metadata and the versioned installer directory. See [release notes](release-notes-v5.0.6.en.md).
 
-This batch contains PR #448/#449 CI improvements, the #451 compatibility repair in PR #452, and independent ordinary-wheel upstream workers. It retains earlier source baselines and the full matrix. Combined full regression, platform CI, ordinary wheels, real Feishu API, public installation and assets are separate release gates. Actual Gateway/model execution and desktop/Android visuals/clicks remain unverified; iOS and new-user trials are outside this release scope.
+## V5.0.6 acceptance record
 
-Full tests, exact-merge CI, assets/checksums and public-tag installation remain release gates. See [release notes](release-notes-v5.0.5.en.md) and the [historical task-card acceptance record](reviews/2026-10-03-task-cards-acceptance.md). Platform API smoke, real Gateway execution, desktop visuals and Android/iOS acceptance are separate evidence; missing coverage is not a pass.
+| Field | Status |
+| --- | --- |
+| Old-archive local reproduction | Non-root macOS bsdtar with `-p` rewrites 0700/1777 target modes to 0755; normal extraction preserves them locally. Owner-only normalization still rewrites mode; a versioned-directory prototype preserves target metadata |
+| Environment readiness | Python 3.12.13 existing `.venv`; check-only reports `incomplete`, fixed Git fixture `missing`, pytest `not_run`. This is not a test pass |
+| Final docs/metadata focused checks | Existing Python 3.12.13 `.venv`, `preflight --suite focused --module docs`: 102 passed, 0 skipped; diff-check passed. Fixed Git fixture missing, overall status `partial`; not full regression |
+| Final archive inventory/metadata and actual extraction | Pending final candidate checks; require exact nine-file bytes, versioned top-level paths, tar uid/gid 0, expected modes, safe paths/types and duplicate rejection |
+| Linux GNU tar non-root/root and macOS | Pending CI; require 0700/1777 target inode/uid/gid/mode and sentinel preservation, executable modes, and old-layout negative control. Root checks stay within verified CI-owned scratch |
+| Exact candidate/merge/tag full CI and CodeQL | Pending; preserve the full supported matrix and inspect exact run commits |
+| Ordinary wheel/public installation | Pending final package provenance and real child-process checks |
+| Public assets/checksums/anonymous download | Pending published assets and actual extraction metadata verification; old v5.0.5 assets/tags remain intact |
+| Reporter host recovery / real Gateway/model / clients | No new acceptance; Linux host-service recovery, Gateway/model and real-client evidence remain separate |
 
+The records below retain earlier release evidence and limits. They do not establish v5.0.6 acceptance.
 
 ## V5.0.5 acceptance record
 
