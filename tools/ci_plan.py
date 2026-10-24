@@ -50,7 +50,7 @@ def main():
     plan = {"schema": 1, "mode": mode, "targets": targets}
     args.output.write_text(json.dumps(plan, indent=2) + "\n")
     versions = ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"] if mode == "full" else ["3.12"]
-    slices = [0, 1] if mode != "docs" else [0]
+    slices = [0, 1, 2] if mode == "full" else ([0] if mode == "docs" else [0, 1])
     matrix = {"python-version": versions, "slice": slices}
     if "GITHUB_OUTPUT" in os.environ:
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:

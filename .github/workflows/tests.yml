@@ -393,6 +393,7 @@ jobs:
         run: |
           shards=8
           workers=4
+          if [ "$REGRESSION_MODE" = full ]; then shards=12; fi
           if [ "$REGRESSION_MODE" = docs ]; then shards=3; workers=3; fi
           python -m tools.ci_run --group linux-${{ matrix.python-version }} \
             --shards "$shards" --workers "$workers" --offset $(( ${{ matrix.slice }} * workers )) \
@@ -644,6 +645,7 @@ jobs:
           test "$SDK314_RESULT" = success
           version="${{ matrix.python-version }}"
           shards=8
+          if [ "$REGRESSION_MODE" = full ]; then shards=12; fi
           if [ "$REGRESSION_MODE" != full ]; then version=3.12; fi
           if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
           python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "linux-$version" --count "$shards" --python-version "$version" --platform linux

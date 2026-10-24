@@ -1,6 +1,6 @@
 # Testing
 
-CI selects documentation, focused or full regression for pull requests. Main and release gates always run the full matrix. Linux Python 3.9–3.14 and macOS retain all cases, distributed across eight isolated Linux shards, ten macOS shards and twelve upstream compatibility shards with complete-coverage verification. The target is under 20 minutes per workflow, subject to actual runner and queue measurements. See the [regression policy](wiki/regression-ci.md).
+CI selects documentation, focused or full regression for pull requests. Main and release gates always run the full matrix. Linux Python 3.9–3.14 and macOS retain all cases, distributed across twelve isolated Linux shards, ten macOS shards and twelve upstream compatibility shards with complete-coverage verification. The target is under 20 minutes per workflow, subject to actual runner and queue measurements. See the [regression policy](wiki/regression-ci.md).
 
 [中文](testing.md) | [English](testing.en.md)
 
