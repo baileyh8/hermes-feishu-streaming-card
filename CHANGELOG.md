@@ -1,6 +1,6 @@
 # Changelog
 
-## v5.0.7 — 2026-10-24 (candidate)
+## v5.0.7 — 2026-10-24
 
 - Verify Hermes v0.22.5 completion ownership and per-turn callback ordering (#456, #453), retaining pinned v0.22.4 and historical regressions.
 - Add bounded terminal-handoff diagnostics for the still-unreproduced multi-tool report (#451); acceptance evidence is tracked in the [release notes](docs/release-notes-v5.0.7.en.md).

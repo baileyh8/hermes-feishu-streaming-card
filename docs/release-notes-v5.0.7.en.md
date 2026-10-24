@@ -1,6 +1,6 @@
 # v5.0.7 — Hermes 0.22.5 compatibility and callback handoff
 
-This candidate addresses [#456](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/456), [#453](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/453) and [#451](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/451). Acceptance is pending; the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.7) records the published result.
+This release addresses [#456](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/456), [#453](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/453) and [#451](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/451). The [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.7) records the published result.
 
 - Verify the v0.22.5 completion wrapper, inherited ownership and usage-limit offer ordering while retaining original delivery and `agent:end` contracts. Keep v0.22.4 as a separate regression source.
 - Correct per-turn reasoning/tool callback ordering while preserving approval callbacks and isolation when an Agent is reused.
@@ -12,6 +12,6 @@ Upgrade using the actual Hermes checkout, HOME, configuration and existing servi
 
 Archives retain the v5.0.6 versioned-root layout. Enter `hermes-feishu-card-v5.0.7-<platform>/` after extraction. Historical tags and assets remain intact.
 
-Focused regressions, exact-commit full CI, ordinary/public package installation, real Feishu API and asset/checksum verification remain separate gates. Actual Gateway/model execution, reporter reproduction and desktop/Android visual/click acceptance are unverified; iOS and new-user trials are excluded.
+Focused contracts/admission tests, ordinary-wheel v0.22.5 install/reinstall/doctor/exact restore and v0.22.4 offline normal/waiter probes passed. Real Feishu API no-waiter passed full-answer and terminal-marker readback with two successful PATCHes and zero send/update failures. Both test cards were recalled with deleted readback. The first waiter API attempt failed an old helper PATCH-count assertion before terminal readback and is not counted as passed. Exact candidate/merge/tag CI, public installation and asset/checksum results are recorded in GitHub Release. Actual Gateway/model execution, reporter reproduction and desktop/Android visual/click acceptance are unverified; iOS and new-user trials are excluded.
 
 Thanks to @coder-zhw (#456), @Kevinzz224 and @ywarmy (#453), and @coytus, @Lite-G and @leavrcn (#451) for reports, analysis and reproduction evidence. These credits are separate from code authorship in Git. All historical contributor credits are retained.

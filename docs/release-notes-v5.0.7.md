@@ -1,6 +1,6 @@
 # v5.0.7 — Hermes 0.22.5 兼容与回调交接
 
-本版本处理 [#456](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/456)、[#453](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/453) 和 [#451](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/451)。当前为待验候选，最终发行及验收结果以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.7) 为准。
+本版本处理 [#456](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/456)、[#453](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/453) 和 [#451](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/451)。最终发行及精确提交验收结果以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.7) 为准。
 
 ## 修复与验证范围
 
@@ -16,7 +16,9 @@
 
 安装包继续使用 v5.0.6 引入的版本化顶层目录。解压后进入 `hermes-feishu-card-v5.0.7-<platform>/` 再运行安装器；旧版 tag 和资产保持不变。
 
-候选需要完成局部失败回归、精确提交完整 CI、普通 wheel 与公开安装、真实 Feishu API 和资产/checksums 检查。实际 Gateway/model、报告者现场、桌面/Android 视觉与点击未验证；iOS 和新用户试用不在本轮范围。待验项不能视为通过。
+本地契约与 admission 回归、普通 wheel 的 v0.22.5 安装/重装/诊断/精确恢复，以及 v0.22.4 离线 normal/waiter 检查已通过。真实 Feishu API 的 no-waiter 路径完成答案与终态标记读回，2 次 PATCH 成功、发送/更新失败为 0；两张测试卡均已撤回并读回确认。首轮 waiter API 因旧验收脚本的 PATCH 次数断言失败，未执行终态读回，不记为通过。
+
+精确候选/merge/tag 完整 CI、公开安装与资产/checksums 的最终结果记录在 GitHub Release。实际 Gateway/model、报告者现场、桌面/Android 视觉与点击未验证；iOS 和新用户试用不在本轮范围。待验项不能视为通过。
 
 ## 贡献记录
 
