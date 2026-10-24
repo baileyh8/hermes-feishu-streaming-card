@@ -99,6 +99,9 @@ native 来源探测在快照前后分别用可信 Git 验证 HEAD 与 clean stat
 
 ### `hermes_feishu_card/install/patcher.py`
 
+V5.0.7 的 `install/completion_contracts.py` 校验 v0.22.5 完成包装器的参数、原始投递调用、后置 usage-limit offer 和原返回值。patcher 继续负责继承/MRO 归属、唯一接点与逐字恢复；不接受任意同形方法名。回调绑定移到当前轮最终配置后，保留静默回合的精确清空分支与审批回调；缓存 Agent 不得复用上一轮 sink。
+
+
 Cron 的交付位置定位在 `install/cron_contracts.py`，通用正文/docstring 位置在 `install/ast_contracts.py`；不得把媒体 hook 移到 extract/filter 之前，或用文件拆分改变旧源码接受范围。
 
 Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py`。handler 发现、marker、生成与写回仍由 patcher 管理；不得借提取放宽唯一 guard、同块赋值、原 source/pinned tuple 及禁止重赋值的条件。
@@ -395,3 +398,6 @@ Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431
 跨 Task completion 接纳 Hermes `5fc490e2b34123212d73ef316086f939567a725a`，以及 #451 核验的 `cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe`、`f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68`、`4d04303818b61bf3aa09278af48356315515965b` 和 `4e58c721c8cf9b51c46636ea84ea6a5cb540880a`。`session_ingress.py` / `session_authority.py` 必须匹配同一组完整源 SHA、实际 loaded code 与完整受检 Base 提取后 seam；不能混用不同来源的单文件摘要。新来源允许 Hermes 合法重建的 source，但仍核对完整路由与原 admission/owner/generation/epoch；旧来源保留对象身份要求。未知来源、loaded topology 或缺少 seam 保留原生回复，detect 单独报告 admission completion 子能力；不能从文件存在、版本字符串或整体 partial 推断支持。每次完成尝试至多调用一次对应 fallback 诊断（固定 `unsupported-source` / `unsupported-loaded-topology` / `missing-or-unverified-extraction-seam` / `unverified-admission-identity` 类别），不记录 IDs、HOME、payload 或正文，不新增 registry 或诊断 owner。`admission_completion.py` 借原 row/marker maps，测试路由为 runtime/delivery；`install/admission_extraction.py` 归 install。普通旧版同 Task Base 路径保持既有支持面。
 
 当前 admission 首次决定卡片策略、且同一 identity 尚未 pin 时，hook 的既有 policy 入口对全部 `SUPPORTED_RUNTIME_EVENTS` 检查 readiness；notice 或 interaction 作为首事件也受此门禁，未知 admission 来源保留原生路径。admission 开始前已 pin 的普通上下文、官方 plugin 的独立 owner 不在本次追改范围；已接管路径继续遵守原投递 owner 与终局失败规则。此能力检测和固定源码测试不代表所有未知版本或 plugin 的零 card 证明，也不代表真实 Gateway/model 验收。
+
+
+V5.0.7 另保留 `pm-0225` 官方配置 writer 来源族（`bf0203a794a07aac3ff764972ab9087baa4e4f4e`），不替换 `pm-0224`。配置规划、官方 enable 字节、异常回滚与源码漂移拒绝一起验收。v0.22.5 PM 忽略无依赖的 metadata-only member；跨代回归使用真实可安装的无外部依赖小包触发下一代，继续检查 HFC wheel 来源和恢复。测试夹具的代次变化不能代替实际 Gateway/model 验收。

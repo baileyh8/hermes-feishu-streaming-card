@@ -13,7 +13,7 @@
     "artifact0/macos-0.xml": "2fd6c9ebb799d0d99245db5e2fa4832043ed63908c0a2008c6f35f5fdb1ea014",
     "artifact0/macos-1.xml": "0bfee3593975aa29c01a009a2f658f9feaf606b03a873ae7889e0fe08cfa712e"
   },
-  "note": "Full-suite hints use the maximum observed macOS Python 3.12 JUnit duration across all six completed macOS workers of run 39741242119 and completed workers 0-2 of run 39745645764. Sub-second cases retain the scheduler default. Upstream hints retain their independent Linux measurements and conservative Python 3.13 estimates; hints never exclude tests.",
+  "note": "Full-suite hints use the maximum observed macOS Python 3.12 JUnit duration across all six completed macOS workers of run 39741242119 and completed workers 0-2 of run 39745645764. Sub-second cases retain the scheduler default. Upstream hints retain their independent Linux measurements and conservative Python 3.13 estimates; hints never exclude tests. New v0.22.5 cases use conservative estimates copied from the corresponding v0.22.4 cases until their first measured run; these estimates are not measured v0.22.5 evidence.",
   "seconds": {
     "tests/integration/test_cli.py::test_module_doctor_explain_supports_hermes_015_without_v_prefix": 1.111,
     "tests/integration/test_cli.py::test_module_doctor_ignores_parent_config_environment": 1.117,
@@ -627,7 +627,28 @@
     "tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate[main]": 0.075,
     "tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate[v0.22.2]": 0.086,
     "tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning[main]": 0.157,
-    "tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning[v0.22.2]": 0.097
+    "tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning[v0.22.2]": 0.097,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[agent/safe_worker_policy.py-pm-0225]": 0.019,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[hermes_cli/config_defaults.py-pm-0225]": 0.019,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[hermes_cli/config_worker_save.py-pm-0225]": 0.015,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[hermes_cli/moa_config.py-pm-0225]": 0.02,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[hermes_cli/plugins_admission.py-pm-0225]": 0.017,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[hermes_cli/plugins_cmd.py-pm-0225]": 0.019,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[pm/publication.py-pm-0225]": 0.016,
+    "tests/integration/test_official_plugin_config_bytes.py::test_new_writer_drift_refuses_before_child_and_preserves_config[utils.py-pm-0225]": 0.014,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-already-None]": 20.364,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-disabled-canonical-None]": 28.805,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-explicit-values-None]": 20.645,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-fresh-None]": 29.651,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-fresh-exception]": 42.881,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-fresh-journal]": 42.881,
+    "tests/integration/test_official_plugin_config_bytes.py::test_private_plan_equals_real_official_writer_and_exact_restore[pm-0225-fresh-nonzero]": 43.821,
+    "tests/integration/test_pm_generation.py::test_exact_wheel_survives_real_pm_generations[0225]": 13.263,
+    "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[None-False-issue456_0225]": 0.701,
+    "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[None-True-issue456_0225]": 0.764,
+    "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[fixture-obligation-False-issue456_0225]": 0.709,
+    "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[fixture-obligation-True-issue456_0225]": 0.421,
+    "tests/integration/test_upstream_hermes_compat.py::test_pinned_upstream_install_repeat_doctor_restore[issue456_0225]": 350.925
   },
   "upstream_evidence": {
     "source_run": "https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/39729191204",
@@ -739,5 +760,6 @@
       "macos-4.xml": "e3dcbebcdf1dbf400ea6ccd0ef6817e1558d4e56362eba34dc219e28ea3d2e24",
       "macos-5.xml": "6552e48b1f9aa8432adcd39943541a0d4546973e14926cfb8056709dd6c956ce"
     }
-  }
+  },
+  "v0225_estimated_from": "Corresponding latest_stable / pm-0224 / 0224 upstream_seconds; 2026-10-24"
 }

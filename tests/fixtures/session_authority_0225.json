@@ -1,0 +1,28 @@
+{
+  "commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+  "archive_sha256": "f657ea73cbf5a06430df24dcf3f72f4bb47284171460bee158a760af657e8ba8",
+  "files": {
+    "cron/scheduler.py": "ec5823fffdeb18f4417eb97cbd37a03739c2fc20bb4e44c333d2dd5e07d86dd4",
+    "cron/scheduler_delivery.py": "7078145d9f66bbf21dd59de03f5a3e5987d6b01996bb179624c942c0ae1536bb",
+    "gateway/platforms/base.py": "e2ab51d8ae41933741644d65b87bdeabbf20a641d218b055f681ea96d245340e",
+    "gateway/run.py": "0c440eb8b361d28a2f02f3f30c2e7dd738b5ca3249caf267fb90ef087af83d35",
+    "gateway/run_busy.py": "d44fc0b16445ba46692058f40228bc8f4b78a23f6f54b23155aed770db9c2b68",
+    "gateway/run_inbound.py": "e1148cc822a69802c60c07c03afea08a3661975e6d16d57798673e1e87937d60",
+    "gateway/run_notifications.py": "1a137001275d29aa14f637e4f2e11ad316233f9a11b86ed159f9d35a89df02b1",
+    "gateway/run_startup.py": "108a658cac645fa0800f93d1b27a79a0285828cc0ec7ab90241a65becb5223ff",
+    "gateway/run_turn.py": "d26c177a4c0edcdd8f901d4b1b7db789c1aa534d72177645afdab32af5509b7d",
+    "gateway/run_turn_hygiene.py": "de22242a30fd948693b0b09170e25530f7bc3cbd70ef4ded1621a860e3aa01ed",
+    "gateway/run_turn_persistence.py": "31d1d1869b5c9d9d08b8f57bd3ccde4dd9c2844c4a2f74fae991d28842363880",
+    "gateway/run_turn_prepare.py": "d78059989e24fc3c15f282c41bccd3e07913dde3f0ad457b0d7117e6b084e9d6",
+    "gateway/run_turn_runner.py": "04f76f4857a8ba251b014d615b814f3920fef8212ad24e69b28fbbc4fdf2df39",
+    "gateway/session_authority.py": "f6eba4d4e17f35e9bcaaf664d1dece93bca8ceccddba3d6d2ad99aa7983bb15f",
+    "gateway/session_ingress.py": "e8b038cbaff9eaced033051b14cf6973395b16106c23c1af1034d281bae467b8",
+    "gateway/session.py": "ed560fb1b416e1bc111ed9c1e20945238fc2632c60121852a428b4ec02b60d5c"
+  },
+  "source_url": "https://github.com/NousResearch/hermes-agent/tree/bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+  "license": "session_authority_5fc490e.LICENSE",
+  "description": "Unmodified upstream v0.22.5 source. Session ingress/authority changed only at the managed-worker call name and post-history keep_from_discard await; the HFC-loaded admission functions remain shape-compatible. Full-module compiled functions run with explicit DB/model/I/O ports; not live Gateway acceptance.",
+  "admission_cohort_commits": {
+    "stable-0225": "bf0203a794a07aac3ff764972ab9087baa4e4f4e"
+  }
+}

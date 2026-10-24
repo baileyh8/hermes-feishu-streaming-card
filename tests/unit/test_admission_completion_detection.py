@@ -10,7 +10,7 @@ import pytest
 from hermes_feishu_card.install import detect
 
 
-@pytest.fixture(params=["5fc490e", "0224"])
+@pytest.fixture(params=["5fc490e", "0224", "0225"])
 def source_tree(tmp_path, request):
     manifest_path = Path(__file__).parents[1] / (
         f"fixtures/session_authority_{request.param}.json"

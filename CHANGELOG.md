@@ -1,5 +1,12 @@
 # Changelog
 
+## v5.0.7 — 2026-10-24 (candidate)
+
+- Verify Hermes v0.22.5 completion ownership and per-turn callback ordering (#456, #453), retaining pinned v0.22.4 and historical regressions.
+- Add bounded terminal-handoff diagnostics for the still-unreproduced multi-tool report (#451); acceptance evidence is tracked in the [release notes](docs/release-notes-v5.0.7.en.md).
+- Unsupported-source CLI returns 1 in local probes; the reported exit 0 is not reproduced.
+- Thanks to @coder-zhw, @Kevinzz224, @ywarmy, @coytus, @Lite-G and @leavrcn for issue evidence and analysis, separate from code authorship. Historical credits and releases remain intact.
+
 ## v5.0.6 — 2026-10-23
 
 - Put each Linux/macOS tarball and Windows ZIP under its matching `hermes-feishu-card-v5.0.6-{linux,macos,windows}/` directory. Remove the extraction-target `.` entry; normalize tar uid/gid to 0, directories and shell installers to 0755, and other regular files to 0644 (#454).

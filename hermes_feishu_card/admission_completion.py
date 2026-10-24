@@ -22,6 +22,8 @@ from types import CodeType, ModuleType
 from typing import Any, Awaitable, Callable
 import weakref
 
+from . import completion_diagnostics
+
 
 _ATTR = "_hfc_admission_display_completion"
 TTL_SECONDS = 75.0
@@ -37,6 +39,13 @@ SOURCE_COHORTS: tuple[dict[str, str], ...] = (
     {
         "gateway.session_ingress": "65013d22cda6f8d8ced1be8634b03ba38ea44c3381e3bf2cf41830e19cfdd5ad",
         "gateway.session_authority": "7c48eb3639cc37121fd1b6f48cdad862f013396080a900c39dd4f7fbf18249a7",
+    },
+    {
+        # v0.22.5 (bf0203a7): only the managed-worker call name and the
+        # post-history keep_from_discard await changed; the verified admission
+        # functions and Base extraction seam remain byte-for-byte compatible.
+        "gateway.session_ingress": "e8b038cbaff9eaced033051b14cf6973395b16106c23c1af1034d281bae467b8",
+        "gateway.session_authority": "f6eba4d4e17f35e9bcaaf664d1dece93bca8ceccddba3d6d2ad99aa7983bb15f",
     },
 )
 Finish = Callable[[Any, bool], Awaitable[None]]
@@ -257,6 +266,7 @@ class Completion:
     authority_profile: str = ""
     db: Any = None
     target: Any = None
+    diagnostic_emitted: bool = False
 
     def abort(self) -> None:
         self.state = "closed"
@@ -501,6 +511,30 @@ def _same_source(source: Any, current: Any) -> bool:
         )
     except (AttributeError, TypeError, ValueError):
         return False
+
+
+def _warn_attempt(offer: Completion, reason: str) -> None:
+    """One fixed-category observation per admission attempt; never identifiers or text."""
+    if not isinstance(offer, Completion) or offer.diagnostic_emitted:
+        return
+    offer.diagnostic_emitted = True
+    completion_diagnostics.attempt_failed(reason)
+
+
+def diagnose_attempt(stage: Any, reason: str, *, consume: bool = True) -> None:
+    """Report a Base/ACK break only when this stage owns an admission offer.
+
+    ``consume=False`` is for a normal observation (debug output) and does not
+    spend the attempt's one fault diagnostic.
+    """
+    if not isinstance(stage, dict):
+        return
+    offer = stage.get("_admission_claim")
+    if isinstance(offer, Completion):
+        if consume:
+            _warn_attempt(offer, reason)
+        else:
+            completion_diagnostics.attempt_failed(reason)
 
 
 def prepare(
@@ -768,6 +802,10 @@ def _install(ingress: Any, finish: Finish) -> None:
             ok = True
             return result
         finally:
+            if not ok:
+                offer = getattr(event, _ATTR, None)
+                if isinstance(offer, Completion):
+                    _warn_attempt(offer, "deliver-native-error")
             try:
                 await finish(event, ok)
             except Exception:
@@ -797,18 +835,29 @@ def consume_extracted(values: dict[str, Any], profile: str) -> dict[str, Any] | 
     offer = getattr(event, _ATTR, None)
     if not isinstance(offer, Completion):
         return None
-    if (
-        not offer.fresh()
-        or offer.state != "offered"
-        or offer.target() is not event
-        or _route(event, profile) != offer.route
-        or values.get("self") is not offer.adapter()
-        or values.get("session_key") != offer.session_key
-        or values.get("pre_extract") != offer.native_response
-        or _verified() is None
-        or not _authority_current(offer, started=False)
-        or not _on_stack(_base_extractor(offer.adapter()))
-    ):
+    reason = ""
+    if not offer.fresh():
+        reason = "consume-expired"
+    elif offer.state != "offered":
+        reason = "consume-state-mismatch"
+    elif offer.target() is not event:
+        reason = "consume-target-mismatch"
+    elif _route(event, profile) != offer.route:
+        reason = "consume-route-mismatch"
+    elif values.get("self") is not offer.adapter():
+        reason = "consume-adapter-mismatch"
+    elif values.get("session_key") != offer.session_key:
+        reason = "consume-session-mismatch"
+    elif values.get("pre_extract") != offer.native_response:
+        reason = "consume-response-mismatch"
+    elif _verified() is None:
+        reason = "consume-source-unverified"
+    elif not _authority_current(offer, started=False):
+        reason = "consume-authority-stale"
+    elif not _on_stack(_base_extractor(offer.adapter())):
+        reason = "consume-base-seam-unverified"
+    if reason:
+        _warn_attempt(offer, reason)
         offer.abort()
         setattr(event, _ATTR, None)
         return None

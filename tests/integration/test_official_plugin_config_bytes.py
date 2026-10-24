@@ -29,6 +29,7 @@ ROOTS = {
     "reported-cf4": ("HFC_CONFIG_WRITER_CF4_ROOT", "cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe"),
     "rc2": ("HFC_CONFIG_WRITER_RC2_ROOT", "f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68"),
     "pm-0224": ("HFC_CONFIG_WRITER_0224_ROOT", "4d04303818b61bf3aa09278af48356315515965b"),
+    "pm-0225": ("HFC_CONFIG_WRITER_0225_ROOT", "bf0203a794a07aac3ff764972ab9087baa4e4f4e"),
     "pm-main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
 EXPECTED_FAMILIES = {"reported-cf4": "pm-0223", "rc2": "pm-0223"}
@@ -127,7 +128,11 @@ def test_official_failure_diagnostic_redacts_real_child_output(capsys, missing):
     (family, selection, None)
     for family in ROOTS
     for selection in ("fresh", "already", "disabled-canonical", "explicit-values")
-] + [("pm-0224", "fresh", outcome) for outcome in ("nonzero", "exception", "journal")])
+] + [
+    (family, "fresh", outcome)
+    for family in ("pm-0224", "pm-0225")
+    for outcome in ("nonzero", "exception", "journal")
+])
 def test_private_plan_equals_real_official_writer_and_exact_restore(
     official_runtime,
     official_enable_diagnostics,
@@ -226,6 +231,7 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     assert plan.family == EXPECTED_FAMILIES.get(family, family)
     assert (home / "config.yaml").read_bytes() == original
     assert not list(preimage.state_dir.glob("hfc-config-plan-*"))
+    prepared_journal = preimage.journal_path.read_bytes()
     if failure is not None:
         with monkeypatch.context() as fault:
             if failure == "journal":
@@ -247,6 +253,8 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
                 plugin.enable_plugin(binding, preimage)
         assert (home / "config.yaml").read_bytes() == original
         assert preimage.backup_path.read_bytes() == original
+        assert preimage.journal_path.read_bytes() == prepared_journal
+        assert json.loads(prepared_journal)["phase"] == "prepared"
     ownership = plugin.enable_plugin(binding, preimage)
     assert (home / "config.yaml").read_bytes() == plan.postimage
     assert (
@@ -263,7 +271,9 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
         shutil.rmtree(home / "pm-project")
 
 
-@pytest.mark.parametrize("snapshot", ["reported-cf4", "rc2", "pm-0224", "pm-main-4e58"])
+@pytest.mark.parametrize(
+    "snapshot", ["reported-cf4", "rc2", "pm-0224", "pm-0225", "pm-main-4e58"]
+)
 @pytest.mark.parametrize("changed", [
     "hermes_cli/plugins_cmd.py", "hermes_cli/config_worker_save.py",
     "hermes_cli/config_defaults.py", "hermes_cli/plugins_admission.py",
@@ -303,3 +313,175 @@ def test_new_writer_drift_refuses_before_child_and_preserves_config(
         )
     assert (home / "config.yaml").read_bytes() == original
     assert not list(state.iterdir())
+
+
+@pytest.mark.parametrize("changed", [
+    "hermes_cli/plugins_cmd.py",
+    "hermes_cli/config.py",
+    "pm/workspace.py",
+    "hermes_cli/left_core_migration.py",
+    "hermes_cli/config_defaults.py",
+    "hermes_cli/plugins_activation.py",
+    'agent/__init__.py',
+    'agent/i18n.py',
+    'agent/i18n_languages.py',
+    'agent/i18n_layers.py',
+    'agent/jiter_preload.py',
+    'hermes_cli/__init__.py',
+    'hermes_cli/_subprocess_compat.py',
+    'hermes_cli/cli_output.py',
+    'hermes_cli/colors.py',
+    'hermes_cli/default_soul.py',
+    'hermes_cli/observability/__init__.py',
+    'hermes_cli/personality.py',
+    'hermes_cli/plugin_install_phase.py',
+    'hermes_cli/plugins_cmd_git.py',
+    'hermes_cli/plugins_cmd_install.py',
+    'hermes_cli/plugins_cmd_listing.py',
+    'hermes_cli/plugins_cmd_remove.py',
+    'hermes_cli/plugins_cmd_toggle.py',
+    'hermes_cli/plugins_cmd_update.py',
+    'hermes_cli/secret_prompt.py',
+    'hermes_cli/stale_modules.py',
+    'hermes_platform/__init__.py',
+    'hermes_platform/host/__init__.py',
+    'hermes_platform/host/darwin_pci.py',
+    'hermes_platform/host/facts.py',
+    'hermes_platform/host/runtime.py',
+    'providers/base.py',
+])
+def test_pm_0225_each_changed_source_drift_refuses_before_child(
+    tmp_path, monkeypatch, changed
+):
+    configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+        pytest.skip("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+    source = Path(configured)
+    root, home, state = tmp_path / "source", tmp_path / "home", tmp_path / "state"
+    home.mkdir()
+    state.mkdir()
+    family = "pm-0225"
+    for name in plugin_config_bytes.FAMILIES[family]:
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / name, target)
+    plugin_config_bytes.verify_family(root, family)
+    target = root / changed
+    target.write_bytes(target.read_bytes() + b"\n# unverified local writer change\n")
+    original = b"# original bytes\r\nplugins: {}\r\n"
+    (home / "config.yaml").write_bytes(original)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("drifted writer must not start any child")
+
+    monkeypatch.setattr(plugin_config_bytes.subprocess, "run", forbidden)
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused, match="contract is unknown"):
+        plugin_config_bytes.plan_enabled_bytes(
+            root=root,
+            python=Path(sys.executable),
+            home=home,
+            state_dir=state,
+            before=original,
+            desired={},
+            enabled_before=False,
+        )
+    assert (home / "config.yaml").read_bytes() == original
+    assert not list(state.iterdir())
+
+
+def test_pm_0225_unbound_local_import_refuses_before_module_execution(tmp_path, monkeypatch):
+    """A newly reached local module cannot execute even if its importer is bound."""
+    root, home, state = tmp_path / "source", tmp_path / "home", tmp_path / "state"
+    root.mkdir()
+    home.mkdir()
+    state.mkdir()
+    package = root / "providers"
+    package.mkdir()
+    importer = package / "__init__.py"
+    importer.write_text("import unreviewed_local\n")
+    # A private-HOME write would otherwise be allowed by the side-effect audit.
+    marker = home / "unbound-executed"
+    (root / "unreviewed_local.py").write_text(
+        "from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n"
+    )
+    sources = {"providers/__init__.py": hashlib.sha256(importer.read_bytes()).hexdigest()}
+    monkeypatch.setattr(plugin_config_bytes, "FAMILIES", {"pm-0225": sources})
+    original = b"plugins: {}\n"
+    (home / "config.yaml").write_bytes(original)
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused, match="byte plan failed"):
+        plugin_config_bytes.plan_enabled_bytes(
+            root=root, python=Path(sys.executable), home=home, state_dir=state,
+            before=original, desired={}, enabled_before=False,
+        )
+    assert not marker.exists()
+    assert (home / "config.yaml").read_bytes() == original
+    assert not list(state.iterdir())
+
+
+@pytest.mark.parametrize("family,expected_code", [("pm-0224", 0), ("pm-0225", 73)])
+def test_local_source_guard_is_private_child_and_new_family_only(
+    tmp_path, family, expected_code
+):
+    root, home = tmp_path / "source", tmp_path / "home"
+    root.mkdir()
+    home.mkdir()
+    (home / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"), "family": family, "sources": {},
+    }))
+    marker = home / "local-executed"
+    (root / "unbound.py").write_text(
+        "from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n"
+    )
+    # Execute the real audit/profile setup, before its first writer import.
+    setup = plugin_config_bytes._CHILD.split(
+        "for name,digest in request['sources'].items():", 1
+    )[0]
+    code = setup + "\nimport decimal,yaml\nsys.path.insert(0,str(root))\nimport unbound\n"
+    child = subprocess.run(
+        [sys.executable, "-I", "-c", code, str(root), str(home)],
+        env={"HOME": str(home), "HERMES_HOME": str(home)},
+        capture_output=True, timeout=30,
+    )
+    assert child.returncode == expected_code
+    assert marker.exists() is (family == "pm-0224")
+    # The parent can still write outside the child's HOME and launch a process.
+    parent_marker = tmp_path / "parent-unaffected"
+    parent_marker.touch()
+    assert parent_marker.exists()
+    assert subprocess.run([sys.executable, "-I", "-c", "pass"], timeout=10).returncode == 0
+
+
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225"])
+def test_private_new_family_compiles_verified_source_instead_of_cached_code(tmp_path, family):
+    import py_compile
+
+    root, home = tmp_path / "source", tmp_path / "home"
+    root.mkdir()
+    home.mkdir()
+    marker = home / "cached-code-executed"
+    source = root / "bound.py"
+    cached = "from pathlib import Path\nPath(" + repr(str(marker)) + ").touch()\n"
+    source.write_text(cached)
+    timestamp = source.stat()
+    py_compile.compile(str(source), doraise=True)
+    # Same mtime/size makes the malicious timestamp cache valid to Python;
+    # only the reviewed .py bytes should be used by the newer planner.
+    source.write_text("#" + "x" * (len(cached.encode()) - 2) + "\n")
+    os.utime(source, ns=(timestamp.st_atime_ns, timestamp.st_mtime_ns))
+    (home / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"), "family": family,
+        "sources": {"bound.py": hashlib.sha256(source.read_bytes()).hexdigest()},
+    }))
+    setup = plugin_config_bytes._CHILD.split(
+        "for name,digest in request['sources'].items():", 1
+    )[0]
+    child = subprocess.run(
+        [sys.executable, "-I", "-c", setup + "\nsys.path.insert(0,str(root))\nimport bound\n",
+         str(root), str(home)],
+        env={"HOME": str(home), "HERMES_HOME": str(home)},
+        capture_output=True, timeout=30,
+    )
+    assert child.returncode == 0
+    assert marker.exists() is (family == "pm-0224")

@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v4.7.5](release-notes-v4.7.5.md) | PM 运行环境绑定、私聊卡片准入与布局边界 |
 | [v4.7.3](release-notes-v4.7.3.md) | 缺心跳扫描降频、健康接口响应与恢复说明 |
 | [v4.7.2](release-notes-v4.7.2.md) | Update safety, SDK callbacks, integrity recovery / 更新与回调修复 |
 | [v4.7.1](release-notes-v4.7.1.md) | 命令确认回调修复与结果卡更新 |

@@ -19,6 +19,7 @@ from hermes_feishu_card.install import pm_dependency as pm
 PM_ROOTS = {
     "previous": ("HFC_UPSTREAM_PM_ROOT", "7bda2a3368024f7ae1c70cef16583e7c2c891674"),
     "0224": ("HFC_CONFIG_WRITER_0224_ROOT", "4d04303818b61bf3aa09278af48356315515965b"),
+    "0225": ("HFC_CONFIG_WRITER_0225_ROOT", "bf0203a794a07aac3ff764972ab9087baa4e4f4e"),
     "main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
 
@@ -81,7 +82,15 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     # config, not passed as a special candidates/members override.
     other = home / 'plugins' / 'other'
     other.mkdir()
-    (other / 'pyproject.toml').write_text('[project]\nname="other"\nversion="1"\ndependencies=[]\n[tool.uv]\npackage=false\n')
+    # v0.22.5 deliberately excludes metadata-only projects from PM members;
+    # make this unrelated member genuinely installable so both the older and
+    # current workspace rules cross a generation.
+    (other / 'other').mkdir()
+    (other / 'other' / '__init__.py').write_text('__version__ = "1"\n')
+    (other / 'pyproject.toml').write_text(
+        '[project]\nname="other"\nversion="1"\ndependencies=[]\n'
+        '[tool.uv]\npackage=true\n'
+    )
     again = child.replace("enabled = plugins.get('enabled') or []", "enabled = [*(plugins.get('enabled') or []), 'other']")
     monkeypatch.setattr(pm, '_CHILD', again)
     probe = pm._call(root, Path(sys.executable), home, {'operation': 'probe'})
@@ -142,7 +151,9 @@ first=committed_venv(root)
 member=home/'plugins'/package.NAME
 assert package.verify_installed(member,first/'bin/python')
 future=home/'plugins'/'future';future.mkdir()
-(future/'pyproject.toml').write_text('[project]\nname="future"\nversion="1"\ndependencies=[]\n[tool.uv]\npackage=false\n')
+(future/'future').mkdir()
+(future/'future'/'__init__.py').write_text('__version__ = "1"\n')
+(future/'pyproject.toml').write_text('[project]\nname="future"\nversion="1"\ndependencies=[]\n[tool.uv]\npackage=true\n')
 package._CHILD=package._CHILD.replace("enabled = plugins.get('enabled') or []", "enabled = [*(plugins.get('enabled') or []), 'future']")
 probe=package._call(root,Path(sys.executable),home,{'operation':'probe'})
 package._call(root,Path(sys.executable),home,{'operation':'add','name':package.NAME,'expected':probe['expected']})
@@ -162,3 +173,42 @@ print('ordinary-installed PM branch crossed generations')
     config = (home / 'config.yaml').read_text()
     assert 'other' in config and 'keep-disabled' in config and pm.NAME not in config
     assert not member.exists()
+
+
+@pytest.mark.parametrize("snapshot,metadata_member", [("0224", True), ("0225", False)])
+def test_pinned_pm_metadata_only_and_installable_member_predicates(
+    tmp_path, snapshot, metadata_member
+):
+    """Keep the older metadata-only behavior distinct from a generation trigger."""
+    variable, expected_head = PM_ROOTS[snapshot]
+    configured = os.environ.get(variable)
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_PM_GENERATION") == "1":
+            pytest.fail("pinned PM source missing: " + variable)
+        pytest.skip("pinned PM source missing: " + variable)
+    upstream = Path(configured)
+    head = subprocess.run(
+        ["git", "-C", str(upstream), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True, timeout=10,
+    ).stdout.strip()
+    assert head == expected_head
+    member = tmp_path / "member"
+    member.mkdir()
+    metadata = '[project]\nname="member"\nversion="1"\ndependencies=[]\n'
+    (member / "pyproject.toml").write_text(metadata + '[tool.uv]\npackage=false\n')
+    code = (
+        "import json,sys;from pathlib import Path;"
+        f"sys.path.insert(0,{str(upstream)!r});"
+        "from pm.workspace import _is_member_candidate;"
+        f"print(json.dumps(_is_member_candidate(Path({str(member)!r}))))"
+    )
+    def candidate():
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", code], cwd=tmp_path,
+            env={"HOME": str(tmp_path), "HERMES_HOME": str(tmp_path)},
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+        return result.stdout.strip() == "true"
+    assert candidate() is metadata_member
+    (member / "pyproject.toml").write_text(metadata + '[tool.uv]\npackage=true\n')
+    assert candidate() is True

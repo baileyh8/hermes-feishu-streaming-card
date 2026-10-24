@@ -111,11 +111,59 @@ _PM_0224_WRITER = {
     'hermes_cli/toolset_validation.py': '417def17fc7bbed252b388840d85519474250c6d8c92fd071463035c2e830df4',
 
 }
+
+# v0.22.5 keeps the enable/write sequence, but changes six files on that path:
+# plugins_cmd only routes the post-enable notification through report_activation;
+# config and left_core_migration add lazy terminal-key migration reads; config_defaults
+# changes data defaults; pm/workspace changes the workspace-member predicate; and
+# plugins_activation adds gateway detection.  The private planner still writes the
+# selected lists and the entry flag directly, so bind the changed sources as a
+# separate family rather than accepting v0.22.5 as pm-0224.
+_PM_0225_WRITER = {
+    **_PM_0224_WRITER,
+    'hermes_cli/plugins_cmd.py': '4944559cbdec88a4bd08edd24faad47a921e768b04c8cb7a171e2634494d08fb',
+    'hermes_cli/config.py': '1aebd87e71338c17f63bdf13ecd62c59aa053bc0b1270398efaa327642a1142b',
+    'pm/workspace.py': 'ecc8c9ccd38ddfbfe6cd228b727e4e13e83765f0166bc2e3ebd21d1582e6e506',
+    'hermes_cli/left_core_migration.py': '197c21fe68d24f0f6df519fcbed22b6d6be8e3fe85765e0663c50efc06b9a05d',
+    'hermes_cli/config_defaults.py': '64890345b7b4d6601bd0dd4c8caac95ba1eaf793ae8b9236c0ccf149e6b2b3bf',
+    'hermes_cli/plugins_activation.py': '83450aea21cbe7214b06cfe873c7f2b2cd84f587d22cad0660e761e8bcbe52e0',
+    # Local modules executed by the bounded private planner import path.
+    # No provider/plugin discovery or third-party dependency closure is admitted.
+    'agent/__init__.py': '21cdce89e9ffdb847634bf498b087410cd191a1e375db43928735846fb7ddc86',
+    'agent/i18n.py': '818d6f6d2870f8931b7a4d2f4583f86194bfc733f5b8fed63627437104917ac8',
+    'agent/i18n_languages.py': 'ec22e409f7a964250cc9f67f317196623f5aa2ad86f23287685e9aa060910a49',
+    'agent/i18n_layers.py': 'f77fc370c92522f5f1d7b7b14de1513e43d25ac6fef73601de48c074a61a5670',
+    'agent/jiter_preload.py': 'bb66461d6e52e54dd2368ad021304d74676824924c45df80f0a3e769c9e5fff3',
+    'hermes_cli/__init__.py': '6a4ab05b8621ec1cd66a5abbe30fa32ed5bddddea95903036da01f0af1af94ce',
+    'hermes_cli/_subprocess_compat.py': '4d036c56de8065099f4b82a50fde9095c43dab7e851e0e3a3fe4cd5c143a212e',
+    'hermes_cli/cli_output.py': 'ebf4ddc96fb90fd21d7c2dd2805e49ae7ecf280148ee15dd531b3efaa1251e8e',
+    'hermes_cli/colors.py': '12d4cd7deaa3832a73b7758609cc9607871a9aa222c5423ca6c0f3e3d4cc2ee6',
+    'hermes_cli/default_soul.py': 'b65192a631f0011fcef245c94d9741e0c716defe605d3edfd0e59f26da211d2d',
+    'hermes_cli/observability/__init__.py': 'ff9ef5f81f6533b011115b69ebcafe65fd3276877fa614b431385115681bb15b',
+    'hermes_cli/personality.py': '9e1f7b44758704c332e893186b15c2be6cf90f2989f7654ae2b46916e5979f8d',
+    'hermes_cli/plugin_install_phase.py': 'e4b98d59c50ed01e0daaa47fd2a13216349c7d2e963de1ad9aa5648a9b05bd81',
+    'hermes_cli/plugins_cmd_git.py': 'e0a71fad2f8a3fc33b80ecff9e6afff00f59df60b57504e4b317927412588f38',
+    'hermes_cli/plugins_cmd_install.py': '8137442dbdfef7d6025da5fcdcf98a4a739c173583acc08241efcf89179576f0',
+    'hermes_cli/plugins_cmd_listing.py': '9f8ab0eb85f73dcf1d8e6acc8b270a38592789d30ae125299698e82a8726e7fc',
+    'hermes_cli/plugins_cmd_remove.py': 'bdb5cbc176d53c24f95c22ae1e98926b9568eff0486e24ce2d2dae20c9b72c3b',
+    'hermes_cli/plugins_cmd_toggle.py': '561054775f12f146417c4cf5cd5e3c6cffac421734c5211af0026da3d0ad4095',
+    'hermes_cli/plugins_cmd_update.py': '52219c30344d686d485f72e11a26c196785b80defd24270da144cfaa34e2b567',
+    'hermes_cli/secret_prompt.py': 'd523702f8899ee5b42eed38e45883c871bde991a070cd40304f8c82186966356',
+    'hermes_cli/stale_modules.py': '35625a6fe429f1b5555e200aa47e84fe73d01ae2815ff53d3c4fa8e56b575eb2',
+    'hermes_platform/__init__.py': '698ba6987eb24da01e63c336607529af9cd38f8694c58f7b96e484b22cbdf5a6',
+    'hermes_platform/host/__init__.py': 'af071e6da9cf17505724bea27a75798f4ec6cd296a8e9821b0bab11bcc06e55b',
+    'hermes_platform/host/darwin_pci.py': '2ecbf4c68873f16f6de855794503c3ba781e3f26ea8da910a8ce5cd513f96fcb',
+    'hermes_platform/host/facts.py': '52eef216017ca8e18d7365ec10a9494b2d261280cfc70d9e0b94a2cc7b363d7a',
+    'hermes_platform/host/runtime.py': 'fd760a3f044d6201aa5b543d0166de11f27e2da6a700839623ebd67ce1037d6a',
+    'providers/base.py': 'b948b1369e80690fe36bbedef5c5d4871c748bc34a0e31a64fc012fb5c99f0b1',
+
+}
 FAMILIES["pm-0223"] = {
     **_PM_0224_WRITER,
     "hermes_cli/config_defaults.py": "615284fcd701fa88d684852a365cc06755e9e348576dd00f83a258e8addee316",
 }
 FAMILIES["pm-0224"] = dict(_PM_0224_WRITER)
+FAMILIES["pm-0225"] = dict(_PM_0225_WRITER)
 FAMILIES["pm-main-4e58"] = {
     **_PM_0224_WRITER,
     "hermes_cli/left_core_migration.py": "a1a67f61f5d264d5cf935f8acb2a14967ad06f4efca3ce3441f4c676950b25dc",
@@ -175,6 +223,12 @@ def deny(reason):
     sys.stderr.write('private config byte plan side effect refused\n');sys.stderr.flush()
     os._exit(73)
 def audit(event,args):
+    if request['family']=='pm-0225' and event=='exec':
+        filename=args[0].co_filename
+        if not filename.startswith('<'):
+            path=Path(filename).resolve()
+            if under(path,root) and path.relative_to(root).as_posix() not in request['sources']:
+                deny('unbound local source execution')
     if event in {'subprocess.Popen','os.system','socket.connect','socket.bind'}:
         if event=='subprocess.Popen':
             frame=sys._getframe(1)
@@ -188,6 +242,9 @@ def audit(event,args):
         deny(event)
     if event=='open' and isinstance(args[0],(str,bytes,os.PathLike)):
         path=Path(os.fsdecode(args[0])).resolve()
+        # Ignore checkout bytecode caches: verified source must be compiled.
+        if request['family']=='pm-0225' and under(path,root) and path.suffix=='.pyc':
+            raise OSError('private planner requires verified source')
         mode=args[1];flags=args[2]
         writing=(isinstance(mode,str) and any(x in mode for x in 'wax+')) or bool(flags & (os.O_WRONLY|os.O_RDWR|os.O_CREAT|os.O_TRUNC))
         if writing and not under(path,home): deny('write outside shadow')

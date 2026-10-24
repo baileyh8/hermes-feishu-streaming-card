@@ -87,7 +87,7 @@ def test_measured_upstream_budget_covers_all_pinned_sources_without_duplicates()
     for baseline in sources:
         assert ("tests/integration/test_upstream_hermes_compat.py::"
                 f"test_pinned_upstream_install_repeat_doctor_restore[{baseline}]") in weights
-    buckets, loads = partition(list(weights), 8, weights)
+    buckets, loads = partition(list(weights), 12, weights)
     selected = [node for bucket in buckets for node in bucket]
     assert sorted(selected) == sorted(weights)
     assert len(selected) == len(set(selected))
@@ -95,7 +95,7 @@ def test_measured_upstream_budget_covers_all_pinned_sources_without_duplicates()
     # The first measured setup used five minutes. Include that preparation in
     # the twenty-minute target; this is a scheduling estimate, not a CI pass.
     assert max(loads) + 300 < 1200
-    assert partition(list(reversed(weights)), 8, weights) == (buckets, loads)
+    assert partition(list(reversed(weights)), 12, weights) == (buckets, loads)
 
 
 @pytest.mark.parametrize("key,value", [("python", "3.10"), ("platform", "win32")])
@@ -138,12 +138,31 @@ def test_full_jobs_keep_all_versions_and_stable_required_contexts():
         assert jobs[name]["if"] == "always() && needs.plan.result == 'success'"
         assert "tools.ci_shard" in str(jobs[name])
         assert "test \"$PRODUCER_RESULT\" = success" in str(jobs[name])
-    assert jobs["upstream-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
+    assert jobs["upstream-shards"]["strategy"]["matrix"]["slice"] == [0, 1, 2]
     assert jobs["macos-shards"]["strategy"]["matrix"]["slice"] == [0, 1, 2, 3, 4]
     assert {"upstream-hermes-compat", "quality", "feishu-sdk-compat-python314"} <= set(jobs["pytest"]["needs"])
     gate = str(jobs["pytest"])
     for variable in ("UPSTREAM_RESULT", "QUALITY_RESULT", "SDK314_RESULT"):
         assert f'test "${variable}" = success' in gate
+
+
+def test_upstream_slice_offsets_cover_twelve_workers_once_and_keep_the_gate():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    producer = jobs["upstream-shards"]
+    command = next(step["run"] for step in producer["steps"]
+                   if "--profile upstream" in step.get("run", ""))
+    count, workers, stride = map(int, re.search(
+        r"--shards (\d+) --workers (\d+) --offset .*\* (\d+) \)\)", command,
+    ).groups())
+    indexes = [index for part in producer["strategy"]["matrix"]["slice"]
+               for index in range(part * stride, part * stride + workers)]
+    assert count == 12 and workers == 4
+    assert sorted(indexes) == list(range(count))
+    assert producer["timeout-minutes"] == 25
+    gate = jobs["upstream-hermes-compat"]
+    assert "upstream-shards" in gate["needs"]
+    assert '--count 12 --python-version' in str(gate)
+    assert 'test "$PRODUCER_RESULT" = success' in str(gate)
 
 
 def test_macos_slice_offsets_cover_ten_workers_once_and_keep_the_gate():

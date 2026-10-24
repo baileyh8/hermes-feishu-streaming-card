@@ -22,7 +22,7 @@
 
 每个 Linux 版本分成八片，由两个独立 runner 各运行四个 pytest 进程；macOS 分为十片，五个 runner 各运行两个进程。各进程使用独立 Git clone、HOME、HFC state、TMPDIR 和 pytest basetemp；安装测试构建 wheel、写源码和元数据时不会竞争同一个 checkout。只借用 CI 准备的只读固定源码、普通 wheel 和用于创建独立环境的 Python。上游 worker 在自己的私有目录新建 venv，以 `--no-index --no-deps` 安装同一 wheel，不复制旧 prefix 的 launchers，也不写回借用环境。`--system-site-packages` 复用 setup-python base 中已安装的测试依赖；它不继承任意外层 venv 的独有依赖。
 
-Hermes 3.12/3.13 兼容矩阵同样各拆八片。公开仓库的 Ubuntu runner 有 4 核、macOS arm64 有 3 核，硬件基准见[官方资源规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)；macOS 每台限制两个测试进程，为重复源码解析和安装测试留出 CPU 余量，不增加付费 runner。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
+Hermes 3.12/3.13 兼容矩阵各拆十二片，由三个 runner 各运行四个进程。公开仓库的 Ubuntu runner 有 4 核、macOS arm64 有 3 核，硬件基准见[官方资源规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)；macOS 每台限制两个测试进程，为重复源码解析和安装测试留出 CPU 余量，不增加付费 runner。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
 
 `tools/ci_shard.py` 按收集到的完整 node ID 集合分配用例，使用 `tools/ci_durations.json` 中的历史耗时做均衡。耗时文件仅影响调度，不是测试白名单。新增和参数化用例自动进入集合，未登记耗时的用例也会运行。慢用例拆到不同进程，保留每个用例内部的完整安装、故障注入与恢复断言。
 
@@ -45,3 +45,5 @@ full 耗时现采用 [CI 39741242119](https://github.com/baileyh8/hermes-feishu-
 若连续运行超过 20 分钟，先根据 artifact 判断是排队、单片偏重、单个用例过慢还是 runner 内 CPU/内存争用，再调整分配或优化重复准备步骤。不得通过删断言、缩短必要超时、跳过真实安装恢复或把失败标为允许失败来达标。
 
 本地先跑受影响的聚焦验证；完整 CI 已在同一精确提交成功时，不为同一发布结论再重复一套无新增证据的本地全量。不同提交的结果不能直接复用。当前 tag workflow 仍执行完整矩阵；跨 workflow 的验证结果复用需另有可核对的 commit 与输入证据，不能因改为并行就跳过发布 gate。
+
+V5.0.7 新增固定 v0.22.5 安装、writer 和 PM 用例，上游改为三个 runner 各四进程（12 片），保留逐用例完整并集与既有 required checks。首次运行前，新用例沿用相应 v0.22.4 的耗时作为调度估计；不是 v0.22.5 的实测或通过证据。

@@ -170,11 +170,14 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
     assert source_step["env"]["HFC_LEGACY_PLUGIN_SOURCE_ROOT"] == "${{ github.workspace }}/.upstream/baseline_0222"
     for family, baseline in {
         "PM_MAIN": "baseline_main_0ab", "CF4": "issue451_cf4", "RC2": "issue451_rc2",
-        "0224": "latest_stable", "MAIN_4E58": "latest_main",
+        "0224": "latest_stable", "0225": "issue456_0225", "MAIN_4E58": "latest_main",
     }.items():
         assert source_step["env"][f"HFC_CONFIG_WRITER_{family}_ROOT"] == (
             "${{ github.workspace }}/.upstream/" + baseline
         )
+    from tools.ci_run import FORWARD
+    assert "HFC_CONFIG_WRITER_0225_ROOT" in FORWARD
+    assert sources["issue456_0225"]["commit"] == "bf0203a794a07aac3ff764972ab9087baa4e4f4e"
     assert sources["latest_stable"]["commit"] == "4d04303818b61bf3aa09278af48356315515965b"
     assert sources["latest_main"]["commit"] == "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"
     assert sources["baseline_0222"]["commit"] == "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
