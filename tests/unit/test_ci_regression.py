@@ -566,7 +566,7 @@ def test_linux_measured_weight_refresh_keeps_twenty_minute_estimate_margin():
     nodes = list(weights) + [f"unmeasured-{index}" for index in range(7526 - len(weights))]
     buckets, loads = partition(nodes, 12, weights)
     assert sorted(node for bucket in buckets for node in bucket) == sorted(nodes)
-    assert len(set(node for bucket in buckets for node in bucket)) == len(nodes)
+    assert len({node for bucket in buckets for node in bucket}) == len(nodes)
     assert max(loads) < 1000
     observed_overhead = sum(measured[key] for key in (
         "pre_test_max_seconds", "post_test_max_seconds",
