@@ -527,3 +527,48 @@ async def test_deliver_cleanup_metadata_error_does_not_change_native_outcome(
             == "native-delivery"
         )
     assert calls == [1]
+
+
+@pytest.mark.parametrize("native_error", [None, RuntimeError("native"), asyncio.CancelledError("native")])
+@pytest.mark.parametrize("failure", ["metadata", "callback"])
+async def test_deliver_diagnostic_cancellation_preserves_native_and_finishes_once(
+    wrapper_ports, monkeypatch, native_error, failure
+):
+    calls = []
+    metadata_reads = []
+
+    class Event:
+        def __getattribute__(self, name):
+            if name == ac._ATTR and failure == "metadata" and native_error is not None and not metadata_reads:
+                metadata_reads.append(name)
+                raise asyncio.CancelledError("diagnostic metadata")
+            return object.__getattribute__(self, name)
+
+    event = Event()
+    offer = object.__new__(ac.Completion)
+    offer.diagnostic_emitted = False
+    setattr(event, ac._ATTR, offer)
+
+    async def native(*args):
+        calls.append("native")
+        if native_error is not None:
+            raise native_error
+        return "native-result"
+
+    async def finish(event, ok):
+        calls.append(("finish", ok))
+
+    def broken(*args):
+        raise asyncio.CancelledError("diagnostic callback")
+
+    monkeypatch.setattr(ac.completion_diagnostics, "attempt_failed", broken)
+    monkeypatch.setattr(ac, "_abort", lambda *args: None)
+    wrapper_ports.ingress.deliver_response = native
+    ac._install(wrapper_ports.ingress, finish)
+    if native_error is None:
+        assert await wrapper_ports.ingress.deliver_response(None, event, "key", "answer") == "native-result"
+    else:
+        with pytest.raises(type(native_error)) as caught:
+            await wrapper_ports.ingress.deliver_response(None, event, "key", "answer")
+        assert caught.value is native_error
+    assert calls == ["native", ("finish", native_error is None)]

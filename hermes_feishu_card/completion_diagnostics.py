@@ -60,17 +60,17 @@ def _emit(message: str, *, debug: bool = False) -> None:
     if debug:
         try:
             logger.debug("[hermes-feishu-card] %s", message)
-        except Exception:
+        except BaseException:
             pass
         return
     try:
         logger.warning("[hermes-feishu-card] %s", message)
         return
-    except Exception:
+    except BaseException:
         pass
     try:
         print(f"[hermes-feishu-card] {message}", file=sys.stderr)
-    except Exception:
+    except BaseException:
         pass
 
 
@@ -89,7 +89,7 @@ def stage_skipped(reason: str) -> None:
             f"admission completion stage skipped: {reason}",
             debug=reason in _NORMAL_STAGE_REASONS,
         )
-    except Exception:
+    except BaseException:
         return
 
 
@@ -107,11 +107,14 @@ def attempt_failed(reason: str) -> None:
                 f"admission completion attempt: {reason}",
                 debug=reason in _NORMAL_ATTEMPT_REASONS,
             )
-    except Exception:
+    except BaseException:
         return
 
 
 def reset() -> None:
-    with _lock:
-        _last_stage.clear()
-        _last_attempt.clear()
+    try:
+        with _lock:
+            _last_stage.clear()
+            _last_attempt.clear()
+    except BaseException:
+        pass

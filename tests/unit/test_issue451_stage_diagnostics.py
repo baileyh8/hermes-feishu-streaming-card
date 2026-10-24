@@ -112,6 +112,60 @@ def test_diagnostics_fail_best_effort_without_changing_delivery(monkeypatch):
     diag._emit("must not raise")
 
 
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+def test_diagnostic_metadata_and_callback_failures_are_best_effort(monkeypatch, error_type):
+    class UnreadableStage(dict):
+        def get(self, *args):
+            raise error_type("unreadable display metadata")
+
+    class UnreadableOffer(ac.Completion):
+        def __getattribute__(self, name):
+            raise error_type("unreadable display metadata")
+
+    ac.diagnose_attempt(UnreadableStage(), "ack-not-applied")
+    ac._warn_attempt(object.__new__(UnreadableOffer), "ack-not-applied")
+
+    def broken(*args):
+        raise error_type("diagnostic unavailable")
+
+    monkeypatch.setattr(diag, "attempt_failed", broken)
+    monkeypatch.setattr(diag, "stage_skipped", broken)
+    offer = object.__new__(ac.Completion)
+    offer.diagnostic_emitted = False
+    ac.diagnose_attempt({"_admission_claim": offer}, "ack-not-applied")
+    ac.diagnose_attempt({"_admission_claim": offer}, "ack-not-capable", consume=False)
+    h._warn_stage_diagnostic("exception")
+
+
+@pytest.mark.parametrize("boundary", ["debug", "warning-print", "clock", "lock"])
+def test_synchronous_diagnostics_cannot_cancel_delivery(monkeypatch, boundary):
+    diag.reset()
+
+    def cancel(*args, **kwargs):
+        raise asyncio.CancelledError("diagnostic only")
+
+    if boundary == "debug":
+        monkeypatch.setattr(diag.logger, "debug", cancel)
+        diag._emit("fixed", debug=True)
+    elif boundary == "warning-print":
+        monkeypatch.setattr(diag.logger, "warning", cancel)
+        monkeypatch.setattr(h.logger, "warning", cancel)
+        monkeypatch.setattr(builtins, "print", cancel)
+        diag._emit("fixed")
+        h._hfc_warn("fixed")
+    else:
+        if boundary == "clock":
+            monkeypatch.setattr(diag.time, "monotonic", cancel)
+        else:
+            class BrokenLock:
+                __enter__ = cancel
+                __exit__ = cancel
+            monkeypatch.setattr(diag, "_lock", BrokenLock())
+        diag.stage_skipped("exception")
+        diag.attempt_failed("ack-not-applied")
+        diag.reset()
+
+
 @pytest.mark.asyncio
 async def test_stage_preconditions_emit_fixed_categories(monkeypatch):
     warnings: list[str] = []

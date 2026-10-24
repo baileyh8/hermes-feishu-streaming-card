@@ -4217,16 +4217,19 @@ def _hfc_warn(message: str) -> None:
     try:
         logger.warning("[hermes-feishu-card] %s", message)
         return
-    except Exception:
+    except BaseException:
         pass
     try:
         print(f"[hermes-feishu-card] {message}", file=sys.stderr)
-    except Exception:
+    except BaseException:
         pass
 
 
 def _warn_stage_diagnostic(reason: str) -> None:
-    _completion_diagnostics.stage_skipped(reason)
+    try:
+        _completion_diagnostics.stage_skipped(reason)
+    except BaseException:
+        pass
 
 
 def _hfc_summarize_post_result(result: Any) -> str:

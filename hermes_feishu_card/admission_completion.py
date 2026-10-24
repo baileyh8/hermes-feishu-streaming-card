@@ -515,10 +515,13 @@ def _same_source(source: Any, current: Any) -> bool:
 
 def _warn_attempt(offer: Completion, reason: str) -> None:
     """One fixed-category observation per admission attempt; never identifiers or text."""
-    if not isinstance(offer, Completion) or offer.diagnostic_emitted:
-        return
-    offer.diagnostic_emitted = True
-    completion_diagnostics.attempt_failed(reason)
+    try:
+        if not isinstance(offer, Completion) or offer.diagnostic_emitted:
+            return
+        offer.diagnostic_emitted = True
+        completion_diagnostics.attempt_failed(reason)
+    except BaseException:
+        pass
 
 
 def diagnose_attempt(stage: Any, reason: str, *, consume: bool = True) -> None:
@@ -527,14 +530,17 @@ def diagnose_attempt(stage: Any, reason: str, *, consume: bool = True) -> None:
     ``consume=False`` is for a normal observation (debug output) and does not
     spend the attempt's one fault diagnostic.
     """
-    if not isinstance(stage, dict):
-        return
-    offer = stage.get("_admission_claim")
-    if isinstance(offer, Completion):
-        if consume:
-            _warn_attempt(offer, reason)
-        else:
-            completion_diagnostics.attempt_failed(reason)
+    try:
+        if not isinstance(stage, dict):
+            return
+        offer = stage.get("_admission_claim")
+        if isinstance(offer, Completion):
+            if consume:
+                _warn_attempt(offer, reason)
+            else:
+                completion_diagnostics.attempt_failed(reason)
+    except BaseException:
+        pass
 
 
 def prepare(
@@ -802,10 +808,13 @@ def _install(ingress: Any, finish: Finish) -> None:
             ok = True
             return result
         finally:
-            if not ok:
-                offer = getattr(event, _ATTR, None)
-                if isinstance(offer, Completion):
-                    _warn_attempt(offer, "deliver-native-error")
+            try:
+                if not ok:
+                    offer = getattr(event, _ATTR, None)
+                    if isinstance(offer, Completion):
+                        _warn_attempt(offer, "deliver-native-error")
+            except BaseException:
+                pass
             try:
                 await finish(event, ok)
             except Exception:
