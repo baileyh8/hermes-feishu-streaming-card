@@ -159,7 +159,7 @@ async def test_actual_upstream_redirect_keeps_original_callbacks_on_new_card(tmp
         assert not hasattr(incoming_source, '_hfc_turn_id')
 
 
-@pytest.mark.parametrize('baseline', ['baseline_0222', 'baseline_main_0ab', 'latest_stable', 'latest_main', 'issue451_cf4', 'issue451_rc2'])
+@pytest.mark.parametrize('baseline', ['baseline_0222', 'baseline_main_0ab', 'latest_stable', 'latest_main', 'issue451_cf4', 'issue451_rc2', 'issue456_0225'])
 @pytest.mark.parametrize('success', [True, False])
 @pytest.mark.parametrize('obligation_id', ['fixture-obligation', None])
 async def test_current_upstream_generated_ledger_executes_in_order(

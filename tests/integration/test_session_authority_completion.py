@@ -20,11 +20,13 @@ from types import CodeType, FunctionType, ModuleType, SimpleNamespace
 import pytest
 
 from hermes_feishu_card import hook_runtime as h
+from hermes_feishu_card import completion_diagnostics as diagnostics
 from hermes_feishu_card.install.decomposed_ownership import render
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/session_authority_5fc490e.json"
 NEW_FIXTURE = FIXTURE.with_name("session_authority_0224.json")
+V0225_FIXTURE = FIXTURE.with_name("session_authority_0225.json")
 
 
 def load_sources(fixture=FIXTURE):
@@ -106,7 +108,7 @@ async def noop(*args, **kwargs):
     pass
 
 
-@pytest.fixture(params=[FIXTURE, NEW_FIXTURE], ids=["5fc", "0224"])
+@pytest.fixture(params=[FIXTURE, NEW_FIXTURE, V0225_FIXTURE], ids=["5fc", "0224", "0225"])
 def harness(tmp_path, monkeypatch, request):
     from hermes_feishu_card import admission_completion as ac
 
@@ -142,6 +144,7 @@ def harness(tmp_path, monkeypatch, request):
         rebuild_source=False,
         mutate_source=lambda source: None,
         before_response=noop,
+        footer="",
         real_post=h._post_json_ordered_response,
         real_gate=h._policy_gate_async,
     )
@@ -306,6 +309,9 @@ def harness(tmp_path, monkeypatch, request):
                 event.source = replace(source)
                 result.mutate_source(event.source)
             await result.before_response(self, event, source)
+            reply_text = result.body
+            if result.footer:
+                reply_text = f"{reply_text}\n\n{result.footer}"
             reply = await globs["_hmwa_deliver_turn_response"](
                 self,
                 event,
@@ -320,8 +326,8 @@ def harness(tmp_path, monkeypatch, request):
                     "session_id": "physical-session",
                 },
                 [],
-                result.body,
-                "",
+                reply_text,
+                result.footer,
                 False,
             )
             result.staged.append(
@@ -394,7 +400,7 @@ def harness(tmp_path, monkeypatch, request):
         "gateway.session_completion_notes": dict(note_if_unviewed=noop),
         "gateway.session_policy": dict(policy_for_source=lambda *a: None),
         "gateway.session_managed_worker": dict(
-            managed_policy=lambda *a: None, execute_managed=noop
+            managed_policy=lambda *a: None, execute_managed=noop, admit_managed=noop
         ),
         "gateway.config": dict(
             Platform=SimpleNamespace(API_SERVER="api", LOCAL="local")
@@ -662,6 +668,75 @@ async def test_sidecar_post_failure_preserves_complete_native_and_ledger(
     assert harness.ledger[-1] == ("final", "ingress-a", True)
 
 
+@pytest.mark.parametrize("failure", ["transport", "not-applied"])
+async def test_admission_ack_break_emits_one_fixed_category(harness, monkeypatch, failure):
+    warnings = []
+    monkeypatch.setattr(
+        diagnostics, "_emit", lambda message, **_kwargs: warnings.append(message)
+    )
+    monkeypatch.setattr(h, "_recover_exact_terminal_native_handoff", noop)
+
+    async def post(*args, **kwargs):
+        if failure == "transport":
+            raise OSError("synthetic transport failure")
+        return {"ok": True, "applied": False}
+
+    monkeypatch.setattr(h, "_post_json_ordered_response", post)
+    await deliver(harness)
+
+    assert harness.native == ["complete answer"]
+    expected = "ack-transport-error" if failure == "transport" else "ack-not-applied"
+    assert f"admission completion attempt: {expected}" in warnings
+    assert sum("admission completion attempt:" in warning for warning in warnings) == 1
+    assert "complete answer" not in "\n".join(warnings)
+
+
+@pytest.mark.parametrize("downgrade", ["not-capable", "not-exact-scope"])
+async def test_ack_normal_downgrade_does_not_mask_transport_failure(
+    harness, monkeypatch, downgrade
+):
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        diagnostics, "_emit", lambda message, **_kwargs: warnings.append(message)
+    )
+    monkeypatch.setattr(h, "_recover_exact_terminal_native_handoff", noop)
+    if downgrade == "not-capable":
+        monkeypatch.setattr(h, "_exact_stage_allows_ack", lambda _: False)
+    else:
+        monkeypatch.setattr(h, "is_exact_native_text_scope", lambda _: False)
+
+    async def failed(*args, **kwargs):
+        raise OSError("synthetic transport failure")
+
+    monkeypatch.setattr(h, "_post_json_ordered_response", failed)
+    await deliver(harness)
+
+    assert harness.native == ["complete answer"]
+    assert warnings == ["admission completion attempt: ack-transport-error"]
+
+
+@pytest.mark.parametrize("downgrade", ["not-capable", "not-exact-scope"])
+async def test_ack_normal_downgrade_is_debug_and_still_suppresses_native(
+    harness, monkeypatch, downgrade
+):
+    emitted = []
+    monkeypatch.setattr(
+        diagnostics,
+        "_emit",
+        lambda message, *, debug=False: emitted.append((message, debug)),
+    )
+    if downgrade == "not-capable":
+        monkeypatch.setattr(h, "_exact_stage_allows_ack", lambda _: False)
+    else:
+        monkeypatch.setattr(h, "is_exact_native_text_scope", lambda _: False)
+
+    await deliver(harness)
+
+    assert harness.native == []
+    expected = "ack-not-capable" if downgrade == "not-capable" else "ack-not-exact-scope"
+    assert emitted == [(f"admission completion attempt: {expected}", True)]
+
+
 @pytest.mark.parametrize(
     "change", ["bot", "sender", "thread", "profile", "chat", "ttl", "source"]
 )
@@ -758,6 +833,36 @@ async def test_candidate_multi_api_and_synthetic_tool_events_finish_once(harness
     assert harness.staged == [True]
 
 
+@pytest.mark.parametrize("api_calls", [4, 5])
+@pytest.mark.parametrize("waiter", [True, False])
+async def test_multi_api_footer_completion_stays_one_card(harness, waiter, api_calls):
+    """The real v0.22.4 footer is appended before terminal staging."""
+    harness.api_calls = api_calls
+    harness.footer = "⏱️ 54s · synthetic footer"
+
+    async def tools(runner, event, source):
+        for phase in ("running", "completed"):
+            assert await h.emit_from_hermes_locals_async({
+                "self": runner,
+                "event": event,
+                "source": source,
+                "tool_name": "synthetic_tool",
+                "tool_call_id": "synthetic-call",
+                "tool_status": phase,
+            }, "tool.updated")
+
+    harness.before_response = tools
+    await deliver(harness, waiter=waiter)
+    assert [p["event"] for p in harness.posts] == [
+        "tool.updated", "tool.updated", "message.completed"
+    ]
+    assert harness.posts[-1]["data"]["answer"] == (
+        "complete answer\n\n⏱️ 54s · synthetic footer"
+    )
+    assert harness.native == []
+    assert harness.staged == [True]
+
+
 def test_mixed_known_source_files_are_not_a_supported_cohort(harness):
     from hermes_feishu_card import admission_completion as ac
     current = Path(sys.modules["gateway.session_authority"].__file__)
@@ -796,7 +901,9 @@ def test_same_file_loaded_topology_drift_is_rejected(harness, module, function):
         setattr(owner, function, original)
 
 
-@pytest.mark.parametrize("fixture", [FIXTURE, NEW_FIXTURE], ids=["5fc", "0224"])
+@pytest.mark.parametrize(
+    "fixture", [FIXTURE, NEW_FIXTURE, V0225_FIXTURE], ids=["5fc", "0224", "0225"]
+)
 def test_full_official_family_idempotence_and_original_bytes_restore(fixture):
     from hermes_feishu_card.install import patcher
 

@@ -12,6 +12,16 @@ from .cron_contracts import (
     find_cron_deliver_body_location as _find_cron_deliver_body_location,
     find_cron_media_delivery_location as _find_cron_media_delivery_location,
 )
+from .completion_contracts import (
+    DELIVERY as _COMPLETION_DELIVERY,
+    DELIVERY_ARGS as _COMPLETION_DELIVERY_ARGS,
+    METHODS as _COMPLETION_METHODS,
+    POST_HOOK as _COMPLETION_POST_HOOK,
+    WRAPPER as _COMPLETION_WRAPPER,
+    dispatch_return as _completion_dispatch_return,
+    return_matches as _completion_return_matches,
+    wrapper_is_exact as _completion_wrapper_is_exact,
+)
 
 from .base_contracts import (
     find_base_patch_locations,
@@ -1790,7 +1800,16 @@ def _unconditionally_executed_statements(function_node):
 
 
 def _last_stable_tool_lifecycle_assignment_location(function_node, lines):
-    callback_names = {"tool_start_callback", "tool_complete_callback"}
+    # Hermes configures the per-turn callbacks in this order:
+    # initial tool callbacks -> approval wrappers -> reasoning reset.  Bind HFC
+    # after the reset, or the upstream assignments silently replace our sinks.
+    # A later `mute_notification_reply` branch intentionally clears presentation
+    # callbacks and must remain after the anchor.
+    callback_names = {
+        "tool_start_callback",
+        "tool_complete_callback",
+        "reasoning_callback",
+    }
     allowed = _unconditionally_executed_statements(function_node)
     candidates = []
     for node in ast.walk(function_node):
@@ -1813,8 +1832,55 @@ def _last_stable_tool_lifecycle_assignment_location(function_node, lines):
         candidates,
         key=lambda node: getattr(node, "end_lineno", None) or node.lineno,
     )
+    # Do not claim an anchor that a later, unknown branch can overwrite.  The
+    # only known post-anchor reassignment is the intentional muted-turn clear:
+    # a direct child of an exact ``if ctx.mute_notification_reply:`` (or the
+    # legacy bare spelling) that assigns None to a presentation callback.
+    parents = {child: parent for parent in ast.walk(function_node)
+               for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(function_node):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(
+            _is_agent_callback_target(target, callback_name)
+            for target in targets
+            for callback_name in callback_names
+        ):
+            continue
+        if (getattr(node, "lineno", 0) or 0) <= latest.lineno:
+            continue
+        if not _is_exact_mute_clear_assignment(node, parents.get(node)):
+            return None
     end_lineno = getattr(latest, "end_lineno", None) or latest.lineno
     return end_lineno, _line_indent(lines, latest.lineno - 1)
+
+
+def _is_exact_mute_clear_assignment(node, parent) -> bool:
+    """Accept only the known direct muted-turn callback clear."""
+    if not isinstance(parent, ast.If) or parent.orelse or node not in parent.body:
+        return False
+    if not (
+        _same_expression(parent.test, "ctx.mute_notification_reply")
+        or _same_expression(parent.test, "mute_notification_reply")
+    ):
+        return False
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    value = node.value
+    return (
+        isinstance(value, ast.Constant)
+        and value.value is None
+        and any(
+            _is_agent_callback_target(target, callback_name)
+            for target in targets
+            for callback_name in (
+                "tool_progress_callback",
+                "tool_start_callback",
+                "tool_complete_callback",
+                "reasoning_callback",
+            )
+        )
+    )
 
 
 def _find_turn_runner_node(tree):
@@ -3297,6 +3363,7 @@ def _render_turn_context_hook_block(renderer, indent: str, newline: str):
     replacements = (
         ("_hfc_bind_reasoning(agent, source, event_message_id, _loop_for_step, _run_still_current)",
          "_hfc_bind_reasoning(agent, _hfc_turn_ctx.source, _hfc_turn_ctx.event_message_id, _hfc_turn_ctx._loop_for_step, _hfc_turn_ctx._run_still_current)"),
+        ("_hfc_platform_name({}, source)", "_hfc_platform_name({}, _hfc_turn_ctx.source)"),
         ("_hfc_bind_agent_turn(agent, source)", "_hfc_bind_agent_turn(agent, _hfc_turn_ctx.source)"),
         ("_run_still_current()", "_hfc_turn_ctx._run_still_current()"),
         ('"source": source,', '"source": _hfc_turn_ctx.source,'),
@@ -3340,6 +3407,8 @@ def _render_tool_hook_block(indent: str, newline: str):
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import emit_from_hermes_locals_threadsafe as _hfc_emit_threadsafe{newline}"
         ),
+        f"{inner_indent}from hermes_feishu_card.hook_runtime import _platform_name as _hfc_platform_name{newline}",
+        f"{inner_indent}_hfc_stable_tool_progress_owned = _hfc_platform_name({{}}, source) == \"feishu\"{newline}",
         f"{inner_indent}_hfc_stable_tool_callbacks = False{newline}",
         f"{inner_indent}_hfc_force_tool_progress_fallback = bool(kwargs.get(\"_hfc_force_tool_progress_fallback\")){newline}",
         f"{inner_indent}if not _hfc_force_tool_progress_fallback:{newline}",
@@ -3356,7 +3425,7 @@ def _render_tool_hook_block(indent: str, newline: str):
         f"{deeper_indent}    except (NameError, TypeError, IndexError):{newline}",
         f"{deeper_indent}        pass{newline}",
         f"{inner_indent}if event_type in (\"tool.started\", \"tool.completed\") and _run_still_current():{newline}",
-        f"{deeper_indent}if _hfc_stable_tool_callbacks:{newline}",
+        f"{deeper_indent}if _hfc_stable_tool_callbacks and _hfc_stable_tool_progress_owned:{newline}",
         f"{deeper_indent}    if event_type == \"tool.started\":{newline}",
         f"{deeper_indent}        _hfc_tool_key = tool_name or \"tool\"{newline}",
         f"{deeper_indent}        _hfc_pending_tool_previews.setdefault(_hfc_tool_key, []).append(preview or \"\"){newline}",
@@ -3391,6 +3460,8 @@ def _render_stable_tool_lifecycle_hook_block(indent: str, newline: str):
         f"{inner_indent}_hfc_bind_agent_turn(agent, source){newline}",
         f"{inner_indent}from hermes_feishu_card.hook_runtime import bind_agent_reasoning as _hfc_bind_reasoning{newline}",
         f"{inner_indent}_hfc_bind_reasoning(agent, source, event_message_id, _loop_for_step, _run_still_current){newline}",
+        f"{inner_indent}from hermes_feishu_card.hook_runtime import _platform_name as _hfc_platform_name{newline}",
+        f"{inner_indent}_hfc_stable_tool_progress_owned = _hfc_platform_name({{}}, source) == \"feishu\"{newline}",
         (
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import emit_from_hermes_locals_threadsafe as _hfc_emit_stable_threadsafe{newline}"
@@ -3405,7 +3476,7 @@ def _render_stable_tool_lifecycle_hook_block(indent: str, newline: str):
         f"{inner_indent}if getattr(_hfc_original_tool_complete_callback, \"_hfc_stable_wrapper\", False):{newline}",
         f"{deeper_indent}_hfc_original_tool_complete_callback = getattr(_hfc_original_tool_complete_callback, \"_hfc_original_callback\", None){newline}",
         f"{inner_indent}def _hfc_tool_progress_callback(event_type, tool_name=None, preview=None, args=None, **kwargs):{newline}",
-        f"{deeper_indent}if event_type in (\"tool.started\", \"tool.completed\") and _run_still_current():{newline}",
+        f"{deeper_indent}if event_type in (\"tool.started\", \"tool.completed\") and _hfc_stable_tool_progress_owned and _run_still_current():{newline}",
         f"{callback_indent}if event_type == \"tool.started\":{newline}",
         f"{payload_indent}_hfc_tool_key = tool_name or \"tool\"{newline}",
         f"{payload_indent}_hfc_pending_tool_previews.setdefault(_hfc_tool_key, []).append(preview or \"\"){newline}",
@@ -4183,7 +4254,7 @@ def _split_completion_node(sources, target):
                and node.module == "gateway.run_turn_persistence" and node.level == 0
                and any(alias.name == "GatewayTurnPersistenceMixin" and alias.asname is None
                        for alias in node.names)]
-    methods = {"_hmwa_post_turn_hooks", "_hmwa_deliver_turn_response"}
+    methods = _COMPLETION_METHODS
     if (len(owners) != 1 or len(peers) != 1 or len(imports) != 1
             or tuple(ast.unparse(base) for base in owners[0].bases) not in {
                 ("GatewayTurnPersistenceMixin",),
@@ -4239,10 +4310,8 @@ def _find_decomposed_completion_node(tree):
         return None
     methods = []
     for name, parameters in (
-        ("_hmwa_deliver_turn_response", ("self", "event", "source", "session_entry", "session_key",
-                                        "run_generation", "agent_result", "agent_messages", "response",
-                                        "_footer_line", "_intentional_silence")),
-        ("_hmwa_post_turn_hooks", ("self", "hook_ctx", "agent_result", "response")),
+        (_COMPLETION_DELIVERY, ("self", *_COMPLETION_DELIVERY_ARGS)),
+        (_COMPLETION_POST_HOOK, ("self", "hook_ctx", "agent_result", "response")),
     ):
         candidates = [node for node in owners[0].body
                       if isinstance(node, ast.AsyncFunctionDef) and node.name == name]
@@ -4256,18 +4325,40 @@ def _find_decomposed_completion_node(tree):
             return None
         methods.append(candidates[0])
     delivery, post = methods
+    wrappers = [
+        node
+        for node in owners[0].body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == _COMPLETION_WRAPPER
+    ]
+    if len(wrappers) > 1:
+        return None
+    wrapper = wrappers[0] if wrappers else None
     # Both seams must actually be called by the handler, with the same result
     # and response; a facade import or a similarly named dead method is not enough.
-    expected_return = ast.parse('return await self._hmwa_deliver_turn_response(event, source, session_entry, session_key, run_generation, agent_result, agent_messages, response, _footer_line, _intentional_silence)').body[0]
     expected_post = ast.parse('await self._hmwa_post_turn_hooks(hook_ctx, agent_result, response)').body[0]
     same = lambda a, b: ast.dump(a) == ast.dump(b)
-    returns = [n for n in ast.walk(handler) if same(n, expected_return)]
+    direct_returns = [
+        n for n in ast.walk(handler)
+        if _completion_return_matches(n, _COMPLETION_DELIVERY, _COMPLETION_DELIVERY_ARGS)
+    ]
+    wrapper_returns = [
+        n for n in ast.walk(handler)
+        if _completion_return_matches(n, _COMPLETION_WRAPPER, _COMPLETION_DELIVERY_ARGS)
+    ]
+    if wrapper is None:
+        if wrapper_returns or len(direct_returns) != 1:
+            return None
+        completion_return = direct_returns[0]
+    else:
+        if direct_returns or len(wrapper_returns) != 1 or not _completion_wrapper_is_exact(wrapper):
+            return None
+        completion_return = wrapper_returns[0]
     posts = [n for n in ast.walk(handler) if same(n, expected_post)]
     emits = [n for n in ast.walk(post) if isinstance(n, ast.Await)
              and isinstance(n.value, ast.Call)
              and _same_expression(n.value.func, 'self.hooks.emit')
              and n.value.args and _same_expression(n.value.args[0], '"agent:end"')]
-    if len(returns) != 1 or len(posts) != 1 or len(emits) != 1 or posts[0].lineno >= returns[0].lineno:
+    if len(posts) != 1 or len(emits) != 1 or posts[0].lineno >= completion_return.lineno:
         return None
     return delivery
 
@@ -4355,9 +4446,9 @@ def _apply_turn_timing_patch(content, *, validated_split=False):
     handler = _find_handler_node(tree)
     if "_turn_seconds" not in _function_scope_names(handler):
         raise ValueError("decomposed completion timing missing")
-    target = next(n for n in ast.walk(handler) if isinstance(n, ast.Return)
-                  and isinstance(n.value, ast.Await) and isinstance(n.value.value, ast.Call)
-                  and _same_expression(n.value.value.func, "self._hmwa_deliver_turn_response"))
+    target = _completion_dispatch_return(handler)
+    if target is None:
+        raise ValueError("decomposed completion timing missing")
     lines = content.splitlines(keepends=True)
     index = target.lineno - 1
     lines[index:index] = _render_turn_timing_hook_block(_line_indent(lines, index), _detect_newline(content))

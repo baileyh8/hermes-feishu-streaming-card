@@ -2,7 +2,22 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.6`，是否已发行以 GitHub Release 的标签和资产为准。本轮处理 #454 的归档解压元数据问题，并同步版本化安装包目录的使用说明。见[发行说明](release-notes-v5.0.6.md)。
+本分支目标版本为 `5.0.7`；本轮处理 #456、#453、#451。最终公开状态与精确验收结果以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.7) 为准。
+
+## V5.0.7 候选验收
+
+| 项目 | 状态 |
+| --- | --- |
+| #456 拒装对照 | 固定 v0.22.5 源码复现完成契约拒绝；v0.22.4 渲染/还原对照通过。原版 CLI 拒装实测 exit 1，报告的 exit 0 未复现 |
+| #453 回调覆盖 | 原版官方渲染输出确认 reasoning/tool 绑定后被清空或覆盖；22 项契约回归通过，最终提交 CI 独立核验 |
+| #451 多工具重复 | 4/5 API、footer、normal/waiter 与真实 Base 完成函数对照未复现；补充有界分类诊断，保留 issue 开放 |
+| 支持版本 CI | 新增固定 v0.22.5，保留 v0.22.4 及全部历史来源；候选/merge/tag完整CI与CodeQL待验 |
+| 普通包/PM/公开安装 | 最终普通 wheel 的 v0.22.5 安装/重装/doctor/13 文件精确恢复通过；公开 tag 安装独立待验 |
+| 真实 Feishu API | no-waiter 完整答案/终态标记读回通过，2 PATCH 成功/0 失败；首 waiter 旧脚本断言失败、终态读回未验证。两张卡均已撤回确认 |
+| 资产与版本记录 | 待annotated tag、checksums、匿名下载与实际解压；保留全部旧tag资产 |
+| 真实 Gateway/model、报告者现场、桌面/Android视觉与点击 | 未验证；iOS与新用户试用不在本轮范围 |
+
+以下保留历史验收记录，不代表本轮通过。
 
 ## V5.0.6 本轮验收记录
 

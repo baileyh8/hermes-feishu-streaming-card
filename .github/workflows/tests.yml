@@ -135,7 +135,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
-        slice: [0, 1]
+        slice: [0, 1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -238,6 +238,12 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68
           path: .upstream/issue451_rc2
+      - name: Checkout Hermes issue 456 v0.22.5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e # v0.22.5
+          path: .upstream/issue456_0225
       - name: Install test dependencies
         run: python -m pip install -e ".[test]" "uv==0.11.7" ruamel.yaml tomli-w packaging wheel rich python-dotenv requests prompt_toolkit "cryptography==48.0.0"
       - name: Prepare ordinary wheel
@@ -280,20 +286,23 @@ jobs:
           HFC_UPSTREAM_BASELINE_MAIN_0AB_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
           HFC_UPSTREAM_ISSUE451_CF4_ROOT: "${{ github.workspace }}/.upstream/issue451_cf4"
           HFC_UPSTREAM_ISSUE451_RC2_ROOT: "${{ github.workspace }}/.upstream/issue451_rc2"
+          HFC_UPSTREAM_ISSUE456_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_PM_MAIN_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
           HFC_CONFIG_WRITER_CF4_ROOT: "${{ github.workspace }}/.upstream/issue451_cf4"
           HFC_CONFIG_WRITER_RC2_ROOT: "${{ github.workspace }}/.upstream/issue451_rc2"
           HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
+          HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
         run: >-
           python -m tools.ci_run --group upstream-${{ matrix.python-version }} --profile upstream
-          --shards 8 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))
+          --shards 12 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))
           --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
           tests/integration/test_official_plugin_config_bytes.py
           tests/integration/test_legacy_observer_install.py
           tests/unit/test_legacy_observed_rate.py::test_real_v0222_plugin_manager_load
           tests/integration/test_upstream_hermes_compat.py
+          tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
           tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning
           tests/integration/test_pm_generation.py
@@ -384,6 +393,7 @@ jobs:
         run: |
           shards=8
           workers=4
+          if [ "$REGRESSION_MODE" = full ]; then shards=12; fi
           if [ "$REGRESSION_MODE" = docs ]; then shards=3; workers=3; fi
           python -m tools.ci_run --group linux-${{ matrix.python-version }} \
             --shards "$shards" --workers "$workers" --offset $(( ${{ matrix.slice }} * workers )) \
@@ -545,7 +555,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.6
+          HFC_VERSION: v5.0.7
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
@@ -635,6 +645,7 @@ jobs:
           test "$SDK314_RESULT" = success
           version="${{ matrix.python-version }}"
           shards=8
+          if [ "$REGRESSION_MODE" = full ]; then shards=12; fi
           if [ "$REGRESSION_MODE" != full ]; then version=3.12; fi
           if [ "$REGRESSION_MODE" = docs ]; then shards=3; fi
           python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "linux-$version" --count "$shards" --python-version "$version" --platform linux
@@ -699,7 +710,7 @@ jobs:
         run: |
           if [ "$REGRESSION_MODE" = full ]; then
             test "$PRODUCER_RESULT" = success
-            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 8 --python-version "${{ matrix.python-version }}" --platform linux
+            python -m tools.ci_shard "$RUNNER_TEMP/evidence" --group "upstream-${{ matrix.python-version }}" --count 12 --python-version "${{ matrix.python-version }}" --platform linux
           else
             printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
           fi

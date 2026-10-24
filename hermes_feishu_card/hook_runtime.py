@@ -29,6 +29,7 @@ from urllib import parse
 from urllib import request
 
 from . import __version__
+from . import completion_diagnostics as _completion_diagnostics
 from .card_limits import serialize_card_for_delivery
 from .canonical_turn import (
     publish_canonical_turn_id,
@@ -435,6 +436,7 @@ def reset_runtime_state() -> None:
         _POLICY_QUERY_LOCKS.clear()
         _POLICY_ASYNC_QUERY_LOCKS.clear()
         _POLICY_ASYNC_EVENT_LOCKS.clear()
+    _completion_diagnostics.reset()
     with _OPERATION_TRANSPORT_SECRETS_LOCK:
         _OPERATION_TRANSPORT_SECRETS.clear()
     _HFC_FEISHU_COMMAND_RESULT_CONTEXT.set(None)
@@ -1998,6 +2000,7 @@ def can_stage_exact_base_completion(local_vars: dict[str, Any]) -> bool:
             return False
         response = _completion_answer(local_vars)
         if not response:
+            _warn_stage_diagnostic("empty-answer")
             return False
         agent_result = local_vars.get("agent_result")
         already_sent = bool(
@@ -2011,9 +2014,11 @@ def can_stage_exact_base_completion(local_vars: dict[str, Any]) -> bool:
             isinstance(agent_result, dict) and agent_result.get("failed")
         )
         if already_sent and not failed:
+            _warn_stage_diagnostic("already-delivered")
             return False
         return _exact_base_delivery_hook_available()
     except Exception:
+        _warn_stage_diagnostic("exception")
         return False
 
 
@@ -2038,11 +2043,23 @@ def _exact_base_delivery_hook_available() -> bool:
         ledger_names = set(getattr(getattr(ledger, "__code__", None), "co_names", ()))
         ledger_contract = {"_record_delivery_obligation", "_send_with_retry", "_finalize_delivery_obligation"}
         if not ledger_contract.issubset(ledger_names):
+            _warn_stage_diagnostic("base-hook-unavailable")
             return False
         if decomposed:
-            return "send_final_ledgered" in send_names and "prepare_decomposed_base_final_delivery" in ledger_names
-        return {"finalize_exact_base_no_text", "send_final_ledgered"}.issubset(names) and "prepare_exact_base_final_delivery" in ledger_names
+            available = (
+                "send_final_ledgered" in send_names
+                and "prepare_decomposed_base_final_delivery" in ledger_names
+            )
+        else:
+            available = (
+                {"finalize_exact_base_no_text", "send_final_ledgered"}.issubset(names)
+                and "prepare_exact_base_final_delivery" in ledger_names
+            )
+        if not available:
+            _warn_stage_diagnostic("base-hook-unavailable")
+        return available
     except Exception:
+        _warn_stage_diagnostic("exception")
         return False
 
 
@@ -2059,10 +2076,12 @@ async def stage_message_completed_from_hermes_locals_async(
     try:
         config = load_runtime_config()
         if not config.enabled:
+            _warn_stage_diagnostic("config-disabled")
             return False
         _ensure_runtime_control_started(config)
         order_identity = _policy_identity(config, local_vars, "message.completed")
         if order_identity is None:
+            _warn_stage_diagnostic("policy-identity-unavailable")
             _cleanup_native_policy_state(local_vars)
             return False
         event_lock = _policy_async_event_lock(order_identity)
@@ -2073,11 +2092,13 @@ async def stage_message_completed_from_hermes_locals_async(
                 "message.completed",
             )
             if not gate.card:
+                _warn_stage_diagnostic("policy-native")
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
             await _flush_pending_deltas_for_local_vars(event_locals)
             payload = build_event("message.completed", event_locals)
             if payload is None:
+                _warn_stage_diagnostic("payload-unavailable")
                 return False
         try:
             task = asyncio.current_task()
@@ -2102,6 +2123,7 @@ async def stage_message_completed_from_hermes_locals_async(
         _HFC_EXACT_COMPLETION_STAGE.set(stage)
         return True
     except Exception:
+        _warn_stage_diagnostic("exception")
         _HFC_EXACT_COMPLETION_STAGE.set(None)
         return False
 
@@ -2610,6 +2632,8 @@ async def prepare_exact_base_final_delivery(
     local_vars: dict[str, Any],
 ) -> tuple[Any, str, Any, Any]:
     """Commit exact Base terminal state after Hermes ledger is attempting."""
+    from .admission_completion import diagnose_attempt
+
     adapter = local_vars.get("delivery_adapter")
     content = str(local_vars.get("content") or "")
     reply_to = local_vars.get("reply_to")
@@ -2628,6 +2652,7 @@ async def prepare_exact_base_final_delivery(
             and not _exact_base_has_attachments(local_vars)
             and _exact_stage_allows_ack(stage)
         )
+        normal_reason = "ack-not-capable" if not ack_capable else ""
         payload = _exact_terminal_payload(
             stage,
             {
@@ -2638,6 +2663,7 @@ async def prepare_exact_base_final_delivery(
         )
         if ack_capable and not is_exact_native_text_scope(payload.get("data")):
             ack_capable = False
+            normal_reason = "ack-not-exact-scope"
             payload = _exact_terminal_payload(
                 stage,
                 {
@@ -2655,6 +2681,7 @@ async def prepare_exact_base_final_delivery(
                 timeout,
             )
         except Exception:
+            diagnose_attempt(stage, "ack-transport-error")
             if ack_capable:
                 await _recover_exact_terminal_native_handoff(
                     payload,
@@ -2665,8 +2692,11 @@ async def prepare_exact_base_final_delivery(
         if "_admission_claim" in stage:
             from .admission_completion import valid_consumed
             if not valid_consumed(stage):
+                diagnose_attempt(stage, "ack-stage-invalidated")
                 return fallback
         applied = _event_was_applied(result, strict=True)
+        if not applied:
+            diagnose_attempt(stage, "ack-not-applied")
         if ack_capable and not applied:
             registered = _register_native_handoff_descriptor(payload, result)
             if not registered:
@@ -2676,6 +2706,8 @@ async def prepare_exact_base_final_delivery(
                     timeout=timeout,
                 )
         if applied:
+            if normal_reason:
+                diagnose_attempt(stage, normal_reason, consume=False)
             return (
                 _ExactCardDeliveryAdapterProxy(adapter),
                 content,
@@ -2684,6 +2716,7 @@ async def prepare_exact_base_final_delivery(
             )
         return fallback
     except Exception:
+        diagnose_attempt(stage, "ack-stage-invalidated")
         _HFC_NATIVE_HANDOFF_CONTEXT.set(None)
         return fallback
     finally:
@@ -2696,6 +2729,8 @@ async def finalize_exact_base_no_text(local_vars: dict[str, Any]) -> None:
     if stage is None:
         return
     try:
+        from .admission_completion import diagnose_attempt
+
         payload = _exact_terminal_payload(stage, local_vars, ack_capable=False)
         await _post_json_ordered_response(
             str(stage["event_url"]),
@@ -2703,7 +2738,10 @@ async def finalize_exact_base_no_text(local_vars: dict[str, Any]) -> None:
             float(stage["timeout_seconds"]),
         )
     except Exception:
-        pass
+        try:
+            diagnose_attempt(stage, "ack-transport-error")
+        except Exception:
+            pass
     finally:
         _HFC_EXACT_COMPLETION_STAGE.set(None)
 
@@ -4178,11 +4216,19 @@ def _hfc_response_summary(response: Any) -> str:
 def _hfc_warn(message: str) -> None:
     try:
         logger.warning("[hermes-feishu-card] %s", message)
-    except Exception:
+        return
+    except BaseException:
         pass
     try:
         print(f"[hermes-feishu-card] {message}", file=sys.stderr)
-    except Exception:
+    except BaseException:
+        pass
+
+
+def _warn_stage_diagnostic(reason: str) -> None:
+    try:
+        _completion_diagnostics.stage_skipped(reason)
+    except BaseException:
         pass
 
 

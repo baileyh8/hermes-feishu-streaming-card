@@ -2,7 +2,11 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.6`; published availability is determined by the GitHub Release tag and assets. This batch addresses #454 archive extraction metadata and the versioned installer directory. See [release notes](release-notes-v5.0.6.en.md).
+This branch targets `5.0.7`; published availability and final evidence are recorded in the GitHub Release. This batch addresses #456, #453 and #451. See [release notes](release-notes-v5.0.7.en.md).
+
+## v5.0.7 candidate
+
+Current candidate: #456, #453 and #451. Pinned v0.22.5 reproduces the original completion-contract rejection; v0.22.4 renders/restores successfully. Unsupported CLI exits 1 locally; exit 0 remains unreproduced. Callback overwrite is confirmed in generated source; 22 contract regressions passed. Expanded four/five-call, footer, normal/waiter and actual Base-function cases did not reproduce #451; bounded diagnostics are added and the issue stays open. Final ordinary-wheel v0.22.5 install/reinstall/doctor/13-source restore passed. Real API no-waiter passed full-answer/terminal-marker readback with 2 successful PATCHes and zero failures; the first waiter attempt failed the old helper assertion before terminal readback. Both cards were recalled and deletion read back. Final CI/CodeQL, public installation and assets remain separate pending gates. Gateway/model, reporter reproduction and desktop/Android visuals/clicks are unverified; iOS/new-user trials are excluded. See [release notes](release-notes-v5.0.7.en.md).
 
 ## V5.0.6 acceptance record
 

@@ -4,7 +4,7 @@
 
 ## CI 回归范围与耗时
 
-普通 PR 按改动选择 docs、focused 或 full；main 和发布 gate 始终跑 full。完整矩阵保留 Linux Python 3.9–3.14 和 macOS 的全部用例，按耗时拆分为 Linux 八片、macOS 六片并核对覆盖。单轮目标为 20 分钟内，以实际 workflow 用时为准。隔离方式、required check 和报告说明见[CI 回归分级](wiki/regression-ci.md)。
+普通 PR 按改动选择 docs、focused 或 full；main 和发布 gate 始终跑 full。完整矩阵保留 Linux Python 3.9–3.14 和 macOS 的全部用例，按耗时拆分为 Linux 十二片、macOS 十片和上游十二片并核对覆盖。单轮目标为 20 分钟内，以实际 workflow 用时为准。隔离方式、required check 和报告说明见[CI 回归分级](wiki/regression-ci.md)。
 
 ## 提交前检查（Issue #330）
 
@@ -29,6 +29,8 @@ python tools/preflight.py --suite full
 不要把本机原始日志直接贴到公开 issue；先检查脱敏。这个工具不替代真实飞书、手机/桌面、公开安装和 release 验收。
 
 若报告缺少测试依赖，请在自己选用的开发环境执行 `python -m pip install -e ".[test]"`。完整矩阵需要独立克隆的官方 Hermes `v2026.8.3` Git checkout（含 `.git`，固定 commit `3c27eb6234bf91b8ceee9e9071591b31e9b148cb`），以 `HFC_FIXED_TAG_SOURCE_ROOT` 指向它；准备方式也见 `.github/workflows/tests.yml` 的 `fixed-hermes-fixture`。不要用运行中的 Hermes checkout 代替固定测试源码。
+
+V5.0.7 新增独立 `issue456_0225` 来源，固定提交 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`；保留 v0.22.4 与所有历史来源。官方 writer/PM 使用 `HFC_CONFIG_WRITER_0225_ROOT`，生成的完成/回调契约测试使用 `HFC_UPSTREAM_ISSUE456_0225_ROOT`；未知或漂移来源继续拒绝。
 
 ## 单元测试
 

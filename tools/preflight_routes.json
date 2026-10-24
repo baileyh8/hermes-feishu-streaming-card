@@ -7,7 +7,8 @@
       "tests/unit/test_legacy_observed_rate.py",
       "tests/integration/test_session_authority_completion.py",
       "tests/unit/test_admission_completion_state.py",
-      "tests/unit/test_admission_completion_detection.py"
+      "tests/unit/test_admission_completion_detection.py",
+      "tests/unit/test_issue451_stage_diagnostics.py"
     ],
     "render": [
       "tests/unit/test_render.py",
@@ -33,6 +34,7 @@
     ],
     "install": [
       "tests/unit/test_patcher.py",
+      "tests/unit/test_issue_456_453_contracts.py",
       "tests/unit/test_gateway_contracts.py",
       "tests/unit/test_stale_interrupted_turn.py",
       "tests/unit/test_cron_contracts.py",
@@ -549,6 +551,10 @@
     "hermes_feishu_card/install/ast_contracts.py": [
       "install"
     ],
+    "hermes_feishu_card/install/completion_contracts.py": [
+      "install",
+      "upstream"
+    ],
     "hermes_feishu_card/install/cron_contracts.py": [
       "install",
       "upstream"
@@ -655,6 +661,10 @@
       "install"
     ],
     "hermes_feishu_card/admission_completion.py": [
+      "runtime",
+      "delivery"
+    ],
+    "hermes_feishu_card/completion_diagnostics.py": [
       "runtime",
       "delivery"
     ],

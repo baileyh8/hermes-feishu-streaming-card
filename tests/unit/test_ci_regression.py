@@ -87,7 +87,7 @@ def test_measured_upstream_budget_covers_all_pinned_sources_without_duplicates()
     for baseline in sources:
         assert ("tests/integration/test_upstream_hermes_compat.py::"
                 f"test_pinned_upstream_install_repeat_doctor_restore[{baseline}]") in weights
-    buckets, loads = partition(list(weights), 8, weights)
+    buckets, loads = partition(list(weights), 12, weights)
     selected = [node for bucket in buckets for node in bucket]
     assert sorted(selected) == sorted(weights)
     assert len(selected) == len(set(selected))
@@ -95,7 +95,7 @@ def test_measured_upstream_budget_covers_all_pinned_sources_without_duplicates()
     # The first measured setup used five minutes. Include that preparation in
     # the twenty-minute target; this is a scheduling estimate, not a CI pass.
     assert max(loads) + 300 < 1200
-    assert partition(list(reversed(weights)), 8, weights) == (buckets, loads)
+    assert partition(list(reversed(weights)), 12, weights) == (buckets, loads)
 
 
 @pytest.mark.parametrize("key,value", [("python", "3.10"), ("platform", "win32")])
@@ -138,12 +138,31 @@ def test_full_jobs_keep_all_versions_and_stable_required_contexts():
         assert jobs[name]["if"] == "always() && needs.plan.result == 'success'"
         assert "tools.ci_shard" in str(jobs[name])
         assert "test \"$PRODUCER_RESULT\" = success" in str(jobs[name])
-    assert jobs["upstream-shards"]["strategy"]["matrix"]["slice"] == [0, 1]
+    assert jobs["upstream-shards"]["strategy"]["matrix"]["slice"] == [0, 1, 2]
     assert jobs["macos-shards"]["strategy"]["matrix"]["slice"] == [0, 1, 2, 3, 4]
     assert {"upstream-hermes-compat", "quality", "feishu-sdk-compat-python314"} <= set(jobs["pytest"]["needs"])
     gate = str(jobs["pytest"])
     for variable in ("UPSTREAM_RESULT", "QUALITY_RESULT", "SDK314_RESULT"):
         assert f'test "${variable}" = success' in gate
+
+
+def test_upstream_slice_offsets_cover_twelve_workers_once_and_keep_the_gate():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    producer = jobs["upstream-shards"]
+    command = next(step["run"] for step in producer["steps"]
+                   if "--profile upstream" in step.get("run", ""))
+    count, workers, stride = map(int, re.search(
+        r"--shards (\d+) --workers (\d+) --offset .*\* (\d+) \)\)", command,
+    ).groups())
+    indexes = [index for part in producer["strategy"]["matrix"]["slice"]
+               for index in range(part * stride, part * stride + workers)]
+    assert count == 12 and workers == 4
+    assert sorted(indexes) == list(range(count))
+    assert producer["timeout-minutes"] == 25
+    gate = jobs["upstream-hermes-compat"]
+    assert "upstream-shards" in gate["needs"]
+    assert '--count 12 --python-version' in str(gate)
+    assert 'test "$PRODUCER_RESULT" = success' in str(gate)
 
 
 def test_macos_slice_offsets_cover_ten_workers_once_and_keep_the_gate():
@@ -186,7 +205,11 @@ def test_full_timing_refresh_includes_admission_work_without_losing_cases():
     weights = profile_weights(data, "full")
     assert weights[("tests/integration/test_session_authority_completion.py::"
                     "test_unknown_admission_is_native_before_first_card_event[0224-seam]")] > 1
-    nodes = list(weights) + ["tests/new_case.py::test_without_a_timing_hint"]
+    # Retain the real collection size, including the short unhinted cases.
+    nodes = list(weights) + [
+        f"tests/new_case.py::test_without_a_timing_hint[{index}]"
+        for index in range(data["full_evidence"]["collection_count"] - len(weights))
+    ]
     buckets, loads = partition(nodes, 10, weights)
     assert sorted(node for bucket in buckets for node in bucket) == sorted(nodes)
     assert len({node for bucket in buckets for node in bucket}) == len(nodes)
@@ -439,3 +462,120 @@ def test_case(case):
     assert sum(len(report["completed"]) for report in reports) == 8
     with pytest.raises(ValueError, match="failed"):
         verify(reports, 2)
+
+
+@pytest.mark.parametrize(
+    "mode,slices,versions",
+    [
+        ("full", [0, 1, 2], ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]),
+        ("focused", [0, 1], ["3.12"]),
+        ("docs", [0], ["3.12"]),
+    ],
+)
+def test_linux_plan_preserves_scope_and_assigns_full_twelve_shards(
+    tmp_path, monkeypatch, mode, slices, versions
+):
+    from tools import ci_plan
+
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"pull_request": {"base": {"sha": "HEAD"}}}))
+    output = tmp_path / "outputs"
+    plan = tmp_path / "plan.json"
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr(ci_plan, "select", lambda paths: (mode, []))
+    monkeypatch.setattr(sys, "argv", ["ci_plan", "--output", str(plan)])
+    ci_plan.main()
+    exported = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert exported["mode"] == mode
+    assert json.loads(exported["pytest_matrix"]) == {
+        "python-version": versions, "slice": slices,
+    }
+    assert json.loads(plan.read_text())["mode"] == mode
+
+
+@pytest.mark.parametrize(
+    "mode,slices,count,workers",
+    [("full", [0, 1, 2], 12, 4), ("focused", [0, 1], 8, 4), ("docs", [0], 3, 3)],
+)
+def test_linux_workflow_executes_matching_producer_and_gate_counts(
+    tmp_path, mode, slices, count, workers
+):
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    producer = jobs["pytest-shards"]
+    assert producer["timeout-minutes"] == 25
+    command = next(step["run"] for step in producer["steps"]
+                   if step.get("name") == "Test isolated duration-balanced shards")
+    gate = next(step["run"] for step in jobs["pytest"]["steps"]
+                if step.get("name") == "Verify every planned case finished exactly once")
+    env = {**os.environ, "REGRESSION_MODE": mode, "RUNNER_TEMP": str(tmp_path),
+           "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}
+    for name in ("PRODUCER_RESULT", "UPSTREAM_RESULT", "QUALITY_RESULT", "SDK314_RESULT"):
+        env[name] = "success"
+    capture = 'python() { printf "%s\\n" "$@"; }\n'
+    indexes = []
+    for part in slices:
+        actual = command.replace("${{ matrix.python-version }}", "3.12").replace(
+            "${{ matrix.slice }}", str(part)
+        )
+        result = subprocess.run(["bash", "-e", "-c", capture + actual],
+                                env=env, capture_output=True, text=True, check=True)
+        args = result.stdout.splitlines()
+        assert int(args[args.index("--shards") + 1]) == count
+        assert int(args[args.index("--workers") + 1]) == workers
+        offset = int(args[args.index("--offset") + 1])
+        indexes.extend(range(offset, offset + workers))
+    assert sorted(indexes) == list(range(count))
+    actual_gate = gate.replace("${{ matrix.python-version }}", "3.12")
+    result = subprocess.run(["bash", "-e", "-c", capture + actual_gate],
+                            env=env, capture_output=True, text=True, check=True)
+    args = result.stdout.splitlines()
+    assert int(args[args.index("--count") + 1]) == count
+    assert args[args.index("--group") + 1] == "linux-3.12"
+
+
+@pytest.mark.parametrize("damage", [None, "old-eight", "missing", "duplicate"])
+def test_linux_full_twelve_shard_gate_keeps_complete_disjoint_union(damage):
+    reports = evidence([f"linux-case-{index}" for index in range(103)], 12)
+    if damage == "old-eight":
+        reports = evidence([f"linux-case-{index}" for index in range(103)], 8)
+    elif damage == "missing":
+        reports.pop()
+    elif damage == "duplicate":
+        reports[-1] = deepcopy(reports[0])
+    if damage is None:
+        assert verify(reports, 12)["tests"] == 103
+    else:
+        with pytest.raises(ValueError, match="missing or duplicate shard"):
+            verify(reports, 12)
+
+
+def test_linux_measured_weight_refresh_keeps_twenty_minute_estimate_margin():
+    data = json.loads((ROOT / "tools/ci_durations.json").read_text())
+    weights = profile_weights(data, "full")
+    measured = data["full_evidence"]
+    assert measured["completed_shard_reports"] == 42
+    assert measured["missing_final_reports"] == 6
+    assert measured["completed_producer_jobs"] == 7 and measured["cancelled_producer_jobs"] == 5
+    assert measured["collection_count"] == 7526
+    historical = ("tests/unit/test_hybrid_gateway_ownership.py::"
+                  "test_exact_historical_504_install_remains_inspectable_and_restorable[738]")
+    assert weights[historical] >= 600
+    assert all(value >= 1 for value in weights.values())
+    nodes = list(weights) + [f"unmeasured-{index}" for index in range(7526 - len(weights))]
+    buckets, loads = partition(nodes, 12, weights)
+    assert sorted(node for bucket in buckets for node in bucket) == sorted(nodes)
+    assert len({node for bucket in buckets for node in bucket}) == len(nodes)
+    assert max(loads) < 1000
+    observed_overhead = sum(measured[key] for key in (
+        "pre_test_max_seconds", "post_test_max_seconds",
+        "worker_non_junit_max_seconds", "orchestration_max_seconds",
+    ))
+    assert observed_overhead == pytest.approx(74.102)
+    allowance = measured["estimated_preparation_allowance_seconds"]
+    assert allowance == 120 and allowance > observed_overhead
+    # The allowance covers observed independent maxima plus scheduling margin;
+    # this is not a CI completion guarantee or a runner-queue budget.
+    assert measured["allowance_excludes_queue"] is True
+    assert max(loads) + allowance < 1200

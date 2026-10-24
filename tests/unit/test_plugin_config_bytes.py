@@ -146,6 +146,9 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
         assert stat.S_IMODE(shadow.parent.stat().st_mode) == 0o700
         assert stat.S_IMODE((shadow / "config.yaml").stat().st_mode) == 0o600
         assert stat.S_IMODE((shadow / "request.json").stat().st_mode) == 0o600
+        request = json.loads((shadow / "request.json").read_text())
+        assert request["family"] in planner.FAMILIES
+        assert request["sources"] == planner.FAMILIES[request["family"]]
         assert kwargs["env"] == {"HOME": str(shadow), "HERMES_HOME": str(shadow)}
         assert "SYNTHETIC-CONFIG-SECRET" not in repr(argv)
         return subprocess.CompletedProcess(argv, 73, stderr=b"SYNTHETIC-STDERR-SECRET")
@@ -167,7 +170,8 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
     assert "SYNTHETIC" not in repr(planner.ConfigBytesPlan(before, root, "fixed"))
 
 
-def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path):
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225"])
+def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path, family):
     """A real child must not resume after an upstream catch disables profiling."""
     import subprocess
     from hermes_feishu_card.install import plugin_config_bytes as planner
@@ -175,7 +179,13 @@ def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path):
     shadow = tmp_path / "shadow"
     shadow.mkdir()
     (shadow / "request.json").write_text(
-        json.dumps({"real_home": str(tmp_path / "real")})
+        json.dumps({
+            "real_home": str(tmp_path / "real"),
+            "family": family,
+            "sources": planner.FAMILIES[family],
+            "desired": {},
+            "enabled_before": False,
+        })
     )
     sentinel = shadow / "forbidden-body"
     # Exercise the actual installed guard prefix, before any upstream import.
