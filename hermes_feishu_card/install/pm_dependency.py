@@ -354,13 +354,22 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         # Keep a valid wheel filename: uv verifies distribution tags.
         (staging / 'runtime.whl').write_bytes(wheel.read_bytes())
         shutil.rmtree(built)
+        # Newer uv resolves a path source that lands inside the plugin workspace
+        # member as a workspace reference, which fails the lock; hermes also
+        # strips direct-URL requirements from declared plugin dependencies.
+        # Stage a second wheel copy in this hermes home's install state (never
+        # part of a workspace member), and point the source at that absolute
+        # path so the requirement stays an ordinary index-style pin.
+        wheel_store = selected_home / '.hermes_feishu_card' / 'wheel-store'
+        wheel_store.mkdir(parents=True, exist_ok=True)
         project = ('[project]\nname = "hfc-runtime-dependency"\nversion = "0"\n'
                    f'dependencies = ["hermes-feishu-streaming-card=={version}"]\n'
                    '[tool.uv]\npackage = false\n[tool.uv.sources]\n'
-                   f'hermes-feishu-streaming-card = {{ path = "{wheel_name}" }}\n')
+                   f'hermes-feishu-streaming-card = {{ path = "{(wheel_store / wheel_name).as_posix()}" }}\n')
         # Ownership uses a fixed logical wheel key; actual filename is recorded below.
         (staging / 'pyproject.toml').write_text(project)
         (staging / 'runtime.whl').rename(staging / wheel_name)
+        shutil.copyfile(staging / wheel_name, wheel_store / wheel_name)
         owner = {"schema": 1, "version": version, "spec_sha256": spec_digest,
                  "selection_added": old['selection_added'] if old else added,
                  "files": {name: sha256((staging / name).read_bytes()).hexdigest()

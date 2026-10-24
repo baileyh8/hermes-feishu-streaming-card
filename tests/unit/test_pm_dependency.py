@@ -1,6 +1,10 @@
 """Owned PM member transaction regressions; no production HOME or PM state."""
 from hashlib import sha256
 import json
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9/3.10
+    import tomli as tomllib
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
@@ -287,3 +291,22 @@ def test_rollback_uninspectable_staging_refuses_before_rename(pm_env, monkeypatc
     assert pm._owned(receipt.member)
     assert pm._owned(receipt.backup)
     assert pm_env.state['enabled'] == ['other', pm.NAME]
+
+
+def test_staged_project_sources_hfc_wheel_outside_plugin_workspace(pm_env):
+    env = pm_env
+    receipt = register(env)
+    assert receipt is not None
+    member = env.home / 'plugins' / pm.NAME
+    staged = tomllib.loads((member / 'pyproject.toml').read_text(encoding='utf-8'))
+    sources = staged['tool']['uv']['sources']['hermes-feishu-streaming-card']
+    path = Path(sources['path'])
+    # A path source that lands inside the plugin workspace member is resolved
+    # by newer uv as a workspace reference and fails the lock; the staged
+    # source must therefore stay outside every plugin member directory and
+    # live in this hermes home's install-state wheel store instead.
+    assert not path.is_relative_to((env.home / 'plugins').resolve())
+    assert path.parent == (env.home / '.hermes_feishu_card' / 'wheel-store').resolve()
+    assert path.read_bytes() == (member / path.name).read_bytes()
+    assert pm._owned(member)
+    receipt.finish()
