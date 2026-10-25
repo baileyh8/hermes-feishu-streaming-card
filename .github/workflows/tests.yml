@@ -345,25 +345,25 @@ jobs:
         with:
           repository: NousResearch/hermes-agent
           ref: 7bda2a3368024f7ae1c70cef16583e7c2c891674
-          path: .upstream/previous
+          path: .upstream/issue428_7bda2a
       - name: Checkout Hermes v0.22.4
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
           ref: 4d04303818b61bf3aa09278af48356315515965b
-          path: .upstream/0224
+          path: .upstream/latest_stable
       - name: Checkout Hermes v0.22.5
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
           ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
-          path: .upstream/0225
+          path: .upstream/issue456_0225
       - name: Checkout Hermes reviewed main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
           ref: 4e58c721c8cf9b51c46636ea84ea6a5cb540880a
-          path: .upstream/main
+          path: .upstream/latest_main
       - name: Install isolated PM test tools
         run: python -m pip install -e ".[test]" "uv==0.13.5" ruamel.yaml tomli-w packaging wheel rich python-dotenv requests prompt_toolkit "cryptography==48.0.0"
       - name: Prepare ordinary wheel and CLI runtime
@@ -384,10 +384,10 @@ jobs:
           PYCODE
       - name: Verify real PM sources and rebinding with uv 0.13.5
         env:
-          HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/previous"
-          HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/0224"
-          HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/0225"
-          HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/main"
+          HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
+          HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
+          HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
+          HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
         run: >-
