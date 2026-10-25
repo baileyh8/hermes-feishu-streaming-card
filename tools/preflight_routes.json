@@ -49,7 +49,8 @@
       "tests/unit/test_pm_wheel_store.py",
       "tests/unit/test_legacy_rebind.py",
       "tests/integration/test_legacy_observer_install.py",
-      "tests/integration/test_pm_rebind.py"
+      "tests/integration/test_pm_rebind.py",
+      "tests/integration/test_official_enable_root.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -241,6 +242,7 @@
     "ci": [
       "tests/unit/test_ci_workflow.py",
       "tests/unit/test_ci_regression.py",
+      "tests/unit/test_official_image_tools.py",
       "tests/unit/test_preflight.py"
     ],
     "archives": [
@@ -682,6 +684,15 @@
       "ci"
     ],
     "tools/ci_shard.py": [
+      "ci"
+    ],
+    "tools/official_image_acceptance.py": [
+      "ci"
+    ],
+    "tools/official_image_diagnose.py": [
+      "ci"
+    ],
+    "tests/unit/test_official_image_tools.py": [
       "ci"
     ],
     "tools/ci_durations.json": [

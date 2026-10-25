@@ -11,14 +11,42 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import tempfile
 from typing import Any, Mapping
 
+import yaml  # type: ignore[import-untyped]
+
 
 class ConfigBytesRefused(ValueError):
     """The official command's exact config postimage cannot be proved."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "refused",
+        stage: str = "plan",
+        source: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code if re.fullmatch(r"[a-z][a-z0-9-]{0,63}", code) else "refused"
+        self.stage = stage if re.fullmatch(r"[a-z][a-z0-9-]{0,31}", stage) else "plan"
+        self.source = (
+            source
+            if source
+            and len(source) <= 200
+            and re.fullmatch(r"[A-Za-z0-9_./-]+", source)
+            and not source.startswith("/")
+            and ".." not in Path(source).parts
+            else None
+        )
+
+    def diagnostic_label(self) -> str:
+        label = f"{self.stage}:{self.code}"
+        return f"{label}:{self.source}" if self.source else label
 
 
 # Whole-source hashes bind cmd_enable's sequence, its imported helpers and the
@@ -164,9 +192,58 @@ FAMILIES["pm-0223"] = {
 }
 FAMILIES["pm-0224"] = dict(_PM_0224_WRITER)
 FAMILIES["pm-0225"] = dict(_PM_0225_WRITER)
+# v0.22.1 predates the v0.22.2 writer split for plugins_cmd and utils, while
+# already sharing the PM publication and worker-save path with pm-main.  Keep
+# its two old sources explicit so neither the legacy pm family nor pm-main can
+# silently stand in for this revision.
+FAMILIES["pm-0221"] = {
+    **FAMILIES["pm-main"],
+    "hermes_cli/plugins_cmd.py": "aec2fd443b48fba00b96308af8ba4ed139f2a7ab1a07770b1773028f021bd023",
+    "utils.py": "394b44230f13ba608c6ce9b2d143563b2554a73a219567b03884637776a4859a",
+}
 FAMILIES["pm-main-4e58"] = {
     **_PM_0224_WRITER,
     "hermes_cli/left_core_migration.py": "a1a67f61f5d264d5cf935f8acb2a14967ad06f4efca3ce3441f4c676950b25dc",
+}
+
+
+# The official launch bootstrap executes these files before the writer plan.
+# They are intentionally separate from FAMILIES: the writer contract and the
+# launcher contract have different consumers and must not imply one another.
+_PM_INIT = "6a4ab05b8621ec1cd66a5abbe30fa32ed5bddddea95903036da01f0af1af94ce"
+LAUNCH_SOURCES: dict[str, dict[str, str]] = {
+    "fixed": {
+        "hermes_cli/main.py": "f27fcee078bc3696d4c37fa98d04972e214d53b01bd6075f12e988ef69d6c241",
+        "hermes_cli/__init__.py": "e4c421279251971d07f84628d1d59222f0368ab297ce8fd0dff10e5938fe971e",
+    },
+    "pm": {
+        "hermes_cli/main.py": "88a7fc166d3bfaac082d44bbfc36c93b53c50f7508ca96e32206dc3f1edfaa82",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
+    "pm-main": {
+        "hermes_cli/main.py": "9b3c4c7ce4626c414f2f9b63338a3a6480eac5bb2028d53bbfb816110ce47ed9",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
+    "pm-0223": {
+        "hermes_cli/main.py": "244637472a5fdad080c99f99356d5acd7fc99bbf8b61cab153a2eb580a61a688",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
+    "pm-0221": {
+        "hermes_cli/main.py": "9ef03ed61d0b6949e47bf2617997cda83b62dc6f007abc7813625cf74f21efde",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
+    "pm-0224": {
+        "hermes_cli/main.py": "244637472a5fdad080c99f99356d5acd7fc99bbf8b61cab153a2eb580a61a688",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
+    "pm-0225": {
+        "hermes_cli/main.py": "95635aea97728e2759f9158210ae60fcfb7141610f9e7cbc2182021d9a50d416",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
+    "pm-main-4e58": {
+        "hermes_cli/main.py": "b822f3aa776d7f94eef646309a6d64cf4b4ea53f6bf5c02d4b06ef17c3d3080f",
+        "hermes_cli/__init__.py": _PM_INIT,
+    },
 }
 
 
@@ -198,37 +275,300 @@ def verify_family(root: Path, family: str) -> None:
         raise ConfigBytesRefused("official config writer contract is unknown")
 
 
+def _launch_path(root: Path, relative: str) -> Path:
+    if not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
+        raise ConfigBytesRefused(
+            "official launch source path is invalid",
+            code="launch-path",
+            stage="launch",
+        )
+    current = root
+    for part in Path(relative).parts:
+        current = current / part
+        try:
+            metadata = current.lstat()
+        except OSError as exc:
+            raise ConfigBytesRefused(
+                "official launch source is unavailable",
+                code="launch-source-unavailable",
+                stage="launch",
+                source=relative,
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ConfigBytesRefused(
+                "official launch source is a symlink",
+                code="launch-source-symlink",
+                stage="launch",
+                source=relative,
+            )
+        if current != root / Path(relative) and not stat.S_ISDIR(metadata.st_mode):
+            raise ConfigBytesRefused(
+                "official launch source parent is not a directory",
+                code="launch-source-parent",
+                stage="launch",
+                source=relative,
+            )
+    return current
+
+
+def _verify_launch_root(root: Path) -> Path:
+    try:
+        absolute = Path(os.path.abspath(os.fspath(root)))
+        root_metadata = absolute.lstat()
+    except OSError as exc:
+        raise ConfigBytesRefused(
+            "official launch root is unavailable",
+            code="launch-root-unavailable",
+            stage="launch",
+        ) from exc
+    if stat.S_ISLNK(root_metadata.st_mode):
+        raise ConfigBytesRefused(
+            "official launch root is a symlink",
+            code="launch-root-symlink",
+            stage="launch",
+        )
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        raise ConfigBytesRefused(
+            "official launch root is not a directory",
+            code="launch-root-type",
+            stage="launch",
+        )
+    for ancestor in absolute.parents:
+        try:
+            metadata = ancestor.lstat()
+        except OSError as exc:
+            raise ConfigBytesRefused(
+                "official launch ancestor is unavailable",
+                code="launch-ancestor-unavailable",
+                stage="launch",
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ConfigBytesRefused(
+                "official launch ancestor is a symlink",
+                code="launch-ancestor-symlink",
+                stage="launch",
+            )
+    return absolute
+
+
+def verify_launch_sources(root: Path, *, family: str | None = None) -> str:
+    """Prove the exact launcher files before executing the official CLI.
+
+    The launch bootstrap runs ``hermes_cli.main`` directly, so writer-source
+    verification alone is insufficient.  Root and every target component must
+    be non-symlinks; both launch files must be regular files with their exact
+    reviewed bytes.  The return value is the selected family.
+    """
+    absolute = _verify_launch_root(root)
+    if family is None:
+        for candidate in FAMILIES:
+            try:
+                verify_family(absolute, candidate)
+            except ConfigBytesRefused:
+                continue
+            family = candidate
+            break
+    if family is None or family not in FAMILIES:
+        raise ConfigBytesRefused(
+            "official config writer contract is unknown",
+            code="launch-family-unknown",
+            stage="launch",
+        )
+    expected = LAUNCH_SOURCES.get(family)
+    if expected is None:
+        raise ConfigBytesRefused(
+            "official launch source contract is unknown",
+            code="launch-source-unknown",
+            stage="launch",
+        )
+    for relative, digest in expected.items():
+        path = _launch_path(absolute, relative)
+        try:
+            metadata = path.lstat()
+        except OSError as exc:
+            raise ConfigBytesRefused(
+                "official launch source is unavailable",
+                code="launch-source-unavailable",
+                stage="launch",
+                source=relative,
+            ) from exc
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ConfigBytesRefused(
+                "official launch source is not a regular file",
+                code="launch-source-type",
+                stage="launch",
+                source=relative,
+            )
+        try:
+            actual = _digest(path)
+        except ConfigBytesRefused as exc:
+            raise ConfigBytesRefused(
+                "official launch source is unsafe",
+                code="launch-source-unsafe",
+                stage="launch",
+                source=relative,
+            ) from exc
+        if actual != digest:
+            raise ConfigBytesRefused(
+                "official launch source changed",
+                code="launch-source-drift",
+                stage="launch",
+                source=relative,
+            )
+    verify_family(absolute, family)
+    return family
+
+
+def _mapping(value: bytes) -> dict[str, Any]:
+    try:
+        parsed = yaml.safe_load(value.decode("utf-8"))
+    except (UnicodeError, yaml.YAMLError) as exc:
+        raise ConfigBytesRefused(
+            "official config byte plan is invalid YAML",
+            code="invalid-yaml",
+            stage="verify",
+        ) from exc
+    if parsed is None:
+        return {}
+    if type(parsed) is not dict or any(type(key) is not str for key in parsed):
+        raise ConfigBytesRefused(
+            "official config byte plan must be a string-keyed mapping",
+            code="invalid-root",
+            stage="verify",
+        )
+    return parsed
+
+
+def _schema_version(mapping: Mapping[str, Any]) -> int | None:
+    if "_config_version" not in mapping:
+        return None
+    version = mapping.get("_config_version")
+    if type(version) is not int or version < 0:
+        raise ConfigBytesRefused(
+            "official config byte plan has an invalid schema version",
+            code="invalid-schema-version",
+            stage="verify",
+        )
+    return version
+
+
 @dataclass(frozen=True, repr=False)
 class ConfigBytesPlan:
     postimage: bytes
     root: Path
     family: str
+    config_version: int | None = None
 
     def verify_source(self) -> None:
         verify_family(self.root, self.family)
 
+    def verify_launch_sources(self) -> None:
+        verify_launch_sources(self.root, family=self.family)
+
+    def matches_expected(self, expected: Mapping[str, Any]) -> bool:
+        """Match config semantics while allowing only the writer's exact stamp.
+
+        The official writer may stamp the schema version as part of every save.
+        That metadata update is accepted only when it equals the value produced
+        by this verified plan and does not move an existing stamp backwards.
+        Every other mapping field must match exactly.  Callers still compare the
+        complete postimage bytes after running the official command.
+        """
+        if not isinstance(expected, Mapping):
+            return False
+        try:
+            actual = _mapping(self.postimage)
+            expected_mapping = dict(expected)
+        except (ConfigBytesRefused, TypeError, ValueError):
+            return False
+        try:
+            actual_version = _schema_version(actual)
+        except ConfigBytesRefused:
+            return False
+        if actual_version != self.config_version:
+            return False
+        if actual == expected_mapping:
+            return True
+        if self.config_version is None:
+            return False
+        if "_config_version" in expected_mapping:
+            expected_version = expected_mapping.get("_config_version")
+            if type(expected_version) is not int or expected_version < 0:
+                return False
+            if expected_version > self.config_version:
+                return False
+        actual_without_stamp = dict(actual)
+        expected_without_stamp = dict(expected_mapping)
+        actual_without_stamp.pop("_config_version", None)
+        expected_without_stamp.pop("_config_version", None)
+        return actual_without_stamp == expected_without_stamp
+
 
 _CHILD = r"""
-import hashlib,importlib,json,os,sys
+import hashlib,importlib,json,os,stat,sys,sysconfig
 from pathlib import Path
 sys.dont_write_bytecode=True
-root,home=map(Path,sys.argv[1:3])
+root=Path(sys.argv[1]).resolve();home=Path(sys.argv[2]).resolve()
 request=json.loads((home/'request.json').read_text())
 real_home=Path(request['real_home']).resolve()
 # Imports may read selected source/runtime libraries. All writes and all config
 # reads are confined to this private HOME; no resolver subprocess or transport.
 def under(path, base):
     return path==base or base in path.parents
-def deny(reason):
-    sys.stderr.write('private config byte plan side effect refused\n');sys.stderr.flush()
+def deny(reason,stage='audit',source=None):
+    report={'reason':reason,'stage':stage}
+    if source: report['source']=source
+    sys.stderr.write('HFC_CONFIG_PLAN_DENY '+json.dumps(report,sort_keys=True,separators=(',',':'))+'\n')
+    sys.stderr.flush()
     os._exit(73)
+def nonsymlink_path(value):
+    path=Path(os.path.abspath(os.fspath(value)))
+    for part in (path,*path.parents):
+        try: metadata=part.lstat()
+        except OSError: return False
+        if stat.S_ISLNK(metadata.st_mode): return False
+    return True
+def has_symlink(value):
+    path=Path(os.path.abspath(os.fspath(value)))
+    for part in (path,*path.parents):
+        try: metadata=part.lstat()
+        except FileNotFoundError: continue
+        except OSError: return True
+        if stat.S_ISLNK(metadata.st_mode): return True
+    return False
+library_roots=[]
+for key in ('stdlib','platstdlib','purelib','platlib'):
+    value=sysconfig.get_paths().get(key)
+    if not value: continue
+    raw=Path(os.path.abspath(value))
+    base=raw.resolve()
+    raw_under_root=under(raw,root)
+    base_under_root=under(base,root)
+    root_under_base=under(root,base)
+    if raw_under_root or base_under_root or root_under_base:
+        if base==root or base in root.parents: deny('library-root-overlap','library')
+        if not nonsymlink_path(raw) or not nonsymlink_path(base):
+            deny('library-root-symlink','library')
+        if raw_under_root != base_under_root:
+            deny('library-root-overlap','library')
+        for package in ('hermes_cli','providers','agent','hermes_platform','pm'):
+            package_root=root/package
+            if base==package_root or package_root in base.parents:
+                deny('library-root-overlap','library')
+    if base not in library_roots: library_roots.append(base)
+def library_path(path):
+    return any(under(path,base) for base in library_roots)
 def audit(event,args):
     if request['family']=='pm-0225' and event=='exec':
         filename=args[0].co_filename
         if not filename.startswith('<'):
-            path=Path(filename).resolve()
-            if under(path,root) and path.relative_to(root).as_posix() not in request['sources']:
-                deny('unbound local source execution')
+            raw=Path(os.path.abspath(os.fspath(filename)))
+            if under(raw,root):
+                if not nonsymlink_path(raw):
+                    deny('local-source-symlink','exec',raw.relative_to(root).as_posix())
+                path=raw.resolve()
+                if not library_path(path) and path.relative_to(root).as_posix() not in request['sources']:
+                    deny('unbound-local-source','exec',path.relative_to(root).as_posix())
     if event in {'subprocess.Popen','os.system','socket.connect','socket.bind'}:
         if event=='subprocess.Popen':
             frame=sys._getframe(1)
@@ -238,29 +578,32 @@ def audit(event,args):
             # block it without starting a subprocess. The entire source is bound.
             if frame.f_globals.get('__name__')=='hermes_cli.version_info' and frame.f_code.co_name=='_run_git':
                 raise RuntimeError('version metadata subprocess disabled in shadow')
-            deny(event)
-        deny(event)
+            deny('subprocess','process')
+        deny('network' if event.startswith('socket.') else 'process',event)
     if event=='open' and isinstance(args[0],(str,bytes,os.PathLike)):
-        path=Path(os.fsdecode(args[0])).resolve()
+        raw=Path(os.path.abspath(os.fsdecode(args[0])))
+        if under(raw,root) and has_symlink(raw):
+            deny('local-source-symlink','open',raw.relative_to(root).as_posix())
+        path=raw.resolve()
         # Ignore checkout bytecode caches: verified source must be compiled.
-        if request['family']=='pm-0225' and under(path,root) and path.suffix=='.pyc':
+        if request['family']=='pm-0225' and under(path,root) and path.suffix=='.pyc' and not library_path(path):
             raise OSError('private planner requires verified source')
         mode=args[1];flags=args[2]
         writing=(isinstance(mode,str) and any(x in mode for x in 'wax+')) or bool(flags & (os.O_WRONLY|os.O_RDWR|os.O_CREAT|os.O_TRUNC))
-        if writing and not under(path,home): deny('write outside shadow')
-        if path in {real_home/'config.yaml',real_home/'.env'}: deny('real config read')
+        if writing and not under(path,home): deny('shadow-write','open')
+        if path in {real_home/'config.yaml',real_home/'.env'}: deny('real-config-read','open')
     if event in {'os.mkdir','os.remove','os.rmdir','os.chmod'}:
         if isinstance(args[0],int):
             identity=os.fstat(args[0])
             if not any((p.stat().st_dev,p.stat().st_ino)==(identity.st_dev,identity.st_ino)
                        for p in home.rglob('*') if p.is_file() and not p.is_symlink()):
-                deny('file descriptor outside shadow')
+                deny('fd-outside-shadow',event)
             return
         path=Path(os.fsdecode(args[0])).resolve()
-        if not under(path,home): deny('mutation outside shadow')
+        if not under(path,home): deny('shadow-mutation',event)
     if event in {'os.rename','os.replace'}:
         if not all(under(Path(os.fsdecode(p)).resolve(),home) for p in args[:2]):
-            deny('rename outside shadow')
+            deny('rename-outside-shadow',event)
 sys.addaudithook(audit)
 def profile(frame,event,arg):
     if event!='call': return
@@ -271,7 +614,7 @@ def profile(frame,event,arg):
         or (module.startswith('hermes_feishu_card') and name=='bootstrap_plugin_runtime')
         or (module=='providers' and name in {'_discover_providers','_run_discovery_steps','_import_plugin_dir','_discover_entry_point_providers'})
         or (module in {'pm.install','pm.client','pm._uv'} and name!='<module>')):
-        deny('plugin load or resolver')
+        deny('plugin-load','profile')
 sys.setprofile(profile)
 for name,digest in request['sources'].items():
     assert hashlib.sha256((root/name).read_bytes()).hexdigest()==digest
@@ -288,7 +631,7 @@ def no_setup_provider_metadata(*args,**kwargs):
     caller=sys._getframe(1)
     if caller.f_globals.get('__name__')=='hermes_cli.config' and caller.f_code.co_name=='_inject_profile_env_vars':
         raise RuntimeError('setup prompt metadata is excluded from byte planning')
-    deny('provider metadata outside setup import')
+    deny('provider-metadata','profile')
 providers.list_providers=no_setup_provider_metadata
 config=module('hermes_cli.config','hermes_cli/config.py')
 providers.list_providers=list_providers
@@ -318,6 +661,44 @@ assert (home/'config.yaml').is_file()
 """
 
 
+def _child_refusal(stderr: bytes | str | None, returncode: int) -> ConfigBytesRefused:
+    """Read only the child's bounded audit envelope; discard all other output."""
+    raw = stderr or b""
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8", errors="replace")
+    prefix = b"HFC_CONFIG_PLAN_DENY "
+    for line in raw.splitlines():
+        if not line.startswith(prefix):
+            continue
+        try:
+            payload = json.loads(line[len(prefix):].decode("ascii"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if type(payload) is not dict or not {"reason", "stage"} <= set(payload):
+            continue
+        if set(payload) - {"reason", "stage", "source"}:
+            continue
+        reason, stage = payload.get("reason"), payload.get("stage")
+        if not isinstance(reason, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", reason):
+            continue
+        if not isinstance(stage, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", stage):
+            continue
+        source = payload.get("source")
+        if source is not None and not isinstance(source, str):
+            source = None
+        return ConfigBytesRefused(
+            "official config byte plan failed",
+            code=reason,
+            stage=stage,
+            source=source,
+        )
+    return ConfigBytesRefused(
+        "official config byte plan failed",
+        code="audit-refused" if returncode == 73 else "child-exit",
+        stage="audit" if returncode == 73 else "child",
+    )
+
+
 def plan_enabled_bytes(
     *,
     root: Path,
@@ -341,8 +722,12 @@ def plan_enabled_bytes(
     try:
         with tempfile.TemporaryDirectory(
             prefix="hfc-config-plan-", dir=state_dir
-        ) as scratch:
-            shadow = Path(scratch) / "home"
+        ) as scratch_name:
+            # Resolve the private paths before the audit compares them.  On
+            # macOS, /var is a symlink to /private/var; leaving one side
+            # unresolved makes every legitimate shadow write look external.
+            scratch = Path(scratch_name).resolve()
+            shadow = (scratch / "home").resolve()
             shadow.mkdir(mode=0o700)
             os.chmod(scratch, 0o700)
             for name, value in {
@@ -371,10 +756,27 @@ def plan_enabled_bytes(
                 check=False,
             )
             if child.returncode != 0:
-                raise ConfigBytesRefused("official config byte plan failed")
+                raise _child_refusal(child.stderr, child.returncode)
             postimage = (shadow / "config.yaml").read_bytes()
-    except (OSError, subprocess.SubprocessError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        raise ConfigBytesRefused(
+            "official config byte plan timed out",
+            code="timeout",
+            stage="child",
+        ) from exc
+    except subprocess.SubprocessError as exc:
+        raise ConfigBytesRefused(
+            "official config byte plan failed",
+            code="child-process",
+            stage="child",
+        ) from exc
+    except OSError as exc:
         # Never forward stderr, arbitrary exception text or config bytes.
-        raise ConfigBytesRefused("official config byte plan failed") from exc
+        raise ConfigBytesRefused(
+            "official config byte plan failed",
+            code="child-io",
+            stage="child",
+        ) from exc
     verify_family(root, family)
-    return ConfigBytesPlan(postimage, root, family)
+    mapping = _mapping(postimage)
+    return ConfigBytesPlan(postimage, root, family, _schema_version(mapping))
