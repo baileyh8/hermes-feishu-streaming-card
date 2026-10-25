@@ -108,10 +108,13 @@ def test_real_pm_generation_explicit_rebind_reinstall_restore(tmp_path, snapshot
     # single purelib path drops those imports when supplying a fresh PM venv.
     # Forward only existing package directories, never the caller's checkout or
     # an editable finder. The PM venv's own installed HFC remains first.
-    tools_sites = json.loads(subprocess.check_output([str(tools_python), "-I", "-c",
+    package_paths_probe = (
         "import json,sys;from pathlib import Path;"
         "print(json.dumps(list(dict.fromkeys(str(Path(p).resolve()) for p in sys.path "
-        "if Path(p).name in {'site-packages','dist-packages'} and Path(p).is_dir()))))"], text=True))
+        "if Path(p).name in {'site-packages','dist-packages'} and Path(p).is_dir()))))"
+    )
+    tools_sites = json.loads(subprocess.check_output(
+        [str(tools_python), "-I", "-c", package_paths_probe], text=True))
     assert tools_sites, "pre-provisioned dependency package paths required"
     _run(tools_python, root, home, SETUP, home, wheel, uv, tools_python, json.dumps(tools_sites),
          stage="real-pm-setup", timeout=180)
