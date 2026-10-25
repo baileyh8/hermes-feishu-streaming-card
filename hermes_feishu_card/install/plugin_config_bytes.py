@@ -735,10 +735,10 @@ for key in ('stdlib','platstdlib','purelib','platlib'):
                 deny('library-root-overlap','library')
         if raw_under_root and not base_under_root:
             # A borrowed interpreter may live at checkout/.venv -> outside.
-            # Admit only its exact sysconfig site-library mapping, never an
+            # Admit only its exact sysconfig library mapping, never an
             # arbitrary source link into a directory that happens to be a lib.
             prefix=Path(os.path.abspath(sys.prefix))
-            if key not in ('purelib','platlib') or not under(raw,prefix) or not under(base,prefix.resolve()):
+            if not under(raw,prefix) or not under(base,prefix.resolve()):
                 deny('library-root-overlap','library')
             library_aliases.append((raw,base))
         elif not nonsymlink_path(raw) or not nonsymlink_path(base):

@@ -757,7 +757,7 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
     # to the same otherwise-trusted canonical directory.
     alias = root / ".venv"
     alias.symlink_to(external, target_is_directory=True)
-    alias_paths = {key: str(alias) for key in ("purelib", "platlib")}
+    alias_paths = {key: str(alias) for key in ("stdlib", "platstdlib", "purelib", "platlib")}
     external_marker.unlink()
     borrowed = run(alias_paths, "externalmarker", alias, prefix=alias)
     assert borrowed.returncode == 0
