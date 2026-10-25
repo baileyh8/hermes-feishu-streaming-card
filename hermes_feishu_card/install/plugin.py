@@ -358,12 +358,14 @@ def enable_plugin(
 def _plan_enabled_config_bytes(
     binding: HermesRuntimeBinding, preimage: PluginConfigPreimage, before: bytes,
     desired: Mapping[str, Any], enabled_before: bool,
+    *, historical_post_sha256: str | None = None,
 ) -> ConfigBytesPlan:
     from .plugin_config_bytes import ConfigBytesRefused, plan_enabled_bytes
     try:
         return plan_enabled_bytes(root=binding.checkout_root, python=binding.runtime_python,
             home=binding.hermes_home, state_dir=preimage.state_dir, before=before,
-            desired=desired, enabled_before=enabled_before)
+            desired=desired, enabled_before=enabled_before,
+            historical_post_sha256=historical_post_sha256)
     except ConfigBytesRefused as exc:
         raise PluginConfigRefused(
             f"official config byte plan failed ({exc.diagnostic_label()})"

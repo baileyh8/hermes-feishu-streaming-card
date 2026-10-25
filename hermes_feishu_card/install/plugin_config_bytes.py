@@ -810,8 +810,9 @@ def module(name,relative):
     value=importlib.import_module(name)
     assert Path(value.__file__).resolve()==root/relative
     return value
-migrate_on_boot=True
-if request.get('boot_gate'):
+migrate_on_boot=request.get('historical_migration')
+if migrate_on_boot is None: migrate_on_boot=True
+if request.get('boot_gate') and request.get('historical_migration') is None:
     # Only inspect the official boot identity/record. Never run bootstrap here.
     # The helpers resolve profiles and PM roots under the exact enable HOME.
     saved_env={key:os.environ.get(key) for key in ('HOME','HERMES_HOME','HERMES_INSTALL_ROOT')}
@@ -965,7 +966,7 @@ def _child_refusal(stderr: bytes | str | None, returncode: int) -> ConfigBytesRe
     )
 
 
-def plan_enabled_bytes(
+def _plan_enabled_bytes(
     *,
     root: Path,
     python: Path,
@@ -974,6 +975,7 @@ def plan_enabled_bytes(
     before: bytes,
     desired: Mapping[str, Any],
     enabled_before: bool,
+    historical_migration: bool | None,
 ) -> ConfigBytesPlan:
     family = None
     for candidate in FAMILIES:
@@ -1002,6 +1004,7 @@ def plan_enabled_bytes(
                     {
                         "real_home": str(home),
                         "boot_gate": family in BOOT_GATE_FAMILIES,
+                        "historical_migration": historical_migration,
                         "git": shutil.which("git"),
                         "family": family,
                         "sources": FAMILIES[family],
@@ -1048,3 +1051,30 @@ def plan_enabled_bytes(
     verify_family(root, family)
     mapping = _mapping(postimage)
     return ConfigBytesPlan(postimage, root, family, _schema_version(mapping))
+
+
+def plan_enabled_bytes(
+    *, root: Path, python: Path, home: Path, state_dir: Path, before: bytes,
+    desired: Mapping[str, Any], enabled_before: bool,
+    historical_post_sha256: str | None = None,
+) -> ConfigBytesPlan:
+    """Plan current enable, or prove one exact already-owned historical output.
+
+    Historical bootstrap state is no longer current state. Replay only the two
+    pinned official migration branches and require the original journal hash;
+    never infer success from a schema stamp or accept arbitrary writer bytes.
+    """
+    if historical_post_sha256 is not None and (type(historical_post_sha256) is not str or not re.fullmatch(r"[0-9a-f]{64}", historical_post_sha256)):
+        raise ConfigBytesRefused("historical config proof is invalid")
+    modes = (None,) if historical_post_sha256 is None else (False, True)
+    for mode in modes:
+        plan = _plan_enabled_bytes(
+            root=root, python=python, home=home, state_dir=state_dir,
+            before=before, desired=desired, enabled_before=enabled_before,
+            historical_migration=mode,
+        )
+        if historical_post_sha256 is None:
+            return plan
+        if hashlib.sha256(plan.postimage).hexdigest() == historical_post_sha256 and plan.matches_expected(desired):
+            return plan
+    raise ConfigBytesRefused("historical config postimage is unverified", code="historical-postimage", stage="migration")

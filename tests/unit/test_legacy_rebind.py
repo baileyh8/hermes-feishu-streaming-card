@@ -55,7 +55,7 @@ def admission(tmp_path, monkeypatch):
         "sha256:" + "a" * 64, home, config, root, root)
     monkeypatch.setattr(plugin, "resolve_runtime_binding", lambda **_: binding)
     monkeypatch.setattr(plugin, "probe_plugin_entrypoint", lambda _: SimpleNamespace(status="verified"))
-    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda b, p, raw, desired, enabled:
+    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda b, p, raw, desired, enabled, **kwargs:
         _exact_plan(yaml.safe_dump(desired, sort_keys=False).encode()))
     def enable(_):
         desired, _ = plugin._expected_enabled_config(plugin._load_config_mapping(config.read_bytes()))

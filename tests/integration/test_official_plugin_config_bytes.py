@@ -379,6 +379,31 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     assert migration.returncode == 0
     assert plugin._run_official_enable(binding) == 0
     assert (home / "config.yaml").read_bytes() == plan.postimage
+    if seed_version == 50:
+        # Historical ownership refers to these real official bytes, even after
+        # the current install's bootstrap record causes a fresh enable to skip.
+        key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
+        record = home / "installs" / key / "bootstrap" / "default.json"
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps({"identity": "bf0203a794a07aac3ff764972ab9087baa4e4f4e"}))
+        arguments = dict(root=root, python=python, home=home,
+                         state_dir=preimage.state_dir, before=original,
+                         desired=desired, enabled_before=enabled_before)
+        current = plugin_config_bytes.plan_enabled_bytes(**arguments)
+        assert current.config_version == 50
+        actual = (home / "config.yaml").read_bytes()
+        proven = plugin_config_bytes.plan_enabled_bytes(
+            **arguments, historical_post_sha256=hashlib.sha256(actual).hexdigest()
+        )
+        assert proven.postimage == actual
+        for changed in (actual.replace(b"keep", b"lost"),
+                        actual.replace(b"_config_version: 51", b"_config_version: 52")):
+            assert changed != actual
+            with pytest.raises(plugin_config_bytes.ConfigBytesRefused, match="historical config postimage"):
+                plugin_config_bytes.plan_enabled_bytes(
+                    **arguments, historical_post_sha256=hashlib.sha256(changed).hexdigest()
+                )
+        assert (home / "config.yaml").read_bytes() == actual
 
 
 def test_pm_0225_floor_boundary_requires_new_migration_sources(

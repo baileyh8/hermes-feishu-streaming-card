@@ -121,7 +121,10 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
         desired, enabled = plugin._expected_enabled_config(plugin._load_config_mapping(before))
         if enabled:
             desired, _ = plugin._expected_enabled_config(plugin._load_config_mapping(before), preserve_enabled_lists=True)
-        plan = plugin._plan_enabled_config_bytes(binding, old_preimage, before, desired, enabled)
+        plan = plugin._plan_enabled_config_bytes(
+            binding, old_preimage, before, desired, enabled,
+            historical_post_sha256=old_owner.post_sha256,
+        )
         if plugin._sha256(plan.postimage) != old_owner.post_sha256:
             raise RebindRefused("legacy_rebind_original_postimage_unverified")
         for candidate in (before, plan.postimage, current):
