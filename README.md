@@ -404,6 +404,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 [MIT License](LICENSE)。
 
+感谢 [mingyangtech666](https://github.com/mingyangtech666) 的 PR #458 提供 PM workspace 外部 wheel 方案；[ywarmy](https://github.com/ywarmy) 在 Issue #459 提供 PM 迁移与配置恢复证据。后续安全事务补充与原始贡献分别保留。
+
 <details>
 <summary>可选服务与赞助披露</summary>
 

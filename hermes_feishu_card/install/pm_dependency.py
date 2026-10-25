@@ -20,6 +20,8 @@ from typing import Any
 import zipfile
 from email.parser import BytesParser
 
+from . import pm_wheel_store
+
 NAME = "hfc-runtime-dependency"
 OWNER = ".hfc-owner.json"
 
@@ -110,6 +112,13 @@ def _safe_directory(path: Path, *, create: bool = False) -> None:
             raise ValueError("PM dependency directory ancestry must be real directories")
 
 
+def _project_source(version: str, reference: dict[str, str]) -> str:
+    return ('[project]\nname = "hfc-runtime-dependency"\nversion = "0"\n'
+            f'dependencies = ["hermes-feishu-streaming-card=={version}"]\n'
+            '[tool.uv]\npackage = false\n[tool.uv.sources]\n'
+            f'hermes-feishu-streaming-card = {{ path = {json.dumps(reference["path"])} }}\n')
+
+
 def _owned(path: Path) -> dict[str, Any] | None:
     try:
         path.lstat()
@@ -122,8 +131,9 @@ def _owned(path: Path) -> dict[str, Any] | None:
         data = json.loads((path / OWNER).read_bytes())
         if not isinstance(data, dict):
             raise ValueError("invalid PM dependency ownership")
-        if (set(data) != {"schema", "version", "spec_sha256", "files", "selection_added"}
-                or type(data["schema"]) is not int or data["schema"] != 1
+        if (set(data) != ({"schema", "version", "spec_sha256", "files", "selection_added"}
+                                 | ({"external_wheel"} if data.get("schema") == 2 else set()))
+                or type(data["schema"]) is not int or data["schema"] not in (1, 2)
                 or not isinstance(data["version"], str) or type(data["selection_added"]) is not bool
                 or not isinstance(data["spec_sha256"], str) or len(data["spec_sha256"]) != 64):
             raise ValueError("invalid PM dependency ownership")
@@ -135,6 +145,11 @@ def _owned(path: Path) -> dict[str, Any] | None:
         for name, digest in files.items():
             if not _regular(path / name) or sha256((path / name).read_bytes()).hexdigest() != digest:
                 raise ValueError("PM dependency member digest changed")
+        if data['schema'] == 2:
+            wheel = pm_wheel_store.validate(path.parent.parent, data['external_wheel'])
+            if ((path / 'pyproject.toml').read_text() != _project_source(data['version'], data['external_wheel'])
+                    or files.get(wheel.name) != data['external_wheel']['sha256']):
+                raise ValueError("PM external wheel differs from member wheel")
         return data
     except (ValueError, TypeError, KeyError) as exc:
         raise ValueError("PM dependency ownership cannot be verified") from exc
@@ -317,7 +332,7 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
     if NAME in probe['disabled']:
         raise ValueError("HFC PM dependency member is explicitly disabled")
     spec_digest = _install_spec_digest(spec)
-    if old is not None and old['version'] == version and (spec is None or old['spec_sha256'] == spec_digest):
+    if old is not None and old['schema'] == 2 and old['version'] == version and (spec is None or old['spec_sha256'] == spec_digest):
         _call(root, python, selected_home, {"operation": "add", "name": NAME,
                                            "expected": probe["expected"]})
         return (Registration(root, python, selected_home, member, None, True)
@@ -360,17 +375,12 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         # Stage a second wheel copy in this hermes home's install state (never
         # part of a workspace member), and point the source at that absolute
         # path so the requirement stays an ordinary index-style pin.
-        wheel_store = selected_home / '.hermes_feishu_card' / 'wheel-store'
-        wheel_store.mkdir(parents=True, exist_ok=True)
-        project = ('[project]\nname = "hfc-runtime-dependency"\nversion = "0"\n'
-                   f'dependencies = ["hermes-feishu-streaming-card=={version}"]\n'
-                   '[tool.uv]\npackage = false\n[tool.uv.sources]\n'
-                   f'hermes-feishu-streaming-card = {{ path = "{(wheel_store / wheel_name).as_posix()}" }}\n')
+        external_wheel = pm_wheel_store.publish(selected_home, wheel_name, (staging / 'runtime.whl').read_bytes())
+        project = _project_source(version, external_wheel)
         # Ownership uses a fixed logical wheel key; actual filename is recorded below.
         (staging / 'pyproject.toml').write_text(project)
         (staging / 'runtime.whl').rename(staging / wheel_name)
-        shutil.copyfile(staging / wheel_name, wheel_store / wheel_name)
-        owner = {"schema": 1, "version": version, "spec_sha256": spec_digest,
+        owner = {"schema": 2, "external_wheel": external_wheel, "version": version, "spec_sha256": spec_digest,
                  "selection_added": old['selection_added'] if old else added,
                  "files": {name: sha256((staging / name).read_bytes()).hexdigest()
                            for name in ('pyproject.toml', wheel_name)}}
@@ -426,17 +436,7 @@ def _remove(root: Path, python: Path, *, home: Path | None) -> None:
     shutil.rmtree(member)
 
 
-def verify_installed(member: Path, python: Path) -> bool:
-    """Compare every package resource with the exact cached ordinary wheel."""
-    owner = _owned(member)
-    if owner is None:
-        return False
-    wheel_name = next(name for name in owner['files'] if name.endswith('.whl'))
-    wheel = member / wheel_name
-    with zipfile.ZipFile(wheel) as archive:
-        hashes = {name: sha256(archive.read(name)).hexdigest() for name in archive.namelist()
-                  if name.startswith('hermes_feishu_card/') and not name.endswith('/')}
-    code = """import sys,json,hashlib,importlib.metadata as metadata
+_VERIFY_CHILD = """import sys,json,hashlib,os,stat,importlib.metadata as metadata
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
@@ -446,20 +446,62 @@ root = Path(package.__file__).parent.parent
 wheel = json.loads(metadata.distribution('hermes-feishu-streaming-card').read_text('direct_url.json') or '{}')
 source = urlsplit(wheel.get('url', ''))
 actual = wheel.get('archive_info', {}).get('hashes', {}).get('sha256')
-if actual is None and source.scheme == 'file' and not source.netloc:
+external = request.get('external_wheel')
+source_ok = True
+if external is not None:
+    source_ok = (source.scheme == 'file' and not source.netloc and not source.query
+                 and not source.fragment and Path(url2pathname(source.path)) == Path(external['path']))
+    if source_ok and actual is None:
+        path = Path(external['path'])
+        before = path.lstat()
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        try:
+            opened = os.fstat(descriptor)
+            digest = hashlib.sha256()
+            while chunk := os.read(descriptor, 65536):
+                digest.update(chunk)
+        finally:
+            os.close(descriptor)
+        after = path.lstat()
+        if (stat.S_ISREG(before.st_mode) and stat.S_ISREG(opened.st_mode)
+                and (before.st_dev,before.st_ino) == (opened.st_dev,opened.st_ino)
+                == (after.st_dev,after.st_ino)):
+            actual = digest.hexdigest()
+elif actual is None and source.scheme == 'file' and not source.netloc:
     path = Path(url2pathname(source.path)).resolve()
     workspace = Path(sys.prefix).parent / 'workspace'
     if workspace.resolve() in path.parents:
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
-ok = not wheel.get('dir_info', {}).get('editable') and actual == request['wheel_sha256'] and all(
+ok = source_ok and not wheel.get('dir_info', {}).get('editable') and actual == request['wheel_sha256'] and all(
     (root / name).is_file() and hashlib.sha256((root / name).read_bytes()).hexdigest() == digest
     for name, digest in request['files'].items())
 print(json.dumps({'ok': ok}))
 """
+
+
+def verify_installed(member: Path, python: Path) -> bool:
+    """Compare every package resource with the exact cached ordinary wheel."""
+    identity = member.lstat()
+    owner = _owned(member)
+    if owner is None:
+        return False
+    wheel_name = next(name for name in owner['files'] if name.endswith('.whl'))
+    wheel = member / wheel_name
+    with zipfile.ZipFile(wheel) as archive:
+        hashes = {name: sha256(archive.read(name)).hexdigest() for name in archive.namelist()
+                  if name.startswith('hermes_feishu_card/') and not name.endswith('/')}
     try:
-        result = subprocess.run([str(python), '-I', '-c', code], input=json.dumps(
-            {'wheel_sha256': owner['files'][wheel_name], 'files': hashes}),
+        before_child = member.lstat()
+        if ((identity.st_dev, identity.st_ino) != (before_child.st_dev, before_child.st_ino)
+                or _owned(member) != owner):
+            return False
+        result = subprocess.run([str(python), '-I', '-c', _VERIFY_CHILD], input=json.dumps(
+            {'wheel_sha256': owner['files'][wheel_name], 'files': hashes,
+             'external_wheel': owner.get('external_wheel')}),
             capture_output=True, text=True, cwd=str(member), timeout=30)
-        return result.returncode == 0 and json.loads(result.stdout)['ok'] is True
+        after = member.lstat()
+        return (result.returncode == 0 and json.loads(result.stdout)['ok'] is True
+                and (identity.st_dev, identity.st_ino) == (after.st_dev, after.st_ino)
+                and _owned(member) == owner)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return False

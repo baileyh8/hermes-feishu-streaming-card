@@ -401,3 +401,6 @@ Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431
 
 
 V5.0.7 另保留 `pm-0225` 官方配置 writer 来源族（`bf0203a794a07aac3ff764972ab9087baa4e4f4e`），不替换 `pm-0224`。配置规划、官方 enable 字节、异常回滚与源码漂移拒绝一起验收。v0.22.5 PM 忽略无依赖的 metadata-only member；跨代回归使用真实可安装的无外部依赖小包触发下一代，继续检查 HFC wheel 来源和恢复。测试夹具的代次变化不能代替实际 Gateway/model 验收。
+
+
+#459/#458 的迁移恢复候选、wheel store 归属和验收边界见 [PM 迁移恢复](pm-recovery.md)。它保留严格默认，通过显式核验后重绑，不要求删除保护记录。

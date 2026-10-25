@@ -22,6 +22,10 @@ MARKER = ".hermes_feishu_card_observer.json"
 PROTOCOL = "hfc-legacy-observer-v1"
 
 
+class ObserverConfigChanged(ValueError):
+    """The verified ownership record does not cover the current config bytes."""
+
+
 def _ast_contract(node: Any) -> Any:
     """Stable AST shape across supported Python versions, without dump formatting.
 
@@ -131,7 +135,7 @@ def _preimage(home: Path, ownership: plugin.PluginOwnership) -> plugin.PluginCon
     )
 
 
-def inspect(root: Path, *, home: Path | None = None) -> tuple[
+def inspect(root: Path, *, home: Path | None = None, allow_config_drift: bool = False) -> tuple[
     dict[str, Any], bytes, plugin.PluginConfigPreimage, plugin.PluginOwnership, bytes
 ] | None:
     """Read-only config/evidence check; a missing companion means pre-migration."""
@@ -154,8 +158,8 @@ def inspect(root: Path, *, home: Path | None = None) -> tuple[
                    **ownership.sanitized()}:
         raise ValueError("legacy observer journal mismatch")
     config = plugin._require_regular_file(selected / "config.yaml", "Hermes config").read_bytes()
-    if plugin._sha256(config) not in (ownership.pre_sha256, ownership.post_sha256):
-        raise ValueError("Hermes config changed since legacy observer install")
+    if not allow_config_drift and plugin._sha256(config) not in (ownership.pre_sha256, ownership.post_sha256):
+        raise ObserverConfigChanged("Hermes config changed since legacy observer install; preview integrity rebind-legacy")
     return record, raw, preimage, ownership, config
 
 
@@ -247,6 +251,8 @@ def observer_status(root: Path, *, home: Path | None = None) -> dict[str, str]:
                 or plugin.PLUGIN_KEY in settings.get("disabled", [])):
             return {"status": "disabled", "reason": "plugin_disabled_or_isolated"}
         return {"status": "active", "reason": "verified_install_admission"}
+    except ObserverConfigChanged:
+        return {"status": "disabled", "reason": "observer_config_changed"}
     except Exception:
         return {"status": "disabled", "reason": "observer_evidence_invalid"}
 

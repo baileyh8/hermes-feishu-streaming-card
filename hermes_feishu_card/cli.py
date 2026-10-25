@@ -356,6 +356,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="inspect or explicitly migrate runtime integrity controls",
     )
     integrity_subparsers = integrity.add_subparsers(dest="integrity_command")
+    integrity_rebind = integrity_subparsers.add_parser("rebind-legacy")
+    integrity_rebind.add_argument("--hermes-dir", required=True)
+    integrity_rebind.add_argument("--hermes-home", required=True)
+    integrity_rebind.add_argument("--yes", action="store_true")
     integrity_migrate = integrity_subparsers.add_parser("migrate-safe")
     integrity_migrate.add_argument("--config", required=True)
     integrity_migrate.add_argument("--hermes-dir", required=True)
@@ -3017,6 +3021,21 @@ def _run_stop(args: argparse.Namespace) -> int:
 
 
 def _run_integrity(args: argparse.Namespace) -> int:
+    if getattr(args, "integrity_command", None) == "rebind-legacy":
+        from .install.legacy_rebind import rebind
+        try:
+            binding = resolve_runtime_binding(checkout_root=args.hermes_dir,
+                hermes_home=args.hermes_home, profile_id=None)
+            result = rebind(binding, apply=args.yes)
+        except (OSError, UnicodeError, ValueError) as exc:
+            from .install.legacy_rebind import RebindRefused
+            reason = str(exc) if isinstance(exc, RebindRefused) else "legacy_rebind_evidence_unverified"
+            print("legacy observer rebind: refused (" + reason + "); preserve evidence and review diagnosis", file=sys.stderr)
+            return 1
+        print("legacy observer rebind: " + result["status"] + " (" + result["reason"] + ")")
+        if not args.yes:
+            print("rerun with --yes to update verified ownership; current config is preserved")
+        return 0
     if getattr(args, "integrity_command", None) == "acknowledge-review":
         return _run_integrity_acknowledge_review(args)
     if getattr(args, "integrity_command", None) != "migrate-safe":

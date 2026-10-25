@@ -410,6 +410,8 @@ The default listener is `127.0.0.1`. Non-loopback deployment requires explicit o
 
 [MIT License](LICENSE).
 
+Thanks to [mingyangtech666](https://github.com/mingyangtech666) for the external PM workspace wheel proposal in PR #458, and [ywarmy](https://github.com/ywarmy) for PM migration and configuration recovery evidence in Issue #459. The original contribution and subsequent transaction hardening are retained separately.
+
 <details>
 <summary>Optional service and affiliate disclosure</summary>
 

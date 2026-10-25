@@ -45,7 +45,10 @@
       "tests/unit/test_extracted_clarify_patcher.py",
       "tests/unit/test_legacy_observed_rate.py",
       "tests/integration/test_session_authority_completion.py",
-      "tests/unit/test_admission_completion_detection.py"
+      "tests/unit/test_admission_completion_detection.py",
+      "tests/unit/test_pm_wheel_store.py",
+      "tests/unit/test_legacy_rebind.py",
+      "tests/integration/test_legacy_observer_install.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -692,6 +695,12 @@
     ".github/workflows/release-assets.yml": [
       "archives",
       "ci"
+    ],
+    "hermes_feishu_card/install/pm_wheel_store.py": [
+      "install"
+    ],
+    "hermes_feishu_card/install/legacy_rebind.py": [
+      "install"
     ]
   }
 }

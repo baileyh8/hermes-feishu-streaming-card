@@ -9,7 +9,10 @@ import secrets
 import stat
 import subprocess
 import tempfile
-from typing import Mapping
+from typing import Any, Mapping, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .plugin_config_bytes import ConfigBytesPlan
 
 import yaml
 
@@ -336,7 +339,10 @@ def enable_plugin(
     return ownership
 
 
-def _plan_enabled_config_bytes(binding, preimage, before, desired, enabled_before):
+def _plan_enabled_config_bytes(
+    binding: HermesRuntimeBinding, preimage: PluginConfigPreimage, before: bytes,
+    desired: Mapping[str, Any], enabled_before: bool,
+) -> ConfigBytesPlan:
     from .plugin_config_bytes import ConfigBytesRefused, plan_enabled_bytes
     try:
         return plan_enabled_bytes(root=binding.checkout_root, python=binding.runtime_python,
