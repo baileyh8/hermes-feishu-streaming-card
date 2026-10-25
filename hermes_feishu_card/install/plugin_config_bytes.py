@@ -718,6 +718,7 @@ def has_symlink(value):
         if stat.S_ISLNK(metadata.st_mode) or reparse(metadata): return True
     return False
 library_roots=[]
+library_aliases=[]
 for key in ('stdlib','platstdlib','purelib','platlib'):
     value=sysconfig.get_paths().get(key)
     if not value: continue
@@ -728,26 +729,36 @@ for key in ('stdlib','platstdlib','purelib','platlib'):
     root_under_base=under(root,base)
     if raw_under_root or base_under_root or root_under_base:
         if base==root or base in root.parents: deny('library-root-overlap','library')
-        if not nonsymlink_path(raw) or not nonsymlink_path(base):
-            deny('library-root-symlink','library')
-        if raw_under_root != base_under_root:
-            deny('library-root-overlap','library')
         for package in ('hermes_cli','providers','agent','hermes_platform','pm'):
             package_root=root/package
-            if base==package_root or package_root in base.parents:
+            if under(base,package_root) or under(raw,package_root):
                 deny('library-root-overlap','library')
+        if raw_under_root and not base_under_root:
+            # A borrowed interpreter may live at checkout/.venv -> outside.
+            # Admit only its exact sysconfig site-library mapping, never an
+            # arbitrary source link into a directory that happens to be a lib.
+            prefix=Path(os.path.abspath(sys.prefix))
+            if key not in ('purelib','platlib') or not under(raw,prefix) or not under(base,prefix.resolve()):
+                deny('library-root-overlap','library')
+            library_aliases.append((raw,base))
+        elif not nonsymlink_path(raw) or not nonsymlink_path(base):
+            deny('library-root-symlink','library')
     if base not in library_roots: library_roots.append(base)
 def library_path(path):
     return any(under(path,base) for base in library_roots)
+def library_alias(raw,path):
+    return any(under(raw,alias) and under(path,base)
+               and raw.relative_to(alias)==path.relative_to(base)
+               for alias,base in library_aliases)
 def audit(event,args):
     if request['family']=='pm-0225' and event=='exec':
         filename=args[0].co_filename
         if not filename.startswith('<'):
             raw=Path(os.path.abspath(os.fspath(filename)))
             if under(raw,root):
-                if not nonsymlink_path(raw):
-                    deny('local-source-symlink','exec',raw.relative_to(root).as_posix())
                 path=raw.resolve()
+                if not library_alias(raw,path) and not nonsymlink_path(raw):
+                    deny('local-source-symlink','exec',raw.relative_to(root).as_posix())
                 if not library_path(path) and path.relative_to(root).as_posix() not in request['sources']:
                     deny('unbound-local-source','exec',path.relative_to(root).as_posix())
     if event in {'subprocess.Popen','os.system','socket.connect','socket.bind'}:
@@ -767,9 +778,9 @@ def audit(event,args):
         deny('network' if event.startswith('socket.') else 'process',event)
     if event=='open' and isinstance(args[0],(str,bytes,os.PathLike)):
         raw=Path(os.path.abspath(os.fsdecode(args[0])))
-        if under(raw,root) and has_symlink(raw):
-            deny('local-source-symlink','open',raw.relative_to(root).as_posix())
         path=raw.resolve()
+        if under(raw,root) and has_symlink(raw) and not library_alias(raw,path):
+            deny('local-source-symlink','open',raw.relative_to(root).as_posix())
         # Ignore checkout bytecode caches: verified source must be compiled.
         if request['family']=='pm-0225' and under(path,root) and path.suffix=='.pyc' and not library_path(path):
             raise OSError('private planner requires verified source')

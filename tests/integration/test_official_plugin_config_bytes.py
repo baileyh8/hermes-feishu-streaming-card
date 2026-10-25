@@ -713,10 +713,11 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
         "enabled_before": enabled_before,
     }))
 
-    def run(paths, imported, search_path=fake_stdlib):
+    def run(paths, imported, search_path=fake_stdlib, prefix=None):
         (shadow / "config.yaml").write_bytes(original)
         code = (
-            "import sysconfig\n"
+            "import sysconfig,sys\n"
+            + ("sys.prefix=" + repr(str(prefix)) + "\n" if prefix else "")
             + "sysconfig.get_paths=lambda: " + repr(paths) + "\n"
             + plugin_config_bytes._CHILD
             + "\nsys.path.insert(0," + repr(str(search_path)) + ")\n"
@@ -750,6 +751,31 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
     allowed_external = run(external_paths, "externalmarker", external)
     assert allowed_external.returncode == 0
     assert external_marker.read_text() == "external"
+
+    # Real legacy installs borrow an external venv through checkout/.venv.
+    # Only the exact interpreter library alias is admitted, not source links
+    # to the same otherwise-trusted canonical directory.
+    alias = root / ".venv"
+    alias.symlink_to(external, target_is_directory=True)
+    alias_paths = {key: str(alias) for key in ("purelib", "platlib")}
+    external_marker.unlink()
+    borrowed = run(alias_paths, "externalmarker", alias, prefix=alias)
+    assert borrowed.returncode == 0
+    assert external_marker.read_text() == "external"
+    external_marker.unlink()
+    source_alias = root / "tools" / "borrowed-library"
+    source_alias.symlink_to(external, target_is_directory=True)
+    rejected_alias = run(alias_paths, "externalmarker", source_alias, prefix=alias)
+    assert rejected_alias.returncode == 73
+    assert b"local-source-symlink" in rejected_alias.stderr
+    assert not external_marker.exists()
+    source_package_alias = root / "hermes_cli" / "borrowed-library"
+    source_package_alias.symlink_to(external, target_is_directory=True)
+    masked = {key: str(source_package_alias) for key in ("purelib", "platlib")}
+    rejected_package = run(masked, "externalmarker", source_package_alias, prefix=source_package_alias)
+    assert rejected_package.returncode == 73
+    assert b"library-root-overlap" in rejected_package.stderr
+    assert not external_marker.exists()
 
     marker.unlink()
     outside = tmp_path / "outside.py"
