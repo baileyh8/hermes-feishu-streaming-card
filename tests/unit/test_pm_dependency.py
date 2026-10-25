@@ -532,7 +532,7 @@ def test_uv_missing_archive_hash_requires_exact_owned_external_source(tmp_path, 
     package = installed / 'hermes_feishu_card'
     package.mkdir(parents=True)
     (package / '__init__.py').write_text('')
-    (package / 'hook_runtime.py').write_text('# installed bytes\n')
+    (package / 'hook_runtime.py').write_bytes(b'# installed bytes\n')
     dist = installed / f'hermes_feishu_streaming_card-{VERSION}.dist-info'
     dist.mkdir()
     (dist / 'METADATA').write_text(f'Name: hermes-feishu-streaming-card\nVersion: {VERSION}\n')
@@ -557,3 +557,43 @@ def test_uv_missing_archive_hash_requires_exact_owned_external_source(tmp_path, 
                             capture_output=True, text=True, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['ok'] is (source_kind == 'missing_hash')
+
+
+def test_pm_directory_reparse_attribute_refuses(pm_env, monkeypatch):
+    from tests.unit.test_pm_wheel_store import _ReparseMetadata
+    target = pm_env.home / 'plugins'
+    target.mkdir()
+    original = Path.lstat
+    def reparse(path, *args, **kwargs):
+        metadata = original(path, *args, **kwargs)
+        return _ReparseMetadata(metadata) if path == target else metadata
+    monkeypatch.setattr(Path, 'lstat', reparse)
+    with pytest.raises(ValueError):
+        register(pm_env)
+    assert not list(target.iterdir())
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='actual Windows PM member junction boundary')
+@pytest.mark.parametrize('boundary', ['plugins', 'member'])
+def test_actual_windows_pm_junction_never_writes_outside_home(pm_env, tmp_path, boundary):
+    import subprocess
+    outside = tmp_path / 'outside-member'
+    outside.mkdir()
+    sentinel = outside / 'sentinel.txt'
+    sentinel.write_bytes(b'keep')
+    plugins = pm_env.home / 'plugins'
+    junction = plugins if boundary == 'plugins' else plugins / pm.NAME
+    junction.parent.mkdir(parents=True, exist_ok=True)
+    # pm_env substitutes the builder's subprocess call; use the standard
+    # Windows API via Popen so junction setup is an actual OS operation.
+    child = subprocess.Popen(['cmd', '/c', 'mklink', '/J', str(junction), str(outside)],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stdout, stderr = child.communicate(timeout=10)
+    assert child.returncode == 0, stdout + stderr
+    try:
+        with pytest.raises(ValueError):
+            register(pm_env)
+        assert sentinel.read_bytes() == b'keep'
+        assert set(outside.iterdir()) == {sentinel}
+    finally:
+        os.rmdir(junction)

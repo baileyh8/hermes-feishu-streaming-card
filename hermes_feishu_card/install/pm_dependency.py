@@ -63,10 +63,10 @@ print(json.dumps({'home': str(home), 'enabled': enabled, 'disabled': disabled, '
 
 def _regular(path: Path) -> bool:
     try:
-        mode = path.lstat().st_mode
+        metadata = path.lstat()
     except FileNotFoundError:
         return False
-    if not stat.S_ISREG(mode):
+    if not stat.S_ISREG(metadata.st_mode) or pm_wheel_store.is_reparse(metadata):
         raise ValueError("PM dependency evidence must be a regular file")
     return True
 
@@ -102,13 +102,14 @@ def _safe_directory(path: Path, *, create: bool = False) -> None:
     # Never turn inaccessible metadata into 'absent'. Reject linked ancestors.
     for parent in reversed((path, *path.parents)):
         try:
-            mode = parent.lstat().st_mode
+            metadata = parent.lstat()
         except FileNotFoundError:
             if create:
                 parent.mkdir(mode=0o700)
-                continue
-            raise ValueError("PM dependency directory is missing") from None
-        if not stat.S_ISDIR(mode):
+                metadata = parent.lstat()
+            else:
+                raise ValueError("PM dependency directory is missing") from None
+        if not stat.S_ISDIR(metadata.st_mode) or pm_wheel_store.is_reparse(metadata):
             raise ValueError("PM dependency directory ancestry must be real directories")
 
 
@@ -410,7 +411,7 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
             except FileNotFoundError:
                 pass
             else:
-                if not stat.S_ISDIR(metadata.st_mode):
+                if not stat.S_ISDIR(metadata.st_mode) or pm_wheel_store.is_reparse(metadata):
                     raise ValueError("PM staging changed; refusing cleanup")
                 shutil.rmtree(staging)
 
@@ -464,6 +465,8 @@ if external is not None:
             os.close(descriptor)
         after = path.lstat()
         if (stat.S_ISREG(before.st_mode) and stat.S_ISREG(opened.st_mode)
+                and not any(getattr(item, 'st_file_attributes', 0) & 0x400
+                            for item in (before, opened, after))
                 and (before.st_dev,before.st_ino) == (opened.st_dev,opened.st_ino)
                 == (after.st_dev,after.st_ino)):
             actual = digest.hexdigest()

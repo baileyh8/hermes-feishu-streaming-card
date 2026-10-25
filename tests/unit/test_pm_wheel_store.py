@@ -99,3 +99,57 @@ def test_posix_permission_branch_rejects_public_wheel(tmp_path):
     Path(reference['path']).chmod(0o644)
     with pytest.raises(ValueError):
         store.validate(tmp_path, reference)
+
+
+class _ReparseMetadata:
+    def __init__(self, original):
+        self.original = original
+        self.st_file_attributes = getattr(original, 'st_file_attributes', 0) | 0x400
+
+    def __getattr__(self, name):
+        return getattr(self.original, name)
+
+
+@pytest.mark.parametrize('boundary', ['state', 'store', 'digest', 'wheel'])
+def test_reparse_attribute_refuses_directory_and_final_file(tmp_path, monkeypatch, boundary):
+    reference = store.publish(tmp_path, NAME, b'owned')
+    wheel = Path(reference['path'])
+    target = {'state': wheel.parent.parent.parent, 'store': wheel.parent.parent,
+              'digest': wheel.parent, 'wheel': wheel}[boundary]
+    original = Path.lstat
+    def reparse(path, *args, **kwargs):
+        metadata = original(path, *args, **kwargs)
+        return _ReparseMetadata(metadata) if path == target else metadata
+    monkeypatch.setattr(Path, 'lstat', reparse)
+    with pytest.raises(ValueError):
+        store.validate(tmp_path, reference)
+    with pytest.raises(ValueError):
+        store.publish(tmp_path, NAME, b'owned')
+    assert wheel.read_bytes() == b'owned'
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='actual Windows junction boundary')
+@pytest.mark.parametrize('boundary', ['state', 'store', 'digest'])
+def test_actual_windows_junction_never_publishes_outside_home(tmp_path, boundary):
+    import subprocess
+    home = tmp_path / 'home'
+    outside = tmp_path / 'outside'
+    home.mkdir()
+    outside.mkdir()
+    sentinel = outside / 'sentinel.txt'
+    sentinel.write_bytes(b'keep')
+    state = home / '.hermes_feishu_card'
+    wheel_store = state / 'wheel-store'
+    digest = wheel_store / sha256(b'owned').hexdigest()
+    junction = {'state': state, 'store': wheel_store, 'digest': digest}[boundary]
+    junction.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(['cmd', '/c', 'mklink', '/J', str(junction), str(outside)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    try:
+        with pytest.raises(ValueError):
+            store.publish(home, NAME, b'owned')
+        assert sentinel.read_bytes() == b'keep'
+        assert set(outside.iterdir()) == {sentinel}
+    finally:
+        os.rmdir(junction)

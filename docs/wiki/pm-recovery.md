@@ -29,7 +29,7 @@ hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-
 
 PM dependency member 的 `tool.uv.sources` 引用 HOME 内 workspace 之外的普通 wheel。候选使用 `.hermes_feishu_card/wheel-store/<sha256>/<wheel-name>`，按内容摘要保存不可变对象；owner schema 2 同时绑定外部路径和摘要，schema 1 的旧 member 仍可校验，并在携带准确安装来源的 ensure 流程迁移。
 
-创建与读取校验目录身份、普通文件和摘要；POSIX 校验私有权限与属主，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接与不确定文件状态。相同文件名但不同内容使用不同摘要目录，不原地覆盖旧 wheel。新安装或 PM admission 失败不改写旧代引用。
+创建与读取校验目录身份、普通文件和摘要；POSIX 校验私有权限与属主，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接、Windows junction/reparse point 与不确定文件状态。相同文件名但不同内容使用不同摘要目录，不原地覆盖旧 wheel。新安装或 PM admission 失败不改写旧代引用。
 
 finish、rollback 和 uninstall 保守保留已归属外部 wheel：旧 PM generation 可能仍引用它们。此候选不扫描未知 PM 状态，也不提供自动垃圾回收；不要手工删除仍被代次使用的对象。保存的对象不是 HFC runtime producer，不会重复注册事件。
 

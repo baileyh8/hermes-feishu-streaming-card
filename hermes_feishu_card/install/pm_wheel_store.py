@@ -25,6 +25,12 @@ _WHEEL_NAME = re.compile(
 )
 
 
+def is_reparse(metadata: os.stat_result) -> bool:
+    """Junctions/mount points can report directory mode instead of symlink mode."""
+    return bool(getattr(metadata, 'st_file_attributes', 0)
+                & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400))
+
+
 @contextmanager
 def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
     identities: dict[Path, tuple[int, int]] = {}
@@ -43,7 +49,7 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
                 else:
                     current.mkdir(mode=0o700)
                 metadata = current.lstat()
-            if not stat.S_ISDIR(metadata.st_mode):
+            if not stat.S_ISDIR(metadata.st_mode) or is_reparse(metadata):
                 raise ValueError(_REFUSAL)
             if managed and _POSIX_PERMISSIONS and hasattr(os, 'getuid') and metadata.st_uid != os.getuid():
                 raise ValueError(_REFUSAL)
@@ -60,6 +66,8 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
                     raise ValueError(_REFUSAL)
         yield descriptors[-1] if descriptors else None
         for current, identity in identities.items():
+            if is_reparse(current.lstat()):
+                raise ValueError(_REFUSAL)
             io.assert_directory_snapshot(current, identity, ValueError, _REFUSAL,
                                          allow_original_absence=False)
     except OSError as exc:
@@ -70,6 +78,8 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
 
 
 def _read(path: Path, parent_fd: int | None) -> bytes:
+    if is_reparse(path.lstat()):
+        raise ValueError(_REFUSAL)
     binding = None
     try:
         if io.DIRFD_BINDING_SUPPORTED:
@@ -82,6 +92,8 @@ def _read(path: Path, parent_fd: int | None) -> bytes:
             path.name if binding else path, parent_fd=binding.parent_fd if binding else None,
             missing_allowed=False, refused=ValueError, non_regular_refusal=_REFUSAL,
             changed_refusal=_REFUSAL, wrap_read_error=True)
+        if is_reparse(path.lstat()):
+            raise ValueError(_REFUSAL)
         if mode is None or (_POSIX_PERMISSIONS and mode & 0o077) or payload is None:
             raise ValueError(_REFUSAL)
         if binding:
@@ -119,6 +131,8 @@ def publish(home: Path, filename: str, payload: bytes) -> dict[str, str]:
                     for entry in (path.parent, *path.parent.parents)}
         def check_ancestry() -> None:
             for entry, identity in ancestry.items():
+                if is_reparse(entry.lstat()):
+                    raise ValueError(_REFUSAL)
                 io.assert_directory_snapshot(entry, identity, ValueError, _REFUSAL,
                                              allow_original_absence=False)
         try:
@@ -164,6 +178,8 @@ def publish(home: Path, filename: str, payload: bytes) -> dict[str, str]:
                             os.fsync(handle.fileno())
                         stage.chmod(0o600)
                         check_ancestry()
+                        if is_reparse(stage.lstat()):
+                            raise ValueError(_REFUSAL)
                         snapshot = io.read_path_snapshot(stage, ValueError, _REFUSAL)
                         if snapshot != (*identity, digest):
                             raise ValueError(_REFUSAL)
@@ -172,7 +188,8 @@ def publish(home: Path, filename: str, payload: bytes) -> dict[str, str]:
                     finally:
                         # Unknown or replaced stages are evidence, not garbage.
                         check_ancestry()
-                        if io.read_path_snapshot(stage, ValueError, _REFUSAL) == (*identity, digest):
+                        if (not is_reparse(stage.lstat())
+                                and io.read_path_snapshot(stage, ValueError, _REFUSAL) == (*identity, digest)):
                             stage.unlink()
             finally:
                 if staged:

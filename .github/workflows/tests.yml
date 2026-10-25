@@ -320,9 +320,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m venv "$RUNNER_TEMP/hfc-uv0135"
+          test_python="$(command -v python)"
+          "$test_python" -m venv "$RUNNER_TEMP/hfc-uv0135"
           "$RUNNER_TEMP/hfc-uv0135/bin/python" -m pip install "uv==0.13.5"
-          PATH="$RUNNER_TEMP/hfc-uv0135/bin:$PATH" python -m tools.ci_run \
+          PATH="$RUNNER_TEMP/hfc-uv0135/bin:$PATH" "$test_python" -m tools.ci_run \
             --group pm-uv0135 --profile upstream --shards 1 --workers 1 \
             --results "$RUNNER_TEMP/results/uv0135" --scratch "$RUNNER_TEMP/ci-workers-uv0135" -- \
             tests/integration/test_pm_generation.py tests/integration/test_pm_rebind.py
