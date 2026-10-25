@@ -45,7 +45,13 @@
       "tests/unit/test_extracted_clarify_patcher.py",
       "tests/unit/test_legacy_observed_rate.py",
       "tests/integration/test_session_authority_completion.py",
-      "tests/unit/test_admission_completion_detection.py"
+      "tests/unit/test_admission_completion_detection.py",
+      "tests/unit/test_pm_wheel_store.py",
+      "tests/unit/test_legacy_rebind.py",
+      "tests/integration/test_legacy_observer_install.py",
+      "tests/integration/test_pm_rebind.py",
+      "tests/integration/test_official_enable_root.py",
+      "tests/unit/test_launch_source_paths.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -237,6 +243,7 @@
     "ci": [
       "tests/unit/test_ci_workflow.py",
       "tests/unit/test_ci_regression.py",
+      "tests/unit/test_official_image_tools.py",
       "tests/unit/test_preflight.py"
     ],
     "archives": [
@@ -680,6 +687,15 @@
     "tools/ci_shard.py": [
       "ci"
     ],
+    "tools/official_image_acceptance.py": [
+      "ci"
+    ],
+    "tools/official_image_diagnose.py": [
+      "ci"
+    ],
+    "tests/unit/test_official_image_tools.py": [
+      "ci"
+    ],
     "tools/ci_durations.json": [
       "ci"
     ],
@@ -692,6 +708,12 @@
     ".github/workflows/release-assets.yml": [
       "archives",
       "ci"
+    ],
+    "hermes_feishu_card/install/pm_wheel_store.py": [
+      "install"
+    ],
+    "hermes_feishu_card/install/legacy_rebind.py": [
+      "install"
     ]
   }
 }

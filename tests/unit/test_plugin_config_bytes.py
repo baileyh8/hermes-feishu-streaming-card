@@ -36,7 +36,11 @@ def planned(tmp_path, monkeypatch):
     monkeypatch.setattr(
         plugin,
         "_plan_enabled_config_bytes",
-        lambda *a: SimpleNamespace(postimage=official, verify_source=lambda: None),
+        lambda *a: SimpleNamespace(
+            postimage=official,
+            verify_source=lambda: None,
+            matches_expected=lambda expected: yaml.safe_load(official) == expected,
+        ),
         raising=False,
     )
     return binding, preimage, original, official
@@ -104,6 +108,43 @@ def test_non_alias_disabled_entry_is_preserved():
     expected, enabled = plugin._expected_enabled_config(before)
     assert not enabled
     assert expected["plugins"]["disabled"] == ["hermes_feishu_card", "keep"]
+
+
+def test_config_plan_allows_only_the_writer_schema_stamp():
+    from hermes_feishu_card.install.plugin_config_bytes import ConfigBytesPlan
+
+    root = Path("/verified/writer")
+    expected = {
+        "plugins": {"enabled": ["hermes-feishu-card"], "disabled": []},
+        "other": "keep",
+    }
+    plan = ConfigBytesPlan(
+        b"plugins: {enabled: [hermes-feishu-card], disabled: []}\nother: keep\n_config_version: 51\n",
+        root,
+        "pm-0224",
+        51,
+    )
+    assert plan.matches_expected(expected)
+    assert plan.matches_expected({**expected, "_config_version": 50})
+    assert plan.matches_expected({**expected, "_config_version": 51})
+    assert not plan.matches_expected({**expected, "_config_version": 52})
+    assert not plan.matches_expected({**expected, "_config_version": "51"})
+    assert not plan.matches_expected({**expected, "other": "changed"})
+    assert not plan.matches_expected({**expected, "plugins": {"enabled": [], "disabled": []}})
+
+
+def test_config_plan_rejects_a_stamp_that_did_not_come_from_its_writer():
+    from hermes_feishu_card.install.plugin_config_bytes import ConfigBytesPlan
+
+    expected = {"plugins": {}, "other": "keep"}
+    plan = ConfigBytesPlan(
+        b"plugins: {}\nother: keep\n_config_version: 52\n",
+        Path("/verified/writer"),
+        "pm-0224",
+        51,
+    )
+    assert not plan.matches_expected(expected)
+    assert not plan.matches_expected({**expected, "_config_version": 52})
 
 
 def test_unknown_writer_refuses_before_any_child(tmp_path, monkeypatch):
@@ -212,7 +253,9 @@ scope['_discover_providers']()
     assert result.returncode == 73
     assert not sentinel.exists()
     assert not (shadow / "continued").exists()
-    assert result.stderr == b"private config byte plan side effect refused\n"
+    marker = b"HFC_CONFIG_PLAN_DENY "
+    line = next(line for line in result.stderr.splitlines() if line.startswith(marker))
+    assert json.loads(line[len(marker):]) == {"reason": "plugin-load", "stage": "profile"}
 
 
 def test_source_binding_failure_after_enable_preserves_unowned_bytes(
@@ -234,7 +277,11 @@ def test_source_binding_failure_after_enable_preserves_unowned_bytes(
     monkeypatch.setattr(
         plugin,
         "_plan_enabled_config_bytes",
-        lambda *a: SimpleNamespace(postimage=official, verify_source=verify),
+        lambda *a: SimpleNamespace(
+            postimage=official,
+            verify_source=verify,
+            matches_expected=lambda expected: yaml.safe_load(official) == expected,
+        ),
     )
 
     def enable(candidate):

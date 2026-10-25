@@ -1683,9 +1683,14 @@ def plan_recovery(
     *,
     accept_hermes_upgrade: bool = False,
 ) -> RecoveryPlan:
-    from .legacy_observer import inspect as inspect_observer
+    from .legacy_observer import ObserverConfigChanged, inspect as inspect_observer
     try:
         inspect_observer(detection.root)
+    except ObserverConfigChanged:
+        return RecoveryPlan(detection.root, "refused", False,
+                            sha256(b"legacy observer config changed").hexdigest(), (),
+                            (RecoveryFinding("observer_config_changed", "error",
+                                "Observer config changed; preview integrity rebind-legacy before retrying restore."),))
     except (OSError, ValueError, UnicodeError):
         return RecoveryPlan(detection.root, "refused", False,
                             sha256(b"unsafe legacy observer evidence").hexdigest(), (),
@@ -2700,6 +2705,7 @@ def _safe_message(code: str) -> str:
         "v3_manifest_invalid": "The V3 install manifest is missing or invalid.",
         "v3_manifest_recovery_required": "The V3 install transaction is not in the installed phase.",
         "v3_patch_invalid": "The V3 Hybrid patch ownership is inconsistent.",
+        "observer_config_changed": "Observer config changed; preview integrity rebind-legacy before retrying restore.",
         "v3_runtime_binding_changed": "The V3 runtime or plugin binding changed since install.",
         "v3_target_changed": "A V3-owned Hermes target changed since install.",
     }

@@ -19,8 +19,19 @@ import pytest
 from hermes_feishu_card import hermes_plugin_runtime, hook_runtime
 from hermes_feishu_card.install import patcher
 from hermes_feishu_card.install import hybrid_renderers
+from hermes_feishu_card.install import plugin_config_bytes
+from hermes_feishu_card.install.plugin_config_bytes import ConfigBytesPlan
 
 FIXED_SHA = "3c27eb6234bf91b8ceee9e9071591b31e9b148cb"
+
+
+class _ExactPlan(ConfigBytesPlan):
+    def verify_source(self) -> None:
+        pass
+
+
+def _exact_plan(postimage: bytes) -> ConfigBytesPlan:
+    return _ExactPlan(postimage, Path("/verified"), "fixed")
 
 
 @pytest.fixture(scope="module")
@@ -547,7 +558,9 @@ def test_exact_historical_504_install_remains_inspectable_and_restorable(
 
     checkout = Path(os.environ["HFC_FIXED_TAG_SOURCE_ROOT"])
     immutable = tmp_path / "immutable-fixed-targets"
-    for target in v3.HYBRID_PATCH_TARGET_ORDER:
+    support = {"hermes_cli/main.py", "hermes_cli/__init__.py"}
+    support.update(plugin_config_bytes.FAMILIES["fixed"])
+    for target in set(v3.HYBRID_PATCH_TARGET_ORDER) | support:
         path = immutable / target
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(
@@ -589,11 +602,9 @@ def test_exact_historical_504_install_remains_inspectable_and_restorable(
     monkeypatch.setattr(
         fixtures.plugin, "_run_official_enable", fixtures._official_enable
     )
-    from types import SimpleNamespace
     import yaml
     monkeypatch.setattr(fixtures.plugin, "_plan_enabled_config_bytes",
-        lambda b, p, raw, desired, enabled: SimpleNamespace(
-            postimage=yaml.safe_dump(desired).encode(), verify_source=lambda: None))
+        lambda b, p, raw, desired, enabled: _exact_plan(yaml.safe_dump(desired).encode()))
     with monkeypatch.context() as initial:
         initial.setattr(v3, "HYBRID_PATCH_REGISTRY", old_registry)
         initial.setattr(patcher, "HYBRID_PATCH_REGISTRY", old_registry)

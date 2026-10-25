@@ -2,9 +2,9 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.7`；本轮处理 #456、#453、#451。最终公开状态与精确验收结果以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.7) 为准。
+本分支目标版本为 `5.0.8`；本轮合并 #458/#459/#461 并处理 #462。最终公开状态与精确验收结果以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.8) 为准。
 
-## V5.0.7 候选验收
+本分支目标版本为 `5.0.8`；本轮合并 #458/#459/#461 并处理 #462。最终公开状态与精确验收结果以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.8) 为准。
 
 | 项目 | 状态 |
 | --- | --- |

@@ -8,7 +8,15 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from hermes_feishu_card.install import plugin
+from hermes_feishu_card.install import plugin, plugin_config_bytes
+
+
+def _exact_plan(postimage: bytes):
+    return SimpleNamespace(
+        postimage=postimage,
+        verify_source=lambda: None,
+        matches_expected=lambda expected: plugin._load_config_mapping(postimage) == expected,
+    )
 
 
 def _checkout(tmp_path: Path) -> tuple[Path, Path]:
@@ -152,6 +160,41 @@ def test_entrypoint_probe_accepts_one_exact_installed_distribution(tmp_path, mon
     assert result.module_origin == module_origin
 
 
+def test_entrypoint_probe_default_requires_current_version(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    runtime_payload = _runtime_payload(checkout)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: runtime_payload
+    )
+    binding = plugin.resolve_runtime_binding(
+        checkout_root=checkout, hermes_home=home, profile_id=None
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_run_entrypoint_probe",
+        lambda _binding: {
+            "candidates": [
+                {
+                    "name": "hermes-feishu-card",
+                    "value": "hermes_feishu_card.hermes_plugin",
+                    "distribution": "hermes-feishu-streaming-card",
+                    "version": "0.0.0",
+                }
+            ],
+            "module_origin": str(
+                Path(str(runtime_payload["purelib"]))
+                / "hermes_feishu_card"
+                / "hermes_plugin.py"
+            ),
+        },
+    )
+
+    result = plugin.probe_plugin_entrypoint(binding)
+
+    assert result.status == "failed"
+    assert "version" in result.reason
+
+
 @pytest.mark.parametrize(
     ("mutation", "reason"),
     (
@@ -173,6 +216,12 @@ def test_entrypoint_probe_accepts_one_exact_installed_distribution(tmp_path, mon
                 version="future"
             ),
             "version",
+        ),
+        (
+            lambda payload, checkout: payload["candidates"][0].update(
+                value="other.module"
+            ),
+            "identity",
         ),
     ),
 )
@@ -216,8 +265,11 @@ def _binding(tmp_path: Path, monkeypatch, config_text: str) -> plugin.HermesRunt
     checkout, home = _checkout(tmp_path)
     # Pure transaction tests inject a known byte-writing process contract. Real
     # writer planning is covered separately by pinned upstream integration.
-    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda b, p, raw, desired, enabled:
-        SimpleNamespace(postimage=yaml.safe_dump(desired).encode(), verify_source=lambda: None))
+    monkeypatch.setattr(
+        plugin,
+        "_plan_enabled_config_bytes",
+        lambda b, p, raw, desired, enabled: _exact_plan(yaml.safe_dump(desired).encode()),
+    )
     (home / "config.yaml").write_text(config_text, encoding="utf-8")
     monkeypatch.setattr(
         plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
@@ -240,6 +292,57 @@ def test_prepare_plugin_config_creates_private_exact_preimage(tmp_path, monkeypa
     assert preimage.config_backup_id.startswith("hfc-config-preimage-")
     assert str(binding.hermes_home) not in json.dumps(preimage.sanitized())
     assert "PRIVATE-CANARY" not in json.dumps(preimage.sanitized())
+
+
+def test_official_enable_refuses_unverified_checkout_before_child(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("unverified checkout must not execute"),
+    )
+
+    with pytest.raises(plugin.PluginConfigRefused, match="enable root is invalid"):
+        plugin._run_official_enable(binding)
+
+
+def test_official_enable_refusal_keeps_only_safe_diagnostic(tmp_path, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise plugin_config_bytes.ConfigBytesRefused(
+            "PRIVATE-CANARY",
+            code="launch-source-drift",
+            stage="launch",
+            source="hermes_cli/main.py",
+        )
+
+    monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", refuse)
+    with pytest.raises(plugin.PluginConfigRefused) as caught:
+        plugin._verify_official_enable_source(tmp_path)
+    message = str(caught.value)
+    assert "launch:launch-source-drift:hermes_cli/main.py" in message
+    assert "PRIVATE-CANARY" not in message
+
+
+def test_config_plan_refusal_keeps_only_safe_diagnostic(tmp_path, monkeypatch):
+    plan_enabled_config_bytes = plugin._plan_enabled_config_bytes
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    preimage = plugin.prepare_plugin_config(binding)
+    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", plan_enabled_config_bytes)
+
+    def refuse(**kwargs):
+        raise plugin_config_bytes.ConfigBytesRefused(
+            "PRIVATE-CANARY",
+            code="unbound-local-source",
+            stage="exec",
+            source="hermes_cli/extra.py",
+        )
+
+    monkeypatch.setattr(plugin_config_bytes, "plan_enabled_bytes", refuse)
+    with pytest.raises(plugin.PluginConfigRefused) as caught:
+        plugin._plan_enabled_config_bytes(binding, preimage, b"plugins: {}\n", {}, False)
+    message = str(caught.value)
+    assert "exec:unbound-local-source:hermes_cli/extra.py" in message
+    assert "PRIVATE-CANARY" not in message
 
 
 def test_enable_plugin_allows_only_exact_plugin_config_change(tmp_path, monkeypatch):
@@ -313,8 +416,7 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
 
     monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
     postimage = b"plugins:\n  enabled: [hermes-feishu-card]\n  disabled: []\n  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n"
-    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda *a:
-        SimpleNamespace(postimage=postimage, verify_source=lambda: None))
+    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda *a: _exact_plan(postimage))
     ownership = plugin.enable_plugin(binding, preimage)
     binding.config_path.write_text("plugins: {}\nuser_change: true\n", encoding="utf-8")
 
@@ -370,7 +472,7 @@ def test_enable_plugin_accepts_exact_already_enabled_official_branch(
     if normalize_lists:
         def normalized_plan(candidate, _preimage, before, desired, enabled):
             expected, _ = plugin._expected_enabled_config(yaml.safe_load(before))
-            return SimpleNamespace(postimage=yaml.safe_dump(expected).encode(), verify_source=lambda: None)
+            return _exact_plan(yaml.safe_dump(expected).encode())
         monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", normalized_plan)
 
     def official_enable(candidate):

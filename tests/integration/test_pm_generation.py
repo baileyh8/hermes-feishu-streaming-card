@@ -4,11 +4,14 @@ Opt-in exact upstream fixture; provisioning alone is injected with the local
 uv/Python toolchain, as in Hermes' own PM lifecycle tests. Resolution, workspace
 copy, generation selection, facts and config publication execute upstream code.
 """
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import zipfile
 
 import pytest
 
@@ -74,6 +77,14 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     python = first / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
     member = home / 'plugins' / pm.NAME
     assert pm.verify_installed(member, python)
+    owner_before = (member / pm.OWNER).read_bytes()
+    owner = json.loads(owner_before)
+    external = Path(owner["external_wheel"]["path"])
+    assert member not in external.parents
+    assert external.parent == home / ".hermes_feishu_card" / "wheel-store" / owner["external_wheel"]["sha256"]
+    external_bytes = external.read_bytes()
+    assert hashlib.sha256(external_bytes).hexdigest() == owner["external_wheel"]["sha256"]
+    assert external_bytes == wheel.read_bytes()
     report = cli._check_runtime_hook_import(python)
     assert report['version'] == cli.PACKAGE_VERSION
     assert cli._runtime_report_uses_installed_package(report, python)
@@ -99,6 +110,39 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     assert second != first
     python2 = second / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
     assert pm.verify_installed(member, python2)
+    # The copied workspace member must retain the immutable external source.
+    copied_projects = list(second.parent.glob("workspace/**/pyproject.toml"))
+    assert any(str(external) in project.read_text() for project in copied_projects)
+    assert external.read_bytes() == external_bytes
+    assert pm.ensure(root, Path(sys.executable), home=home, spec=str(wheel),
+                     version=cli.PACKAGE_VERSION) is None
+    assert selected() == second
+    assert (member / pm.OWNER).read_bytes() == owner_before
+
+    # A valid same-name wheel with a changed ZIP comment has identical package
+    # resources but distinct archive provenance. Real admission commits it; the
+    # public receipt rollback must restore the old member and re-admit its source.
+    replacement_dir = tmp_path / "replacement"
+    replacement_dir.mkdir()
+    replacement = replacement_dir / wheel.name
+    shutil.copyfile(wheel, replacement)
+    with zipfile.ZipFile(replacement, "a") as archive:
+        archive.comment = b"HFC real PM rollback acceptance"
+    replacement_receipt = pm.ensure(root, Path(sys.executable), home=home,
+                                   spec=str(replacement), version=cli.PACKAGE_VERSION)
+    assert replacement_receipt is not None
+    replacement_owner = json.loads((member / pm.OWNER).read_bytes())
+    replacement_external = Path(replacement_owner["external_wheel"]["path"])
+    assert replacement_external != external
+    assert pm.verify_installed(member, selected() / python2.relative_to(second))
+    assert external.read_bytes() == external_bytes
+    # Generation A remains independently importable while another source wins.
+    assert cli._runtime_report_uses_installed_package(cli._check_runtime_hook_import(python), python)
+    replacement_receipt.rollback()
+    assert (member / pm.OWNER).read_bytes() == owner_before
+    assert external.read_bytes() == external_bytes
+    assert replacement_external.is_file(), "unknown old-generation references require retention"
+    assert pm.verify_installed(member, selected() / python2.relative_to(second))
     assert cli._runtime_report_uses_installed_package(cli._check_runtime_hook_import(python2), python2)
     # A dependency-only directory is deliberately absent from runtime plugin
     # discovery, while the single wheel entry point remains available.

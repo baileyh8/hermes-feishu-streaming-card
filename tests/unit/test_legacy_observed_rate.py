@@ -15,6 +15,30 @@ from hermes_feishu_card.render import render_card
 from hermes_feishu_card.session import CardSession
 from hermes_feishu_card.observed_rate import ObservedRates
 from hermes_feishu_card.install import legacy_observer as install, plugin
+from hermes_feishu_card.install import plugin_config_bytes
+from hermes_feishu_card.install.plugin_config_bytes import ConfigBytesPlan
+
+
+class _ExactPlan(ConfigBytesPlan):
+    def verify_source(self) -> None:
+        pass
+
+
+def _exact_plan(postimage: bytes) -> ConfigBytesPlan:
+    return _ExactPlan(postimage, Path("/verified"), "fixed")
+
+
+def _copy_fixed_support(root: Path) -> None:
+    configured = os.environ.get("HFC_FIXED_TAG_SOURCE_ROOT")
+    if not configured:
+        pytest.skip("HFC_FIXED_TAG_SOURCE_ROOT required for launch guard")
+    source = Path(configured)
+    support = {"hermes_cli/main.py", "hermes_cli/__init__.py"}
+    support.update(plugin_config_bytes.FAMILIES["fixed"])
+    for relative in support:
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source / relative).read_bytes())
 
 
 def observation(**changes):
@@ -135,13 +159,14 @@ def installed(tmp_path, monkeypatch):
     root, home = tmp_path / "checkout", tmp_path / "home"
     root.mkdir()
     home.mkdir()
+    _copy_fixed_support(root)
     original = b"# retain comments and CRLF\r\nplugins: {}\r\nother: value\r\n"
     (home / "config.yaml").write_bytes(original)
     binding = plugin.HermesRuntimeBinding(root, Path(sys.executable), Path(sys.executable),
         "sha256:" + "a" * 64, home, home / "config.yaml", root, root)
     monkeypatch.setattr(plugin, "resolve_runtime_binding", lambda **_: binding)
     monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda b, p, raw, desired, enabled:
-        SimpleNamespace(postimage=yaml.safe_dump(desired).encode(), verify_source=lambda: None))
+        _exact_plan(yaml.safe_dump(desired).encode()))
     monkeypatch.setattr(plugin, "probe_plugin_entrypoint", lambda _: SimpleNamespace(status="verified"))
     calls = []
     def enable(_):

@@ -9,7 +9,10 @@ import secrets
 import stat
 import subprocess
 import tempfile
-from typing import Mapping
+from typing import Any, Mapping, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .plugin_config_bytes import ConfigBytesPlan
 
 import yaml
 
@@ -19,6 +22,16 @@ from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
 PLUGIN_KEY = "hermes-feishu-card"
 PLUGIN_ENTRY_POINT = "hermes_feishu_card.hermes_plugin"
 PLUGIN_DISTRIBUTION = "hermes-feishu-streaming-card"
+# The PM generation interpreter is trusted. This bootstrap only selects the
+# reviewed checkout's modules; sitecustomize/.pth and preloaded modules remain
+# inside that runtime boundary.
+_OFFICIAL_ENABLE_BOOTSTRAP = (
+    "import runpy, sys\n"
+    "root = sys.argv.pop(1)\n"
+    "sys.path.insert(0, root)\n"
+    "sys.argv[0] = 'hermes'\n"
+    "runpy.run_module('hermes_cli.main', run_name='__main__')\n"
+)
 
 
 class RuntimeBindingRefused(ValueError):
@@ -300,11 +313,17 @@ def enable_plugin(
     )
     desired = already_enabled_expected if enabled_before else expected
     plan = _plan_enabled_config_bytes(binding, preimage, before_bytes, desired, enabled_before)
-    if _load_config_mapping(plan.postimage) not in (expected, already_enabled_expected):
+    if not (
+        plan.matches_expected(expected)
+        or plan.matches_expected(already_enabled_expected)
+    ):
         raise PluginConfigRefused("official config byte plan changed unrelated config")
     if _read_bound_config(binding) != before_bytes:
         raise PluginConfigRefused("Hermes config changed after preimage")
     _verify_config_plan_source(plan)
+    family = getattr(plan, "family", None)
+    if family is not None:
+        _verify_official_enable_source(binding.checkout_root, family=family)
     try:
         return_code = _run_official_enable(binding)
     except Exception as exc:
@@ -336,14 +355,21 @@ def enable_plugin(
     return ownership
 
 
-def _plan_enabled_config_bytes(binding, preimage, before, desired, enabled_before):
+def _plan_enabled_config_bytes(
+    binding: HermesRuntimeBinding, preimage: PluginConfigPreimage, before: bytes,
+    desired: Mapping[str, Any], enabled_before: bool,
+    *, historical_post_sha256: str | None = None,
+) -> ConfigBytesPlan:
     from .plugin_config_bytes import ConfigBytesRefused, plan_enabled_bytes
     try:
         return plan_enabled_bytes(root=binding.checkout_root, python=binding.runtime_python,
             home=binding.hermes_home, state_dir=preimage.state_dir, before=before,
-            desired=desired, enabled_before=enabled_before)
+            desired=desired, enabled_before=enabled_before,
+            historical_post_sha256=historical_post_sha256)
     except ConfigBytesRefused as exc:
-        raise PluginConfigRefused("official config byte plan failed") from exc
+        raise PluginConfigRefused(
+            f"official config byte plan failed ({exc.diagnostic_label()})"
+        ) from exc
 
 
 def _verify_config_plan_source(plan):
@@ -351,7 +377,9 @@ def _verify_config_plan_source(plan):
     try:
         plan.verify_source()
     except ConfigBytesRefused as exc:
-        raise PluginConfigRefused("official config writer contract is unknown") from exc
+        raise PluginConfigRefused(
+            f"official config writer contract is unknown ({exc.diagnostic_label()})"
+        ) from exc
 
 
 def _rollback_verified_enable(
@@ -479,13 +507,15 @@ def _expected_enabled_config(
 
 
 def _run_official_enable(binding: HermesRuntimeBinding) -> int:
+    _verify_official_enable_source(binding.checkout_root)
     try:
         completed = subprocess.run(
             [
                 str(binding.runtime_python),
                 "-I",
-                "-m",
-                "hermes_cli.main",
+                "-c",
+                _OFFICIAL_ENABLE_BOOTSTRAP,
+                str(binding.checkout_root),
                 "plugins",
                 "enable",
                 PLUGIN_KEY,
@@ -500,11 +530,22 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
             env={
                 "HOME": str(binding.hermes_home),
                 "HERMES_HOME": str(binding.hermes_home),
+                "HERMES_INSTALL_ROOT": str(binding.checkout_root),
             },
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PluginConfigRefused("official plugin enable failed") from exc
     return completed.returncode
+
+
+def _verify_official_enable_source(root: Path, *, family: str | None = None) -> None:
+    from .plugin_config_bytes import ConfigBytesRefused, verify_launch_sources
+    try:
+        verify_launch_sources(root, family=family)
+    except ConfigBytesRefused as exc:
+        raise PluginConfigRefused(
+            f"official plugin enable root is invalid ({exc.diagnostic_label()})"
+        ) from exc
 
 
 def _read_bound_config(binding: HermesRuntimeBinding) -> bytes:

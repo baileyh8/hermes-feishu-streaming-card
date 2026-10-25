@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.7"
+version = "5.0.8"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -79,6 +79,7 @@ include = [
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
   "hermes_feishu_card/install/legacy_observer.py",
+  "hermes_feishu_card/install/legacy_rebind.py",
   "hermes_feishu_card/install/plugin_config_bytes.py",
   "hermes_feishu_card/canonical_turn.py",
   "hermes_feishu_card/interaction_input.py",
@@ -105,6 +106,7 @@ include = [
   "hermes_feishu_card/install/posix_transaction.py",
   "hermes_feishu_card/install/source_layout.py",
   "hermes_feishu_card/install/pm_dependency.py",
+  "hermes_feishu_card/install/pm_wheel_store.py",
   "hermes_feishu_card/install/errors.py",
   "hermes_feishu_card/install/git_evidence.py",
   "hermes_feishu_card/install/decomposed_ownership.py",
@@ -131,6 +133,7 @@ files = [
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
   "hermes_feishu_card/install/legacy_observer.py",
+  "hermes_feishu_card/install/legacy_rebind.py",
   "hermes_feishu_card/install/plugin_config_bytes.py",
   "hermes_feishu_card/canonical_turn.py",
   "hermes_feishu_card/interaction_input.py",
@@ -157,6 +160,7 @@ files = [
   "hermes_feishu_card/install/posix_transaction.py",
   "hermes_feishu_card/install/source_layout.py",
   "hermes_feishu_card/install/pm_dependency.py",
+  "hermes_feishu_card/install/pm_wheel_store.py",
   "hermes_feishu_card/install/errors.py",
   "hermes_feishu_card/install/git_evidence.py",
   "hermes_feishu_card/install/decomposed_ownership.py",

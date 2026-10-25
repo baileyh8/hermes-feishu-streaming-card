@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.8 — 2026-10-25
+
+- Combine owned external PM wheels and verified legacy observer rebinding (#458/#459/#461), preserving original authors and recovery evidence.
+- Address actual PM launcher/install-root and official-image writer compatibility (#462) without relaxing unknown-source or unrelated-config guards.
+- Exact acceptance and remaining limits are tracked in the [release notes](docs/release-notes-v5.0.8.en.md).
+
 ## v5.0.7 — 2026-10-24
 
 - Verify Hermes v0.22.5 completion ownership and per-turn callback ordering (#456, #453), retaining pinned v0.22.4 and historical regressions.

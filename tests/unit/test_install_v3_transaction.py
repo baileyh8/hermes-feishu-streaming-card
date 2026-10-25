@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from hermes_feishu_card.install import plugin, v3
+from hermes_feishu_card.install import plugin, plugin_config_bytes, v3
 from hermes_feishu_card import cli
 from hermes_feishu_card.integration import (
     HYBRID_REQUIRED_NATIVE_CAPABILITIES,
@@ -19,6 +19,14 @@ from hermes_feishu_card.integration import (
     PatchCapabilities,
     select_integration_mode,
 )
+
+
+def _exact_plan(postimage: bytes):
+    return SimpleNamespace(
+        postimage=postimage,
+        verify_source=lambda: None,
+        matches_expected=lambda expected: plugin._load_config_mapping(postimage) == expected,
+    )
 
 
 FIXED_SOURCE_ROOT = Path(
@@ -31,12 +39,22 @@ FIXED_SOURCE_ROOT = Path(
 
 @pytest.fixture(autouse=True)
 def expected_test_process_bytes(monkeypatch):
-    monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda b, p, raw, desired, enabled:
-        SimpleNamespace(postimage=yaml.safe_dump(desired).encode(), verify_source=lambda: None))
+    monkeypatch.setattr(
+        plugin,
+        "_plan_enabled_config_bytes",
+        lambda b, p, raw, desired, enabled: _exact_plan(yaml.safe_dump(desired).encode()),
+    )
 
 
 def _fixture(tmp_path: Path):
     root = tmp_path / "home" / "hermes-agent"
+    (root / "hermes_cli").mkdir(parents=True)
+    for name in ("main.py", "__init__.py"):
+        shutil.copy2(FIXED_SOURCE_ROOT / "hermes_cli" / name, root / "hermes_cli" / name)
+    for relative in plugin_config_bytes.FAMILIES["fixed"]:
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(FIXED_SOURCE_ROOT / relative, target)
     for target in v3.HYBRID_PATCH_TARGET_ORDER:
         path = root / target
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -742,10 +760,15 @@ def test_plugin_enable_exit_zero_unrelated_change_reports_guard_and_preserves_ed
     child_results = []
 
     def controlled_enable_child(argv, **kwargs):
-        assert argv == [str(binding.runtime_python), "-I", "-m", "hermes_cli.main",
-                        "plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"]
+        assert argv[:3] == [str(binding.runtime_python), "-I", "-c"]
+        assert argv[4] == str(root)
+        assert argv[5:] == ["plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"]
         assert kwargs["cwd"] == str(root)
-        assert kwargs["env"] == {"HOME": str(binding.hermes_home), "HERMES_HOME": str(binding.hermes_home)}
+        assert kwargs["env"] == {
+            "HOME": str(binding.hermes_home),
+            "HERMES_HOME": str(binding.hermes_home),
+            "HERMES_INSTALL_ROOT": str(root),
+        }
         # Execute a real bounded child at the process port. This synthetic child
         # represents an official command that succeeds but changes other config.
         script = ("from pathlib import Path; "

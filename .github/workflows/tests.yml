@@ -281,6 +281,7 @@ jobs:
           HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
           HFC_REQUIRE_CONFIG_WRITER_CONTRACT: "1"
           HFC_REQUIRE_UPSTREAM_RATE_CONTRACT: "1"
+          HFC_REQUIRE_PM_ROOT_ENTRYPOINT: "1"
           HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
           HFC_UPSTREAM_BASELINE_0222_ROOT: "${{ github.workspace }}/.upstream/baseline_0222"
           HFC_UPSTREAM_BASELINE_MAIN_0AB_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
@@ -290,15 +291,18 @@ jobs:
           HFC_CONFIG_WRITER_PM_MAIN_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
           HFC_CONFIG_WRITER_CF4_ROOT: "${{ github.workspace }}/.upstream/issue451_cf4"
           HFC_CONFIG_WRITER_RC2_ROOT: "${{ github.workspace }}/.upstream/issue451_rc2"
+          HFC_CONFIG_WRITER_0221_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
           HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
+          HFC_REQUIRE_PM_REBIND: "1"
         run: >-
           python -m tools.ci_run --group upstream-${{ matrix.python-version }} --profile upstream
           --shards 12 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))
           --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
           tests/integration/test_official_plugin_config_bytes.py
+          tests/integration/test_official_enable_root.py
           tests/integration/test_legacy_observer_install.py
           tests/unit/test_legacy_observed_rate.py::test_real_v0222_plugin_manager_load
           tests/integration/test_upstream_hermes_compat.py
@@ -306,11 +310,99 @@ jobs:
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
           tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning
           tests/integration/test_pm_generation.py
+          tests/integration/test_pm_rebind.py
       - name: Preserve upstream reports and slow-test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: regression-upstream-${{ matrix.python-version }}-${{ matrix.slice }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 3
+
+  pm-uv0135:
+    needs: [plan, fixed-hermes-fixture]
+    if: needs.plan.outputs.mode == 'full'
+    timeout-minutes: 25
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hermes-v2026.8.3-fixed-tag
+          path: ${{ runner.temp }}
+      - name: Restore immutable source fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf "$RUNNER_TEMP/hermes-v2026.8.3-fixed-tag.tar.gz" -C "$RUNNER_TEMP"
+          printf 'HFC_FIXED_TAG_SOURCE_ROOT=%s\n' "$RUNNER_TEMP/hermes-agent-v2026.8.3-v430-audit" >> "$GITHUB_ENV"
+      - name: Checkout Hermes previous
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 7bda2a3368024f7ae1c70cef16583e7c2c891674
+          path: .upstream/issue428_7bda2a
+      - name: Checkout Hermes v0.22.4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 4d04303818b61bf3aa09278af48356315515965b
+          path: .upstream/latest_stable
+      - name: Checkout Hermes v0.22.5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
+          path: .upstream/issue456_0225
+      - name: Checkout Hermes reviewed main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 4e58c721c8cf9b51c46636ea84ea6a5cb540880a
+          path: .upstream/latest_main
+      - name: Install isolated PM test tools
+        run: python -m pip install -e ".[test]" "uv==0.13.5" ruamel.yaml tomli-w packaging wheel rich python-dotenv requests prompt_toolkit "cryptography==48.0.0"
+      - name: Prepare ordinary wheel and CLI runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/hfc-pm-wheel" .
+          python -m venv --system-site-packages "$RUNNER_TEMP/hfc-pm-runtime"
+          python - <<'PYCODE'
+          import os
+          from pathlib import Path
+          import subprocess
+          wheel, = (Path(os.environ["RUNNER_TEMP"]) / "hfc-pm-wheel").glob("*.whl")
+          runtime = Path(os.environ["RUNNER_TEMP"]) / "hfc-pm-runtime/bin/python"
+          subprocess.run([str(runtime), "-m", "pip", "install", "--force-reinstall", "--no-deps", str(wheel)], check=True)
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write(f"HFC_TEST_WHEEL={wheel}\nHFC_LEGACY_PLUGIN_PYTHON={runtime}\n")
+          PYCODE
+      - name: Verify real PM sources and rebinding with uv 0.13.5
+        env:
+          HFC_UPSTREAM_PM_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
+          HFC_CONFIG_WRITER_0221_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
+          HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
+          HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
+          HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
+          HFC_REQUIRE_PM_GENERATION: "1"
+          HFC_REQUIRE_PM_REBIND: "1"
+        run: >-
+          python -m tools.ci_run --group pm-uv0135 --profile upstream --shards 1 --workers 1
+          --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
+          tests/integration/test_pm_generation.py tests/integration/test_pm_rebind.py
+      - name: Retain real PM and rebinding evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: regression-pm-uv0135
           path: ${{ runner.temp }}/results/
           if-no-files-found: error
           overwrite: true
@@ -445,6 +537,10 @@ jobs:
           tests/unit/test_session.py
           tests/unit/test_status.py
           tests/unit/test_subscription_usage.py
+          tests/unit/test_pm_dependency.py
+          tests/unit/test_pm_wheel_store.py
+          tests/unit/test_launch_source_paths.py
+          tests/unit/test_legacy_rebind.py
           tests/unit/test_text.py
           tests/integration/test_card_freeze.py
           tests/integration/test_clarify_multi_select.py
@@ -555,7 +651,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.7
+          HFC_VERSION: v5.0.8
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
@@ -714,3 +810,84 @@ jobs:
           else
             printf 'Regression mode: %s; this full-only matrix was not requested.\n' "$REGRESSION_MODE" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  official-image-acceptance:
+    name: official-image-acceptance (${{ matrix.image }}, ${{ matrix.pyc_mode }})
+    needs: plan
+    if: needs.plan.outputs.mode == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - image: v0.22.1
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.22.2
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.22.3
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.22.4
+            pyc_mode: preserved
+            legacy: true
+          - image: v0.22.5
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.22.5
+            pyc_mode: cleared
+            legacy: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build exact candidate wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check setuptools wheel
+          mkdir -p "$RUNNER_TEMP/hfc-wheel"
+          python -m pip wheel --no-deps --no-build-isolation \
+            --wheel-dir "$RUNNER_TEMP/hfc-wheel" .
+          test "$(find "$RUNNER_TEMP/hfc-wheel" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" = 1
+      - name: Build legacy v5.0.7 schema1 wheel
+        if: matrix.legacy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hfc-legacy-source" "$RUNNER_TEMP/hfc-legacy-wheel"
+          git archive 83cab6a81562b29199b4a764eea88cd4e03a47de |
+            tar -x -C "$RUNNER_TEMP/hfc-legacy-source"
+          python -m pip wheel --no-deps --no-build-isolation \
+            --wheel-dir "$RUNNER_TEMP/hfc-legacy-wheel" \
+            "$RUNNER_TEMP/hfc-legacy-source"
+          test "$(find "$RUNNER_TEMP/hfc-legacy-wheel" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" = 1
+      - name: Run pinned official image acceptance
+        shell: bash
+        env:
+          HFC_IMAGE: ${{ matrix.image }}
+          HFC_PYC_MODE: ${{ matrix.pyc_mode }}
+        run: |
+          set -euo pipefail
+          wheel="$(find "$RUNNER_TEMP/hfc-wheel" -maxdepth 1 -name '*.whl' -print -quit)"
+          args=(--wheel "$wheel" --image "$HFC_IMAGE" --pyc-mode "$HFC_PYC_MODE"
+                --evidence-dir "$RUNNER_TEMP/hfc-image-evidence/$HFC_IMAGE-$HFC_PYC_MODE")
+          if [ "${{ matrix.legacy }}" = true ]; then
+            legacy="$(find "$RUNNER_TEMP/hfc-legacy-wheel" -maxdepth 1 -name '*.whl' -print -quit)"
+            args+=(--legacy-wheel "$legacy")
+          fi
+          python tools/official_image_acceptance.py "${args[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: official-image-${{ matrix.image }}-${{ matrix.pyc_mode }}
+          path: ${{ runner.temp }}/hfc-image-evidence
+          if-no-files-found: error
+          retention-days: 7

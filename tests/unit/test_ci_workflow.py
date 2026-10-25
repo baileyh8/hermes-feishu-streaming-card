@@ -9,6 +9,36 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_official_image_gate_covers_real_install_and_bytecode_states():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())
+    job = workflow["jobs"]["official-image-acceptance"]
+    assert job["needs"] == "plan"
+    assert job["if"] == "needs.plan.outputs.mode == 'full'"
+    assert job["runs-on"] == "ubuntu-latest"
+    cases = job["strategy"]["matrix"]["include"]
+    identities = {(case["image"], case["pyc_mode"]) for case in cases}
+    assert len(identities) == len(cases)
+    assert {image for image, _ in identities} == {
+        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5"
+    }
+    assert ("v0.22.5", "preserved") in identities
+    assert ("v0.22.5", "cleared") in identities
+    assert any(case["legacy"] for case in cases)
+    assert "matrix.pyc_mode" in job["name"]
+    windows = workflow["jobs"]["pytest-windows"]
+    assert "tests/unit/test_launch_source_paths.py" in next(
+        step["run"] for step in windows["steps"] if step.get("name") == "Test"
+    )
+    command = next(step["run"] for step in job["steps"]
+                   if step.get("name") == "Run pinned official image acceptance")
+    assert "tools/official_image_acceptance.py" in command
+    assert "--diagnose" not in command
+    assert "--legacy-wheel" in command
+    upload = next(step for step in job["steps"] if "upload-artifact@" in step.get("uses", ""))
+    assert upload["if"] == "always()"
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
 def test_github_actions_runs_full_pytest_matrix():
     workflow = ROOT / ".github" / "workflows" / "tests.yml"
 
