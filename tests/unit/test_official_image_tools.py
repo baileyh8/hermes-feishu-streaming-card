@@ -248,11 +248,49 @@ def test_legacy_recovery_restores_before_fresh_upgrade(tmp_path, monkeypatch):
     evidence.mkdir()
     (evidence / "legacy-observer").mkdir()
     marker = root / ".hermes_feishu_card_observer.json"
-    marker.write_bytes(b"rebound")
     config = home / "config.yaml"
     config.write_text(
-        "plugins:\n  enabled: [hermes-feishu-card, hfc-acceptance-other]\n"
-        "  disabled: []\nother: keep\n"
+        "plugins:\n  enabled: [hermes-feishu-card, hfc-acceptance-other, hfc-runtime-dependency]\n"
+        "  disabled: [keep-disabled]\n"
+        "  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n"
+        "other: keep\n_config_version: 51\n"
+    )
+    expected_restore = (
+        b"plugins:\n  enabled: [hermes-feishu-card, hfc-acceptance-other, "
+        b"hfc-runtime-dependency]\n  disabled: [keep-disabled]\n"
+        b"other: keep\n_config_version: 51\n"
+    )
+    backup_id = "hfc-config-preimage-test"
+    state = home / ".hermes_feishu_card" / "install"
+    state.mkdir(parents=True)
+    (state / f"{backup_id}.yaml").write_bytes(expected_restore)
+    pre_sha = acceptance._sha256_bytes(expected_restore)
+    (state / f"{backup_id}.json").write_text(
+        json.dumps(
+            {
+                "protocol": "hfc-plugin-config-preimage-v1",
+                "phase": "installed",
+                "config_backup_id": backup_id,
+                "pre_sha256": pre_sha,
+                "backup_sha256": pre_sha,
+                "post_sha256": acceptance._sha256_bytes(config.read_bytes()),
+            }
+        )
+    )
+    marker.write_text(
+        json.dumps(
+            {
+                "home": str(home),
+                "plugin_config": {
+                    "config_backup_id": backup_id,
+                    "pre_sha256": pre_sha,
+                    "backup_sha256": pre_sha,
+                    "post_sha256": acceptance._sha256_bytes(config.read_bytes()),
+                    "enabled_before": False,
+                    "added_by_hfc": True,
+                },
+            }
+        )
     )
     member = home / "plugins" / "hfc-runtime-dependency"
     member.mkdir(parents=True)
@@ -276,6 +314,7 @@ def test_legacy_recovery_restores_before_fresh_upgrade(tmp_path, monkeypatch):
         if name == "legacy-restore":
             assert json.loads(owner.read_text())["schema"] == 1
             marker.unlink()
+            config.write_bytes(expected_restore)
         elif name == "legacy-uninstall":
             shutil.rmtree(member)
         return SimpleNamespace(returncode=0)

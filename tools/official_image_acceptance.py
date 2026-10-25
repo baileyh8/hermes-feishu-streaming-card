@@ -1731,7 +1731,12 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("uninstall changed source after restore")
     _require_other_plugin("uninstall")
 
-    _install(evidence, name="fresh-install-after-uninstall")
+    _snapshot_config(evidence, "config-before-fresh-install")
+    try:
+        _install(evidence, name="fresh-install-after-uninstall")
+    except AcceptanceFailure:
+        _failure_snapshot(evidence, "fresh-install-after-uninstall")
+        raise
     fresh_selected = _selected_python()
     _run_runtime_verify(
         fresh_selected,
@@ -1945,6 +1950,26 @@ def _legacy_recover_after_rebind(
     if marker.read_bytes() == marker_before_rebind:
         raise AcceptanceFailure("legacy rebind did not update the observer marker")
     (legacy_evidence / "marker.after-rebind.json").write_bytes(marker.read_bytes())
+    try:
+        marker_record = json.loads(marker.read_bytes())
+        ownership = marker_record["plugin_config"]
+        backup_id = ownership["config_backup_id"]
+        state = Path(HERMES_HOME) / ".hermes_feishu_card" / "install"
+        expected_restore = (state / f"{backup_id}.yaml").read_bytes()
+        journal = json.loads((state / f"{backup_id}.json").read_text())
+    except (KeyError, OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise AcceptanceFailure("rebind preimage evidence is unavailable") from exc
+    expected_sha256 = _sha256_bytes(expected_restore)
+    if (
+        ownership.get("pre_sha256") != expected_sha256
+        or ownership.get("backup_sha256") != expected_sha256
+        or journal.get("protocol") != "hfc-plugin-config-preimage-v1"
+        or journal.get("phase") != "installed"
+        or journal.get("config_backup_id") != backup_id
+        or journal.get("pre_sha256") != expected_sha256
+        or journal.get("backup_sha256") != expected_sha256
+    ):
+        raise AcceptanceFailure("rebind preimage evidence changed")
     config = Path(HERMES_HOME) / "config.yaml"
     if config.read_bytes() != config_before_rebind:
         raise AcceptanceFailure("legacy rebind changed unrelated config")
@@ -1966,7 +1991,10 @@ def _legacy_recover_after_rebind(
     if marker.exists():
         raise AcceptanceFailure("legacy restore left the observer marker")
     (legacy_evidence / "marker.absent.txt").write_text("absent\n")
-    if config.read_bytes() != config_before_rebind:
+    restored = config.read_bytes()
+    restored_sha256 = _sha256_bytes(restored)
+    (evidence / "legacy-config-after-restore.yaml").write_bytes(restored)
+    if restored != expected_restore:
         raise AcceptanceFailure("legacy restore changed unrelated config")
     _require_other_plugin("legacy restore")
     restored_owner = _owner_payload()
@@ -1995,7 +2023,12 @@ def _legacy_recover_after_rebind(
         raise AcceptanceFailure("legacy uninstall changed source")
     _require_other_plugin("legacy uninstall")
 
-    _install(evidence, name="legacy-fresh-install")
+    _snapshot_config(evidence, "config-before-legacy-fresh-install")
+    try:
+        _install(evidence, name="legacy-fresh-install")
+    except AcceptanceFailure:
+        _failure_snapshot(evidence, "legacy-fresh-install")
+        raise
     if _observer_status()["status"] != "active":
         raise AcceptanceFailure("legacy fresh install did not activate observer")
     selected = _selected_python()
@@ -2019,6 +2052,8 @@ def _legacy_recover_after_rebind(
     _require_other_plugin("fresh install")
     return {
         "selected_runtime": selected_report,
+        "restored_config_sha256": restored_sha256,
+        "restored_config_version": 51,
         "restored_owner_schema": 1,
         "candidate_owner_schema": 2,
         "old_generation_preserved": True,
