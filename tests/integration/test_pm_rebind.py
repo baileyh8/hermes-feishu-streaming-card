@@ -23,7 +23,8 @@ import json,sys,subprocess,os
 from pathlib import Path
 from hermes_feishu_card.install import pm_dependency as package
 from hermes_feishu_card import __version__
-root,home,wheel,uv,tools_python,tools_site=map(Path,sys.argv[1:])
+root,home,wheel,uv,tools_python=map(Path,sys.argv[1:6])
+tools_sites=json.loads(sys.argv[6])
 assert Path(sys.prefix) in Path(package.__file__).parents
 (root/'pyproject.toml').write_text('[project]\nname="pm-rebind-core"\nversion="1"\nrequires-python=">=3.11"\ndependencies=[]\n[tool.uv]\npackage=false\n')
 other=home/'plugins'/'other';other.mkdir(parents=True)
@@ -33,7 +34,7 @@ other=home/'plugins'/'other';other.mkdir(parents=True)
 locked=subprocess.run([str(uv),'lock','--offline','--python',str(tools_python)],cwd=root,capture_output=True,text=True,timeout=30)
 assert locked.returncode==0,locked.stderr
 injection=(f"sys.path.append({str(root)!r})\n"
-           f"sys.path.append({str(tools_site)!r})\n"
+           f"sys.path.extend({tools_sites!r})\n"
            "import pm.paths,pm._uv,pm.client,pm.install\n"
            f"pm.paths.repo_root=lambda:Path({str(root)!r})\n"
            f"pm._uv._toolchain=lambda **kwargs:(Path({str(uv)!r}),Path({str(tools_python)!r}))\n"
@@ -55,6 +56,7 @@ import sys
 from pathlib import Path
 from hermes_feishu_card import cli
 root=Path(sys.argv[1]);home=Path.home()
+assert Path(sys.prefix) in Path(cli.__file__).parents, 'HFC must load from the PM wheel, not supplied dependency paths'
 # This test already installed the exact wheel through real PM admission. The
 # Feishu SDK is unrelated to source/observer recovery and never imported here.
 cli._ensure_hermes_runtime_package=lambda *a,**k:None
@@ -102,15 +104,22 @@ def test_real_pm_generation_explicit_rebind_reinstall_restore(tmp_path, snapshot
     shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
     home.mkdir()
     before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*.py")}
-    tools_site = subprocess.check_output([str(tools_python), "-I", "-c",
-        "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
-    _run(tools_python, root, home, SETUP, home, wheel, uv, tools_python, tools_site,
+    # CI's ordinary tool venv can inherit dependencies from system sites. A
+    # single purelib path drops those imports when supplying a fresh PM venv.
+    # Forward only existing package directories, never the caller's checkout or
+    # an editable finder. The PM venv's own installed HFC remains first.
+    tools_sites = json.loads(subprocess.check_output([str(tools_python), "-I", "-c",
+        "import json,sys;from pathlib import Path;"
+        "print(json.dumps(list(dict.fromkeys(str(Path(p).resolve()) for p in sys.path "
+        "if Path(p).name in {'site-packages','dist-packages'} and Path(p).is_dir()))))"], text=True))
+    assert tools_sites, "pre-provisioned dependency package paths required"
+    _run(tools_python, root, home, SETUP, home, wheel, uv, tools_python, json.dumps(tools_sites),
          stage="real-pm-setup", timeout=180)
     def prepare_runtime(generation):
         python = generation / "bin/python"
         site = Path(subprocess.check_output([str(python), "-I", "-c",
             "import sysconfig;print(sysconfig.get_path('purelib'))"], text=True).strip())
-        (site / "hfc-rebind-fixture.pth").write_text(str(root) + "\n" + tools_site + "\n")
+        (site / "hfc-rebind-fixture.pth").write_text("\n".join([str(root), *tools_sites]) + "\n")
         (site / "sitecustomize.py").write_text("import os\nos.environ['UV_OFFLINE']='1'\n" + SENSOR)
         return python
     first = Path(json.loads((home / "pm-generation-a.json").read_text()))
