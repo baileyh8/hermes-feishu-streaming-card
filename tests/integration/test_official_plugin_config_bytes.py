@@ -185,10 +185,11 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     disabled = "[keep-disabled, hermes_feishu_card]"
     if selection == "disabled-canonical":
         disabled = "[keep-disabled, hermes_feishu_card, hermes-feishu-card]"
+    version = 50 if family in {"fixed", "pm"} else 51
     original = (
         f"# preserve exact original bytes\r\nplugins:\r\n  enabled: {enabled}\r\n"
         f"  disabled: {disabled}\r\n  isolation: in_process\r\n"
-        'agent:\r\n  max_turns: 100\r\nother: "keep"\r\n_config_version: 50\r\n'
+        f'agent:\r\n  max_turns: 100\r\nother: "keep"\r\n_config_version: {version}\r\n'
     ).encode()
     if selection == "explicit-values":
         original = original.replace(
@@ -290,6 +291,131 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
         shutil.rmtree(home / "pm-project")
 
 
+@pytest.mark.parametrize("seed_version,expected_version", [(50, 51), (11, 11)])
+def test_pm_0225_official_startup_migration_matches_private_plan(
+    official_runtime, tmp_path, seed_version, expected_version  # noqa: F811
+):
+    """Compose the exact boot migration helper with the unmodified writer."""
+    _, python, prefix, path_file = official_runtime
+    configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+        pytest.skip("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+    source = Path(configured)
+    root, home = tmp_path / "hermes", tmp_path / "home"
+    shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    home.mkdir(mode=0o700)
+    path_file.write_text(str(root) + "\nimport sys; sys.dont_write_bytecode=True\n")
+    original = (
+        "# preserve startup migration bytes\r\nplugins:\r\n"
+        "  enabled: [hfc-runtime-dependency]\r\n  disabled: [keep-disabled]\r\n"
+        f'agent:\r\n  max_turns: 100\r\nother: "keep"\r\n_config_version: {seed_version}\r\n'
+    ).encode()
+    (home / "config.yaml").write_bytes(original)
+
+    uv = shutil.which("uv")
+    assert uv
+    project = home / "pm-project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname="migration-plan-test"\nversion="1"\nrequires-python=">=3.11"\ndependencies=[]\n[tool.uv]\npackage=false\n'
+    )
+    subprocess.run(
+        [uv, "lock", "--offline"], cwd=project, check=True,
+        capture_output=True, timeout=30,
+    )
+    (home / "hfc-pm-tools.json").write_text(
+        json.dumps({"uv": uv, "python": str(python), "project": str(project)})
+    )
+    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    binding = plugin.HermesRuntimeBinding(
+        checkout_root=root,
+        runtime_python=python,
+        runtime_python_resolved=python.resolve(),
+        python_identity="sha256:" + "a" * 64,
+        hermes_home=home,
+        config_path=home / "config.yaml",
+        purelib=purelib,
+        platlib=purelib,
+    )
+    preimage = plugin.prepare_plugin_config(binding)
+    desired, enabled_before = plugin._expected_enabled_config(
+        plugin._load_config_mapping(original)
+    )
+    plan = plugin_config_bytes.plan_enabled_bytes(
+        root=root,
+        python=python,
+        home=home,
+        state_dir=preimage.state_dir,
+        before=original,
+        desired=desired,
+        enabled_before=enabled_before,
+    )
+    assert plan.config_version == expected_version
+    assert (home / "config.yaml").read_bytes() == original
+
+    migration = subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            "import sys; sys.path.insert(0,sys.argv[1]); "
+            "from hermes_cli.post_update import step_migrate_config; "
+            "step_migrate_config()",
+            str(root),
+        ],
+        cwd=root,
+        env={
+            "HOME": str(home),
+            "HERMES_HOME": str(home),
+            "HERMES_INSTALL_ROOT": str(root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+        capture_output=True,
+        timeout=30,
+    )
+    assert migration.returncode == 0
+    assert plugin._run_official_enable(binding) == 0
+    assert (home / "config.yaml").read_bytes() == plan.postimage
+
+
+def test_pm_0225_floor_boundary_requires_new_migration_sources(
+    official_runtime, tmp_path  # noqa: F811
+):
+    """A below-floor config is untouched; the first auto-migrated schema is bounded."""
+    _, python, _, _ = official_runtime
+    configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+        pytest.skip("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+    source = Path(configured)
+    root, home, state = tmp_path / "source", tmp_path / "home", tmp_path / "state"
+    shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    home.mkdir()
+    state.mkdir()
+    before = b"plugins: {}\n_config_version: 12\n"
+    (home / "config.yaml").write_bytes(before)
+    desired, enabled_before = plugin._expected_enabled_config(
+        plugin._load_config_mapping(before)
+    )
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused) as caught:
+        plugin_config_bytes.plan_enabled_bytes(
+            root=root,
+            python=python,
+            home=home,
+            state_dir=state,
+            before=before,
+            desired=desired,
+            enabled_before=enabled_before,
+        )
+    assert caught.value.code == "unbound-local-source"
+    assert caught.value.source == "tools/bot_mode_probe.py"
+    assert (home / "config.yaml").read_bytes() == before
+    assert not list(state.iterdir())
+
+
 @pytest.mark.parametrize(
     "snapshot", ["reported-cf4", "rc2", "pm-0221", "pm-0224", "pm-0225", "pm-main-4e58"]
 )
@@ -343,6 +469,17 @@ def test_new_writer_drift_refuses_before_child_and_preserves_config(
     "hermes_cli/left_core_migration.py",
     "hermes_cli/config_defaults.py",
     "hermes_cli/plugins_activation.py",
+    "hermes_cli/config_migrations.py",
+    "hermes_cli/tools_config.py",
+    "hermes_cli/platforms.py",
+    "hermes_cli/tools_config_cua.py",
+    "hermes_cli/tools_config_mcp.py",
+    "hermes_cli/tools_config_post_setup.py",
+    "hermes_cli/tools_config_providers.py",
+    "hermes_cli/toolset_scope.py",
+    "tools/transcription_common.py",
+    "tools/tts_command_provider.py",
+    "toolsets.py",
     'agent/__init__.py',
     'agent/i18n.py',
     'agent/i18n_languages.py',

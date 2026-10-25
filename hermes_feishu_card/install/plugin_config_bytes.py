@@ -190,8 +190,59 @@ FAMILIES["pm-0223"] = {
     **_PM_0224_WRITER,
     "hermes_cli/config_defaults.py": "615284fcd701fa88d684852a365cc06755e9e348576dd00f83a258e8addee316",
 }
-FAMILIES["pm-0224"] = dict(_PM_0224_WRITER)
-FAMILIES["pm-0225"] = dict(_PM_0225_WRITER)
+_PM_BOOT_SOURCES = {
+    'hermes_cli/config_migrations.py': '8f8debda50266cfcb6ef22f6c9801c8d5a409759aa3065c7acb41481492e5d48',
+    'tools/managed_tool_gateway.py': '0ef654b920bf4cc5db7161499537867cdf791bd03cef928b1072a76c463f0ca3',
+    'tools/tool_backend_helpers.py': '238d2ad2fbfc9f8d5621e7b6ab81990832498d50c766851277323cfefc3a76a2',
+    'tools/__init__.py': '7bca460f476ac9ace706c8cfd07e98f8aae34d839862f0f68abafc3a8397cf35',
+}
+_PM_MIGRATION_SOURCES = {
+    'agent/skill_utils.py': 'cb1996a2ef7f52f075f1a45fa64eee4ea9f332b9910da4ecc123ce0ead79fb46',
+    'hermes_cli/platforms.py': 'c5d4e10e7b4a05f1687430d70e6ac6cdb45f93bd3c0e54c3d9a0dff5771c48d0',
+    'hermes_cli/tools_config_cua.py': '1c59fa3b0893ae5ad9a9935fbe08d8217a470a742eaca1c7eebb2a127cd826c4',
+    'hermes_cli/tools_config_mcp.py': 'b6257f0804150f3462534a5d8e067ff9c4e426185f5ea68cba3cdddab7bda7a7',
+    'hermes_cli/tools_config_post_setup.py': '7495404d41580758fe6b52ae85a4ba6a873eb0ef508830bda429f42121ddf224',
+    'hermes_cli/tools_config_providers.py': 'feb6278c87923ce2ae0e232af926ac04e0a033c273bad57128527aa24ed442a5',
+    'hermes_cli/toolset_scope.py': '0c127c7532ca0d93bc63bc47a05688dea390a99d06d5faaaf898093c9d8900dc',
+    'tools/transcription_common.py': '266d015747aed3f45236852a8036895230535b534196eae9e1b9890d6e8165b8',
+    'tools/tts_command_provider.py': 'a79804b09dbf2f1562422e055701aade9e13d403f4a2a6bd5b1edc60d8dd8688',
+    'toolsets.py': '7674a11eeebcc06b7c83c816fca0bc6982107870f5615375d2ffc5dbe6044eaa',
+}
+FAMILIES["pm-main"] = {
+    **FAMILIES["pm-main"],
+    **_PM_BOOT_SOURCES,
+    **_PM_MIGRATION_SOURCES,
+    'agent/skill_utils.py': '9cb773037fe97940cdfcbf8b0d6bbfe60e366985749d3ae3bec3b274a83e33c4',
+    'hermes_cli/config_defaults.py': '3ee8953297ff5135c2b622255ab0ab7a7c4aae40a4f31bfe7d5a50175f1b052d',
+    'hermes_cli/config_version_stamp.py': '4cf5c3b74f429424fd1284a31de586669518c783d6cc0889562044df53d7046d',
+    'hermes_cli/tools_config.py': '5e87b744007f7bedd7b23f343395296e359950885ceff783bd208a50997cbfd2',
+    'hermes_cli/nous_account.py': '9a6084162864b46aaa105158760a0e09cd373a8865f6df6e2b6f19153a2a096e',
+    'hermes_cli/nous_subscription.py': '2c2af55b313c512ccf9ef46f5aa6c9a1594a9124e4604d0357262be5a54bb2b9',
+}
+FAMILIES["pm-0223"] = {
+    **FAMILIES["pm-0223"],
+    **_PM_BOOT_SOURCES,
+    **_PM_MIGRATION_SOURCES,
+    'hermes_cli/tools_config.py': '059a778e27f929c0c8afa77654d16bd9bd49ceee815f3a2e96b5b378efde2769',
+    'hermes_cli/nous_account.py': '9a6084162864b46aaa105158760a0e09cd373a8865f6df6e2b6f19153a2a096e',
+    'hermes_cli/nous_subscription.py': '7e16ba702d371ead27b9f1ea633ce067e85bfbf2adb4c8586cae0a73fb9fd287',
+}
+FAMILIES["pm-0224"] = {
+    **_PM_0224_WRITER,
+    **_PM_BOOT_SOURCES,
+    **_PM_MIGRATION_SOURCES,
+    'hermes_cli/tools_config.py': '35012cc12fc709a5a95c3f547ebb76a1938f231f0012e7e6fa843bf4be52a2fd',
+    'hermes_cli/nous_account.py': '9a6084162864b46aaa105158760a0e09cd373a8865f6df6e2b6f19153a2a096e',
+    'hermes_cli/nous_subscription.py': '7e16ba702d371ead27b9f1ea633ce067e85bfbf2adb4c8586cae0a73fb9fd287',
+}
+FAMILIES["pm-0225"] = {
+    **_PM_0225_WRITER,
+    **_PM_BOOT_SOURCES,
+    **_PM_MIGRATION_SOURCES,
+    'hermes_cli/tools_config.py': '35012cc12fc709a5a95c3f547ebb76a1938f231f0012e7e6fa843bf4be52a2fd',
+    'hermes_cli/nous_account.py': 'e87bb3cdac4c1b6e002d630fc5b2241bedb97cbef2de9fd419ad81f8e1297b7a',
+    'hermes_cli/nous_subscription.py': '64f6374cdbc2ff3889ec94350f1d4eae5057eaa14d28ea89abc99a4eb5b796b0',
+}
 # v0.22.1 predates the v0.22.2 writer split for plugins_cmd and utils, while
 # already sharing the PM publication and worker-save path with pm-main.  Keep
 # its two old sources explicit so neither the legacy pm family nor pm-main can
@@ -200,9 +251,18 @@ FAMILIES["pm-0221"] = {
     **FAMILIES["pm-main"],
     "hermes_cli/plugins_cmd.py": "aec2fd443b48fba00b96308af8ba4ed139f2a7ab1a07770b1773028f021bd023",
     "utils.py": "394b44230f13ba608c6ce9b2d143563b2554a73a219567b03884637776a4859a",
+    'agent/skill_utils.py': '9cb773037fe97940cdfcbf8b0d6bbfe60e366985749d3ae3bec3b274a83e33c4',
+    'hermes_cli/config_defaults.py': '9fc0c1fe87e3ea4a819d21a129810786ccc03e09ba5778f853ce5796277d8428',
+    'hermes_cli/tools_config.py': '43fe9f97de62893fd7d372067adb979e41ecec32f5fec9fd6d0fba7474f91664',
+    'hermes_cli/tools_config_mcp.py': 'fa0d09619743be92befc92087221dbce15a9fe5045598cd1928bfcf53477537a',
 }
 FAMILIES["pm-main-4e58"] = {
     **_PM_0224_WRITER,
+    **_PM_BOOT_SOURCES,
+    **_PM_MIGRATION_SOURCES,
+    'hermes_cli/tools_config.py': '35012cc12fc709a5a95c3f547ebb76a1938f231f0012e7e6fa843bf4be52a2fd',
+    'hermes_cli/nous_account.py': '9a6084162864b46aaa105158760a0e09cd373a8865f6df6e2b6f19153a2a096e',
+    'hermes_cli/nous_subscription.py': '7e16ba702d371ead27b9f1ea633ce067e85bfbf2adb4c8586cae0a73fb9fd287',
     "hermes_cli/left_core_migration.py": "a1a67f61f5d264d5cf935f8acb2a14967ad06f4efca3ce3441f4c676950b25dc",
 }
 
@@ -672,6 +732,16 @@ def no_setup_provider_metadata(*args,**kwargs):
 providers.list_providers=no_setup_provider_metadata
 config=module('hermes_cli.config','hermes_cli/config.py')
 providers.list_providers=list_providers
+try:
+    from hermes_cli.config_migrations import SUPPORT_FLOOR_VERSION
+    current,latest=config.check_config_version()
+    if current < latest and current >= SUPPORT_FLOOR_VERSION:
+        config.migrate_config(interactive=False,quiet=True)
+        migrated,_latest=config.check_config_version()
+        if migrated < latest:
+            deny('startup-migration-incomplete','migration')
+except Exception:
+    deny('startup-migration-failed','migration')
 utils=module('utils','utils.py')
 desired=request['desired']
 commands=module('hermes_cli.plugins_cmd','hermes_cli/plugins_cmd.py')

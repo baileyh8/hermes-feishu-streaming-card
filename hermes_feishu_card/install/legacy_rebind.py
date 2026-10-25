@@ -80,12 +80,20 @@ def _rebased_preimage(before: bytes, post: bytes, current: bytes) -> bytes:
 def _verify_runtime(binding: plugin.HermesRuntimeBinding) -> None:
     member = binding.hermes_home / "plugins" / pm_dependency.NAME
     # _owned validates the member's source ownership, not just its version.
-    if pm_dependency._owned(member) is None:
+    owner = pm_dependency._owned(member)
+    if owner is None:
         raise RebindRefused("legacy_rebind_pm_owner_required")
     if not pm_dependency.verify_installed(member, binding.runtime_python):
         raise RebindRefused("legacy_rebind_wheel_resources_unverified")
-    if plugin.probe_plugin_entrypoint(binding).status != "verified":
+    version = owner.get("version")
+    if type(version) is not str or not version:
+        raise RebindRefused("legacy_rebind_pm_owner_required")
+    if plugin.probe_plugin_entrypoint(
+        binding, expected_version=version
+    ).status != "verified":
         raise RebindRefused("legacy_rebind_entrypoint_unverified")
+    if pm_dependency._owned(member) != owner:
+        raise RebindRefused("legacy_rebind_pm_owner_changed")
 
 
 def _source_fingerprint(root: Path) -> str:

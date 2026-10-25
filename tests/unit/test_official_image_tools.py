@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 import zipfile
 
@@ -66,6 +67,242 @@ def test_wheel_validation_requires_real_basename(tmp_path):
         diagnose._wheel(wrong)
 
 
+def test_replacement_wheel_keeps_valid_basename_and_changes_bytes(tmp_path):
+    original = _wheel(tmp_path / "source" / WHEEL_NAME)
+    replacement = acceptance._make_replacement_wheel(tmp_path / "evidence", original)
+    assert replacement == tmp_path / "evidence" / "replacement-wheel" / WHEEL_NAME
+    assert replacement.name == WHEEL_NAME
+    assert replacement.name != "replacement.whl"
+    assert acceptance._sha256_file(replacement) != acceptance._sha256_file(original)
+    assert acceptance.inspect_wheel(replacement).version == VERSION
+
+
+def test_legacy_seed_is_preenabled_and_versioned(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    digest = acceptance._seed_legacy_config(evidence)
+    assert (home / "config.yaml").read_bytes() == acceptance.LEGACY_SEED
+    assert (evidence / "legacy-seed.yaml").read_bytes() == acceptance.LEGACY_SEED
+    metadata = json.loads((evidence / "legacy-seed.json").read_text())
+    assert metadata["source"] == "LEGACY_SEED"
+    assert metadata["sha256"] == digest
+    assert metadata["preenabled"] == [acceptance.PLUGIN_NAME]
+    assert metadata["config_version"] == 51
+
+
+def test_legacy_phase_uses_legacy_seed_before_other_setup(tmp_path, monkeypatch):
+    marker = RuntimeError("legacy seed called")
+    calls = []
+    monkeypatch.setattr(
+        acceptance,
+        "_seed_legacy_config",
+        lambda evidence: calls.append(evidence) or (_ for _ in ()).throw(marker),
+    )
+    with pytest.raises(RuntimeError, match="legacy seed called"):
+        acceptance._legacy_phase(tmp_path, SimpleNamespace(), SimpleNamespace())
+    assert calls == [tmp_path]
+
+
+def test_baseline_registers_other_before_install(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        acceptance,
+        "_layout_report",
+        lambda: {
+            "repo_root": acceptance.HERMES_ROOT,
+            "repo_root_expected": acceptance.HERMES_ROOT,
+            "hermes_install_root_present": False,
+            "pythonpath_present": False,
+        },
+    )
+    monkeypatch.setattr(acceptance, "_current_wheel", lambda: tmp_path / "candidate.whl")
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(
+        acceptance,
+        "_pyc_baseline",
+        lambda *a, **k: {"cleared": {}, "operation_root": {}, "operation_home": {}},
+    )
+    monkeypatch.setattr(acceptance, "_run_runtime_verify", lambda *a, **k: {})
+    monkeypatch.setattr(acceptance, "_seed", lambda *a, **k: calls.append("seed"))
+    monkeypatch.setattr(
+        acceptance,
+        "_register_other_plugin",
+        lambda *a, **k: calls.append("register") or (_ for _ in ()).throw(RuntimeError("stop")),
+    )
+    monkeypatch.setattr(acceptance, "_install", lambda *a, **k: calls.append("install"))
+    with pytest.raises(RuntimeError, match="stop"):
+        acceptance._baseline_phase(
+            tmp_path, SimpleNamespace(sha256="a" * 64, version=VERSION)
+        )
+    assert calls == ["seed", "register"]
+
+
+def test_legacy_registers_other_before_legacy_install(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        acceptance,
+        "_seed_legacy_config",
+        lambda evidence: calls.append("seed") or acceptance.LEGACY_SEED,
+    )
+    monkeypatch.setattr(acceptance, "_source_snapshot", lambda _: {})
+    monkeypatch.setattr(
+        acceptance,
+        "_pyc_baseline",
+        lambda *a, **k: calls.append("pyc") or {"operation_root": {}, "operation_home": {}},
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_register_other_plugin",
+        lambda *a, **k: calls.append("register") or (_ for _ in ()).throw(RuntimeError("stop")),
+    )
+    with pytest.raises(RuntimeError, match="stop"):
+        acceptance._legacy_phase(tmp_path, SimpleNamespace(), SimpleNamespace())
+    assert calls == ["seed", "pyc", "register"]
+
+
+def test_other_plugin_registration_happens_before_install(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    config = home / "config.yaml"
+    config.write_text("plugins:\n  enabled: []\n  disabled: []\n")
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(acceptance, "_clean_container_env", lambda extra=None: {})
+
+    def admit(name, command, **kwargs):
+        assert name == "other-before-install-admission"
+        config.write_text(
+            "plugins:\n  enabled: [hfc-acceptance-other]\n"
+            "  disabled: []\n"
+        )
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"enabled": ["hfc-acceptance-other"], "disabled": []}\n',
+        )
+
+    monkeypatch.setattr(acceptance, "_run_logged", admit)
+    after = acceptance._register_other_plugin(evidence, "other-before-install")
+    assert after == config.read_bytes()
+    assert "hfc-acceptance-other" in acceptance._plugin_selection()[0]
+    record = json.loads((evidence / "other-before-install.json").read_text())
+    assert record["enabled_before"] == []
+    assert record["enabled_after"] == ["hfc-acceptance-other"]
+
+
+def test_generation_change_keeps_config_bytes_and_requires_binding_change(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    config = home / "config.yaml"
+    before = (
+        "plugins:\n  enabled:\n    - hermes-feishu-card\n"
+        "    - hfc-acceptance-other\n  disabled: []\n"
+    ).encode()
+    config.write_bytes(before)
+    marker = tmp_path / "root" / ".hermes_feishu_card_observer.json"
+    marker.parent.mkdir()
+    marker.write_bytes(b"marker")
+    old_generation = tmp_path / "old-generation"
+    old_generation.mkdir()
+    seen = {}
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(marker.parent))
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(acceptance, "_clean_container_env", lambda extra=None: {})
+    monkeypatch.setattr(acceptance, "_selected_python", lambda: tmp_path / "new-generation")
+    bindings = iter(("binding-before", "binding-after"))
+    monkeypatch.setattr(acceptance, "_binding_identity", lambda: next(bindings))
+
+    def admit(name, command, **kwargs):
+        seen["name"] = name
+        seen["config"] = config.read_bytes()
+        seen["other_version"] = (home / "plugins" / acceptance.OTHER_PLUGIN / "pyproject.toml").read_text()
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"enabled": ["hermes-feishu-card", "hfc-acceptance-other"], "disabled": []}\n',
+        )
+
+    monkeypatch.setattr(acceptance, "_run_logged", admit)
+    selected, after, binding = acceptance._advance_other_generation(
+        evidence, "generation", old_generation, b"marker"
+    )
+    assert selected == tmp_path / "new-generation"
+    assert after == before
+    assert binding == "binding-after"
+    assert seen["config"] == before
+    assert 'version="2"' in seen["other_version"]
+
+
+def test_legacy_recovery_restores_before_fresh_upgrade(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    home = tmp_path / "home"
+    evidence = tmp_path / "evidence"
+    root.mkdir()
+    home.mkdir()
+    evidence.mkdir()
+    (evidence / "legacy-observer").mkdir()
+    marker = root / ".hermes_feishu_card_observer.json"
+    marker.write_bytes(b"rebound")
+    config = home / "config.yaml"
+    config.write_text(
+        "plugins:\n  enabled: [hermes-feishu-card, hfc-acceptance-other]\n"
+        "  disabled: []\nother: keep\n"
+    )
+    member = home / "plugins" / "hfc-runtime-dependency"
+    member.mkdir(parents=True)
+    owner = member / ".hfc-owner.json"
+    owner.write_text(json.dumps({"schema": 1, "version": "5.0.7"}))
+    old_generation = tmp_path / "old-generation"
+    old_generation.mkdir()
+    source_before = {"gateway/run.py": "digest"}
+    calls = []
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(root))
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "_source_snapshot", lambda _: source_before)
+    monkeypatch.setattr(acceptance, "_current_wheel", lambda: tmp_path / "candidate.whl")
+    monkeypatch.setattr(acceptance, "_selected_python", lambda: Path("/selected/python"))
+    monkeypatch.setattr(acceptance, "_observer_status", lambda: {"status": "active"})
+    monkeypatch.setattr(acceptance, "_run_runtime_verify", lambda *a, **k: {"status": "ok"})
+    monkeypatch.setattr(acceptance, "_check_pm_installed", lambda _: True)
+
+    def cli(_evidence, name, arguments, **kwargs):
+        calls.append(name)
+        if name == "legacy-restore":
+            assert json.loads(owner.read_text())["schema"] == 1
+            marker.unlink()
+        elif name == "legacy-uninstall":
+            shutil.rmtree(member)
+        return SimpleNamespace(returncode=0)
+
+    def install(_evidence, *, name, **kwargs):
+        calls.append(name)
+        assert not member.exists()
+        member.mkdir(parents=True)
+        owner.write_text(json.dumps({"schema": 2, "version": "5.0.8"}))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(acceptance, "_cli", cli)
+    monkeypatch.setattr(acceptance, "_install", install)
+    report = acceptance._legacy_recover_after_rebind(
+        evidence,
+        SimpleNamespace(version="5.0.8", sha256="candidate"),
+        SimpleNamespace(version="5.0.7", sha256="legacy"),
+        source_before=source_before,
+        config_before_rebind=config.read_bytes(),
+        marker_before_rebind=b"old",
+        old_generation=old_generation,
+    )
+    assert calls == ["legacy-restore", "legacy-uninstall", "legacy-fresh-install"]
+    assert report["restored_owner_schema"] == 1
+    assert report["candidate_owner_schema"] == 2
+
+
 def test_acceptance_docker_command_mounts_wheel_directory(tmp_path):
     spec = acceptance.IMAGE_SPECS["v0.22.5"]
     wheel_dir = tmp_path / "wheels"
@@ -79,6 +316,7 @@ def test_acceptance_docker_command_mounts_wheel_directory(tmp_path):
         legacy_name=None,
         phase="diagnose",
         pyc_mode="preserved",
+        capture_enable=False,
         uid=1000,
         gid=1000,
         tool=tmp_path / "tool.py",
@@ -90,6 +328,23 @@ def test_acceptance_docker_command_mounts_wheel_directory(tmp_path):
     assert "python -B -I /opt/hfc/tool.py" in " ".join(command)
     assert not any("PYTHONPATH" in value for value in command)
     assert not any("HERMES_INSTALL_ROOT" in value for value in command)
+    assert "HFC_CAPTURE_ENABLE=1" not in command
+    diagnostic = acceptance._docker_run_command(
+        docker="docker",
+        spec=spec,
+        state=tmp_path / "state",
+        evidence=tmp_path / "evidence",
+        wheel_dir=wheel_dir,
+        wheel_name=WHEEL_NAME,
+        legacy_name=None,
+        phase="diagnose",
+        pyc_mode="preserved",
+        capture_enable=True,
+        uid=1000,
+        gid=1000,
+        tool=tmp_path / "tool.py",
+    )
+    assert "HFC_CAPTURE_ENABLE=1" in diagnostic
 
 
 def test_diagnostic_host_stages_real_filename(tmp_path, monkeypatch):
@@ -256,3 +511,144 @@ def test_base_cli_uses_controller_bytecode_guard(monkeypatch):
         "-B",
         "-I",
     ]
+
+
+@pytest.mark.parametrize("capture", [False, True])
+def test_install_uses_explicit_enable_capture_mode(tmp_path, monkeypatch, capture):
+    calls = []
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", "/opt/hermes")
+    monkeypatch.setattr(acceptance, "HERMES_HOME", "/opt/data")
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(acceptance, "_current_wheel", lambda: Path("/wheel.whl"))
+    monkeypatch.setattr(acceptance, "_clean_container_env", lambda extra=None: {})
+    monkeypatch.setenv("HFC_CAPTURE_ENABLE", "1" if capture else "0")
+    monkeypatch.setattr(
+        acceptance,
+        "_run_logged",
+        lambda name, command, **kwargs: calls.append((name, list(command))),
+    )
+    acceptance._install(tmp_path, name="install")
+
+    name, command = calls[0]
+    assert name == "install"
+    arguments = [
+        "install",
+        "--hermes-dir",
+        "/opt/hermes",
+        "--hermes-home",
+        "/opt/data",
+        "--yes",
+    ]
+    if capture:
+        assert command[:4] == ["/base/python", "-B", "-I", "-c"]
+        assert command[5] == str(tmp_path / "install-enable-observations")
+        assert command[6:] == arguments
+    else:
+        assert command == ["/base/python", "-B", "-I", "-m", "hermes_feishu_card.cli", *arguments]
+    compile(acceptance._observed_cli_code(), "<hfc-observed-cli>", "exec")
+
+
+def test_failure_state_snapshot_preserves_exact_regular_files(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    state = home / ".hermes_feishu_card" / "install"
+    state.mkdir(parents=True)
+    preimage = b"plugins:\n  enabled:\n    - hfc-runtime-dependency\n"
+    (state / "hfc-config-preimage-fixed.yaml").write_bytes(preimage)
+    (state / "hfc-config-preimage-fixed.json").write_text('{"phase":"installed"}\n')
+    (state / "linked.yaml").symlink_to(state / "hfc-config-preimage-fixed.yaml")
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+
+    result = acceptance._snapshot_install_state(evidence, "failure-install")
+
+    copied = evidence / "failure-install-install-state"
+    assert (copied / "hfc-config-preimage-fixed.yaml").read_bytes() == preimage
+    assert result["files"]["hfc-config-preimage-fixed.yaml"] == acceptance._sha256_bytes(preimage)
+    assert result["skipped"] == ["linked.yaml"]
+
+
+def test_config_plan_probe_uses_exact_preimage_and_runtime(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    state = home / ".hermes_feishu_card" / "install"
+    state.mkdir(parents=True)
+    preimage = state / "hfc-config-preimage-fixed.yaml"
+    preimage.write_bytes(b"plugins:\n  enabled: []\n")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(list(command))
+        Path(command[-2]).write_bytes(b"plugins:\n  enabled: [hermes-feishu-card]\n")
+        Path(command[-1]).write_text("")
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"family":"fixed","actual_equals_plan":false}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(acceptance, "_selected_python", lambda: Path("/pm/python"))
+    monkeypatch.setattr(acceptance, "_run_command", run)
+    result = acceptance._snapshot_config_plan(evidence, "failure-install")
+
+    command = calls[0]
+    assert command[:4] == ["/base/python", "-B", "-I", "-c"]
+    assert command[-5:-3] == [str(state), str(preimage)]
+    assert command[-2] == str(evidence / "failure-install-plan-postimage.yaml")
+    assert result["status"] == "captured"
+    assert result["preimage"] == preimage.name
+    compile(acceptance._config_plan_probe_code(), "<hfc-config-plan-probe>", "exec")
+
+
+def test_legacy_failure_records_bounded_snapshot(tmp_path, monkeypatch):
+    evidence = tmp_path / "evidence"
+    info = SimpleNamespace(as_dict=lambda: {"version": VERSION})
+    snapshots = []
+    monkeypatch.setenv("HFC_LEGACY_WHEEL_FILENAME", "legacy.whl")
+    monkeypatch.setattr(acceptance, "_current_wheel", lambda: tmp_path / "wheel.whl")
+    monkeypatch.setattr(acceptance, "_legacy_wheel", lambda: tmp_path / "legacy.whl")
+    monkeypatch.setattr(acceptance, "inspect_wheel", lambda _: info)
+    monkeypatch.setattr(
+        acceptance,
+        "_legacy_phase",
+        lambda *_: (_ for _ in ()).throw(acceptance.AcceptanceFailure("legacy red")),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_failure_snapshot",
+        lambda path, stage: snapshots.append((path, stage)),
+    )
+    result = acceptance._container_main(
+        ["--container-phase", "legacy", "--evidence", str(evidence)]
+    )
+    assert result == 1
+    assert snapshots == [(evidence, "legacy")]
+    assert json.loads((evidence / "container-result.json").read_text())["reason"] == "legacy red"
+
+
+def test_runtime_verify_does_not_overwrite_capture_mode(tmp_path, monkeypatch):
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    marker = evidence / "capture-mode.json"
+    marker.write_text('{"diagnostic_wrapper": true}\n')
+    output = tmp_path / "verify.json"
+    monkeypatch.setattr(acceptance, "_runtime_verify", lambda **_: 0)
+    result = acceptance._container_main(
+        [
+            "--container-verify",
+            "--verify-wheel",
+            str(tmp_path / "wheel.whl"),
+            "--verify-expected-sha256",
+            "a" * 64,
+            "--verify-output",
+            str(output),
+            "--evidence",
+            str(evidence),
+        ]
+    )
+    assert result == 0
+    assert json.loads(marker.read_text()) == {"diagnostic_wrapper": True}

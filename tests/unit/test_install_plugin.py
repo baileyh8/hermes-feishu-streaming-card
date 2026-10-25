@@ -160,6 +160,41 @@ def test_entrypoint_probe_accepts_one_exact_installed_distribution(tmp_path, mon
     assert result.module_origin == module_origin
 
 
+def test_entrypoint_probe_default_requires_current_version(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    runtime_payload = _runtime_payload(checkout)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: runtime_payload
+    )
+    binding = plugin.resolve_runtime_binding(
+        checkout_root=checkout, hermes_home=home, profile_id=None
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_run_entrypoint_probe",
+        lambda _binding: {
+            "candidates": [
+                {
+                    "name": "hermes-feishu-card",
+                    "value": "hermes_feishu_card.hermes_plugin",
+                    "distribution": "hermes-feishu-streaming-card",
+                    "version": "0.0.0",
+                }
+            ],
+            "module_origin": str(
+                Path(str(runtime_payload["purelib"]))
+                / "hermes_feishu_card"
+                / "hermes_plugin.py"
+            ),
+        },
+    )
+
+    result = plugin.probe_plugin_entrypoint(binding)
+
+    assert result.status == "failed"
+    assert "version" in result.reason
+
+
 @pytest.mark.parametrize(
     ("mutation", "reason"),
     (
@@ -181,6 +216,12 @@ def test_entrypoint_probe_accepts_one_exact_installed_distribution(tmp_path, mon
                 version="future"
             ),
             "version",
+        ),
+        (
+            lambda payload, checkout: payload["candidates"][0].update(
+                value="other.module"
+            ),
+            "identity",
         ),
     ),
 )

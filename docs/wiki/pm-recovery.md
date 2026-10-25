@@ -19,7 +19,7 @@ hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-
 hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-home /actual/home --yes
 ```
 
-重绑须验证受管源码/manifest/备份、observer 记录与配置 journal、同一 HOME、已归属 PM dependency member，以及当前 runtime 的普通 wheel 来源和包资源。未知来源、证据损坏、不可检查文件和并发变化继续拒绝。仅支持已核验的 decomposed 安装和可用目录描述符安全事务的平台。Windows 的重绑当前明确拒绝；非 PM 或旧 single-file 安装的未知 venv 重建不在此候选的接纳范围。
+重绑须验证受管源码/manifest/备份、observer 记录与配置 journal、同一 HOME、已归属 PM dependency member，以及当前 runtime 的普通 wheel 来源和包资源。新 CLI 可以核验已归属的旧版本 runtime：entry point 必须与已验证的 member/wheel 版本一致，探针后再次核对 owner；普通安装探针仍要求当前版本。不得先升级 member 再绕过原绑定检查。未知来源、证据损坏、不可检查文件和并发变化继续拒绝。仅支持已核验的 decomposed 安装和可用目录描述符安全事务的平台。Windows 的重绑当前明确拒绝；非 PM 或旧 single-file 安装的未知 venv 重建不在此候选的接纳范围。
 
 仅当插件配置分支仍等于已证明的官方写入结果时，才接纳无关配置编辑；恢复保留其它当前配置字节。插件分支修改、重复 YAML key、别名或其它无法证明归属的结构需要人工处理。重绑使用新 preimage/journal，并保留迁移前证据；失败保持可审计状态。重绑不恢复旧审批、任务执行或运行中 Gateway。
 
@@ -37,7 +37,7 @@ finish、rollback 和 uninstall 保守保留已归属外部 wheel：旧 PM gener
 
 ## PM 启动与配置写入
 
-PM generation 的解释器与执行源码目录分别核验，工作目录本身不能保证 CLI 来自所选 checkout。启动前后检查准确的 main/init 源码与目录链；所选 runtime 的 site、`.pth` 与预加载模块仍属于既有可信运行时边界，不将这个入口称为任意代码隔离。配置写入只接纳准确受检 writer 的输出；writer family 名称是源码组合标识，与 Hermes tag 不保证一一对应。官方 schema 版本戳与用户配置字段分别核对，真正无关字段仍须一致，实际落盘字节仍须与准确规划相同。
+PM generation 的解释器与执行源码目录分别核验，工作目录本身不能保证 CLI 来自所选 checkout。启动前后检查准确的 main/init 源码与目录链；所选 runtime 的 site、`.pth` 与预加载模块仍属于既有可信运行时边界，不将这个入口称为任意代码隔离。配置写入只接纳准确受检 writer 的输出；writer family 名称是源码组合标识，与 Hermes tag 不保证一一对应。私有副本先按准确受检的官方配置迁移执行，再规划插件写入；不手写或猜测 schema 版本戳。官方版本戳与用户配置字段分别核对，真正无关字段仍须一致，实际落盘字节仍须与准确规划相同。
 
 未知源码、未登记的本地执行模块及不确定配置变化继续拒绝。诊断只公开固定拒绝类别与阶段，不透出原始配置、子进程错误输出或源地址。容器镜像应按准确 digest 与源码分别验收；Git fixture 通过不代表所有官方镜像已验证。
 

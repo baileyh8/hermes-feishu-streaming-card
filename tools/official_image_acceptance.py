@@ -35,6 +35,7 @@ CONTAINER_EVIDENCE = "/opt/hfc/evidence"
 PLUGIN_NAME = "hermes-feishu-card"
 PLUGIN_DISTRIBUTION = "hermes-feishu-streaming-card"
 PLUGIN_ENTRY_POINT = "hermes_feishu_card.hermes_plugin"
+OTHER_PLUGIN = "hfc-acceptance-other"
 MINIMAL_SEED = b"plugins: {}\nmodel: acceptance-model\n"
 FULL_SEED = (
     b"plugins:\n"
@@ -507,6 +508,23 @@ def _seed(path: Path, value: bytes = FULL_SEED) -> None:
     path.write_bytes(value)
 
 
+def _seed_legacy_config(evidence: Path) -> str:
+    config = Path(HERMES_HOME) / "config.yaml"
+    _seed(config, LEGACY_SEED)
+    digest = _snapshot_config(evidence, "legacy-seed")
+    _write_json(
+        evidence / "legacy-seed.json",
+        {
+            "source": "LEGACY_SEED",
+            "sha256": digest,
+            "bytes": len(LEGACY_SEED),
+            "preenabled": [PLUGIN_NAME],
+            "config_version": 51,
+        },
+    )
+    return digest
+
+
 def _clean_container_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
     allowed = {
         "CC",
@@ -581,6 +599,90 @@ def _base_cli() -> list[str]:
     return [str(_base_python()), "-B", "-I", "-m", "hermes_feishu_card.cli"]
 
 
+def _observed_cli_code() -> str:
+    return r'''
+import hashlib
+import json
+import runpy
+import sys
+from pathlib import Path
+
+capture = Path(sys.argv[1])
+cli_args = sys.argv[2:]
+capture.mkdir(parents=True, exist_ok=True)
+from hermes_feishu_card.install import plugin
+from hermes_feishu_card.install import plugin_config_bytes as planner
+
+original_plan = planner.plan_enabled_bytes
+original_enable = plugin._run_official_enable
+record = {'errors': [], 'diagnostic_wrapper': True}
+
+def digest(value):
+    return hashlib.sha256(value).hexdigest()
+
+def write(name, value):
+    try:
+        (capture / name).write_bytes(value)
+    except Exception as exc:
+        record['errors'].append(f'write {name}: {type(exc).__name__}')
+
+def flush():
+    try:
+        (capture / 'capture.json').write_text(
+            json.dumps(record, sort_keys=True, indent=2) + '\n'
+        )
+    except Exception:
+        pass
+
+def plan_probe(**kwargs):
+    plan = original_plan(**kwargs)
+    record['plan'] = {
+        'family': plan.family,
+        'config_version': plan.config_version,
+        'source_root': str(plan.root),
+        'source_hashes': dict(planner.FAMILIES.get(plan.family, {})),
+        'before_sha256': digest(kwargs['before']),
+        'postimage_sha256': digest(plan.postimage),
+    }
+    write('plan-before.yaml', kwargs['before'])
+    write('plan-postimage.yaml', plan.postimage)
+    flush()
+    return plan
+
+def enable_probe(binding):
+    record['binding'] = {
+        'checkout_root': str(binding.checkout_root),
+        'runtime_python': str(binding.runtime_python),
+        'runtime_python_resolved': str(binding.runtime_python_resolved),
+        'purelib': str(binding.purelib),
+        'platlib': str(binding.platlib),
+    }
+    record['official_enable'] = {}
+    try:
+        result = original_enable(binding)
+        record['official_enable']['returncode'] = result
+        return result
+    finally:
+        try:
+            after = Path(binding.config_path).read_bytes()
+            record['official_enable']['after_sha256'] = digest(after)
+            planned = record.get('plan', {}).get('postimage_sha256')
+            record['official_enable']['after_equals_plan'] = (
+                after == (capture / 'plan-postimage.yaml').read_bytes()
+                if planned else None
+            )
+            write('official-after.yaml', after)
+        except Exception as exc:
+            record['errors'].append(f'capture after: {type(exc).__name__}')
+        flush()
+
+planner.plan_enabled_bytes = plan_probe
+plugin._run_official_enable = enable_probe
+sys.argv = ['hermes-feishu-card', *cli_args]
+runpy.run_module('hermes_feishu_card.cli', run_name='__main__')
+'''
+
+
 def _container_wheel(env_name: str, label: str) -> Path:
     filename = os.environ.get(env_name, "")
     if not filename or Path(filename).name != filename:
@@ -591,6 +693,19 @@ def _container_wheel(env_name: str, label: str) -> Path:
 
 def _current_wheel() -> Path:
     return _container_wheel("HFC_WHEEL_FILENAME", "current wheel")
+
+
+def _replacement_wheel_path(evidence: Path, wheel: Path) -> Path:
+    return evidence / "replacement-wheel" / wheel.name
+
+
+def _make_replacement_wheel(evidence: Path, wheel: Path) -> Path:
+    replacement = _replacement_wheel_path(evidence, wheel)
+    replacement.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(wheel, replacement)
+    with zipfile.ZipFile(replacement, "a") as archive:
+        archive.comment = b"HFC official-image rollback acceptance"
+    return replacement
 
 
 def _legacy_wheel() -> Path:
@@ -1114,12 +1229,158 @@ def _snapshot_config(evidence: Path, label: str) -> str:
     return _sha256_bytes(value)
 
 
+def _snapshot_install_state(evidence: Path, label: str) -> dict[str, Any]:
+    state = Path(HERMES_HOME) / ".hermes_feishu_card" / "install"
+    if not state.exists() and not state.is_symlink():
+        return {"status": "missing", "files": {}}
+    if state.is_symlink() or not state.is_dir():
+        raise AcceptanceFailure("install state is not a regular directory")
+    destination = evidence / f"{label}-install-state"
+    destination.mkdir(parents=True, exist_ok=False)
+    files: dict[str, str] = {}
+    skipped: list[str] = []
+    total = 0
+    for item in sorted(state.iterdir(), key=lambda value: value.name):
+        metadata = item.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            skipped.append(item.name)
+            continue
+        total += metadata.st_size
+        if len(files) >= 64 or total > 4 * 1024 * 1024:
+            raise AcceptanceFailure("install state exceeds evidence bound")
+        value = item.read_bytes()
+        (destination / item.name).write_bytes(value)
+        files[item.name] = _sha256_bytes(value)
+    return {"status": "copied", "files": files, "skipped": skipped}
+
+
+def _config_plan_probe_code() -> str:
+    return r'''
+import difflib
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+root, home, state, preimage, runtime, postimage_path, diff_path = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root))
+from hermes_feishu_card.install import plugin
+from hermes_feishu_card.install.plugin_config_bytes import plan_enabled_bytes
+
+before = preimage.read_bytes()
+mapping = plugin._load_config_mapping(before)
+expected, enabled_before = plugin._expected_enabled_config(mapping)
+already_enabled_expected = (
+    plugin._expected_enabled_config(mapping, preserve_enabled_lists=True)[0]
+    if enabled_before else expected
+)
+desired = already_enabled_expected if enabled_before else expected
+plan = plan_enabled_bytes(
+    root=root,
+    python=runtime,
+    home=home,
+    state_dir=state,
+    before=before,
+    desired=desired,
+    enabled_before=enabled_before,
+)
+postimage_path.write_bytes(plan.postimage)
+actual = (home / 'config.yaml').read_bytes()
+diff = ''.join(difflib.unified_diff(
+    actual.decode('utf-8').splitlines(keepends=True),
+    plan.postimage.decode('utf-8').splitlines(keepends=True),
+    fromfile='actual',
+    tofile='planned',
+))
+diff_path.write_text(diff)
+print(json.dumps({
+    'enabled_before': enabled_before,
+    'family': plan.family,
+    'config_version': plan.config_version,
+    'preimage_sha256': hashlib.sha256(before).hexdigest(),
+    'postimage_sha256': hashlib.sha256(plan.postimage).hexdigest(),
+    'actual_sha256': hashlib.sha256(actual).hexdigest(),
+    'actual_equals_plan': actual == plan.postimage,
+    'plan_matches_expected': plan.matches_expected(expected),
+}, sort_keys=True))
+'''
+
+
+def _snapshot_config_plan(evidence: Path, label: str) -> dict[str, Any]:
+    state = Path(HERMES_HOME) / ".hermes_feishu_card" / "install"
+    if not state.is_dir() or state.is_symlink():
+        return {"status": "missing"}
+    preimages = [
+        item for item in state.iterdir()
+        if item.name.startswith("hfc-config-preimage-")
+        and item.suffix == ".yaml"
+        and stat.S_ISREG(item.lstat().st_mode)
+    ]
+    if not preimages:
+        return {"status": "missing"}
+    preimage = max(preimages, key=lambda item: (item.lstat().st_mtime_ns, item.name))
+    runtime = _selected_python()
+    postimage_path = evidence / f"{label}-plan-postimage.yaml"
+    diff_path = evidence / f"{label}-plan-vs-actual.diff"
+    result = _run_command(
+        [
+            str(_base_python()),
+            "-B",
+            "-I",
+            "-c",
+            _config_plan_probe_code(),
+            HERMES_ROOT,
+            HERMES_HOME,
+            str(state),
+            str(preimage),
+            str(runtime),
+            str(postimage_path),
+            str(diff_path),
+        ],
+        env=_clean_container_env(),
+        timeout=300,
+    )
+    _write_log(evidence / f"{label}-plan-probe", result)
+    if result.returncode:
+        return {
+            "status": "failed",
+            "preimage": preimage.name,
+            "returncode": result.returncode,
+        }
+    try:
+        summary = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise AcceptanceFailure("config plan probe returned invalid evidence") from exc
+    if type(summary) is not dict:
+        raise AcceptanceFailure("config plan probe returned invalid evidence")
+    summary["status"] = "captured"
+    summary["preimage"] = preimage.name
+    return summary
+
+
 def _failure_snapshot(evidence: Path, stage: str) -> None:
-    payload: dict[str, Any] = {"stage": stage, "created_at": _utc_now()}
+    payload: dict[str, Any] = {
+        "stage": stage,
+        "capture_timing": "after_official_cli_exit",
+        "rollback_may_already_be_applied": True,
+        "created_at": _utc_now(),
+    }
     try:
         payload["config_sha256"] = _snapshot_config(evidence, f"failure-{stage}-config")
     except Exception as exc:
         payload["config_error"] = _safe_message(exc)
+    try:
+        payload["install_state"] = _snapshot_install_state(
+            evidence, f"failure-{stage}"
+        )
+    except Exception as exc:
+        payload["install_state_error"] = _safe_message(exc)
+    try:
+        payload["config_plan"] = _snapshot_config_plan(
+            evidence, f"failure-{stage}"
+        )
+    except Exception as exc:
+        payload["config_plan_error"] = _safe_message(exc)
     try:
         payload["owner"] = _owner_payload()
     except Exception as exc:
@@ -1147,17 +1408,30 @@ def _install(
     name: str,
     expected: int = 0,
 ) -> subprocess.CompletedProcess[str]:
+    arguments = [
+        "install",
+        "--hermes-dir",
+        HERMES_ROOT,
+        "--hermes-home",
+        HERMES_HOME,
+        "--yes",
+    ]
+    command = (
+        [
+            str(_base_python()),
+            "-B",
+            "-I",
+            "-c",
+            _observed_cli_code(),
+            str(evidence / f"{name}-enable-observations"),
+            *arguments,
+        ]
+        if os.environ.get("HFC_CAPTURE_ENABLE") == "1"
+        else [*_base_cli(), *arguments]
+    )
     return _run_logged(
         name,
-        [
-            *_base_cli(),
-            "install",
-            "--hermes-dir",
-            HERMES_ROOT,
-            "--hermes-home",
-            HERMES_HOME,
-            "--yes",
-        ],
+        command,
         evidence=evidence,
         env=_clean_container_env({"HFC_INSTALL_SPEC": str(_current_wheel())}),
         timeout=1200,
@@ -1214,9 +1488,10 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         mode="base",
     )
     _seed(Path(HERMES_HOME) / "config.yaml")
+    generations_before = _generation_names(Path(HERMES_HOME))
+    _register_other_plugin(evidence, "other-before-install")
     source_before = _source_snapshot(Path(HERMES_ROOT))
     config_before = _snapshot_config(evidence, "config-before-install")
-    generations_before = _generation_names(Path(HERMES_HOME))
     families = _config_families()
     matches = [name for name, value in families.items() if value == "match"]
     if not matches:
@@ -1325,10 +1600,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         },
     )
 
-    replacement = evidence / "replacement.whl"
-    shutil.copyfile(wheel_path, replacement)
-    with zipfile.ZipFile(replacement, "a") as archive:
-        archive.comment = b"HFC official-image rollback acceptance"
+    replacement = _make_replacement_wheel(evidence, wheel_path)
     replacement_code = (
         "import json,sys;from pathlib import Path;"
         f"sys.path.insert(0,{HERMES_ROOT!r});"
@@ -1360,43 +1632,12 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("replacement wheel was not retained after rollback")
     _write_json(evidence / "pm-rollback.json", rollback_payload)
 
-    other = Path(HERMES_HOME) / "plugins" / "hfc-acceptance-other"
-    other.mkdir(parents=True, exist_ok=True)
-    (other / "hfc_acceptance_other").mkdir(exist_ok=True)
-    (other / "hfc_acceptance_other" / "__init__.py").write_text("__version__ = '1'\n")
-    (other / "pyproject.toml").write_text(
-        '[project]\nname="hfc-acceptance-other"\nversion="1"\n'
-        'requires-python=">=3.11"\ndependencies=[]\n'
-        '[tool.uv]\npackage=true\n'
+    marker_before_generation = (
+        Path(HERMES_ROOT) / ".hermes_feishu_card_observer.json"
+    ).read_bytes()
+    new_selected, _generation_config, new_binding = _advance_other_generation(
+        evidence, "pm-generation-change", selected, marker_before_generation
     )
-    admission_code = (
-        "import json,sys;from pathlib import Path;"
-        f"sys.path.insert(0,{HERMES_ROOT!r});"
-        "from hermes_constants import get_hermes_home;"
-        "from pm.filesystem import file_digest;"
-        "from pm.plugins_state import read_home_selection;"
-        "from hermes_cli.plugins_admission import admit_plugin_set_change;"
-        "home=Path(get_hermes_home());config=read_home_selection(home) or {};"
-        "plugins=config.get('plugins') or {};enabled=list(plugins.get('enabled') or []);"
-        "disabled=list(plugins.get('disabled') or []);"
-        "expected=file_digest(home/'config.yaml') or 'missing';"
-        "enabled=list(dict.fromkeys([*enabled,'hfc-acceptance-other']));"
-        "admit_plugin_set_change(set(enabled),set(disabled),active_plugins_dir=home/'plugins',expected_config=expected,plugin='hfc-acceptance-other');"
-        "print(json.dumps({'enabled':enabled,'disabled':disabled}))"
-    )
-    _run_logged(
-        "pm-generation-change",
-        [str(_base_python()), "-B", "-I", "-c", admission_code],
-        evidence=evidence,
-        env=_clean_container_env(),
-        timeout=600,
-    )
-    new_selected = _selected_python()
-    if new_selected == selected:
-        raise AcceptanceFailure("official PM admission reused the old generation")
-    new_binding = _binding_identity()
-    if new_binding == install_state["binding_identity"]:
-        raise AcceptanceFailure("official PM admission did not change runtime identity")
     marker_before_failed_restore = (
         Path(HERMES_ROOT) / ".hermes_feishu_card_observer.json"
     ).read_bytes()
@@ -1420,6 +1661,15 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("failed restore changed the observer marker")
     if _source_snapshot(Path(HERMES_ROOT)) != source_before_failed_restore:
         raise AcceptanceFailure("failed restore changed owned source")
+    config_before_rebind = (Path(HERMES_HOME) / "config.yaml").read_bytes()
+    enabled_before_rebind, _disabled_before_rebind = _plugin_selection()
+    _write_json(
+        evidence / "config-before-rebind.json",
+        {
+            "sha256": _sha256_bytes(config_before_rebind),
+            "enabled": enabled_before_rebind,
+        },
+    )
     _cli(
         evidence,
         "rebind-legacy",
@@ -1433,6 +1683,8 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
             "--yes",
         ],
     )
+    if (Path(HERMES_HOME) / "config.yaml").read_bytes() != config_before_rebind:
+        raise AcceptanceFailure("rebind changed unrelated config")
     _install(evidence, name="reinstall-after-rebind")
     if _observer_status()["status"] != "active":
         raise AcceptanceFailure("observer is not active after rebind")
@@ -1460,6 +1712,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         (restored_config.get("plugins") or {}).get("enabled") or []
     ):
         raise AcceptanceFailure("restore removed the PM-owned dependency")
+    _require_other_plugin("restore")
     _cli(
         evidence,
         "uninstall",
@@ -1476,6 +1729,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("uninstall left the PM dependency")
     if _source_snapshot(Path(HERMES_ROOT)) != source_before:
         raise AcceptanceFailure("uninstall changed source after restore")
+    _require_other_plugin("uninstall")
 
     _install(evidence, name="fresh-install-after-uninstall")
     fresh_selected = _selected_python()
@@ -1500,6 +1754,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
             "--yes",
         ],
     )
+    _require_other_plugin("final restore")
     _cli(
         evidence,
         "final-uninstall",
@@ -1512,6 +1767,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
             "--yes",
         ],
     )
+    _require_other_plugin("final uninstall")
     final_pyc = _pyc_snapshot(Path(HERMES_ROOT))
     final_home_pyc = _pyc_snapshot(Path(HERMES_HOME))
     return {
@@ -1525,6 +1781,248 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         "fresh_install": True,
         "final_pyc": final_pyc,
         "final_home_pyc": final_home_pyc,
+    }
+
+
+def _write_other_plugin(version: int) -> Path:
+    other = Path(HERMES_HOME) / "plugins" / OTHER_PLUGIN
+    other.mkdir(parents=True, exist_ok=True)
+    (other / "hfc_acceptance_other").mkdir(exist_ok=True)
+    (other / "hfc_acceptance_other" / "__init__.py").write_text(
+        f"__version__ = '{version}'\n"
+    )
+    (other / "pyproject.toml").write_text(
+        f'[project]\nname="{OTHER_PLUGIN}"\nversion="{version}"\n'
+        'requires-python=">=3.11"\ndependencies=[]\n'
+        '[tool.uv]\npackage=true\n'
+    )
+    return other
+
+
+def _plugin_selection() -> tuple[list[str], list[str]]:
+    mapping = _config_mapping()
+    plugins = mapping.get("plugins")
+    enabled = plugins.get("enabled") if isinstance(plugins, dict) else None
+    disabled = plugins.get("disabled") if isinstance(plugins, dict) else None
+    if not isinstance(enabled, list) or not isinstance(disabled, list):
+        raise AcceptanceFailure("Hermes plugin selection is invalid")
+    return [str(value) for value in enabled], [str(value) for value in disabled]
+
+
+def _require_other_plugin(stage: str) -> None:
+    enabled, _disabled = _plugin_selection()
+    if OTHER_PLUGIN not in enabled:
+        raise AcceptanceFailure(f"{stage} lost the other plugin")
+
+
+def _admit_other_selection(
+    evidence: Path,
+    label: str,
+    enabled: Sequence[str],
+    disabled: Sequence[str],
+    expected_sha256: str,
+) -> dict[str, Any]:
+    admission_code = (
+        "import json,sys;from pathlib import Path;"
+        f"sys.path.insert(0,{HERMES_ROOT!r});"
+        "from hermes_constants import get_hermes_home;"
+        "from hermes_cli.plugins_admission import admit_plugin_set_change;"
+        "home=Path(get_hermes_home());"
+        f"enabled={list(enabled)!r};disabled={list(disabled)!r};"
+        f"expected={expected_sha256!r};"
+        f"admit_plugin_set_change(set(enabled),set(disabled),active_plugins_dir=home/'plugins',expected_config=expected,plugin={OTHER_PLUGIN!r});"
+        "print(json.dumps({'enabled':enabled,'disabled':disabled}))"
+    )
+    result = _run_logged(
+        label,
+        [str(_base_python()), "-B", "-I", "-c", admission_code],
+        evidence=evidence,
+        env=_clean_container_env(),
+        timeout=600,
+    )
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise AcceptanceFailure("plugin admission returned invalid evidence") from exc
+    if not isinstance(payload, dict):
+        raise AcceptanceFailure("plugin admission returned invalid evidence")
+    return payload
+
+
+def _register_other_plugin(evidence: Path, label: str) -> bytes:
+    config = Path(HERMES_HOME) / "config.yaml"
+    before = config.read_bytes()
+    enabled_before, disabled_before = _plugin_selection()
+    _write_other_plugin(1)
+    enabled = list(dict.fromkeys([*enabled_before, OTHER_PLUGIN]))
+    payload = _admit_other_selection(
+        evidence, f"{label}-admission", enabled, disabled_before, _sha256_bytes(before)
+    )
+    after = config.read_bytes()
+    enabled_after, disabled_after = _plugin_selection()
+    if OTHER_PLUGIN not in enabled_after:
+        raise AcceptanceFailure("other plugin registration was not enabled")
+    if disabled_after != disabled_before:
+        raise AcceptanceFailure("other plugin registration changed disabled plugins")
+    _write_json(
+        evidence / f"{label}.json",
+        {
+            "before_sha256": _sha256_bytes(before),
+            "after_sha256": _sha256_bytes(after),
+            "enabled_before": enabled_before,
+            "enabled_after": enabled_after,
+            "disabled_before": disabled_before,
+            "disabled_after": disabled_after,
+            "admission": payload,
+            "project_version": 1,
+        },
+    )
+    return after
+
+
+def _advance_other_generation(
+    evidence: Path,
+    label: str,
+    old_generation: Path,
+    old_marker: bytes,
+) -> tuple[Path, bytes, str]:
+    marker = Path(HERMES_ROOT) / ".hermes_feishu_card_observer.json"
+    config = Path(HERMES_HOME) / "config.yaml"
+    before = config.read_bytes()
+    enabled, disabled = _plugin_selection()
+    if OTHER_PLUGIN not in enabled:
+        raise AcceptanceFailure("other plugin was not registered before generation change")
+    binding_before = _binding_identity()
+    _write_other_plugin(2)
+    admission = _admit_other_selection(
+        evidence, label, enabled, disabled, _sha256_bytes(before)
+    )
+    after = config.read_bytes()
+    if after != before:
+        raise AcceptanceFailure("generation change altered plugin config bytes")
+    enabled_after, disabled_after = _plugin_selection()
+    if enabled_after != enabled or disabled_after != disabled:
+        raise AcceptanceFailure("generation change altered plugin selection")
+    new_selected = _selected_python()
+    if new_selected == old_generation:
+        raise AcceptanceFailure("plugin generation change was not observable")
+    if marker.read_bytes() != old_marker:
+        raise AcceptanceFailure("generation change altered the old observer marker")
+    binding_after = _binding_identity()
+    if binding_after == binding_before:
+        raise AcceptanceFailure("plugin generation change did not change runtime identity")
+    _write_json(
+        evidence / f"{label}.json",
+        {
+            "config_before_sha256": _sha256_bytes(before),
+            "config_after_sha256": _sha256_bytes(after),
+            "enabled_before": enabled,
+            "enabled_after": enabled_after,
+            "disabled_before": disabled,
+            "disabled_after": disabled_after,
+            "binding_before": binding_before,
+            "binding_after": binding_after,
+            "admission": admission,
+            "project_version_before": 1,
+            "project_version_after": 2,
+        },
+    )
+    return new_selected, after, binding_after
+
+
+def _legacy_recover_after_rebind(
+    evidence: Path,
+    wheel_info: WheelInfo,
+    legacy_info: WheelInfo,
+    *,
+    source_before: Mapping[str, str],
+    config_before_rebind: bytes,
+    marker_before_rebind: bytes,
+    old_generation: Path,
+) -> dict[str, Any]:
+    marker = Path(HERMES_ROOT) / ".hermes_feishu_card_observer.json"
+    legacy_evidence = evidence / "legacy-observer"
+    if marker.read_bytes() == marker_before_rebind:
+        raise AcceptanceFailure("legacy rebind did not update the observer marker")
+    (legacy_evidence / "marker.after-rebind.json").write_bytes(marker.read_bytes())
+    config = Path(HERMES_HOME) / "config.yaml"
+    if config.read_bytes() != config_before_rebind:
+        raise AcceptanceFailure("legacy rebind changed unrelated config")
+
+    _cli(
+        evidence,
+        "legacy-restore",
+        [
+            "restore",
+            "--hermes-dir",
+            HERMES_ROOT,
+            "--hermes-home",
+            HERMES_HOME,
+            "--yes",
+        ],
+    )
+    if _source_snapshot(Path(HERMES_ROOT)) != source_before:
+        raise AcceptanceFailure("legacy restore did not recover exact source")
+    if marker.exists():
+        raise AcceptanceFailure("legacy restore left the observer marker")
+    (legacy_evidence / "marker.absent.txt").write_text("absent\n")
+    if config.read_bytes() != config_before_rebind:
+        raise AcceptanceFailure("legacy restore changed unrelated config")
+    _require_other_plugin("legacy restore")
+    restored_owner = _owner_payload()
+    if (
+        restored_owner.get("schema") != 1
+        or restored_owner.get("version") != legacy_info.version
+    ):
+        raise AcceptanceFailure("legacy restore did not preserve the old owned member")
+
+    _cli(
+        evidence,
+        "legacy-uninstall",
+        [
+            "uninstall",
+            "--hermes-dir",
+            HERMES_ROOT,
+            "--hermes-home",
+            HERMES_HOME,
+            "--yes",
+        ],
+    )
+    member = Path(HERMES_HOME) / "plugins" / "hfc-runtime-dependency"
+    if member.exists():
+        raise AcceptanceFailure("legacy uninstall left the PM member")
+    if _source_snapshot(Path(HERMES_ROOT)) != source_before:
+        raise AcceptanceFailure("legacy uninstall changed source")
+    _require_other_plugin("legacy uninstall")
+
+    _install(evidence, name="legacy-fresh-install")
+    if _observer_status()["status"] != "active":
+        raise AcceptanceFailure("legacy fresh install did not activate observer")
+    selected = _selected_python()
+    selected_report = _run_runtime_verify(
+        selected,
+        wheel=_current_wheel(),
+        expected_sha256=wheel_info.sha256,
+        output=evidence / "legacy-fresh-runtime.json",
+        mode="pm",
+    )
+    if not _check_pm_installed(selected):
+        raise AcceptanceFailure("legacy PM member does not match candidate wheel")
+    candidate_owner = _owner_payload()
+    if (
+        candidate_owner.get("schema") != 2
+        or candidate_owner.get("version") != wheel_info.version
+    ):
+        raise AcceptanceFailure("fresh install did not publish the candidate owner")
+    if not old_generation.is_dir():
+        raise AcceptanceFailure("legacy recovery removed the old generation")
+    _require_other_plugin("fresh install")
+    return {
+        "selected_runtime": selected_report,
+        "restored_owner_schema": 1,
+        "candidate_owner_schema": 2,
+        "old_generation_preserved": True,
+        "other_plugin_preserved": True,
     }
 
 
@@ -1561,52 +2059,26 @@ def _legacy_observer_chain(
             backup_hashes[item.name] = _sha256_file(item)
     legacy_install_source = _source_snapshot(Path(HERMES_ROOT))
     legacy_source_changes = _source_diff(source_before, legacy_install_source)
-    config_before_rebind = (Path(HERMES_HOME) / "config.yaml").read_bytes()
-
-    other = Path(HERMES_HOME) / "plugins" / "hfc-acceptance-other"
-    other.mkdir(parents=True, exist_ok=True)
-    (other / "hfc_acceptance_other").mkdir(exist_ok=True)
-    (other / "hfc_acceptance_other" / "__init__.py").write_text("__version__ = '1'\n")
-    (other / "pyproject.toml").write_text(
-        '[project]\nname="hfc-acceptance-other"\nversion="1"\n'
-        'requires-python=">=3.11"\ndependencies=[]\n'
-        '[tool.uv]\npackage=true\n'
-    )
-    admission_code = (
-        "import json,sys;from pathlib import Path;"
-        f"sys.path.insert(0,{HERMES_ROOT!r});"
-        "from hermes_constants import get_hermes_home;"
-        "from pm.filesystem import file_digest;"
-        "from pm.plugins_state import read_home_selection;"
-        "from hermes_cli.plugins_admission import admit_plugin_set_change;"
-        "home=Path(get_hermes_home());config=read_home_selection(home) or {};"
-        "plugins=config.get('plugins') or {};enabled=list(plugins.get('enabled') or []);"
-        "disabled=list(plugins.get('disabled') or []);"
-        "expected=file_digest(home/'config.yaml') or 'missing';"
-        "enabled=list(dict.fromkeys([*enabled,'hfc-acceptance-other']));"
-        "admit_plugin_set_change(set(enabled),set(disabled),active_plugins_dir=home/'plugins',expected_config=expected,plugin='hfc-acceptance-other');"
-        "print(json.dumps({'enabled':enabled,'disabled':disabled}))"
-    )
-    _run_logged(
-        "legacy-pm-generation-change",
-        [str(_base_python()), "-B", "-I", "-c", admission_code],
-        evidence=evidence,
-        env=_clean_container_env(),
-        timeout=600,
-    )
-    new_selected = _selected_python()
-    if new_selected == old_generation:
-        raise AcceptanceFailure("legacy observer generation change was not observable")
-    if marker.read_bytes() != old_marker:
-        raise AcceptanceFailure("generation change altered the old observer marker")
-
     _install_current_cli(evidence)
+    new_selected, _generation_config, _new_binding = _advance_other_generation(
+        evidence, "legacy-pm-generation-change", old_generation, old_marker
+    )
+
     launch_families = _launch_families()
     launch_matches = [
         name for name, value in launch_families.items() if value == "match"
     ]
     if not launch_matches:
         raise AcceptanceFailure("legacy candidate launch source guard did not match")
+    config_before_rebind = (Path(HERMES_HOME) / "config.yaml").read_bytes()
+    enabled_before_rebind, _disabled_before_rebind = _plugin_selection()
+    _write_json(
+        evidence / "legacy-config-before-rebind.json",
+        {
+            "sha256": _sha256_bytes(config_before_rebind),
+            "enabled": enabled_before_rebind,
+        },
+    )
     marker_before_rebind = marker.read_bytes()
     _cli(
         evidence,
@@ -1621,74 +2093,14 @@ def _legacy_observer_chain(
             "--yes",
         ],
     )
-    if marker.read_bytes() == marker_before_rebind:
-        raise AcceptanceFailure("legacy rebind did not update the observer marker")
-    (legacy_evidence / "marker.after-rebind.json").write_bytes(marker.read_bytes())
-    if (Path(HERMES_HOME) / "config.yaml").read_bytes() != config_before_rebind:
-        raise AcceptanceFailure("legacy rebind changed unrelated config")
-
-    _install(evidence, name="legacy-reinstall-after-rebind")
-    selected = _selected_python()
-    selected_report = _run_runtime_verify(
-        selected,
-        wheel=_current_wheel(),
-        expected_sha256=wheel_info.sha256,
-        output=evidence / "legacy-selected-runtime.json",
-        mode="pm",
-    )
-    if _observer_status()["status"] != "active":
-        raise AcceptanceFailure("legacy observer is not active after rebind")
-    if not _check_pm_installed(selected):
-        raise AcceptanceFailure("legacy PM member does not match candidate wheel")
-    if _owner_payload().get("schema") != 2:
-        raise AcceptanceFailure("legacy rebind did not publish schema 2")
-
-    _cli(
+    recovery = _legacy_recover_after_rebind(
         evidence,
-        "legacy-restore",
-        [
-            "restore",
-            "--hermes-dir",
-            HERMES_ROOT,
-            "--hermes-home",
-            HERMES_HOME,
-            "--yes",
-        ],
-    )
-    if _source_snapshot(Path(HERMES_ROOT)) != source_before:
-        raise AcceptanceFailure("legacy restore did not recover exact source")
-    if marker.exists():
-        raise AcceptanceFailure("legacy restore left the observer marker")
-    (legacy_evidence / "marker.absent.txt").write_text("absent\n")
-    if _owner_payload().get("schema") != 2:
-        raise AcceptanceFailure("legacy restore removed the PM member")
-
-    _cli(
-        evidence,
-        "legacy-uninstall",
-        [
-            "uninstall",
-            "--hermes-dir",
-            HERMES_ROOT,
-            "--hermes-home",
-            HERMES_HOME,
-            "--yes",
-        ],
-    )
-    if (Path(HERMES_HOME) / "plugins" / "hfc-runtime-dependency").exists():
-        raise AcceptanceFailure("legacy uninstall left the PM member")
-    if _source_snapshot(Path(HERMES_ROOT)) != source_before:
-        raise AcceptanceFailure("legacy uninstall changed source")
-
-    _install(evidence, name="legacy-fresh-install")
-    if _observer_status()["status"] != "active":
-        raise AcceptanceFailure("legacy fresh install did not activate observer")
-    _run_runtime_verify(
-        _selected_python(),
-        wheel=_current_wheel(),
-        expected_sha256=wheel_info.sha256,
-        output=evidence / "legacy-fresh-runtime.json",
-        mode="pm",
+        wheel_info,
+        legacy_info,
+        source_before=source_before,
+        config_before_rebind=config_before_rebind,
+        marker_before_rebind=marker_before_rebind,
+        old_generation=old_generation,
     )
     _cli(
         evidence,
@@ -1702,6 +2114,7 @@ def _legacy_observer_chain(
             "--yes",
         ],
     )
+    _require_other_plugin("legacy final restore")
     _cli(
         evidence,
         "legacy-final-uninstall",
@@ -1714,6 +2127,7 @@ def _legacy_observer_chain(
             "--yes",
         ],
     )
+    _require_other_plugin("legacy final uninstall")
     final_pyc = _pyc_snapshot(Path(HERMES_ROOT))
     final_home_pyc = _pyc_snapshot(Path(HERMES_HOME))
     return {
@@ -1729,11 +2143,14 @@ def _legacy_observer_chain(
         "legacy_state_files": backup_hashes,
         "legacy_source_changes": legacy_source_changes,
         "launch_families": launch_matches,
-        "legacy_schema_upgraded": 2,
+        "legacy_restored_owner_schema": recovery["restored_owner_schema"],
+        "candidate_owner_schema": recovery["candidate_owner_schema"],
+        "old_generation_preserved": recovery["old_generation_preserved"],
+        "other_plugin_preserved": recovery["other_plugin_preserved"],
         "rebind_updated_marker": True,
         "restore_source_exact": True,
         "fresh_install": True,
-        "selected_runtime": selected_report,
+        "selected_runtime": recovery["selected_runtime"],
         "pyc_mode": pyc_mode,
         "pyc_baseline": pyc_baseline,
         "pyc_operation": {"root": pyc_before, "home": home_pyc_before},
@@ -1750,7 +2167,7 @@ def _legacy_phase(
     pyc_mode = os.environ.get("HFC_PYC_MODE", "preserved")
     if pyc_mode not in {"preserved", "cleared"}:
         raise AcceptanceFailure("HFC_PYC_MODE is invalid")
-    _seed(Path(HERMES_HOME) / "config.yaml")
+    _seed_legacy_config(evidence)
     source_before = _source_snapshot(Path(HERMES_ROOT))
     generations_before = _generation_names(Path(HERMES_HOME))
     pyc_baseline = _pyc_baseline(
@@ -1765,6 +2182,7 @@ def _legacy_phase(
     )
     pyc_before = pyc_baseline["operation_root"]
     home_pyc_before = pyc_baseline["operation_home"]
+    _register_other_plugin(evidence, "legacy-other-before-install")
     legacy_wheel = _legacy_wheel()
     legacy_code = (
         "import json,sys;from pathlib import Path;"
@@ -2065,6 +2483,13 @@ def _container_main(argv: Sequence[str]) -> int:
     args, _ = parser.parse_known_args(argv)
     evidence = args.evidence or Path(CONTAINER_EVIDENCE)
     evidence.mkdir(parents=True, exist_ok=True)
+    if not args.container_verify:
+        _write_json(
+            evidence / "capture-mode.json",
+            {
+                "diagnostic_wrapper": os.environ.get("HFC_CAPTURE_ENABLE") == "1",
+            },
+        )
     phase = "diagnose" if args.container_diagnose else args.container_phase
     try:
         if args.container_verify:
@@ -2087,7 +2512,11 @@ def _container_main(argv: Sequence[str]) -> int:
         elif phase == "legacy":
             if legacy_info is None:
                 raise AcceptanceFailure("legacy wheel is not mounted")
-            result = _legacy_phase(evidence, wheel_info, legacy_info)
+            try:
+                result = _legacy_phase(evidence, wheel_info, legacy_info)
+            except Exception:
+                _failure_snapshot(evidence, "legacy")
+                raise
         elif phase == "diagnose":
             result = _diagnose_phase(evidence, wheel_info)
         else:
@@ -2127,6 +2556,7 @@ def _docker_run_command(
     legacy_name: str | None,
     phase: str,
     pyc_mode: str,
+    capture_enable: bool,
     uid: int,
     gid: int,
     tool: Path,
@@ -2172,6 +2602,8 @@ def _docker_run_command(
     ]
     if legacy_name is not None:
         command.extend(["--env", f"HFC_LEGACY_WHEEL_FILENAME={legacy_name}"])
+    if capture_enable:
+        command.extend(["--env", "HFC_CAPTURE_ENABLE=1"])
     phase_flag = "--container-diagnose" if phase == "diagnose" else "--container-phase"
     phase_args = [] if phase == "diagnose" else [phase]
     command.extend(
@@ -2267,6 +2699,7 @@ def _run_host_phase(
     legacy: Path | None,
     phase: str,
     pyc_mode: str,
+    capture_enable: bool,
     tool: Path,
 ) -> int:
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -2296,6 +2729,7 @@ def _run_host_phase(
         legacy_name=legacy_name,
         phase=phase,
         pyc_mode=pyc_mode,
+        capture_enable=capture_enable,
         uid=uid,
         gid=gid,
         tool=tool,
@@ -2322,6 +2756,7 @@ def _host_main(argv: Sequence[str]) -> int:
     parser.add_argument("--keep-state", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--diagnose", action="store_true")
+    parser.add_argument("--capture-enable", action="store_true")
     parser.add_argument(
         "--pyc-mode",
         choices=("preserved", "cleared"),
@@ -2342,6 +2777,7 @@ def _host_main(argv: Sequence[str]) -> int:
         plan = {
             "schema": 1,
             "mode": "diagnose" if args.diagnose else "acceptance",
+            "diagnostic_wrapper": args.capture_enable,
             "pyc_mode": args.pyc_mode,
             "wheel": wheel_info.as_dict(),
             "legacy_wheel": legacy_info.as_dict() if legacy_info else None,
@@ -2387,6 +2823,7 @@ def _host_main(argv: Sequence[str]) -> int:
                             legacy=legacy_info.path if legacy_info is not None else None,
                             phase=phase,
                             pyc_mode=args.pyc_mode,
+                            capture_enable=args.capture_enable,
                             tool=Path(__file__).resolve(),
                         )
                         if code:

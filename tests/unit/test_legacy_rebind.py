@@ -276,6 +276,63 @@ def test_runtime_verification_requires_owned_member_and_all_resources(tmp_path, 
         legacy_rebind._verify_runtime(binding)
 
 
+def test_runtime_verification_uses_owned_member_version(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_rebind, pm_dependency
+    binding = SimpleNamespace(hermes_home=tmp_path, runtime_python=Path(sys.executable))
+    owner = {"schema": 1, "version": "5.0.7"}
+    probes = []
+    monkeypatch.setattr(pm_dependency, "_owned", lambda _: owner)
+    monkeypatch.setattr(pm_dependency, "verify_installed", lambda *a: True)
+    monkeypatch.setattr(
+        plugin,
+        "probe_plugin_entrypoint",
+        lambda target, *, expected_version: probes.append(
+            (target, expected_version)
+        )
+        or SimpleNamespace(status="verified"),
+    )
+
+    legacy_rebind._verify_runtime(binding)
+
+    assert probes == [(binding, "5.0.7")]
+
+
+@pytest.mark.parametrize("status", ["failed", "unknown"])
+def test_runtime_verification_rejects_unverified_owned_entrypoint(
+    tmp_path, monkeypatch, status
+):
+    from hermes_feishu_card.install import legacy_rebind, pm_dependency
+    binding = SimpleNamespace(hermes_home=tmp_path, runtime_python=Path(sys.executable))
+    owner = {"schema": 1, "version": "5.0.7"}
+    monkeypatch.setattr(pm_dependency, "_owned", lambda _: owner)
+    monkeypatch.setattr(pm_dependency, "verify_installed", lambda *a: True)
+    monkeypatch.setattr(
+        plugin,
+        "probe_plugin_entrypoint",
+        lambda *a, **k: SimpleNamespace(status=status),
+    )
+
+    with pytest.raises(ValueError, match="entrypoint_unverified"):
+        legacy_rebind._verify_runtime(binding)
+
+
+def test_runtime_verification_rejects_owner_change_during_probe(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_rebind, pm_dependency
+    binding = SimpleNamespace(hermes_home=tmp_path, runtime_python=Path(sys.executable))
+    owner = {"schema": 1, "version": "5.0.7"}
+    owners = iter((owner, {**owner, "version": "5.0.8"}))
+    monkeypatch.setattr(pm_dependency, "_owned", lambda _: next(owners))
+    monkeypatch.setattr(pm_dependency, "verify_installed", lambda *a: True)
+    monkeypatch.setattr(
+        plugin,
+        "probe_plugin_entrypoint",
+        lambda *a, **k: SimpleNamespace(status="verified"),
+    )
+
+    with pytest.raises(ValueError, match="pm_owner_changed"):
+        legacy_rebind._verify_runtime(binding)
+
+
 def test_rebound_evidence_allows_next_verified_runtime_generation(admission, monkeypatch):
     from hermes_feishu_card.install import legacy_rebind
     binding, _ = admission
