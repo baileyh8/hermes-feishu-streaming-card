@@ -539,6 +539,7 @@ jobs:
           tests/unit/test_subscription_usage.py
           tests/unit/test_pm_dependency.py
           tests/unit/test_pm_wheel_store.py
+          tests/unit/test_launch_source_paths.py
           tests/unit/test_legacy_rebind.py
           tests/unit/test_text.py
           tests/integration/test_card_freeze.py

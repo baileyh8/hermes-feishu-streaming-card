@@ -268,6 +268,14 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def _is_reparse(metadata: os.stat_result) -> bool:
+    """Windows junctions can report directory mode without symlink mode."""
+    return bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+
+
 def verify_family(root: Path, family: str) -> None:
     if family not in FAMILIES or any(
         _digest(root / name) != digest for name, digest in FAMILIES[family].items()
@@ -301,6 +309,13 @@ def _launch_path(root: Path, relative: str) -> Path:
                 stage="launch",
                 source=relative,
             )
+        if _is_reparse(metadata):
+            raise ConfigBytesRefused(
+                "official launch source is a reparse point",
+                code="launch-source-reparse",
+                stage="launch",
+                source=relative,
+            )
         if current != root / Path(relative) and not stat.S_ISDIR(metadata.st_mode):
             raise ConfigBytesRefused(
                 "official launch source parent is not a directory",
@@ -327,6 +342,12 @@ def _verify_launch_root(root: Path) -> Path:
             code="launch-root-symlink",
             stage="launch",
         )
+    if _is_reparse(root_metadata):
+        raise ConfigBytesRefused(
+            "official launch root is a reparse point",
+            code="launch-root-reparse",
+            stage="launch",
+        )
     if not stat.S_ISDIR(root_metadata.st_mode):
         raise ConfigBytesRefused(
             "official launch root is not a directory",
@@ -346,6 +367,12 @@ def _verify_launch_root(root: Path) -> Path:
             raise ConfigBytesRefused(
                 "official launch ancestor is a symlink",
                 code="launch-ancestor-symlink",
+                stage="launch",
+            )
+        if _is_reparse(metadata):
+            raise ConfigBytesRefused(
+                "official launch ancestor is a reparse point",
+                code="launch-ancestor-reparse",
                 stage="launch",
             )
     return absolute
@@ -396,6 +423,13 @@ def verify_launch_sources(root: Path, *, family: str | None = None) -> str:
             raise ConfigBytesRefused(
                 "official launch source is not a regular file",
                 code="launch-source-type",
+                stage="launch",
+                source=relative,
+            )
+        if _is_reparse(metadata):
+            raise ConfigBytesRefused(
+                "official launch source is a reparse point",
+                code="launch-source-reparse",
                 stage="launch",
                 source=relative,
             )
@@ -521,12 +555,15 @@ def deny(reason,stage='audit',source=None):
     sys.stderr.write('HFC_CONFIG_PLAN_DENY '+json.dumps(report,sort_keys=True,separators=(',',':'))+'\n')
     sys.stderr.flush()
     os._exit(73)
+def reparse(metadata):
+    return bool(getattr(metadata,'st_file_attributes',0)
+                & getattr(stat,'FILE_ATTRIBUTE_REPARSE_POINT',0x400))
 def nonsymlink_path(value):
     path=Path(os.path.abspath(os.fspath(value)))
     for part in (path,*path.parents):
         try: metadata=part.lstat()
         except OSError: return False
-        if stat.S_ISLNK(metadata.st_mode): return False
+        if stat.S_ISLNK(metadata.st_mode) or reparse(metadata): return False
     return True
 def has_symlink(value):
     path=Path(os.path.abspath(os.fspath(value)))
@@ -534,7 +571,7 @@ def has_symlink(value):
         try: metadata=part.lstat()
         except FileNotFoundError: continue
         except OSError: return True
-        if stat.S_ISLNK(metadata.st_mode): return True
+        if stat.S_ISLNK(metadata.st_mode) or reparse(metadata): return True
     return False
 library_roots=[]
 for key in ('stdlib','platstdlib','purelib','platlib'):

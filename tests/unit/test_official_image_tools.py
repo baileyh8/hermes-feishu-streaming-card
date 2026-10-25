@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import zipfile
@@ -86,6 +87,7 @@ def test_acceptance_docker_command_mounts_wheel_directory(tmp_path):
     assert f"HFC_WHEEL_FILENAME={WHEEL_NAME}" in command
     assert "/opt/hfc/wheel.whl" not in " ".join(command)
     assert "--container-diagnose" in " ".join(command)
+    assert "python -B -I /opt/hfc/tool.py" in " ".join(command)
     assert not any("PYTHONPATH" in value for value in command)
     assert not any("HERMES_INSTALL_ROOT" in value for value in command)
 
@@ -163,3 +165,94 @@ def test_pyc_baseline_and_cleared_mode_are_bounded(tmp_path):
     assert cleared["files"] == 2
     assert acceptance._pyc_snapshot(root)["count"] == 0
     assert not cache.exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX venv launcher symlinks")
+def test_python_launcher_accepts_valid_symlink_and_keeps_original_path(tmp_path):
+    target = tmp_path / "python-real"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o755)
+    launcher = tmp_path / "bin" / "python"
+    launcher.parent.mkdir()
+    launcher.symlink_to(target)
+    assert acceptance._python_launcher(launcher, "launcher") == launcher
+    assert acceptance._python_launcher(target, "target") == target
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX venv launcher symlinks")
+def test_python_launcher_rejects_broken_directory_and_nonexec_targets(tmp_path):
+    broken = tmp_path / "broken"
+    broken.symlink_to(tmp_path / "missing")
+    with pytest.raises(acceptance.AcceptanceFailure):
+        acceptance._python_launcher(broken, "broken")
+    directory = tmp_path / "directory"
+    directory.mkdir()
+    directory_link = tmp_path / "directory-link"
+    directory_link.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(acceptance.AcceptanceFailure):
+        acceptance._python_launcher(directory_link, "directory")
+    non_exec = tmp_path / "non-exec"
+    non_exec.write_text("not executable\n")
+    non_exec.chmod(0o644)
+    with pytest.raises(acceptance.AcceptanceFailure):
+        acceptance._python_launcher(non_exec, "non-exec")
+
+
+def test_bootstrap_uses_supported_ensurepip_and_pip_flags(tmp_path, monkeypatch):
+    calls = []
+
+    def record(name, command, **kwargs):
+        calls.append((name, list(command)))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        acceptance,
+        "_base_python",
+        lambda: Path("/opt/hermes/.venv/bin/python"),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_current_wheel",
+        lambda: Path("/opt/hfc/wheels/hermes_feishu_streaming_card-5.0.8-py3-none-any.whl"),
+    )
+    monkeypatch.setattr(acceptance, "_run_logged", record)
+    acceptance._bootstrap_pip(tmp_path)
+    assert [name for name, _ in calls] == ["ensurepip", "install-wheel"]
+    assert "--no-compile" not in calls[0][1]
+    assert "--no-compile" in calls[1][1]
+
+
+def test_pyc_baseline_prepares_before_clearing(tmp_path):
+    root = tmp_path / "root"
+    home = tmp_path / "home"
+    (root / "cache").mkdir(parents=True)
+    home.mkdir()
+    (root / "cache" / "image.pyc").write_bytes(b"image")
+
+    def prepare():
+        (root / "cache" / "bootstrap.pyc").write_bytes(b"bootstrap")
+
+    baseline = acceptance._pyc_baseline(
+        root,
+        home,
+        "cleared",
+        prepare=prepare,
+        evidence=tmp_path / "evidence",
+    )
+    assert baseline["image_root"]["count"] == 1
+    assert baseline["bootstrap_root"]["count"] == 2
+    assert baseline["cleared"]["hermes"]["files"] == 2
+    assert baseline["operation_root"]["count"] == 0
+
+
+def test_base_cli_uses_controller_bytecode_guard(monkeypatch):
+    monkeypatch.setattr(
+        acceptance,
+        "_base_python",
+        lambda: Path("/opt/hermes/.venv/bin/python"),
+    )
+    assert acceptance._base_cli()[:3] == [
+        "/opt/hermes/.venv/bin/python",
+        "-B",
+        "-I",
+    ]

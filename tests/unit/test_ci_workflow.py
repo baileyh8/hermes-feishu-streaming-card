@@ -25,6 +25,10 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     assert ("v0.22.5", "cleared") in identities
     assert any(case["legacy"] for case in cases)
     assert "matrix.pyc_mode" in job["name"]
+    windows = workflow["jobs"]["pytest-windows"]
+    assert "tests/unit/test_launch_source_paths.py" in next(
+        step["run"] for step in windows["steps"] if step.get("name") == "Test"
+    )
     command = next(step["run"] for step in job["steps"]
                    if step.get("name") == "Run pinned official image acceptance")
     assert "tools/official_image_acceptance.py" in command

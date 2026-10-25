@@ -327,11 +327,12 @@ def _container() -> int:
     )
     steps: list[dict[str, Any]] = []
     for name, command in (
-        ("ensurepip", [str(python), "-m", "ensurepip", "--upgrade"]),
+        ("ensurepip", [str(python), "-B", "-m", "ensurepip", "--upgrade"]),
         (
             "install",
             [
                 str(python),
+                "-B",
                 "-m",
                 "pip",
                 "install",
@@ -407,6 +408,7 @@ def _container() -> int:
         result = _run(
             [
                 str(python),
+                "-B",
                 "-I",
                 "-c",
                 _diagnostic_code(),
@@ -611,7 +613,7 @@ def _host(argv: Sequence[str]) -> int:
             f"{evidence}:{EVIDENCE}",
             IMAGE,
             "-lc",
-            f"exec /opt/hermes/.venv/bin/python -I {TOOL} --container-diagnose",
+            f"exec /opt/hermes/.venv/bin/python -B -I {TOOL} --container-diagnose",
         ]
         result = _run(command, timeout=1800)
         _write(

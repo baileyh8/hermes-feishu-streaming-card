@@ -50,7 +50,8 @@
       "tests/unit/test_legacy_rebind.py",
       "tests/integration/test_legacy_observer_install.py",
       "tests/integration/test_pm_rebind.py",
-      "tests/integration/test_official_enable_root.py"
+      "tests/integration/test_official_enable_root.py",
+      "tests/unit/test_launch_source_paths.py"
     ],
     "process": [
       "tests/unit/test_process.py",

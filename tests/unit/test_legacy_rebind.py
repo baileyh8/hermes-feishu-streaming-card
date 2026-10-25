@@ -11,6 +11,30 @@ import pytest
 import yaml
 
 from hermes_feishu_card.install import legacy_observer, plugin
+from hermes_feishu_card.install import plugin_config_bytes
+from hermes_feishu_card.install.plugin_config_bytes import ConfigBytesPlan
+
+
+class _ExactPlan(ConfigBytesPlan):
+    def verify_source(self) -> None:
+        pass
+
+
+def _exact_plan(postimage: bytes) -> ConfigBytesPlan:
+    return _ExactPlan(postimage, Path("/verified"), "fixed")
+
+
+def _copy_fixed_support(root: Path) -> None:
+    configured = os.environ.get("HFC_FIXED_TAG_SOURCE_ROOT")
+    if not configured:
+        pytest.skip("HFC_FIXED_TAG_SOURCE_ROOT required for launch guard")
+    source = Path(configured)
+    support = {"hermes_cli/main.py", "hermes_cli/__init__.py"}
+    support.update(plugin_config_bytes.FAMILIES["fixed"])
+    for relative in support:
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source / relative).read_bytes())
 
 
 @pytest.fixture
@@ -21,6 +45,7 @@ def admission(tmp_path, monkeypatch):
     root, home = tmp_path / "checkout", tmp_path / "home"
     shutil.copytree(Path(__file__).parents[1] / "fixtures/hermes_decomposed", root,
                     ignore=shutil.ignore_patterns("__pycache__"))
+    _copy_fixed_support(root)
     (root / "VERSION").write_text("0.22.2\n")
     home.mkdir()
     config = home / "config.yaml"
@@ -31,7 +56,7 @@ def admission(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, "resolve_runtime_binding", lambda **_: binding)
     monkeypatch.setattr(plugin, "probe_plugin_entrypoint", lambda _: SimpleNamespace(status="verified"))
     monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda b, p, raw, desired, enabled:
-        SimpleNamespace(postimage=yaml.safe_dump(desired, sort_keys=False).encode(), verify_source=lambda: None))
+        _exact_plan(yaml.safe_dump(desired, sort_keys=False).encode()))
     def enable(_):
         desired, _ = plugin._expected_enabled_config(plugin._load_config_mapping(config.read_bytes()))
         config.write_text(yaml.safe_dump(desired, sort_keys=False))

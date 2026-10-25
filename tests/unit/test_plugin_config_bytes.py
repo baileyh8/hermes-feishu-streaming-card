@@ -1,6 +1,5 @@
 """Byte ownership at the official-enable boundary; config semantics are not receipts."""
 
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -146,74 +145,6 @@ def test_config_plan_rejects_a_stamp_that_did_not_come_from_its_writer():
     )
     assert not plan.matches_expected(expected)
     assert not plan.matches_expected({**expected, "_config_version": 52})
-
-
-def _launch_fixture(tmp_path, monkeypatch):
-    from hermes_feishu_card.install import plugin_config_bytes as planner
-
-    root = tmp_path / "source"
-    package = root / "hermes_cli"
-    package.mkdir(parents=True)
-    (package / "config.py").write_text("# writer source\n")
-    (package / "__init__.py").write_text("# package init\n")
-    (package / "main.py").write_text("# launch main\n")
-    sources = {
-        "hermes_cli/config.py": hashlib.sha256((package / "config.py").read_bytes()).hexdigest()
-    }
-    launch = {
-        "hermes_cli/__init__.py": hashlib.sha256((package / "__init__.py").read_bytes()).hexdigest(),
-        "hermes_cli/main.py": hashlib.sha256((package / "main.py").read_bytes()).hexdigest(),
-    }
-    monkeypatch.setattr(planner, "FAMILIES", {"synthetic": sources})
-    monkeypatch.setattr(planner, "LAUNCH_SOURCES", {"synthetic": launch})
-    return planner, root, package
-
-
-def test_launch_sources_require_exact_non_symlink_bytes(tmp_path, monkeypatch):
-    planner, root, package = _launch_fixture(tmp_path, monkeypatch)
-    assert planner.verify_launch_sources(root, family="synthetic") == "synthetic"
-
-    (package / "main.py").write_text("# changed launch main\n")
-    with pytest.raises(planner.ConfigBytesRefused) as caught:
-        planner.verify_launch_sources(root, family="synthetic")
-    assert caught.value.code == "launch-source-drift"
-    assert caught.value.source == "hermes_cli/main.py"
-
-
-def test_every_writer_family_has_a_launch_source_contract():
-    from hermes_feishu_card.install import plugin_config_bytes as planner
-
-    assert set(planner.FAMILIES) <= set(planner.LAUNCH_SOURCES)
-    for sources in planner.LAUNCH_SOURCES.values():
-        assert set(sources) == {"hermes_cli/main.py", "hermes_cli/__init__.py"}
-        assert all(len(digest) == 64 for digest in sources.values())
-
-
-def test_launch_sources_reject_symlinks_and_ancestor_symlinks(tmp_path, monkeypatch):
-    planner, root, package = _launch_fixture(tmp_path, monkeypatch)
-    target = tmp_path / "outside-main.py"
-    target.write_text("# outside\n")
-    (package / "main.py").unlink()
-    (package / "main.py").symlink_to(target)
-    with pytest.raises(planner.ConfigBytesRefused) as caught:
-        planner.verify_launch_sources(root, family="synthetic")
-    assert caught.value.code == "launch-source-symlink"
-
-    linked_root = tmp_path / "linked-root"
-    linked_root.symlink_to(root, target_is_directory=True)
-    with pytest.raises(planner.ConfigBytesRefused) as caught:
-        planner.verify_launch_sources(linked_root, family="synthetic")
-    assert caught.value.code == "launch-root-symlink"
-
-    parent = tmp_path / "real-parent"
-    parent.mkdir()
-    nested = parent / "source"
-    nested.mkdir()
-    linked_parent = tmp_path / "linked-parent"
-    linked_parent.symlink_to(parent, target_is_directory=True)
-    with pytest.raises(planner.ConfigBytesRefused) as caught:
-        planner.verify_launch_sources(linked_parent / "source", family="synthetic")
-    assert caught.value.code == "launch-ancestor-symlink"
 
 
 def test_unknown_writer_refuses_before_any_child(tmp_path, monkeypatch):

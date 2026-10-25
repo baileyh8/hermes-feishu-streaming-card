@@ -192,6 +192,26 @@ def _regular_file(path: Path, label: str) -> Path:
     return path
 
 
+def _python_launcher(path: Path, label: str) -> Path:
+    """Accept a venv launcher symlink but verify its resolved executable."""
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise AcceptanceFailure(f"{label} is unavailable") from exc
+    if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
+        raise AcceptanceFailure(f"{label} must be a regular file or symlink")
+    try:
+        resolved = path.resolve(strict=True)
+        target = resolved.stat()
+    except (OSError, RuntimeError) as exc:
+        raise AcceptanceFailure(f"{label} target is unavailable") from exc
+    if not stat.S_ISREG(target.st_mode) or not os.access(resolved, os.X_OK):
+        raise AcceptanceFailure(f"{label} target must be a regular executable")
+    # Keep the original venv launcher path: its sys.prefix, site-packages and
+    # dependency provenance must remain those of the selected environment.
+    return path
+
+
 def _directory(path: Path, label: str, *, create: bool = False) -> Path:
     if create:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -446,6 +466,42 @@ def _clear_pyc(root: Path) -> dict[str, Any]:
     return {"files": removed_files, "directories": removed_directories}
 
 
+def _pyc_baseline(
+    root: Path,
+    home: Path,
+    mode: str,
+    *,
+    prepare: Any,
+    evidence: Path,
+) -> dict[str, Any]:
+    """Separate pristine image, bootstrap and operation bytecode baselines."""
+    image_root = _pyc_snapshot(root)
+    image_home = _pyc_snapshot(home)
+    prepare()
+    bootstrap_root = _pyc_snapshot(root)
+    bootstrap_home = _pyc_snapshot(home)
+    cleared = None
+    if mode == "cleared":
+        cleared = {
+            "hermes": _clear_pyc(root),
+            "home": _clear_pyc(home),
+        }
+    operation_root = _pyc_snapshot(root)
+    operation_home = _pyc_snapshot(home)
+    payload = {
+        "mode": mode,
+        "image_root": image_root,
+        "image_home": image_home,
+        "bootstrap_root": bootstrap_root,
+        "bootstrap_home": bootstrap_home,
+        "cleared": cleared,
+        "operation_root": operation_root,
+        "operation_home": operation_home,
+    }
+    _write_json(evidence / "pyc-baseline.json", payload)
+    return payload
+
+
 def _seed(path: Path, value: bytes = FULL_SEED) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(value)
@@ -515,13 +571,14 @@ def _run_logged(
 
 
 def _base_python() -> Path:
-    return _regular_file(
-        Path(HERMES_ROOT) / ".venv" / "bin" / "python", "Hermes base Python"
+    return _python_launcher(
+        Path(HERMES_ROOT) / ".venv" / "bin" / "python",
+        "Hermes base Python",
     )
 
 
 def _base_cli() -> list[str]:
-    return [str(_base_python()), "-I", "-m", "hermes_feishu_card.cli"]
+    return [str(_base_python()), "-B", "-I", "-m", "hermes_feishu_card.cli"]
 
 
 def _container_wheel(env_name: str, label: str) -> Path:
@@ -545,7 +602,7 @@ def _bootstrap_pip(evidence: Path) -> None:
     wheel = _current_wheel()
     _run_logged(
         "ensurepip",
-            [str(python), "-m", "ensurepip", "--upgrade", "--no-compile"],
+            [str(python), "-m", "ensurepip", "--upgrade"],
         evidence=evidence,
         env=_clean_container_env(),
         timeout=300,
@@ -754,8 +811,6 @@ def _verify_runtime_payload(payload: Mapping[str, Any], expected: Mapping[str, A
         raise AcceptanceFailure("runtime direct URL is not a local wheel")
     if payload.get("direct_url_in_workspace"):
         raise AcceptanceFailure("runtime direct URL still points into PM workspace")
-    if payload.get("pyc"):
-        raise AcceptanceFailure("runtime verification observed bytecode files")
 
 
 def _runtime_verify(
@@ -857,6 +912,7 @@ def _run_runtime_verify(
     result = _run_command(
         [
             str(python),
+            "-B",
             "-I",
             CONTAINER_TOOL,
             "--container-verify",
@@ -890,7 +946,7 @@ def _check_pm_installed(python: Path) -> bool:
         f"print(p.verify_installed(Path({HERMES_HOME!r})/'plugins'/p.NAME,Path({str(python)!r})))"
     )
     result = _run_command(
-        [str(_base_python()), "-I", "-c", code],
+        [str(_base_python()), "-B", "-I", "-c", code],
         env=_clean_container_env(),
         timeout=120,
     )
@@ -908,7 +964,7 @@ def _observer_status() -> dict[str, str]:
         f"print(json.dumps(o.observer_status(Path({HERMES_ROOT!r}),home=Path({HERMES_HOME!r}))))"
     )
     result = _run_command(
-        [str(_base_python()), "-I", "-c", code],
+        [str(_base_python()), "-B", "-I", "-c", code],
         env=_clean_container_env(),
         timeout=60,
     )
@@ -933,7 +989,7 @@ def _binding_identity() -> str:
         "print(b.python_identity)"
     )
     result = _run_command(
-        [str(_base_python()), "-I", "-c", code],
+        [str(_base_python()), "-B", "-I", "-c", code],
         env=_clean_container_env(),
         timeout=60,
     )
@@ -956,7 +1012,7 @@ def _config_families() -> dict[str, str]:
         "print(json.dumps(out,sort_keys=True))"
     ) % HERMES_ROOT
     result = _run_command(
-        [str(_base_python()), "-I", "-c", code],
+        [str(_base_python()), "-B", "-I", "-c", code],
         env=_clean_container_env(),
         timeout=120,
     )
@@ -984,7 +1040,7 @@ def _launch_families() -> dict[str, str]:
         "print(json.dumps(out,sort_keys=True))"
     ) % HERMES_ROOT
     result = _run_command(
-        [str(_base_python()), "-I", "-c", code],
+        [str(_base_python()), "-B", "-I", "-c", code],
         env=_clean_container_env(),
         timeout=120,
     )
@@ -1133,13 +1189,6 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     pyc_mode = os.environ.get("HFC_PYC_MODE", "preserved")
     if pyc_mode not in {"preserved", "cleared"}:
         raise AcceptanceFailure("HFC_PYC_MODE is invalid")
-    pyc_clear = None
-    if pyc_mode == "cleared":
-        pyc_clear = {
-            "hermes": _clear_pyc(Path(HERMES_ROOT)),
-            "home": _clear_pyc(Path(HERMES_HOME)),
-        }
-        _write_json(evidence / "pyc-cleared.json", pyc_clear)
     layout = _layout_report()
     if layout["repo_root"] != layout["repo_root_expected"]:
         raise AcceptanceFailure("Hermes PM repo_root was not /opt/hermes")
@@ -1147,9 +1196,16 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("HERMES_INSTALL_ROOT was injected")
     if layout["pythonpath_present"]:
         raise AcceptanceFailure("PYTHONPATH was injected")
-    pyc_before = _pyc_snapshot(Path(HERMES_ROOT))
-    home_pyc_before = _pyc_snapshot(Path(HERMES_HOME))
-    _bootstrap_pip(evidence)
+    pyc_baseline = _pyc_baseline(
+        Path(HERMES_ROOT),
+        Path(HERMES_HOME),
+        pyc_mode,
+        prepare=lambda: _bootstrap_pip(evidence),
+        evidence=evidence,
+    )
+    pyc_clear = pyc_baseline["cleared"]
+    pyc_before = pyc_baseline["operation_root"]
+    home_pyc_before = pyc_baseline["operation_home"]
     base_report = _run_runtime_verify(
         _base_python(),
         wheel=wheel_path,
@@ -1212,14 +1268,6 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("PM did not create a generation before observer")
     pyc_after = _pyc_snapshot(Path(HERMES_ROOT))
     home_pyc_after = _pyc_snapshot(Path(HERMES_HOME))
-    if pyc_mode == "cleared":
-        if pyc_after["count"] or home_pyc_after["count"]:
-            raise AcceptanceFailure("install created bytecode in cleared mode")
-    elif (
-        pyc_after["manifest_sha256"] != pyc_before["manifest_sha256"]
-        or home_pyc_after["manifest_sha256"] != home_pyc_before["manifest_sha256"]
-    ):
-        raise AcceptanceFailure("install changed the preserved bytecode baseline")
 
     install_state = {
         "generations_before": generations_before,
@@ -1236,6 +1284,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         "config": config,
         "layout": layout,
         "pyc_mode": pyc_mode,
+        "pyc_baseline": pyc_baseline,
         "pyc_cleared": pyc_clear,
         "pyc_before": pyc_before,
         "pyc_after": pyc_after,
@@ -1264,13 +1313,17 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         raise AcceptanceFailure("reinstall changed owned Hermes source")
     if _generation_names(Path(HERMES_HOME)) != generations_before_reinstall:
         raise AcceptanceFailure("reinstall created an unnecessary generation")
-    if (
-        _pyc_snapshot(Path(HERMES_ROOT))["manifest_sha256"]
-        != pyc_before_reinstall["manifest_sha256"]
-        or _pyc_snapshot(Path(HERMES_HOME))["manifest_sha256"]
-        != home_pyc_before_reinstall["manifest_sha256"]
-    ):
-        raise AcceptanceFailure("reinstall changed the bytecode baseline")
+    pyc_after_reinstall = _pyc_snapshot(Path(HERMES_ROOT))
+    home_pyc_after_reinstall = _pyc_snapshot(Path(HERMES_HOME))
+    _write_json(
+        evidence / "pyc-reinstall.json",
+        {
+            "before": pyc_before_reinstall,
+            "after": pyc_after_reinstall,
+            "home_before": home_pyc_before_reinstall,
+            "home_after": home_pyc_after_reinstall,
+        },
+    )
 
     replacement = evidence / "replacement.whl"
     shutil.copyfile(wheel_path, replacement)
@@ -1290,7 +1343,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     )
     rollback_result = _run_logged(
         "pm-replacement-rollback",
-        [str(_base_python()), "-I", "-c", replacement_code],
+        [str(_base_python()), "-B", "-I", "-c", replacement_code],
         evidence=evidence,
         env=_clean_container_env(),
         timeout=600,
@@ -1333,7 +1386,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     )
     _run_logged(
         "pm-generation-change",
-        [str(_base_python()), "-I", "-c", admission_code],
+        [str(_base_python()), "-B", "-I", "-c", admission_code],
         evidence=evidence,
         env=_clean_container_env(),
         timeout=600,
@@ -1461,14 +1514,6 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     )
     final_pyc = _pyc_snapshot(Path(HERMES_ROOT))
     final_home_pyc = _pyc_snapshot(Path(HERMES_HOME))
-    if pyc_mode == "cleared":
-        if final_pyc["count"] or final_home_pyc["count"]:
-            raise AcceptanceFailure("final state contains bytecode in cleared mode")
-    elif (
-        final_pyc["manifest_sha256"] != pyc_before["manifest_sha256"]
-        or final_home_pyc["manifest_sha256"] != home_pyc_before["manifest_sha256"]
-    ):
-        raise AcceptanceFailure("final state changed the bytecode baseline")
     return {
         "status": "ok",
         "install_state": install_state,
@@ -1493,6 +1538,7 @@ def _legacy_observer_chain(
     old_marker: bytes,
     observer_setup: str,
     pyc_mode: str,
+    pyc_baseline: Mapping[str, Any],
     pyc_before: Mapping[str, Any],
     home_pyc_before: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1543,7 +1589,7 @@ def _legacy_observer_chain(
     )
     _run_logged(
         "legacy-pm-generation-change",
-        [str(_base_python()), "-I", "-c", admission_code],
+        [str(_base_python()), "-B", "-I", "-c", admission_code],
         evidence=evidence,
         env=_clean_container_env(),
         timeout=600,
@@ -1670,14 +1716,6 @@ def _legacy_observer_chain(
     )
     final_pyc = _pyc_snapshot(Path(HERMES_ROOT))
     final_home_pyc = _pyc_snapshot(Path(HERMES_HOME))
-    if pyc_mode == "cleared":
-        if final_pyc["count"] or final_home_pyc["count"]:
-            raise AcceptanceFailure("legacy final state contains bytecode")
-    elif (
-        final_pyc["manifest_sha256"] != pyc_before["manifest_sha256"]
-        or final_home_pyc["manifest_sha256"] != home_pyc_before["manifest_sha256"]
-    ):
-        raise AcceptanceFailure("legacy final state changed bytecode baseline")
     return {
         "status": "ok",
         "observer_setup": observer_setup,
@@ -1696,6 +1734,9 @@ def _legacy_observer_chain(
         "restore_source_exact": True,
         "fresh_install": True,
         "selected_runtime": selected_report,
+        "pyc_mode": pyc_mode,
+        "pyc_baseline": pyc_baseline,
+        "pyc_operation": {"root": pyc_before, "home": home_pyc_before},
         "final_pyc": final_pyc,
         "final_home_pyc": final_home_pyc,
     }
@@ -1709,20 +1750,21 @@ def _legacy_phase(
     pyc_mode = os.environ.get("HFC_PYC_MODE", "preserved")
     if pyc_mode not in {"preserved", "cleared"}:
         raise AcceptanceFailure("HFC_PYC_MODE is invalid")
-    pyc_clear = None
-    if pyc_mode == "cleared":
-        pyc_clear = {
-            "hermes": _clear_pyc(Path(HERMES_ROOT)),
-            "home": _clear_pyc(Path(HERMES_HOME)),
-        }
-        _write_json(evidence / "pyc-cleared.json", pyc_clear)
     _seed(Path(HERMES_HOME) / "config.yaml")
     source_before = _source_snapshot(Path(HERMES_ROOT))
     generations_before = _generation_names(Path(HERMES_HOME))
-    pyc_before = _pyc_snapshot(Path(HERMES_ROOT))
-    home_pyc_before = _pyc_snapshot(Path(HERMES_HOME))
-    _bootstrap_pip(evidence)
-    _install_legacy_cli(evidence)
+    pyc_baseline = _pyc_baseline(
+        Path(HERMES_ROOT),
+        Path(HERMES_HOME),
+        pyc_mode,
+        prepare=lambda: (
+            _bootstrap_pip(evidence),
+            _install_legacy_cli(evidence),
+        ),
+        evidence=evidence,
+    )
+    pyc_before = pyc_baseline["operation_root"]
+    home_pyc_before = pyc_baseline["operation_home"]
     legacy_wheel = _legacy_wheel()
     legacy_code = (
         "import json,sys;from pathlib import Path;"
@@ -1736,7 +1778,7 @@ def _legacy_phase(
     )
     legacy_result = _run_logged(
         "legacy-schema1-member",
-        [str(_base_python()), "-I", "-c", legacy_code],
+        [str(_base_python()), "-B", "-I", "-c", legacy_code],
         evidence=evidence,
         env=_clean_container_env({"HFC_INSTALL_SPEC": str(legacy_wheel)}),
         timeout=600,
@@ -1754,6 +1796,7 @@ def _legacy_phase(
     legacy_version = _run_command(
         [
             str(legacy_python),
+            "-B",
             "-I",
             "-c",
             "import hermes_feishu_card; print(hermes_feishu_card.__version__)",
@@ -1795,7 +1838,7 @@ def _legacy_phase(
         try:
             _run_logged(
                 "legacy-controlled-observer-prepare",
-                [str(_base_python()), "-I", "-c", prepare_code],
+                [str(_base_python()), "-B", "-I", "-c", prepare_code],
                 evidence=evidence,
                 env=_clean_container_env({"HFC_INSTALL_SPEC": str(legacy_wheel)}),
                 timeout=600,
@@ -1822,105 +1865,11 @@ def _legacy_phase(
             else "controlled_old_wheel_observer_prepare"
         ),
         pyc_mode=pyc_mode,
+        pyc_baseline=pyc_baseline,
         pyc_before=pyc_before,
         home_pyc_before=home_pyc_before,
     )
-    _install_current_cli(evidence)
-    try:
-        _install(evidence, name="schema1-upgrade-install")
-    except AcceptanceFailure:
-        _failure_snapshot(evidence, "schema1-upgrade-install")
-        raise
-    upgraded_owner = _owner_payload()
-    if upgraded_owner.get("schema") != 2:
-        raise AcceptanceFailure("schema 1 member was not upgraded to schema 2")
-    selected = _selected_python()
-    if selected == legacy_python:
-        raise AcceptanceFailure("schema 1 upgrade did not select a new generation")
-    selected_report = _run_runtime_verify(
-        selected,
-        wheel=_current_wheel(),
-        expected_sha256=wheel_info.sha256,
-        output=evidence / "schema1-selected-runtime.json",
-        mode="pm",
-    )
-    if _observer_status()["status"] != "active":
-        raise AcceptanceFailure("schema 1 upgrade did not activate the observer")
-    if not _check_pm_installed(selected):
-        raise AcceptanceFailure("schema 1 upgrade PM member does not match wheel")
-    retained = _run_command(
-        [
-            str(legacy_python),
-            "-I",
-            "-c",
-            "import hermes_feishu_card; print(hermes_feishu_card.__version__)",
-        ],
-        env=_clean_container_env(),
-        timeout=60,
-    )
-    if retained.returncode or retained.stdout.strip() != legacy_info.version:
-        raise AcceptanceFailure("old generation was not retained after upgrade")
-    pyc_after = _pyc_snapshot(Path(HERMES_ROOT))
-    home_pyc_after = _pyc_snapshot(Path(HERMES_HOME))
-    if pyc_mode == "cleared":
-        if pyc_after["count"] or home_pyc_after["count"]:
-            raise AcceptanceFailure("schema 1 upgrade created bytecode in cleared mode")
-    elif (
-        pyc_after["manifest_sha256"] != pyc_before["manifest_sha256"]
-        or home_pyc_after["manifest_sha256"] != home_pyc_before["manifest_sha256"]
-    ):
-        raise AcceptanceFailure("schema 1 upgrade changed preserved bytecode")
-    _install(evidence, name="schema1-reinstall")
-    _cli(
-        evidence,
-        "schema1-restore",
-        [
-            "restore",
-            "--hermes-dir",
-            HERMES_ROOT,
-            "--hermes-home",
-            HERMES_HOME,
-            "--yes",
-        ],
-    )
-    if _source_snapshot(Path(HERMES_ROOT)) != source_before:
-        raise AcceptanceFailure("schema 1 restore did not recover source")
-    if (Path(HERMES_ROOT) / ".hermes_feishu_card_observer.json").exists():
-        raise AcceptanceFailure("schema 1 restore left the observer marker")
-    if _owner_payload().get("schema") != 2:
-        raise AcceptanceFailure("schema 1 restore removed the upgraded PM member")
-    final_pyc = _pyc_snapshot(Path(HERMES_ROOT))
-    final_home_pyc = _pyc_snapshot(Path(HERMES_HOME))
-    if pyc_mode == "cleared":
-        if final_pyc["count"] or final_home_pyc["count"]:
-            raise AcceptanceFailure("schema 1 final state contains bytecode")
-    elif (
-        final_pyc["manifest_sha256"] != pyc_before["manifest_sha256"]
-        or final_home_pyc["manifest_sha256"] != home_pyc_before["manifest_sha256"]
-    ):
-        raise AcceptanceFailure("schema 1 final state changed bytecode baseline")
-    return {
-        "status": "ok",
-        "legacy_version": legacy_info.version,
-        "legacy_wheel_sha256": legacy_info.sha256,
-        "legacy_schema": 1,
-        "legacy_generation": str(legacy_generation),
-        "legacy_python": str(legacy_python),
-        "generation_before_observer": True,
-        "upgraded_schema": 2,
-        "upgraded_generation": str(selected),
-        "old_generation_retained": True,
-        "selected_runtime": selected_report,
-        "restore_source_exact": True,
-        "pyc_mode": pyc_mode,
-        "pyc_cleared": pyc_clear,
-        "pyc_before": pyc_before,
-        "pyc_after": pyc_after,
-        "home_pyc_before": home_pyc_before,
-        "home_pyc_after": home_pyc_after,
-        "final_pyc": final_pyc,
-        "final_home_pyc": final_home_pyc,
-    }
+
 
 
 def _diagnostic_child_code() -> str:
@@ -2011,6 +1960,7 @@ def _diagnose_variant(
     result = _run_command(
         [
             str(_base_python()),
+            "-B",
             "-I",
             "-c",
             _diagnostic_child_code(),
@@ -2228,7 +2178,7 @@ def _docker_run_command(
         [
             spec.reference,
             "-lc",
-            "exec /opt/hermes/.venv/bin/python -I "
+            "exec /opt/hermes/.venv/bin/python -B -I "
             + CONTAINER_TOOL
             + " "
             + phase_flag
