@@ -48,7 +48,8 @@
       "tests/unit/test_admission_completion_detection.py",
       "tests/unit/test_pm_wheel_store.py",
       "tests/unit/test_legacy_rebind.py",
-      "tests/integration/test_legacy_observer_install.py"
+      "tests/integration/test_legacy_observer_install.py",
+      "tests/integration/test_pm_rebind.py"
     ],
     "process": [
       "tests/unit/test_process.py",

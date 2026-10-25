@@ -294,6 +294,7 @@ jobs:
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
+          HFC_REQUIRE_PM_REBIND: "1"
         run: >-
           python -m tools.ci_run --group upstream-${{ matrix.python-version }} --profile upstream
           --shards 12 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))
@@ -306,6 +307,7 @@ jobs:
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
           tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning
           tests/integration/test_pm_generation.py
+          tests/integration/test_pm_rebind.py
       - name: Verify external wheel sources with uv 0.13.5
         if: matrix.python-version == '3.12' && matrix.slice == 0
         env:
@@ -314,6 +316,7 @@ jobs:
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
+          HFC_REQUIRE_PM_REBIND: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -322,7 +325,7 @@ jobs:
           PATH="$RUNNER_TEMP/hfc-uv0135/bin:$PATH" python -m tools.ci_run \
             --group pm-uv0135 --profile upstream --shards 1 --workers 1 \
             --results "$RUNNER_TEMP/results/uv0135" --scratch "$RUNNER_TEMP/ci-workers-uv0135" -- \
-            tests/integration/test_pm_generation.py
+            tests/integration/test_pm_generation.py tests/integration/test_pm_rebind.py
       - name: Preserve upstream reports and slow-test timings
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -462,6 +465,9 @@ jobs:
           tests/unit/test_session.py
           tests/unit/test_status.py
           tests/unit/test_subscription_usage.py
+          tests/unit/test_pm_dependency.py
+          tests/unit/test_pm_wheel_store.py
+          tests/unit/test_legacy_rebind.py
           tests/unit/test_text.py
           tests/integration/test_card_freeze.py
           tests/integration/test_clarify_multi_select.py

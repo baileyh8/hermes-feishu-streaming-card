@@ -1,6 +1,7 @@
 """Owned PM member transaction regressions; no production HOME or PM state."""
 from hashlib import sha256
 import json
+import os
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.9/3.10
@@ -17,6 +18,15 @@ from hermes_feishu_card.install import pm_dependency as pm
 
 
 VERSION = cli.PACKAGE_VERSION
+
+
+def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        if os.name == 'nt' and getattr(exc, 'winerror', None) == 1314:
+            pytest.skip('Windows symlink creation requires privilege (WinError 1314)')
+        raise
 
 
 @pytest.fixture
@@ -235,6 +245,8 @@ def test_same_version_local_wheel_content_changes_identity(tmp_path):
 @pytest.mark.parametrize('dirfd', [True, False])
 def test_second_publication_rename_failure_restores_previous_source(pm_env, monkeypatch, dirfd):
     from hermes_feishu_card.install import posix_transaction
+    if dirfd and not posix_transaction.DIRFD_BINDING_SUPPORTED:
+        pytest.skip('directory descriptor operations unavailable')
     monkeypatch.setattr(posix_transaction, 'DIRFD_BINDING_SUPPORTED', dirfd)
     receipt = register(pm_env)
     receipt.finish()
@@ -326,7 +338,7 @@ def test_external_store_symlink_refuses(pm_env, tmp_path):
     outside.mkdir()
     state = pm_env.home / '.hermes_feishu_card'
     state.mkdir()
-    (state / 'wheel-store').symlink_to(outside, target_is_directory=True)
+    _symlink_or_skip_windows_privilege(state / 'wheel-store', outside, directory=True)
     with pytest.raises(ValueError):
         register(pm_env)
     assert not list(outside.iterdir())
@@ -385,7 +397,7 @@ def test_external_wheel_missing_or_symlink_refuses(pm_env, tmp_path, alteration)
     if alteration == 'symlink':
         outside = tmp_path / 'unowned.whl'
         outside.write_bytes(content)
-        wheel.symlink_to(outside)
+        _symlink_or_skip_windows_privilege(wheel, outside)
     with pytest.raises(ValueError):
         register(pm_env)
 
@@ -393,6 +405,8 @@ def test_external_wheel_missing_or_symlink_refuses(pm_env, tmp_path, alteration)
 def test_wheel_store_parent_swap_during_publication_refuses(pm_env, monkeypatch):
     from hermes_feishu_card.install import pm_wheel_store as store
     from hermes_feishu_card.install import posix_transaction as io
+    if not io.DIRFD_BINDING_SUPPORTED:
+        pytest.skip('stage_file race injection requires directory descriptor operations')
     original = io.stage_file
     saved = []
     def swap(target, *args, **kwargs):
@@ -480,13 +494,15 @@ def test_external_files_and_directories_are_private(pm_env):
 def test_store_ancestor_swap_before_stage_does_not_write_unowned_directory(pm_env, monkeypatch, tmp_path):
     from hermes_feishu_card.install import pm_wheel_store as store
     from hermes_feishu_card.install import posix_transaction as io
+    if not io.DIRFD_BINDING_SUPPORTED:
+        pytest.skip('stage_file race injection requires directory descriptor operations')
     original = io.stage_file
     outside = tmp_path / 'outside'
     outside.mkdir()
     def swap(target, *args, **kwargs):
         state = pm_env.home / '.hermes_feishu_card'
         state.rename(state.with_name('owned-moved'))
-        state.symlink_to(outside, target_is_directory=True)
+        _symlink_or_skip_windows_privilege(state, outside, directory=True)
         return original(target, *args, **kwargs)
     monkeypatch.setattr(io, 'stage_file', swap)
     with pytest.raises(ValueError):

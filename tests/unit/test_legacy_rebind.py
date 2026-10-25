@@ -1,6 +1,7 @@
 """Explicit recovery preserves unrelated config and the original admission proof."""
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -202,7 +203,12 @@ def test_symlink_evidence_refused(admission, monkeypatch, target):
         "journal": state / (record["plugin_config"]["config_backup_id"] + ".json"), "directory": state}[target]
     moved = chosen.with_name(chosen.name + ".saved")
     chosen.rename(moved)
-    chosen.symlink_to(moved, target_is_directory=target == "directory")
+    try:
+        chosen.symlink_to(moved, target_is_directory=target == "directory")
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires privilege (WinError 1314)")
+        raise
     with pytest.raises(ValueError):
         legacy_rebind.rebind(binding, apply=True)
     assert chosen.is_symlink()
