@@ -913,7 +913,9 @@
     "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[None-True-issue456_0225]": 0.764,
     "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[fixture-obligation-False-issue456_0225]": 0.709,
     "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[fixture-obligation-True-issue456_0225]": 0.421,
-    "tests/integration/test_upstream_hermes_compat.py::test_pinned_upstream_install_repeat_doctor_restore[issue456_0225]": 350.925
+    "tests/integration/test_upstream_hermes_compat.py::test_pinned_upstream_install_repeat_doctor_restore[issue456_0225]": 350.925,
+    "tests/integration/test_pm_rebind.py::test_real_pm_generation_explicit_rebind_reinstall_restore[0224]": 559.298,
+    "tests/integration/test_pm_rebind.py::test_real_pm_generation_explicit_rebind_reinstall_restore[0225]": 550.754
   },
   "upstream_evidence": {
     "source_run": "https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/39729191204",
@@ -1069,5 +1071,15 @@
       }
     }
   },
-  "v0225_estimated_from": "Corresponding latest_stable / pm-0224 / 0224 upstream_seconds; 2026-10-24"
+  "v0225_estimated_from": "Corresponding latest_stable / pm-0224 / 0224 upstream_seconds; 2026-10-24",
+  "pm_rebind_evidence": {
+    "source_commit": "d53e2a5b396a3ec45d9d3e63193385b066d6c59e",
+    "source_run": "https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/40153552379",
+    "junit_sha256": {
+      "regression-upstream-3.13-1.zip/upstream-3.13-6.xml": "fc704ffbd899d47e53f5277a2130ea4518c6d3fdb83f63f908aa5b39f04e8484",
+      "regression-upstream-3.12-1.zip/upstream-3.12-6.xml": "7e5130d23a4ac87907aedaeae8428c4479b51ee0d01774c9ac20b841c0560a2b",
+      "timeout-regression-upstream-3.12-0.zip/upstream-3.12-3.xml": "de2030cddc79503fdecd06d6a70621048c1f6cb8f9be22cfc52495f04e66b9de"
+    },
+    "note": "Measured testcase times for the two new upstream rebind cases; the main Python 3.12 collection passed, but the appended uv0.13.5 step exceeded its remaining job budget. Timing evidence is not a whole-run pass."
+  }
 }
