@@ -1358,6 +1358,69 @@ def _snapshot_config_plan(evidence: Path, label: str) -> dict[str, Any]:
     return summary
 
 
+def _snapshot_boot_identity(evidence: Path, label: str) -> dict[str, Any]:
+    config = Path(HERMES_HOME) / "config.yaml"
+    mapping = _config_mapping()
+    code = r'''
+import json
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+from hermes_cli import boot_bootstrap
+from hermes_cli.steward import read_install_stamp
+
+result = {}
+try:
+    result['identity'] = boot_bootstrap.current_install_identity(root)
+    result['needs_bootstrap'] = boot_bootstrap.needs_bootstrap(root)
+    result['git_head'] = boot_bootstrap.read_git_head(root)
+    record = boot_bootstrap.record_path(root)
+    result['record_path'] = str(record)
+    try:
+        metadata = record.lstat()
+        result['record_exists'] = True
+        result['record_type'] = 'regular' if stat.S_ISREG(metadata.st_mode) else 'other'
+        if stat.S_ISREG(metadata.st_mode):
+            result['record_identity'] = json.loads(record.read_text()).get('identity')
+    except FileNotFoundError:
+        result['record_exists'] = False
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        result['record_error'] = 'unreadable'
+    stamp = read_install_stamp(root)
+    result['stamp_commit'] = stamp.get('commit')
+    result['stamp_tag'] = stamp.get('tag')
+except Exception as exc:
+    result['error'] = type(exc).__name__
+print(json.dumps(result, sort_keys=True))
+'''
+    completed = _run_command(
+        [str(_base_python()), "-B", "-I", "-c", code, HERMES_ROOT],
+        env=_clean_container_env(),
+        timeout=60,
+    )
+    _write_log(evidence / f"{label}-probe", completed)
+    payload: dict[str, Any] = {
+        "config_sha256": _sha256_file(config),
+        "config_version": mapping.get("_config_version"),
+        "status": "failed" if completed.returncode else "ok",
+    }
+    if completed.returncode:
+        payload["returncode"] = completed.returncode
+    else:
+        try:
+            observed = json.loads(completed.stdout.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError) as exc:
+            raise AcceptanceFailure("boot identity probe returned invalid evidence") from exc
+        if not isinstance(observed, dict):
+            raise AcceptanceFailure("boot identity probe returned invalid evidence")
+        payload.update(observed)
+    _write_json(evidence / f"{label}.json", payload)
+    return payload
+
+
 def _failure_snapshot(evidence: Path, stage: str) -> None:
     payload: dict[str, Any] = {
         "stage": stage,
@@ -1732,6 +1795,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     _require_other_plugin("uninstall")
 
     _snapshot_config(evidence, "config-before-fresh-install")
+    _snapshot_boot_identity(evidence, "boot-identity-before-fresh-install")
     try:
         _install(evidence, name="fresh-install-after-uninstall")
     except AcceptanceFailure:
@@ -2024,6 +2088,7 @@ def _legacy_recover_after_rebind(
     _require_other_plugin("legacy uninstall")
 
     _snapshot_config(evidence, "config-before-legacy-fresh-install")
+    _snapshot_boot_identity(evidence, "boot-identity-before-legacy-fresh-install")
     try:
         _install(evidence, name="legacy-fresh-install")
     except AcceptanceFailure:

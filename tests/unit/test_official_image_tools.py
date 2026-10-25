@@ -239,6 +239,40 @@ def test_generation_change_keeps_config_bytes_and_requires_binding_change(tmp_pa
     assert 'version="2"' in seen["other_version"]
 
 
+def test_boot_identity_snapshot_records_original_identity_and_record(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").write_text("plugins: {}\n_config_version: 51\n")
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", "/opt/hermes")
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(acceptance, "_clean_container_env", lambda extra=None: {})
+    observed = {
+        "identity": "commit-abc",
+        "needs_bootstrap": None,
+        "git_head": "commit-abc",
+        "record_path": "/opt/data/boot.json",
+        "record_exists": True,
+        "record_type": "regular",
+        "record_identity": "commit-abc",
+        "stamp_commit": None,
+        "stamp_tag": None,
+    }
+    monkeypatch.setattr(
+        acceptance,
+        "_run_command",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout=json.dumps(observed) + "\n", stderr=""),
+    )
+    payload = acceptance._snapshot_boot_identity(evidence, "boot")
+    assert payload["identity"] == "commit-abc"
+    assert payload["needs_bootstrap"] is None
+    assert payload["record_identity"] == "commit-abc"
+    assert payload["config_version"] == 51
+    assert json.loads((evidence / "boot.json").read_text())["identity"] == "commit-abc"
+
+
 def test_legacy_recovery_restores_before_fresh_upgrade(tmp_path, monkeypatch):
     root = tmp_path / "root"
     home = tmp_path / "home"
@@ -308,6 +342,7 @@ def test_legacy_recovery_restores_before_fresh_upgrade(tmp_path, monkeypatch):
     monkeypatch.setattr(acceptance, "_observer_status", lambda: {"status": "active"})
     monkeypatch.setattr(acceptance, "_run_runtime_verify", lambda *a, **k: {"status": "ok"})
     monkeypatch.setattr(acceptance, "_check_pm_installed", lambda _: True)
+    monkeypatch.setattr(acceptance, "_snapshot_boot_identity", lambda *a, **k: {})
 
     def cli(_evidence, name, arguments, **kwargs):
         calls.append(name)

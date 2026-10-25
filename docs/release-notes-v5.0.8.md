@@ -7,7 +7,7 @@
 - 外部 wheel 位于 workspace member 外的 SHA256 目录，owner 绑定准确路径、摘要和包资源；缺少 archive hash 时只从已验证的准确 file URL 补读。不因文件存在就信任来源。旧代对象保留，拒绝 symlink、Windows junction/reparse point 及未知文件状态。
 - `integrity rebind-legacy` 默认只读预览，显式 `--yes` 才重绑；重新验证同一 HOME、源码、受管 hooks、manifest、备份、observer 记录和普通 wheel。保留无关配置及旧 journal/preimage；已归属的旧 wheel 按其准确版本核验 entry point，并再次核对 owner；普通安装仍要求当前版本。默认 install/restore 继续严格拒绝漂移。仅支持已核验的 POSIX PM decomposed 安装，Windows 和旧 single-file 会明确拒绝。
 - 官方 enable 子进程从所选 checkout 加载 CLI，核验 main/init 摘要及目录链，避免 PM workspace 改变安装 key。单独设置 `HERMES_INSTALL_ROOT` 不能代替入口来源检查。
-- 新增 v0.22.1 对应的准确 writer 组合，在私有副本执行受检官方迁移，规划 writer 写出的准确 schema 版本戳，其他配置字段仍须匹配，实际落盘字节仍须等于规划。family 名称与 tag 不保证一一对应。
+- 新增 v0.22.1 对应的准确 writer 组合，依据所选 checkout 的安装身份及官方初始化记录决定是否在私有副本执行受检迁移，规划 writer 写出的准确 schema 版本戳，其他配置字段仍须匹配，实际落盘字节仍须等于规划。family 名称与 tag 不保证一一对应。
 - 官方 0.22.5 镜像把 Python 标准库放在 Hermes 树内；配置规划将所选解释器的准确 sysconfig 库根与 Hermes 源码分别处理，保留未知项目模块和不安全路径拒绝。诊断仅公开固定类别，避免泄露配置、私有路径、源地址或原始错误输出。
 
 ## 升级与恢复

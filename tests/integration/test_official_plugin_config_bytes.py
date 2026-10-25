@@ -306,6 +306,7 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     root, home = tmp_path / "hermes", tmp_path / "home"
     shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
     home.mkdir(mode=0o700)
+    (root / "install-stamp.json").write_text(json.dumps({"commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e"}))
     path_file.write_text(str(root) + "\nimport sys; sys.dont_write_bytecode=True\n")
     original = (
         "# preserve startup migration bytes\r\nplugins:\r\n"
@@ -394,6 +395,7 @@ def test_pm_0225_floor_boundary_requires_new_migration_sources(
     root, home, state = tmp_path / "source", tmp_path / "home", tmp_path / "state"
     shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
     home.mkdir()
+    (root / "install-stamp.json").write_text(json.dumps({"commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e"}))
     state.mkdir()
     before = b"plugins: {}\n_config_version: 12\n"
     (home / "config.yaml").write_bytes(before)
@@ -412,6 +414,78 @@ def test_pm_0225_floor_boundary_requires_new_migration_sources(
         )
     assert caught.value.code == "unbound-local-source"
     assert caught.value.source == "tools/bot_mode_probe.py"
+    assert (home / "config.yaml").read_bytes() == before
+    assert not list(state.iterdir())
+
+
+@pytest.mark.parametrize(
+    ("record_identity", "expected_version"),
+    [("current", 50), ("stale", 51), ("invalid", None), ("symlink", None), ("lock", None)],
+)
+def test_pm_0225_boot_record_gates_startup_schema_migration(
+    official_runtime, tmp_path, record_identity, expected_version  # noqa: F811
+):
+    """The private plan follows Hermes' one-bootstrap-per-install-identity gate."""
+    _, python, _, _ = official_runtime
+    configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+        pytest.skip("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
+    root = Path(configured).resolve()
+    home = tmp_path / "home"
+    state = home / ".hermes_feishu_card" / "install"
+    state.mkdir(parents=True)
+    before = (
+        b"plugins:\r\n  enabled: [hfc-acceptance-other, hfc-runtime-dependency]\r\n"
+        b"  disabled: [keep-disabled]\r\n  isolation: in_process\r\n"
+        b"other: keep\r\n_config_version: 50\r\n"
+    )
+    (home / "config.yaml").write_bytes(before)
+    identity = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    if record_identity in {"stale", "lock"}:
+        identity = "0" * 40
+    key = hashlib.sha256(str(root).encode()).hexdigest()[:16]
+    record = home / "installs" / key / "bootstrap" / "default.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(
+        json.dumps({"schemaVersion": 1, "identity": identity, "results": {}})
+    )
+    if record_identity == "invalid":
+        record.write_text("{invalid-json")
+    elif record_identity == "symlink":
+        target = record.with_name("saved-record.json")
+        record.rename(target)
+        record.symlink_to(target)
+    elif record_identity == "lock":
+        record.with_name(record.name + ".lock").write_text("held")
+    record_before = record.read_bytes()
+    desired, enabled_before = plugin._expected_enabled_config(
+        plugin._load_config_mapping(before)
+    )
+    def make_plan():
+        return plugin_config_bytes.plan_enabled_bytes(
+            root=root, python=python, home=home, state_dir=state,
+            before=before, desired=desired, enabled_before=enabled_before,
+        )
+    if expected_version is None:
+        with pytest.raises(plugin_config_bytes.ConfigBytesRefused) as caught:
+            make_plan()
+        assert caught.value.code == {
+            "invalid": "boot-record-invalid", "symlink": "boot-record-symlink",
+            "lock": "boot-lock-present",
+        }[record_identity]
+    else:
+        plan = make_plan()
+        assert plan.config_version == expected_version
+        assert b"hfc-runtime-dependency" in plan.postimage
+    assert record.read_bytes() == record_before
     assert (home / "config.yaml").read_bytes() == before
     assert not list(state.iterdir())
 
@@ -470,6 +544,8 @@ def test_new_writer_drift_refuses_before_child_and_preserves_config(
     "hermes_cli/config_defaults.py",
     "hermes_cli/plugins_activation.py",
     "hermes_cli/config_migrations.py",
+    "hermes_cli/boot_bootstrap.py",
+    "hermes_cli/profiles.py",
     "hermes_cli/tools_config.py",
     "hermes_cli/platforms.py",
     "hermes_cli/tools_config_cua.py",

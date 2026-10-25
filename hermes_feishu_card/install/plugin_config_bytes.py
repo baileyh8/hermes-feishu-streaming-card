@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -266,6 +267,89 @@ FAMILIES["pm-main-4e58"] = {
     "hermes_cli/left_core_migration.py": "a1a67f61f5d264d5cf935f8acb2a14967ad06f4efca3ce3441f4c676950b25dc",
 }
 
+
+# The CLI migrates configuration only once per install identity. Bind the
+# read-only decision helpers as well as the writer; a restored older preimage
+# must not be migrated merely because its schema is below the latest one.
+BOOT_GATE_FAMILIES = frozenset(('pm-main', 'pm-0223', 'pm-0221', 'pm-0224', 'pm-0225', 'pm-main-4e58'))
+FAMILIES['pm-main'] = {**FAMILIES['pm-main'],
+    'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
+    'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
+    'hermes_cli/steward.py': 'd365372909dd2b14d769c8df2972f7b0871e8ce294c7b18707f70e1f310ff8a7',
+    'hermes_cli/profiles.py': '7617b19a172dad75021789b5a47946ce2d4f90c2349668e32b6466e98fe06ef5',
+    'hermes_cli/archive_safe.py': 'a59587bca0a200d3b2b4b360aa1736f5d99b457716bdf21b42df8bccc4cd0b54',
+    'hermes_cli/home_data_layout.py': '173e2a613284763cf41f3465dbeed88fffdce1c5533f18b4f70a173da8b772a0',
+    'hermes_cli/profiles_remove.py': '86e2f9b67b4865829a35773e1cb3767c95aacbbeccb730e22c140d865d44def7',
+    'agent/file_safety.py': '90515fb80bcf85c5b153370071f3d85bd945d838e0423d29e11e951f95833f6f',
+    'pm/__init__.py': '67adcba1f0e4db2b2967d07e6b630aca4214b1fac9bd8649dcf221b4bf3fcfac',
+    'pm/environments.py': '40b5fb014b07ad7c7187352bacb9b79581da4c1304d2e86768eb5dfd95a2ea2b',
+    'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
+}
+FAMILIES['pm-0223'] = {**FAMILIES['pm-0223'],
+    'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
+    'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
+    'hermes_cli/steward.py': 'd365372909dd2b14d769c8df2972f7b0871e8ce294c7b18707f70e1f310ff8a7',
+    'hermes_cli/profiles.py': 'bf02f8442a80ce0daad0ddde130662294e6f5b26b75d2d432e4fc021dd0edf3a',
+    'hermes_cli/archive_safe.py': 'a59587bca0a200d3b2b4b360aa1736f5d99b457716bdf21b42df8bccc4cd0b54',
+    'hermes_cli/home_data_layout.py': '173e2a613284763cf41f3465dbeed88fffdce1c5533f18b4f70a173da8b772a0',
+    'hermes_cli/profiles_remove.py': '86e2f9b67b4865829a35773e1cb3767c95aacbbeccb730e22c140d865d44def7',
+    'agent/file_safety.py': '90515fb80bcf85c5b153370071f3d85bd945d838e0423d29e11e951f95833f6f',
+    'pm/__init__.py': '67adcba1f0e4db2b2967d07e6b630aca4214b1fac9bd8649dcf221b4bf3fcfac',
+    'pm/environments.py': '40b5fb014b07ad7c7187352bacb9b79581da4c1304d2e86768eb5dfd95a2ea2b',
+    'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
+}
+FAMILIES['pm-0221'] = {**FAMILIES['pm-0221'],
+    'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
+    'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
+    'hermes_cli/steward.py': 'd365372909dd2b14d769c8df2972f7b0871e8ce294c7b18707f70e1f310ff8a7',
+    'hermes_cli/profiles.py': '7617b19a172dad75021789b5a47946ce2d4f90c2349668e32b6466e98fe06ef5',
+    'hermes_cli/archive_safe.py': 'a59587bca0a200d3b2b4b360aa1736f5d99b457716bdf21b42df8bccc4cd0b54',
+    'hermes_cli/home_data_layout.py': '173e2a613284763cf41f3465dbeed88fffdce1c5533f18b4f70a173da8b772a0',
+    'hermes_cli/profiles_remove.py': '86e2f9b67b4865829a35773e1cb3767c95aacbbeccb730e22c140d865d44def7',
+    'agent/file_safety.py': '90515fb80bcf85c5b153370071f3d85bd945d838e0423d29e11e951f95833f6f',
+    'pm/__init__.py': '67adcba1f0e4db2b2967d07e6b630aca4214b1fac9bd8649dcf221b4bf3fcfac',
+    'pm/environments.py': 'ac5a9f09bc622a60aa616880be0906b07bec95bb8ad934924e931aa28dc8b777',
+    'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
+}
+FAMILIES['pm-0224'] = {**FAMILIES['pm-0224'],
+    'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
+    'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
+    'hermes_cli/steward.py': 'd365372909dd2b14d769c8df2972f7b0871e8ce294c7b18707f70e1f310ff8a7',
+    'hermes_cli/profiles.py': 'bf02f8442a80ce0daad0ddde130662294e6f5b26b75d2d432e4fc021dd0edf3a',
+    'hermes_cli/archive_safe.py': 'a59587bca0a200d3b2b4b360aa1736f5d99b457716bdf21b42df8bccc4cd0b54',
+    'hermes_cli/home_data_layout.py': '173e2a613284763cf41f3465dbeed88fffdce1c5533f18b4f70a173da8b772a0',
+    'hermes_cli/profiles_remove.py': '86e2f9b67b4865829a35773e1cb3767c95aacbbeccb730e22c140d865d44def7',
+    'agent/file_safety.py': '90515fb80bcf85c5b153370071f3d85bd945d838e0423d29e11e951f95833f6f',
+    'pm/__init__.py': '67adcba1f0e4db2b2967d07e6b630aca4214b1fac9bd8649dcf221b4bf3fcfac',
+    'pm/environments.py': '40b5fb014b07ad7c7187352bacb9b79581da4c1304d2e86768eb5dfd95a2ea2b',
+    'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
+}
+FAMILIES['pm-0225'] = {**FAMILIES['pm-0225'],
+    'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
+    'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
+    'hermes_cli/steward.py': 'd365372909dd2b14d769c8df2972f7b0871e8ce294c7b18707f70e1f310ff8a7',
+    'hermes_cli/profiles.py': 'ed9be0ff625906e8b0aecdd208dcda0a484a0e3fb4ab736a91b20bae39727add',
+    'hermes_cli/archive_safe.py': 'a59587bca0a200d3b2b4b360aa1736f5d99b457716bdf21b42df8bccc4cd0b54',
+    'hermes_cli/home_data_layout.py': '173e2a613284763cf41f3465dbeed88fffdce1c5533f18b4f70a173da8b772a0',
+    'hermes_cli/profiles_remove.py': '86e2f9b67b4865829a35773e1cb3767c95aacbbeccb730e22c140d865d44def7',
+    'agent/file_safety.py': '90515fb80bcf85c5b153370071f3d85bd945d838e0423d29e11e951f95833f6f',
+    'pm/__init__.py': '67adcba1f0e4db2b2967d07e6b630aca4214b1fac9bd8649dcf221b4bf3fcfac',
+    'pm/environments.py': '40b5fb014b07ad7c7187352bacb9b79581da4c1304d2e86768eb5dfd95a2ea2b',
+    'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
+}
+FAMILIES['pm-main-4e58'] = {**FAMILIES['pm-main-4e58'],
+    'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
+    'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
+    'hermes_cli/steward.py': 'd365372909dd2b14d769c8df2972f7b0871e8ce294c7b18707f70e1f310ff8a7',
+    'hermes_cli/profiles.py': 'bf02f8442a80ce0daad0ddde130662294e6f5b26b75d2d432e4fc021dd0edf3a',
+    'hermes_cli/archive_safe.py': 'a59587bca0a200d3b2b4b360aa1736f5d99b457716bdf21b42df8bccc4cd0b54',
+    'hermes_cli/home_data_layout.py': '173e2a613284763cf41f3465dbeed88fffdce1c5533f18b4f70a173da8b772a0',
+    'hermes_cli/profiles_remove.py': '86e2f9b67b4865829a35773e1cb3767c95aacbbeccb730e22c140d865d44def7',
+    'agent/file_safety.py': '90515fb80bcf85c5b153370071f3d85bd945d838e0423d29e11e951f95833f6f',
+    'pm/__init__.py': '67adcba1f0e4db2b2967d07e6b630aca4214b1fac9bd8649dcf221b4bf3fcfac',
+    'pm/environments.py': '40b5fb014b07ad7c7187352bacb9b79581da4c1304d2e86768eb5dfd95a2ea2b',
+    'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
+}
 
 # The official launch bootstrap executes these files before the writer plan.
 # They are intentionally separate from FAMILIES: the writer contract and the
@@ -673,6 +757,10 @@ def audit(event,args):
             # The pinned writer's optional telemetry imports version metadata.
             # Its git lookup is irrelevant to bytes and catches this refusal;
             # block it without starting a subprocess. The entire source is bound.
+            if frame.f_globals.get('__name__')=='hermes_cli.boot_bootstrap' and frame.f_code.co_name=='read_git_head':
+                command=args[1]
+                if isinstance(command,(list,tuple)) and len(command)==5 and command[1:]==['-C',str(root),'rev-parse','HEAD']:
+                    return
             if frame.f_globals.get('__name__')=='hermes_cli.version_info' and frame.f_code.co_name=='_run_git':
                 raise RuntimeError('version metadata subprocess disabled in shadow')
             deny('subprocess','process')
@@ -722,6 +810,77 @@ def module(name,relative):
     value=importlib.import_module(name)
     assert Path(value.__file__).resolve()==root/relative
     return value
+migrate_on_boot=True
+if request.get('boot_gate'):
+    # Only inspect the official boot identity/record. Never run bootstrap here.
+    # The helpers resolve profiles and PM roots under the exact enable HOME.
+    saved_env={key:os.environ.get(key) for key in ('HOME','HERMES_HOME','HERMES_INSTALL_ROOT')}
+    os.environ.update(HOME=str(real_home),HERMES_HOME=str(real_home),HERMES_INSTALL_ROOT=str(root))
+    try:
+        boot=module('hermes_cli.boot_bootstrap','hermes_cli/boot_bootstrap.py')
+        # Read Git identity with the caller's existing Git executable, without
+        # importing PM's installer merely to discover its managed Git. Both
+        # paths ask Git for this exact checkout's HEAD; absent Git refuses.
+        try:
+            git_metadata=(root/'.git').lstat()
+        except FileNotFoundError:
+            git_metadata=None
+        except OSError:
+            deny('boot-git-uninspectable','migration')
+        if git_metadata is not None:
+            if stat.S_ISLNK(git_metadata.st_mode) or reparse(git_metadata) or not (stat.S_ISREG(git_metadata.st_mode) or stat.S_ISDIR(git_metadata.st_mode)):
+                deny('boot-git-unsafe','migration')
+            git=request.get('git')
+            if not git: deny('boot-git-unavailable','migration')
+            boot._git_binary=lambda:git
+        else:
+            stamp_path=root/'install-stamp.json'
+            try: stamp_metadata=stamp_path.lstat()
+            except FileNotFoundError: stamp_metadata=None
+            except OSError: deny('boot-stamp-uninspectable','migration')
+            if stamp_metadata is not None:
+                if not stat.S_ISREG(stamp_metadata.st_mode) or reparse(stamp_metadata) or stamp_metadata.st_size>1024*1024:
+                    deny('boot-stamp-unsafe','migration')
+                try:
+                    stamp_bytes=stamp_path.read_bytes()
+                    stamp_value=json.loads(stamp_bytes.decode('utf-8-sig'))
+                except (OSError,ValueError,UnicodeError): deny('boot-stamp-invalid','migration')
+                if not isinstance(stamp_value,dict): deny('boot-stamp-invalid','migration')
+                stamp_after=stamp_path.lstat()
+                if (stamp_metadata.st_dev,stamp_metadata.st_ino,stamp_metadata.st_size,stamp_metadata.st_mtime_ns)!=(stamp_after.st_dev,stamp_after.st_ino,stamp_after.st_size,stamp_after.st_mtime_ns):
+                    deny('boot-stamp-changed','migration')
+        identity=boot.current_install_identity(root)
+        record=boot.record_path(root)
+        if has_symlink(record): deny('boot-record-symlink','migration')
+        try:
+            record_stat=record.lstat()
+        except FileNotFoundError:
+            known={}
+        except OSError:
+            deny('boot-record-uninspectable','migration')
+        else:
+            if not stat.S_ISREG(record_stat.st_mode) or record_stat.st_size>1024*1024:
+                deny('boot-record-unsafe','migration')
+            try:
+                record_bytes=record.read_bytes()
+                known=json.loads(record_bytes.decode('utf-8-sig'))
+            except (OSError,ValueError,UnicodeError):
+                deny('boot-record-invalid','migration')
+            after=record.lstat()
+            if (record_stat.st_dev,record_stat.st_ino,record_stat.st_size,record_stat.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):
+                deny('boot-record-changed','migration')
+            if not isinstance(known,dict): deny('boot-record-invalid','migration')
+        migrate_on_boot=bool(identity and known.get('identity')!=identity)
+        if migrate_on_boot:
+            lock=record.with_suffix(record.suffix+'.lock')
+            try: lock.lstat()
+            except FileNotFoundError: pass
+            except OSError: deny('boot-lock-uninspectable','migration')
+            else: deny('boot-lock-present','migration')
+    finally:
+        for key,value in saved_env.items():
+            if value is None: os.environ.pop(key,None)
+            else: os.environ[key]=value
 providers=module('providers','providers/__init__.py')
 list_providers=providers.list_providers
 def no_setup_provider_metadata(*args,**kwargs):
@@ -735,7 +894,7 @@ providers.list_providers=list_providers
 try:
     from hermes_cli.config_migrations import SUPPORT_FLOOR_VERSION
     current,latest=config.check_config_version()
-    if current < latest and current >= SUPPORT_FLOOR_VERSION:
+    if migrate_on_boot and current < latest and current >= SUPPORT_FLOOR_VERSION:
         config.migrate_config(interactive=False,quiet=True)
         migrated,_latest=config.check_config_version()
         if migrated < latest:
@@ -842,6 +1001,8 @@ def plan_enabled_bytes(
                 "request.json": json.dumps(
                     {
                         "real_home": str(home),
+                        "boot_gate": family in BOOT_GATE_FAMILIES,
+                        "git": shutil.which("git"),
                         "family": family,
                         "sources": FAMILIES[family],
                         "desired": desired,
