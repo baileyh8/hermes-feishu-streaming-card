@@ -364,7 +364,7 @@ def test_plan_trace_executes_module_scope_and_keeps_unknown_private():
     stream = io.StringIO()
     namespace = {
         "sys": SimpleNamespace(stderr=stream, platform=sys.platform,
-                               stdlib_module_names=sys.stdlib_module_names),
+                               stdlib_module_names=getattr(sys, "stdlib_module_names", ())),
         "request": {"git": None, "sources": {"hermes_cli/config.py": "fixed"}},
         "root": Path("/unused-trace-root"), "subprocess": subprocess, "json": json,
     }
