@@ -1,0 +1,179 @@
+name: HFC Windows candidate probe
+on:
+  push:
+    branches: [codex/509-windows-probe]
+concurrency:
+  group: hfc-509-windows-probe
+  cancel-in-progress: true
+permissions:
+  contents: read
+env:
+  HFC_FIXED_TAG_COMMIT: 3c27eb6234bf91b8ceee9e9071591b31e9b148cb
+jobs:
+  pytest-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[test]"
+      - name: Test
+        run: >-
+          python -m pytest -q
+          tests/unit/test_bots.py
+          tests/unit/test_card_limits.py
+          tests/unit/test_cardkit.py
+          tests/unit/test_config.py
+          tests/unit/test_delivery_policy.py
+          tests/unit/test_diagnostics.py
+          tests/unit/test_event_auth.py
+          tests/unit/test_events.py
+          tests/unit/test_feishu_client.py
+          tests/unit/test_hook_runtime.py
+          tests/unit/test_notice_routing_regressions.py
+          tests/unit/test_lifecycle.py
+          tests/unit/test_render.py
+          tests/unit/test_stream_thinking_to_body.py
+          tests/unit/test_331_adapted.py
+          tests/unit/test_runner.py
+          tests/unit/test_control_token_file.py
+          tests/unit/test_session.py
+          tests/unit/test_status.py
+          tests/unit/test_subscription_usage.py
+          tests/unit/test_pm_dependency.py
+          tests/unit/test_pm_wheel_store.py
+          tests/unit/test_launch_source_paths.py
+          tests/unit/test_legacy_rebind.py
+          tests/unit/test_text.py
+          tests/integration/test_card_freeze.py
+          tests/integration/test_clarify_multi_select.py
+          tests/integration/test_feishu_client_http.py
+          tests/integration/test_hook_runtime_integration.py
+          tests/integration/test_server.py
+
+  pytest-windows-463:
+    name: native-windows-463 (Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: d923a5eb487a17c0a68801bba9ef0f56c81040a8 # v0.22.2
+          path: .upstream/baseline_0222
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e # v0.22.5
+          path: .upstream/issue456_0225
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install Windows acceptance dependencies
+        run: >-
+          python -m pip install -e ".[test]" "uv==0.11.7"
+          ruamel.yaml tomli-w packaging wheel rich python-dotenv requests
+          prompt_toolkit "cryptography==48.0.0"
+      - name: Prepare ordinary wheel and reusable official runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pin = "bf0203a794a07aac3ff764972ab9087baa4e4f4e"
+          $source = Join-Path $env:GITHUB_WORKSPACE ".upstream\issue456_0225"
+          if ((git -C $source rev-parse HEAD) -ne $pin) { throw "v0.22.5 source SHA mismatch" }
+          if (git -C $source status --porcelain) { throw "v0.22.5 source is not clean" }
+          $wheelDir = Join-Path $env:RUNNER_TEMP "hfc-pm-wheel"
+          python -m pip wheel --no-deps --wheel-dir $wheelDir .
+          $wheel = Get-ChildItem -LiteralPath $wheelDir -Filter "*.whl" | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $wheel) { throw "ordinary wheel missing" }
+          $runtime = Join-Path $env:RUNNER_TEMP "hfc-official-runtime"
+          python -m venv --system-site-packages $runtime
+          $runtimePython = Join-Path $runtime "Scripts\python.exe"
+          & $runtimePython -m pip install --force-reinstall --no-deps $wheel
+          python -c "import os,sys; open(os.environ['GITHUB_ENV'],'a',encoding='utf-8').write(sys.argv[1]+'='+sys.argv[2]+'\n')" HFC_TEST_WHEEL $wheel
+          python -c "import os,sys; open(os.environ['GITHUB_ENV'],'a',encoding='utf-8').write(sys.argv[1]+'='+sys.argv[2]+'\n')" HFC_LEGACY_PLUGIN_SOURCE_ROOT (Join-Path $env:GITHUB_WORKSPACE ".upstream\baseline_0222")
+          python -c "import os,sys; open(os.environ['GITHUB_ENV'],'a',encoding='utf-8').write(sys.argv[1]+'='+sys.argv[2]+'\n')" HFC_LEGACY_PLUGIN_PYTHON $runtimePython
+          python -c "import os,sys; open(os.environ['GITHUB_ENV'],'a',encoding='utf-8').write(sys.argv[1]+'='+sys.argv[2]+'\n')" HFC_CONFIG_WRITER_0225_ROOT $source
+      - name: Read back native source, wheel and installed resources
+        shell: pwsh
+        run: |
+          @'
+          import hashlib, json, os, subprocess, sys, zipfile
+          from pathlib import Path
+          source = Path(os.environ["HFC_CONFIG_WRITER_0225_ROOT"])
+          baseline = Path(os.environ["HFC_LEGACY_PLUGIN_SOURCE_ROOT"])
+          wheel = Path(os.environ["HFC_TEST_WHEEL"])
+          runtime = Path(os.environ["HFC_LEGACY_PLUGIN_PYTHON"])
+          assert source.is_absolute() and baseline.is_absolute()
+          assert wheel.is_absolute() and runtime.is_absolute()
+          assert wheel.is_file() and runtime.is_file()
+          assert source.resolve().drive == baseline.resolve().drive == wheel.resolve().drive
+          expected = {
+              source: "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+              baseline: "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+          }
+          for root, pin in expected.items():
+              head = subprocess.run(
+                  ["git", "-C", str(root), "rev-parse", "HEAD"],
+                  check=True, capture_output=True, text=True,
+              ).stdout.strip()
+              status = subprocess.run(
+                  ["git", "-C", str(root), "status", "--porcelain"],
+                  check=True, capture_output=True, text=True,
+              ).stdout
+              assert head == pin and not status, (root, head, status)
+          site = Path(subprocess.run(
+              [str(runtime), "-I", "-c", "import sysconfig;print(sysconfig.get_path('purelib'))"],
+              check=True, capture_output=True, text=True,
+          ).stdout.strip())
+          with zipfile.ZipFile(wheel) as archive:
+              resources = [
+                  name for name in archive.namelist()
+                  if name.startswith("hermes_feishu_card/") and not name.endswith("/")
+              ]
+              assert resources
+              for name in resources:
+                  assert (site / name).read_bytes() == archive.read(name), name
+          direct_url = next(site.glob("hermes_feishu_streaming_card-*.dist-info/direct_url.json"))
+          provenance = json.loads(direct_url.read_text(encoding="utf-8"))
+          assert not provenance.get("dir_info", {}).get("editable")
+          assert provenance["archive_info"]["hashes"]["sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+          print(json.dumps({
+              "source": str(source), "baseline": str(baseline),
+              "wheel": str(wheel), "resources": len(resources),
+          }, sort_keys=True))
+          '@ | python -
+      - name: Test binary I/O, portable restore and fixed v0.22.5 child
+        env:
+          HFC_REQUIRE_CONFIG_WRITER_CONTRACT: "1"
+          HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
+          HFC_REQUIRE_PM_GENERATION: "1"
+        run: >-
+          python -m pytest -q
+          tests/unit/test_windows_native_io.py
+          tests/unit/test_bound_recovery_io.py
+          tests/unit/test_pm_wheel_store.py
+          tests/unit/test_pm_dependency.py
+          tests/unit/test_plugin_config_bytes.py
+          tests/unit/test_install_plugin.py
+          tests/unit/test_decomposed_patcher.py
+          "tests/integration/test_pm_generation.py::test_exact_wheel_survives_real_pm_generations[0225]"
+          "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_official_startup_migration_matches_private_plan"
