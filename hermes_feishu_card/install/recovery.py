@@ -84,6 +84,10 @@ def _require_secure_dirfd_transactions() -> None:
         )
 
 
+def _portable_restore_supported() -> bool:
+    return os.name == "nt"
+
+
 
 
 
@@ -192,7 +196,7 @@ def _root_lock(root: Path) -> Iterator[None]:
         lock_path = root / _LOCK_NAME
         if lock_path.is_symlink():
             raise RecoveryRefused("recovery lock path must not be a symbolic link")
-        flags = os.O_RDWR | os.O_CREAT
+        flags = os.O_RDWR | os.O_CREAT | bound_io.BINARY_FLAG
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         descriptor = os.open(str(lock_path), flags, 0o600)
@@ -2808,7 +2812,10 @@ def install_decomposed(detection, *, no_repair=False, expected_fingerprint=None,
 
 
 def restore_decomposed(detection):
-    _require_secure_dirfd_transactions()
+    if not _secure_dirfd_transactions_supported() and not _portable_restore_supported():
+        # Unsupported platforms refuse before taking a lock or reading/mutating
+        # ownership state. Windows alone has the portable family transaction.
+        _require_secure_dirfd_transactions()
     with _root_lock(detection.root):
         snapshot, originals, _, state = decomposed_ownership._inspect(detection.root, render_hooks=False)
         if state == "clean":
@@ -2820,6 +2827,82 @@ def restore_decomposed(detection):
             raise ValueError("decomposed evidence changed before restore")
         changes = [(detection.root / name, raw.decode("utf-8")) for name, raw in originals.items()
                    if snapshot[name] != raw]
-        changes.extend((detection.root / (name + BACKUP_SUFFIX), None) for name in originals)
-        changes.append((detection.root / MANIFEST_NAME, None))
-        _commit_recovery_changes(detection, fresh, changes)
+        if _secure_dirfd_transactions_supported():
+            changes.extend((detection.root / (name + BACKUP_SUFFIX), None) for name in originals)
+            changes.append((detection.root / MANIFEST_NAME, None))
+            _commit_recovery_changes(detection, fresh, changes)
+            return
+        from .file_transaction import (
+            _remove_targets_portably,
+            _snapshot_restore_evidence,
+            _write_targets_portably,
+        )
+        evidence = {
+            name: detection.root / name
+            for name in (
+                *DECOMPOSED_SOURCE_TARGETS,
+                *(name + BACKUP_SUFFIX for name in DECOMPOSED_SOURCE_TARGETS),
+                MANIFEST_NAME,
+            )
+        }
+        identities, directories = _snapshot_restore_evidence(detection.root, evidence)
+        if decomposed_ownership._fingerprint(decomposed_ownership._snapshot(detection.root)) != fresh.fingerprint:
+            raise ValueError("decomposed evidence changed before portable restore")
+        try:
+            _write_targets_portably(
+                changes,
+                expected_identities=identities,
+                expected_directories=directories,
+                preserve_earlier_writes_on_rollback_failure=True,
+            )
+            restored_identities, _ = _snapshot_restore_evidence(
+                detection.root,
+                {name: detection.root / name for name in originals},
+            )
+            for name, raw in originals.items():
+                current = restored_identities[detection.root / name]
+                if current is None or current[2] != sha256(raw).hexdigest():
+                    raise ValueError("portable restore could not verify original source")
+            cleanup = [detection.root / (name + BACKUP_SUFFIX) for name in originals]
+            cleanup.append(detection.root / MANIFEST_NAME)
+            cleanup_contents = {
+                detection.root / (name + BACKUP_SUFFIX): snapshot[name + BACKUP_SUFFIX].decode("utf-8")
+                for name in originals
+            }
+            cleanup_contents[detection.root / MANIFEST_NAME] = snapshot[MANIFEST_NAME].decode("utf-8")
+            _remove_targets_portably(
+                cleanup,
+                expected_identities=identities,
+                expected_directories=directories,
+                recovery_contents=cleanup_contents,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            # A failed evidence deletion must leave the original owned state,
+            # not restored source plus a partial backup/manifest family.
+            current_identities, _ = _snapshot_restore_evidence(
+                detection.root,
+                {name: detection.root / name for name in originals},
+            )
+            rollback = [
+                (detection.root / name, snapshot[name].decode("utf-8"))
+                for name in originals
+                if snapshot[name] is not None
+            ]
+            try:
+                _write_targets_portably(
+                    rollback,
+                    expected_identities=current_identities,
+                    expected_directories=directories,
+                    preserve_earlier_writes_on_rollback_failure=True,
+                )
+            except (OSError, UnicodeError, ValueError) as rollback_exc:
+                raise ValueError(
+                    "portable restore rollback failed; manual review required"
+                ) from rollback_exc
+            if decomposed_ownership._inspect(detection.root)[3] != state:
+                raise ValueError(
+                    "portable restore rollback did not restore owned state"
+                ) from exc
+            raise
+        if decomposed_ownership._inspect(detection.root)[3] != "clean":
+            raise ValueError("portable restore left owned evidence")

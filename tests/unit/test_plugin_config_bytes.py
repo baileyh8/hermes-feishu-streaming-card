@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 from unittest.mock import Mock
 from types import SimpleNamespace
@@ -190,7 +191,9 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
         request = json.loads((shadow / "request.json").read_text())
         assert request["family"] in planner.FAMILIES
         assert request["sources"] == planner.FAMILIES[request["family"]]
-        assert kwargs["env"] == {"HOME": str(shadow), "HERMES_HOME": str(shadow)}
+        assert kwargs["env"] == planner.isolated_child_env(
+            shadow, temp_dir=shadow / "tmp"
+        )
         assert "SYNTHETIC-CONFIG-SECRET" not in repr(argv)
         return subprocess.CompletedProcess(argv, 73, stderr=b"SYNTHETIC-STDERR-SECRET")
 
@@ -209,6 +212,109 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
     assert not list(state.iterdir())
     assert (home / "config.yaml").read_bytes() == before
     assert "SYNTHETIC" not in repr(planner.ConfigBytesPlan(before, root, "fixed"))
+
+
+def test_isolated_child_environment_is_bounded_and_windows_home_safe(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    home = tmp_path / "home with spaces" / "用户"
+    root = tmp_path / "checkout with spaces"
+    monkeypatch.setenv("HFC_PRIVATE_SECRET", "do-not-inherit")
+    monkeypatch.setattr(planner.os, "name", "nt")
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    monkeypatch.setenv("TEMP", r"C:\private-temp")
+    monkeypatch.setenv("TMP", r"C:\private-temp")
+    environment = planner.isolated_child_env(
+        home, install_root=root, temp_dir=home / "tmp", include_path=True
+    )
+    assert environment["HOME"] == environment["HERMES_HOME"] == str(home)
+    assert environment["USERPROFILE"] == str(home)
+    assert environment["HERMES_INSTALL_ROOT"] == str(root)
+    assert environment["TEMP"] == environment["TMP"] == str(home / "tmp")
+    assert environment["SYSTEMROOT"] == environment["WINDIR"] == r"C:\Windows"
+    assert environment["COMSPEC"] == r"C:\Windows\System32\cmd.exe"
+    assert environment["PATH"] == r"C:\Windows\System32"
+    assert "HFC_PRIVATE_SECRET" not in environment
+
+
+def test_private_child_neutralizes_platform_version_probe(tmp_path):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"),
+        "family": "pm-0224",
+        "sources": {},
+        "desired": {},
+        "enabled_before": False,
+    }))
+    setup = planner._CHILD.split("root=Path(sys.argv[1])", 1)[0]
+    setup = setup.replace("sys.platform=='win32'", "True")
+    probe = setup + "\nassert platform._syscmd_ver('a','b','c') == ('a','b','c')\n"
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(tmp_path), str(shadow)],
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_git_audit_accepts_only_the_exact_bound_windows_argv(tmp_path):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    root, home = tmp_path / "checkout with spaces", tmp_path / "shadow"
+    root.mkdir()
+    home.mkdir()
+    git = r"C:\Program Files\Git\cmd\git.exe"
+    (home / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"),
+        "family": "pm-0224",
+        "sources": {},
+        "git": git,
+        "desired": {},
+        "enabled_before": False,
+    }))
+    setup = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
+    setup = setup.replace(
+        "and sys.platform=='win32' and isinstance(command,str)",
+        "and isinstance(command,str)",
+    )
+    expected = [git, "-C", str(root), "rev-parse", "HEAD"]
+    accepted = setup + (
+        "\nscope={'__name__':'hermes_cli.boot_bootstrap','audit':audit,"
+        "'subprocess':subprocess,'root':root,'expected':" + repr(expected) + "}\n"
+        "exec(\"def read_git_head():\\n"
+        "    audit('subprocess.Popen',(expected[0],expected,str(root),{}))\\n"
+        "    audit('subprocess.Popen',(expected[0],subprocess.list2cmdline(expected),str(root),{}))\",scope)\n"
+        "scope['read_git_head']()\n(home/'accepted').write_text('yes')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", accepted, str(root), str(home)],
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (home / "accepted").read_text() == "yes"
+
+    refused = setup + (
+        "\nscope={'__name__':'hermes_cli.boot_bootstrap','audit':audit,"
+        "'subprocess':subprocess,'root':root,'expected':" + repr(expected) + "}\n"
+        "exec(\"def read_git_head():\\n"
+        "    audit('subprocess.Popen',(expected[0],expected+['--format=evil'],str(root),{}))\",scope)\n"
+        "scope['read_git_head']()\n(home/'continued').write_text('bad')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", refused, str(root), str(home)],
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 73
+    assert not (home / "continued").exists()
 
 
 @pytest.mark.parametrize("family", ["pm-0224", "pm-0225"])

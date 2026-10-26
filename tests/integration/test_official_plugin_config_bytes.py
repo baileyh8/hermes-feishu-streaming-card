@@ -368,9 +368,9 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
         ],
         cwd=root,
         env={
-            "HOME": str(home),
-            "HERMES_HOME": str(home),
-            "HERMES_INSTALL_ROOT": str(root),
+            **plugin_config_bytes.isolated_child_env(
+                home, install_root=root, include_path=True
+            ),
             "PYTHONDONTWRITEBYTECODE": "1",
         },
         capture_output=True,

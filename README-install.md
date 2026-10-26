@@ -341,6 +341,20 @@ bash install.sh
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
+Native Windows uses the portable transaction boundary for explicit PM
+install, restore and uninstall: every byte read or write requests `O_BINARY`,
+existing files are opened with an exclusive handle, and the original bytes,
+digest, directory identity and reparse state are rechecked before replacement
+or cleanup. Source restoration and backup/manifest deletion form one family
+transaction: a failed or interrupted evidence deletion restores the verified
+installed source bytes and exact evidence before reporting failure. Unknown
+Hermes sources remain refused. Automatic recovery and
+`integrity migrate-safe` still require POSIX directory-relative operations;
+stop before those steps and use the documented explicit restore flow instead
+of deleting ownership evidence by hand. The Windows CI entry runs the fixed,
+unmodified Hermes v0.22.5 fixture on Python 3.12 and 3.14; a local POSIX mock is
+not native Windows acceptance evidence.
+
 ## Environment Variables
 
 | Variable | Default | Description |

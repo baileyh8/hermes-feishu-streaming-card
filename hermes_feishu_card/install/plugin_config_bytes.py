@@ -20,6 +20,8 @@ from typing import Any, Mapping
 
 import yaml  # type: ignore[import-untyped]
 
+from .file_transaction import BINARY_FLAG
+
 
 class ConfigBytesRefused(ValueError):
     """The official command's exact config postimage cannot be proved."""
@@ -48,6 +50,46 @@ class ConfigBytesRefused(ValueError):
     def diagnostic_label(self) -> str:
         label = f"{self.stage}:{self.code}"
         return f"{label}:{self.source}" if self.source else label
+
+
+def isolated_child_env(
+    home: Path,
+    *,
+    install_root: Path | None = None,
+    temp_dir: Path | None = None,
+    include_path: bool = False,
+) -> dict[str, str]:
+    """Build a bounded child environment with the Windows home variables it needs."""
+    environment = {"HOME": str(home), "HERMES_HOME": str(home)}
+    if install_root is not None:
+        environment["HERMES_INSTALL_ROOT"] = str(install_root)
+    if os.name != "nt":
+        return environment
+
+    environment["USERPROFILE"] = str(home)
+    system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
+    if system_root:
+        environment["SYSTEMROOT"] = system_root
+        environment["WINDIR"] = system_root
+    for name in ("SYSTEMDRIVE", "COMSPEC", "PATHEXT"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    if "COMSPEC" not in environment and system_root:
+        environment["COMSPEC"] = str(Path(system_root) / "System32" / "cmd.exe")
+    if "PATHEXT" not in environment:
+        environment["PATHEXT"] = ".COM;.EXE;.BAT;.CMD"
+    if temp_dir is not None:
+        environment["TEMP"] = str(temp_dir)
+        environment["TMP"] = str(temp_dir)
+    else:
+        for name in ("TEMP", "TMP"):
+            value = os.environ.get(name)
+            if value:
+                environment[name] = value
+    if include_path and os.environ.get("PATH"):
+        environment["PATH"] = os.environ["PATH"]
+    return environment
 
 
 # Whole-source hashes bind cmd_enable's sequence, its imported helpers and the
@@ -683,9 +725,13 @@ class ConfigBytesPlan:
 
 
 _CHILD = r"""
-import hashlib,importlib,json,os,stat,sys,sysconfig
+import hashlib,importlib,json,os,platform,stat,subprocess,sys,sysconfig
 from pathlib import Path
 sys.dont_write_bytecode=True
+if sys.platform=='win32' and hasattr(platform,'_syscmd_ver'):
+    def _quiet_syscmd_ver(system='',release='',version='',supported_platforms=('win32','win16','dos')):
+        return system,release,version
+    platform._syscmd_ver=_quiet_syscmd_ver
 root=Path(sys.argv[1]).resolve();home=Path(sys.argv[2]).resolve()
 request=json.loads((home/'request.json').read_text())
 real_home=Path(request['real_home']).resolve()
@@ -770,8 +816,18 @@ def audit(event,args):
             # block it without starting a subprocess. The entire source is bound.
             if frame.f_globals.get('__name__')=='hermes_cli.boot_bootstrap' and frame.f_code.co_name=='read_git_head':
                 command=args[1]
-                if isinstance(command,(list,tuple)) and len(command)==5 and command[1:]==['-C',str(root),'rev-parse','HEAD']:
-                    return
+                git=request.get('git')
+                if isinstance(git,str) and git:
+                    expected=[git,'-C',str(root),'rev-parse','HEAD']
+                    executable=args[0]
+                    executable_ok=(executable is None
+                                   or os.path.normcase(os.path.abspath(os.fsdecode(executable)))
+                                   == os.path.normcase(os.path.abspath(git)))
+                    if executable_ok and isinstance(command,(list,tuple)) and list(command)==expected:
+                        return
+                    if (executable_ok and sys.platform=='win32' and isinstance(command,str)
+                            and command==subprocess.list2cmdline(expected)):
+                        return
             if frame.f_globals.get('__name__')=='hermes_cli.version_info' and frame.f_code.co_name=='_run_git':
                 raise RuntimeError('version metadata subprocess disabled in shadow')
             deny('subprocess','process')
@@ -826,8 +882,9 @@ if migrate_on_boot is None: migrate_on_boot=True
 if request.get('boot_gate') and request.get('historical_migration') is None:
     # Only inspect the official boot identity/record. Never run bootstrap here.
     # The helpers resolve profiles and PM roots under the exact enable HOME.
-    saved_env={key:os.environ.get(key) for key in ('HOME','HERMES_HOME','HERMES_INSTALL_ROOT')}
+    saved_env={key:os.environ.get(key) for key in ('HOME','HERMES_HOME','HERMES_INSTALL_ROOT','USERPROFILE')}
     os.environ.update(HOME=str(real_home),HERMES_HOME=str(real_home),HERMES_INSTALL_ROOT=str(root))
+    if sys.platform=='win32': os.environ['USERPROFILE']=str(real_home)
     try:
         boot=module('hermes_cli.boot_bootstrap','hermes_cli/boot_bootstrap.py')
         # Read Git identity with the caller's existing Git executable, without
@@ -1008,6 +1065,8 @@ def _plan_enabled_bytes(
             scratch = Path(scratch_name).resolve()
             shadow = (scratch / "home").resolve()
             shadow.mkdir(mode=0o700)
+            child_temp = shadow / "tmp"
+            child_temp.mkdir(mode=0o700)
             os.chmod(scratch, 0o700)
             for name, value in {
                 "config.yaml": before,
@@ -1025,13 +1084,13 @@ def _plan_enabled_bytes(
                 ).encode(),
             }.items():
                 path = shadow / name
-                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY_FLAG, 0o600)
                 with os.fdopen(descriptor, "wb") as stream:
                     stream.write(value)
             child = subprocess.run(
                 [str(python), "-I", "-c", _CHILD, str(root), str(shadow)],
                 cwd=root,
-                env={"HOME": str(shadow), "HERMES_HOME": str(shadow)},
+                env=isolated_child_env(shadow, temp_dir=child_temp),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 timeout=30,
