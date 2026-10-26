@@ -148,6 +148,17 @@ def _hfc_trace_subprocess(frame, command, executable):
         'hermes_yaml', 'pm.paths', 'pm._uv', 'pm.install', 'pm.client',
         'pm.environments', 'utils',
     }
+    for filename in request.get('sources', {}):
+        if filename.endswith('.py'):
+            name = filename[:-3].replace('/', '.')
+            if name.endswith('.__init__'):
+                name = name[:-9]
+            if name:
+                upstream_modules.add(name)
+    upstream_roots = {
+        'hermes_cli', 'pm', 'agent', 'providers', 'gateway', 'tools',
+        'plugins', 'hermes_feishu_card', 'hermes_platform', 'hermes_constants',
+    }
     stdlib = set(getattr(sys, 'stdlib_module_names', ()))
     def safe(value):
         if not isinstance(value, str) or not value or len(value) > 200:
@@ -159,6 +170,7 @@ def _hfc_trace_subprocess(frame, command, executable):
         return value if all(ch.isalnum() or ch in '._' for ch in value) else None
     def allowed(module):
         return (module == 'sitecustomize' or module in upstream_modules
+                or module.split('.', 1)[0] in upstream_roots
                 or module.split('.', 1)[0] in stdlib)
     def describe(candidate):
         if candidate is None:
@@ -166,10 +178,10 @@ def _hfc_trace_subprocess(frame, command, executable):
         module = safe(candidate.f_globals.get('__name__', ''))
         if module is None or module in {'__main__', 'subprocess'} or not allowed(module):
             return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
-        function = safe(candidate.f_code.co_name) or 'unknown'
-        qualname = safe(getattr(candidate.f_code, 'co_qualname', None)) or function
-        if function == 'unknown':
-            return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
+        raw_function = candidate.f_code.co_name
+        function = 'module_scope' if raw_function == '<module>' else (safe(raw_function) or 'unknown')
+        raw_qualname = getattr(candidate.f_code, 'co_qualname', None)
+        qualname = 'module_scope' if raw_qualname == '<module>' else (safe(raw_qualname) or function)
         return {'module': module, 'function': function, 'qualname': qualname}
     caller_frames = []
     current = frame
@@ -225,6 +237,18 @@ def _parse_plan_trace(stderr):
         "hermes_yaml", "pm.paths", "pm._uv", "pm.install", "pm.client",
         "pm.environments", "utils",
     }
+    for sources in plugin_config_bytes.FAMILIES.values():
+        for filename in sources:
+            if filename.endswith(".py"):
+                name = filename[:-3].replace("/", ".")
+                if name.endswith(".__init__"):
+                    name = name[:-9]
+                if name:
+                    upstream_modules.add(name)
+    upstream_roots = {
+        "hermes_cli", "pm", "agent", "providers", "gateway", "tools",
+        "plugins", "hermes_feishu_card", "hermes_platform", "hermes_constants",
+    }
     stdlib = set(getattr(sys, "stdlib_module_names", ()))
     stdlib.update({
         "os", "platform", "uuid", "subprocess", "sys", "pathlib",
@@ -239,6 +263,7 @@ def _parse_plan_trace(stderr):
             and (
                 value == "sitecustomize"
                 or value in upstream_modules
+                or value.split(".", 1)[0] in upstream_roots
                 or value.split(".", 1)[0] in stdlib
             )
         )
@@ -325,6 +350,43 @@ def _parse_plan_trace(stderr):
         if valid:
             return safe
     return None
+
+
+
+def test_plan_trace_executes_module_scope_and_keeps_unknown_private():
+    import ast
+    import io
+    from types import SimpleNamespace
+
+    child = ast.parse(_diagnostic_plan_child())
+    function = next(node for node in child.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "_hfc_trace_subprocess")
+    stream = io.StringIO()
+    namespace = {
+        "sys": SimpleNamespace(stderr=stream, platform=sys.platform,
+                               stdlib_module_names=sys.stdlib_module_names),
+        "request": {"git": None, "sources": {"hermes_cli/config.py": "fixed"}},
+        "root": Path("/unused-trace-root"), "subprocess": subprocess, "json": json,
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]),
+                 "<isolated-trace-function>", "exec"), namespace)
+    frame = SimpleNamespace(
+        f_globals={"__name__": "hermes_cli.config"},
+        f_code=SimpleNamespace(co_name="<module>", co_qualname="<module>"),
+        f_back=None,
+    )
+    trace = namespace["_hfc_trace_subprocess"]
+    assert trace(frame, ["unmatched"], None) == "hermes_cli.config.module_scope"
+    report = _parse_plan_trace(stream.getvalue().encode("ascii"))
+    assert report["caller_frames"] == [{
+        "module": "hermes_cli.config", "function": "module_scope",
+        "qualname": "module_scope",
+    }]
+    frame.f_globals["__name__"] = "PRIVATE_MODULE_CANARY"
+    stream.seek(0)
+    stream.truncate(0)
+    assert trace(frame, ["unmatched"], None) == "unknown"
+    assert "PRIVATE_MODULE_CANARY" not in stream.getvalue()
 
 
 def _plan_with_failure_diagnostic(plan, **kwargs):
