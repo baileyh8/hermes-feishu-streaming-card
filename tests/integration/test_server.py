@@ -5193,7 +5193,10 @@ async def test_full_capacity_repeated_recheck_returns_same_successor_and_moves_d
     }
 
 
-async def test_private_repair_is_exactly_once_under_concurrent_confirmation(monkeypatch):
+@pytest.mark.parametrize("after_completion", [False, True])
+async def test_private_repair_is_exactly_once_under_concurrent_confirmation(
+    monkeypatch, after_completion
+):
     feishu_client = FakeFeishuClient()
     report = operations_report()
     detection = SimpleNamespace(root=Path("/private/hermes"))
@@ -5234,20 +5237,31 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(monk
                 repair, chat_id="oc_private", operator="ou_first"
             ),
         )
-        confirm = operations_button((await first.json())["card"], "确认修复")
-        responses = await asyncio.gather(
-            *[
-                test_client.post(
-                    "/card/actions",
-                    json=operations_action_payload(
-                        confirm, chat_id="oc_private", operator=f"ou_{index}"
-                    ),
-                )
-                for index in range(8)
-            ]
-        )
+        confirmation = await first.json()
+        executing_operation_id = confirmation["operation_id"]
+        confirm = operations_button(confirmation["card"], "确认修复")
+
+        async def confirm_once(index):
+            return await test_client.post(
+                "/card/actions",
+                json=operations_action_payload(
+                    confirm, chat_id="oc_private", operator=f"ou_{index}"
+                ),
+            )
+
+        if after_completion:
+            responses = [await confirm_once(0)]
+            await wait_for_card_update(feishu_client, "安全修复已完成")
+            responses.extend(
+                await asyncio.gather(*(confirm_once(i) for i in range(1, 8)))
+            )
+        else:
+            responses = await asyncio.gather(*(confirm_once(i) for i in range(8)))
         bodies = [await response.json() for response in responses]
         await wait_for_card_update(feishu_client, "安全修复已完成")
+        current_deliveries = app[sidecar_server.OPERATIONS_DELIVERIES_KEY]
+        assert len(current_deliveries) == 1
+        completed_operation_id = next(iter(current_deliveries))
     finally:
         await test_client.close()
 
@@ -5255,8 +5269,22 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(monk
     assert calls[0][1] == "recovery-a"
     assert app[METRICS_KEY].recovery_attempts == 1
     assert app[METRICS_KEY].recovery_successes == 1
+    assert len(feishu_client.sent) == 1
+    assert completed_operation_id != executing_operation_id
     assert all(response.status == 200 for response in responses)
-    assert all("正在安全修复" in str(body["card"]) for body in bodies)
+    # A fast repair can finish before every concurrent callback arrives. Late
+    # confirmations must follow its exact successor without another mutation.
+    for body in bodies:
+        assert body["ok"] is True
+        if "正在安全修复" in str(body["card"]):
+            assert body["operation_id"] == executing_operation_id
+        else:
+            assert "安全修复已完成" in str(body["card"])
+            assert body["operation_id"] == completed_operation_id
+    if after_completion:
+        assert all(
+            body["operation_id"] == completed_operation_id for body in bodies[1:]
+        )
     assert "安全修复已完成" in str(feishu_client.updated[-1][1])
 
 
