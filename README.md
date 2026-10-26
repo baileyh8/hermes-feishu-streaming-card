@@ -15,9 +15,9 @@
 
 [V5 新变化](#v5-新变化) · [从 V4x 升级](#从-v4x-升级到-v5) · [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.8；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.8.md)。
+**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.9；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.9.md)。
 
-安装包与 checksums 以 [v5.0.8 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.8) 正式发布的文件为准。
+安装包与 checksums 以 [v5.0.9 Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.9) 正式发布的文件为准。
 
 ## V5 新变化
 
@@ -42,6 +42,8 @@ card:
 ```
 
 这组设置让执行过程默认收起，完成后仍可展开。`task` 预设本身默认展开；第二行明确选择收起。升级不会自动把 `classic`、`focused` 或 `detailed` 改成 `task`。
+
+V5.0.9 修复原生 admission 身份、Windows 字节 I/O 与配置子进程隔离、历史 PM wheel 恢复及固定恢复诊断（#451/#459/#462/#463）；验收范围见[发行说明](docs/release-notes-v5.0.9.md)。
 
 V5.0.8合并 PM 外部 wheel 来源保护与迁移安全重绑，并处理实际 PM 启动目录和官方镜像配置写入兼容（#458/#459/#462）；验收进度与限制见[发行说明](docs/release-notes-v5.0.8.md)。
 
@@ -127,7 +129,7 @@ macOS / Linux 示例（先把路径改为你当前安装所用的值）：
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.8/install.sh | bash -s -- --version v5.0.8 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.9/install.sh | bash -s -- --version v5.0.9 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 Windows、Docker、分离 HOME 的完整步骤，以及验证与回退方法，见 **[V4.x → V5 升级指南](docs/upgrade-v4-to-v5.md)**。升级 HFC 与升级 Hermes 是两件事；飞书 `/update` 不能当作本插件的版本升级命令。
@@ -163,7 +165,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.8
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.9
 bash install-docker.sh
 ```
 
@@ -294,6 +296,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.9](docs/release-notes-v5.0.9.md) | 原生 admission 身份、Windows 安装与历史 PM 恢复 |
 | [v5.0.8](docs/release-notes-v5.0.8.md) | PM 外部 wheel、迁移安全重绑与官方镜像安装兼容 |
 | [v5.0.7](docs/release-notes-v5.0.7.md) | Hermes v0.22.5 兼容、每轮回调与终局诊断（候选） |
 | [v5.0.6](docs/release-notes-v5.0.6.md) | 版本化归档顶层目录、规范元数据与实际解压安全门禁 |
@@ -303,12 +306,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.2](docs/release-notes-v5.0.2.md) | 已知中英文瞬态提示撤回，保留排队信息与原生心跳收尾 |
 | [v5.0.1](docs/release-notes-v5.0.1.md) | Hermes 0.22.x completion/审批兼容与 PM 持久依赖登记 |
 | [v5.0.0](docs/release-notes-v5.0.0.md) | 任务分区、交互续答、本轮统计与安装恢复边界 |
-| [v4.7.7](docs/release-notes-v4.7.7.md) | 可选原生表格；保留长单元格和无法拆分的 Markdown 表格 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
 
+- V5.0.9：感谢 [coytus](https://github.com/coytus) 的 #451、[mingyangtech666](https://github.com/mingyangtech666) 的 #463 与 #458 原实现、[mouyong](https://github.com/mouyong) 的 #462，以及 [ywarmy](https://github.com/ywarmy) 的 #459 补充证据；Dependabot 提供 #464/#465/#466。原提交和历史署名保留，问题证据与代码作者分别记录。
 - V5.0.7：感谢 [coder-zhw](https://github.com/coder-zhw)（#456）、[Kevinzz224](https://github.com/Kevinzz224) 和 [ywarmy](https://github.com/ywarmy)（#453），以及 [coytus](https://github.com/coytus)、[Lite-G](https://github.com/Lite-G)、[leavrcn](https://github.com/leavrcn)（#451）提供报告、分析及复测证据；代码作者以 Git 提交为准。
 - V5.0.6：感谢 [leavrcn](https://github.com/leavrcn) 提供 [#454](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/454) 的归档元数据问题报告与复现证据。这是问题证据署名，代码作者以 Git 提交为准；全部历史贡献记录保留。
 - V5.0.5：修复与 CI 维护由 [baileyh8](https://github.com/baileyh8) 完成（[PR #448](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/448)、[PR #449](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/449)、[PR #452](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/452)）。感谢 [coytus](https://github.com/coytus) 提供 [#451](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/451) 现场报告，以及 [Lite-G](https://github.com/Lite-G) 的源码分析；这两项是问题证据和分析署名，与本次代码作者分开记录。
