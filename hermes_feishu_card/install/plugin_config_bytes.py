@@ -861,6 +861,10 @@ def profile(frame,event,arg):
     if event!='call': return
     module=frame.f_globals.get('__name__','') or ''
     name=frame.f_code.co_name
+    if (sys.platform=='win32' and request['family']=='pm-0225'
+            and module=='hermes_dir_acl'
+            and name in {'_grant_with_pywin32','_grant_with_icacls','_whoami_sid'}):
+        deny('acl-grant-attempt','profile','hermes_dir_acl.py')
     if ((module.startswith('hermes_cli.plugins') and name in {
         'discover_plugins','discover_and_load','_discover_and_load_inner','_load_plugin','_load_plugin_scoped'})
         or (module.startswith('hermes_feishu_card') and name=='bootstrap_plugin_runtime')
@@ -877,6 +881,42 @@ def module(name,relative):
     value=importlib.import_module(name)
     assert Path(value.__file__).resolve()==root/relative
     return value
+def _refuse_shadow_acl_grant(*args, **kwargs):
+    # The upstream public helper treats a grant failure as best-effort False.
+    # This private process computes bytes; actual enable owns actual ACL work.
+    raise PermissionError('ACL changes are outside private config planning')
+def _restrict_shadow_acl(acl):
+    source_path=root/'hermes_dir_acl.py'
+    try:
+        original=getattr(acl,'_grant',None)
+        if (getattr(acl,'__name__',None)!='hermes_dir_acl'
+                or Path(acl.__file__).resolve()!=source_path
+                or type(original) is not type(_refuse_shadow_acl_grant)):
+            deny('acl-helper-drift','plan','hermes_dir_acl.py')
+        source=source_path.read_bytes()
+        if hashlib.sha256(source).hexdigest()!=request['sources'].get('hermes_dir_acl.py'):
+            deny('acl-helper-drift','plan','hermes_dir_acl.py')
+        code=original.__code__
+        expected=next((part for part in compile(source,code.co_filename,'exec',dont_inherit=True).co_consts
+                       if isinstance(part,type(code)) and part.co_name=='_grant'),None)
+        defaults=original.__defaults__
+        if (original.__module__!='hermes_dir_acl' or original.__name__!='_grant'
+                or original.__qualname__!='_grant'
+                or Path(code.co_filename).resolve()!=source_path
+                or code.co_argcount!=4 or code.co_posonlyargcount or code.co_kwonlyargcount
+                or code.co_flags & 12
+                or code.co_varnames[:4]!=('path','is_dir','expected','subtree_has_link')
+                or type(defaults) is not tuple or len(defaults)!=3
+                or type(defaults[0]) is not bool or defaults!=(True,None,None)
+                or original.__kwdefaults__ is not None or original.__closure__ is not None
+                or code!=expected):
+            deny('acl-helper-drift','plan','hermes_dir_acl.py')
+    except (OSError,AttributeError,TypeError,ValueError,SyntaxError):
+        deny('acl-helper-drift','plan','hermes_dir_acl.py')
+    acl._grant=_refuse_shadow_acl_grant
+if sys.platform=='win32' and request['family']=='pm-0225':
+    # Load and bind before any upstream HOME helper can perform a Windows grant.
+    _restrict_shadow_acl(module('hermes_dir_acl','hermes_dir_acl.py'))
 migrate_on_boot=request.get('historical_migration')
 if migrate_on_boot is None: migrate_on_boot=True
 if request.get('boot_gate') and request.get('historical_migration') is None:
