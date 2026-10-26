@@ -47,20 +47,53 @@ def _record_child_failure_diagnostic(monkeypatch):
             and command[3] == pm._CHILD
             and result.returncode
         ):
-            stderr = result.stderr or ""
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
+            stderr = result.stderr or b""
+            if isinstance(stderr, str):
+                stderr = stderr.encode("utf-8", errors="replace")
             missing = re.findall(
-                r"(?m)^ModuleNotFoundError: No module named '([^']+)'\r?$", stderr
+                rb"(?m)^ModuleNotFoundError: No module named "
+                rb"'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)'\r?$",
+                stderr,
             )
             print(json.dumps({
                 "pm_child_returncode": result.returncode,
-                "missing_modules": sorted(set(missing)),
-                "stderr_bytes": len(stderr.encode("utf-8")),
+                "missing_modules": sorted(
+                    {name.decode("ascii") for name in missing if len(name) <= 200}
+                ),
+                "stderr_bytes": len(stderr),
             }, sort_keys=True), flush=True)
         return result
 
     monkeypatch.setattr(pm.subprocess, "run", recorded)
+
+
+def test_pm_child_failure_diagnostic_is_bounded_and_redacted(
+    tmp_path, monkeypatch, capsys
+):
+    secret = "PRIVATE-CANARY"
+    stderr = (
+        "ModuleNotFoundError: No module named 'ruamel.yaml'\n"
+        "ModuleNotFoundError: No module named 'cryptography.hazmat'\n"
+        "ModuleNotFoundError: No module named 'bad/" + secret + "'\n"
+        "ModuleNotFoundError: No module named '" + "a" * 201 + "'\n"
+        "Error: " + secret + "\n"
+    ).encode("utf-8")
+    result = subprocess.CompletedProcess([], 7, stderr=stderr)
+    monkeypatch.setattr(pm.subprocess, "run", lambda *args, **kwargs: result)
+    _record_child_failure_diagnostic(monkeypatch)
+
+    returned = pm.subprocess.run([
+        sys.executable, "-I", "-c", pm._CHILD, str(tmp_path),
+    ])
+
+    assert returned is result
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "pm_child_returncode": 7,
+        "missing_modules": ["cryptography.hazmat", "ruamel.yaml"],
+        "stderr_bytes": len(stderr),
+    }
+    assert secret not in json.dumps(report)
 
 
 @pytest.mark.parametrize("snapshot", PM_ROOTS)
