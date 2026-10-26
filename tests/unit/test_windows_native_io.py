@@ -98,8 +98,8 @@ def test_portable_evidence_success_deletes_verified_family_on_windows(tmp_path):
     root.mkdir()
     first = root / "run.py.hermes_feishu_card.bak"
     second = root / "manifest with 用户.json"
-    first.write_text("backup\r\n", encoding="utf-8")
-    second.write_text('{"ok": true}\r\n', encoding="utf-8")
+    first.write_bytes(b"backup\r\n")
+    second.write_bytes(b'{"ok": true}\r\n')
     identities, directories = portable._snapshot_restore_evidence(
         root, {"backup": first, "manifest": second}
     )
@@ -111,11 +111,11 @@ def test_portable_evidence_success_deletes_verified_family_on_windows(tmp_path):
     assert not first.exists() and not second.exists()
 
     changed = root / "changed.bak"
-    changed.write_text("expected\r\n", encoding="utf-8")
+    changed.write_bytes(b"expected\r\n")
     identities, directories = portable._snapshot_restore_evidence(
         root, {"changed": changed}
     )
-    changed.write_text("concurrent edit\r\n", encoding="utf-8")
+    changed.write_bytes(b"concurrent edit\r\n")
     with pytest.raises(ValueError, match="changed"):
         portable._remove_targets_portably(
             [changed],
@@ -134,7 +134,7 @@ def _portable_evidence_family(tmp_path):
         root / ".hermes_feishu_card_manifest": '{"manifest": true}\r\n',
     }
     for path, value in values.items():
-        path.write_text(value, encoding="utf-8")
+        path.write_bytes(value.encode("utf-8"))
     identities, directories = portable._snapshot_restore_evidence(
         root, {path.name: path for path in values}
     )
