@@ -141,6 +141,13 @@ def _diagnostic_plan_child():
     child = plugin_config_bytes._CHILD
     helper = r'''
 def _hfc_trace_subprocess(frame, command, executable):
+    known_modules = {
+        'hermes_cli.boot_bootstrap', 'hermes_cli.version_info',
+        'hermes_cli.post_update', 'hermes_cli.config',
+        'hermes_cli.plugins_cmd', 'hermes_cli.plugins_cmd_capabilities',
+        'hermes_yaml', 'pm.paths', 'pm._uv', 'pm.install', 'pm.client',
+        'pm.environments', 'utils', 'platform',
+    }
     def safe(value):
         if not isinstance(value, str) or not value or len(value) > 200:
             return None
@@ -156,10 +163,15 @@ def _hfc_trace_subprocess(frame, command, executable):
         matches = command == expected
         if not matches and sys.platform == 'win32' and isinstance(command, str):
             matches = command == subprocess.list2cmdline(expected)
+    module_raw = frame.f_globals.get('__name__', '') if frame else ''
+    module = module_raw if module_raw in known_modules else 'unknown'
+    function = safe(frame.f_code.co_name) if frame and module != 'unknown' else 'unknown'
+    qualname = safe(getattr(frame.f_code, 'co_qualname', None)) if frame and module != 'unknown' else 'unknown'
+    source = f'{module}.{qualname or function}' if module != 'unknown' and (qualname or function) else 'unknown'
     report = {
-        'caller_module': safe(frame.f_globals.get('__name__', '')) if frame else None,
-        'caller_function': safe(frame.f_code.co_name) if frame else None,
-        'caller_qualname': safe(getattr(frame.f_code, 'co_qualname', None)) if frame else None,
+        'caller_module': module,
+        'caller_function': function,
+        'caller_qualname': qualname,
         'command_kind': safe(type(command).__name__) or 'other',
         'command_matches_boot_git': matches,
         'executable_is_none': executable is None,
@@ -167,6 +179,7 @@ def _hfc_trace_subprocess(frame, command, executable):
     }
     sys.stderr.write('HFC_CONFIG_PLAN_TRACE ' + json.dumps(report, sort_keys=True, separators=(',', ':')) + '\n')
     sys.stderr.flush()
+    return source
 '''
     marker = "def audit(event,args):"
     assert child.count(marker) == 1
@@ -175,13 +188,21 @@ def _hfc_trace_subprocess(frame, command, executable):
     assert child.count(denial) == 1
     return child.replace(
         denial,
-        "            _hfc_trace_subprocess(frame, args[1], args[0])\n" + denial,
+        "            source = _hfc_trace_subprocess(frame, args[1], args[0])\n"
+        "            deny('subprocess','process',source)\n",
         1,
     )
 
 
 def _parse_plan_trace(stderr):
     prefix = b"HFC_CONFIG_PLAN_TRACE "
+    known_modules = {
+        "hermes_cli.boot_bootstrap", "hermes_cli.version_info",
+        "hermes_cli.post_update", "hermes_cli.config",
+        "hermes_cli.plugins_cmd", "hermes_cli.plugins_cmd_capabilities",
+        "hermes_yaml", "pm.paths", "pm._uv", "pm.install", "pm.client",
+        "pm.environments", "utils", "platform", "unknown",
+    }
     string_fields = {"caller_module", "caller_function", "caller_qualname"}
     type_fields = {"command_kind", "executable_kind"}
     bool_fields = {"command_matches_boot_git", "executable_is_none"}
@@ -198,11 +219,14 @@ def _parse_plan_trace(stderr):
         valid = True
         for name in string_fields:
             value = payload[name]
-            if value is not None and (
+            if (
                 not isinstance(value, str)
                 or len(value) > 200
                 or not re.fullmatch(r"[A-Za-z0-9_.]+", value)
             ):
+                valid = False
+                break
+            if name == "caller_module" and value not in known_modules:
                 valid = False
                 break
             safe[name] = value
@@ -241,6 +265,7 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
     tmp_path, monkeypatch, capsys
 ):
     secret = "PRIVATE-CANARY"
+    compile(_diagnostic_plan_child(), "<diagnostic-child>", "exec")
     valid_stderr = (
         b"HFC_CONFIG_PLAN_DENY "
         b'{"reason":"plugin-load","source":"hermes_cli/example.py",'
@@ -248,6 +273,11 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         + secret.encode()
     )
     invalid_stderr = (
+        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"read_git_head",'
+        b'"caller_module":"PRIVATE-CANARY",'
+        b'"caller_qualname":"read_git_head","command_kind":"str",'
+        b'"command_matches_boot_git":false,"executable_is_none":true,'
+        b'"executable_kind":"none"}\n'
         b'HFC_CONFIG_PLAN_TRACE {"caller_function":"read_git_head",'
         b'"caller_module":"hermes_cli.boot_bootstrap",'
         b'"caller_qualname":"read_git_head","command_kind":"str",'
