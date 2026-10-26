@@ -1,0 +1,53 @@
+name: HFC actual release assets
+on:
+  push:
+    branches: [codex/509-assets-proof]
+permissions:
+  contents: read
+jobs:
+  actual-release-proof:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preserve reviewed helper and select immutable release
+        env:
+          RELEASE_COMMIT: '678ddfa81ae37a05ce7612ac069458724849dd90'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/hfc-actual-assets.py "$RUNNER_TEMP/hfc-actual-assets.py"
+          git fetch origin '+refs/heads/main:refs/remotes/origin/main' '+refs/tags/v5.0.9:refs/tags/v5.0.9'
+          test "$(git cat-file -t refs/tags/v5.0.9)" = tag
+          test "$(git rev-parse refs/tags/v5.0.9^{commit})" = "$RELEASE_COMMIT"
+          git checkout --detach "$RELEASE_COMMIT"
+          python scripts/verify_release.py --tag v5.0.9 --expected-commit "$RELEASE_COMMIT" --require-main-ancestor
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Prepare extraction contract dependency
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Download exact draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view v5.0.9 --repo baileyh8/hermes-feishu-streaming-card --json tagName,isDraft,targetCommitish,assets > "$RUNNER_TEMP/hfc-release-draft.json"
+          gh release download v5.0.9 --repo baileyh8/hermes-feishu-streaming-card --dir "$RUNNER_TEMP/hfc-actual-assets"
+      - name: Validate checksums and GNU tar root and nonroot extraction
+        run: python "$RUNNER_TEMP/hfc-actual-assets.py" --source "$GITHUB_WORKSPACE" --tag v5.0.9 --assets "$RUNNER_TEMP/hfc-actual-assets" --evidence "$RUNNER_TEMP/hfc-release-proof" --root
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: v509-actual-release-proof
+          path: |
+            ${{ runner.temp }}/hfc-release-proof
+            ${{ runner.temp }}/hfc-release-draft.json
+          if-no-files-found: error
+          retention-days: 30
