@@ -668,6 +668,7 @@ jobs:
           tests/unit/test_decomposed_patcher.py
           "tests/integration/test_pm_generation.py::test_exact_wheel_survives_real_pm_generations[0225]"
           "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_official_startup_migration_matches_private_plan"
+          "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_shadow_acl_uses_real_failure_path_without_success_cache"
 
   macos-shards:
     needs: [plan, fixed-hermes-fixture]
