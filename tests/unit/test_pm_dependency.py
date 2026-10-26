@@ -626,7 +626,12 @@ def _installed_runtime(tmp_path, wheel_bytes, version, direct_url):
     runtime = tmp_path / 'runtime'
     subprocess.run([sys.executable, '-m', 'venv', '--without-pip', str(runtime)],
                    check=True, capture_output=True, text=True)
-    site = next(runtime.glob('lib/python*/site-packages'))
+    python = runtime / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    probe = subprocess.run(
+        [str(python), '-I', '-c', 'import sysconfig;print(sysconfig.get_path("purelib"))'],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    site = Path(probe.stdout.strip())
     with zipfile.ZipFile(__import__('io').BytesIO(wheel_bytes)) as archive:
         for name in archive.namelist():
             if name.startswith('hermes_feishu_card/') and not name.endswith('/'):
@@ -639,7 +644,7 @@ def _installed_runtime(tmp_path, wheel_bytes, version, direct_url):
         f'Name: hermes-feishu-streaming-card\nVersion: {version}\n'
     )
     (dist / 'direct_url.json').write_text(json.dumps(direct_url))
-    return runtime / 'bin' / 'python', site
+    return python, site
 
 
 def test_pr458_schema1_flat_store_is_proven_by_owner_declaration_and_digest(tmp_path):

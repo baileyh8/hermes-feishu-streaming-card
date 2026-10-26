@@ -169,6 +169,94 @@ def test_portable_restore_rollback_failure_preserves_complete_evidence(hermes, m
     }
 
 
+@pytest.mark.parametrize("edit_kind", ["bytes", "inode", "directory"])
+def test_portable_cleanup_failure_never_claims_a_concurrent_source_edit(
+    hermes, tmp_path, monkeypatch, edit_kind
+):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    recovery.install_decomposed(detection)
+    target = next(
+        hermes / name for name in decomposed.SOURCE_TARGETS
+        if (hermes / name).exists()
+    )
+    user_edit = target.read_bytes() + b"\n# concurrent user edit during cleanup\n"
+    backups = {
+        path: path.read_bytes()
+        for path in hermes.rglob("*.hermes_feishu_card.bak")
+    }
+    manifest = (hermes / ".hermes_feishu_card_manifest").read_bytes()
+
+    def fail_after_edit(paths, **kwargs):
+        if edit_kind == "bytes":
+            target.write_bytes(user_edit)
+        elif edit_kind == "inode":
+            replacement = tmp_path / "replacement-source"
+            replacement.write_bytes(user_edit)
+            os.replace(replacement, target)
+        else:
+            moved = target.parent.with_name(target.parent.name + "-moved")
+            target.parent.rename(moved)
+            target.parent.mkdir()
+            target.write_bytes(user_edit)
+        raise OSError("injected cleanup failure after user edit")
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_remove_targets_portably", fail_after_edit)
+
+    with pytest.raises((OSError, ValueError)):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert target.read_bytes() == user_edit
+    if edit_kind == "directory":
+        moved_parent = target.parent.with_name(target.parent.name + "-moved")
+        moved_backups = {
+            moved_parent / path.relative_to(target.parent): value
+            for path, value in backups.items() if target.parent in path.parents
+        }
+        assert {path: path.read_bytes() for path in moved_backups} == moved_backups
+        unchanged = {
+            path: value for path, value in backups.items()
+            if target.parent not in path.parents
+        }
+        assert {path: path.read_bytes() for path in unchanged} == unchanged
+    else:
+        assert {path: path.read_bytes() for path in backups} == backups
+    assert (hermes / ".hermes_feishu_card_manifest").read_bytes() == manifest
+
+
+def test_portable_initial_write_failure_does_not_attempt_a_second_claim(hermes, monkeypatch):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    recovery.install_decomposed(detection)
+    target = next(
+        hermes / name for name in decomposed.SOURCE_TARGETS
+        if (hermes / name).exists()
+    )
+    user_edit = target.read_bytes() + b"\n# concurrent edit before initial write failure\n"
+    calls = []
+
+    def fail_initial(changes, **kwargs):
+        calls.append(changes)
+        target.write_bytes(user_edit)
+        raise OSError("injected initial portable write failure")
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_write_targets_portably", fail_initial)
+
+    with pytest.raises(OSError, match="initial portable write failure"):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert len(calls) == 1
+    assert target.read_bytes() == user_edit
+    assert list(hermes.rglob("*.hermes_feishu_card.bak"))
+    assert (hermes / ".hermes_feishu_card_manifest").is_file()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
 def test_windows_restore_partial_delete_failure_restores_installed_family(hermes, monkeypatch):
     from hermes_feishu_card.install import file_transaction

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -23,26 +25,48 @@ def _exact_plan(postimage: bytes):
 def _checkout(tmp_path: Path) -> tuple[Path, Path]:
     home = tmp_path / "home"
     checkout = home / "hermes-agent"
-    (checkout / ".venv" / "bin").mkdir(parents=True)
     home.mkdir(exist_ok=True)
+    checkout.mkdir(parents=True)
     (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
-    launcher = checkout / ".venv" / "bin" / "python"
-    launcher.symlink_to("/usr/bin/python3")
+    prefix = checkout / ".venv"
+    if os.name == "nt":
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(prefix)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        launcher = _venv_python(prefix)
+        launcher.parent.mkdir(parents=True)
+        launcher.symlink_to(sys.executable)
+        _venv_purelib(prefix).mkdir(parents=True, exist_ok=True)
     return checkout, home
+
+
+def _venv_python(prefix: Path) -> Path:
+    return prefix / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _venv_purelib(prefix: Path) -> Path:
+    if os.name == "nt":
+        return prefix / "Lib" / "site-packages"
+    return prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
 
 
 def _runtime_payload(checkout: Path) -> dict[str, object]:
     prefix = checkout / ".venv"
-    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    purelib = _venv_purelib(prefix)
     return {
-        "executable": str(checkout / ".venv" / "bin" / "python"),
+        "executable": str(_venv_python(prefix)),
         "prefix": str(prefix),
-        "base_prefix": "/usr",
+        "base_prefix": sys.base_prefix,
         "purelib": str(purelib),
         "platlib": str(purelib),
     }
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink launcher case")
 def test_runtime_binding_accepts_verified_posix_venv_symlink(tmp_path, monkeypatch):
     checkout, home = _checkout(tmp_path)
     monkeypatch.setattr(
@@ -58,8 +82,21 @@ def test_runtime_binding_accepts_verified_posix_venv_symlink(tmp_path, monkeypat
     assert binding.checkout_root == checkout
     assert binding.hermes_home == home
     assert binding.config_path == home / "config.yaml"
-    assert binding.runtime_python == checkout / ".venv" / "bin" / "python"
+    assert binding.runtime_python == _venv_python(checkout / ".venv")
     assert binding.python_identity.startswith("sha256:")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows venv launcher case")
+def test_runtime_binding_accepts_native_venv_launcher(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    binding = plugin.resolve_runtime_binding(
+        checkout_root=checkout, hermes_home=home, profile_id=None
+    )
+    assert binding.runtime_python == _venv_python(checkout / ".venv")
+    assert binding.runtime_python.is_file()
 
 
 def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch):
@@ -71,7 +108,10 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
     real_home.mkdir()
     (real_home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
     linked_home = tmp_path / "linked-home"
-    linked_home.symlink_to(real_home, target_is_directory=True)
+    try:
+        linked_home.symlink_to(real_home, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc.__class__.__name__}")
 
     with pytest.raises(plugin.RuntimeBindingRefused, match="Hermes home"):
         plugin.resolve_runtime_binding(
@@ -79,7 +119,10 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
         )
 
     (home / "config.yaml").unlink()
-    (home / "config.yaml").symlink_to(real_home / "config.yaml")
+    try:
+        (home / "config.yaml").symlink_to(real_home / "config.yaml")
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc.__class__.__name__}")
     with pytest.raises(plugin.RuntimeBindingRefused, match="config"):
         plugin.resolve_runtime_binding(
             checkout_root=checkout, hermes_home=home, profile_id=None
@@ -98,9 +141,7 @@ def test_runtime_binding_profile_id_never_selects_home(tmp_path, monkeypatch):
         )
 
 
-def test_runtime_binding_rejects_wrong_prefix_and_nonexecutable_target(
-    tmp_path, monkeypatch
-):
+def test_runtime_binding_rejects_wrong_prefix(tmp_path, monkeypatch):
     checkout, home = _checkout(tmp_path)
     monkeypatch.setattr(
         plugin,
@@ -115,13 +156,35 @@ def test_runtime_binding_rejects_wrong_prefix_and_nonexecutable_target(
             checkout_root=checkout, hermes_home=home, profile_id=None
         )
 
-    launcher = checkout / ".venv" / "bin" / "python"
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable-bit case")
+def test_runtime_binding_rejects_nonexecutable_posix_target(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    launcher = _venv_python(checkout / ".venv")
     launcher.unlink()
     target = tmp_path / "python-target"
     target.write_text("not executable", encoding="utf-8")
     target.chmod(stat.S_IRUSR | stat.S_IWUSR)
     launcher.symlink_to(target)
     with pytest.raises(plugin.RuntimeBindingRefused, match="executable"):
+        plugin.resolve_runtime_binding(
+            checkout_root=checkout, hermes_home=home, profile_id=None
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows nonregular launcher case")
+def test_runtime_binding_rejects_nonregular_native_launcher(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    launcher = _venv_python(checkout / ".venv")
+    launcher.unlink()
+    launcher.mkdir()
+    with pytest.raises(plugin.RuntimeBindingRefused, match="nonregular"):
         plugin.resolve_runtime_binding(
             checkout_root=checkout, hermes_home=home, profile_id=None
         )
@@ -456,12 +519,9 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_runtime_binding_uses_pm_committed_venv_with_real_child(tmp_path, legacy):
-    import subprocess
-    import sys
-
     checkout, home = _checkout(tmp_path)
     if not legacy:
-        (checkout / ".venv" / "bin" / "python").unlink()
+        _venv_python(checkout / ".venv").unlink()
     managed = tmp_path / "managed environment" / "venv"
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(managed)], check=True)
     pm = checkout / "pm"
@@ -474,7 +534,7 @@ def test_runtime_binding_uses_pm_committed_venv_with_real_child(tmp_path, legacy
     binding = plugin.resolve_runtime_binding(
         checkout_root=checkout, hermes_home=home, profile_id=None,
     )
-    assert binding.runtime_python == managed / "bin" / "python"
+    assert binding.runtime_python == _venv_python(managed)
     assert binding.purelib.is_relative_to(managed)
     assert binding.hermes_home == home
 
