@@ -20,4 +20,4 @@
 
 ## 贡献
 
-感谢 [coytus](https://github.com/coytus) 的 #451 反馈、[mingyangtech666](https://github.com/mingyangtech666) 的 #463 反馈与 #458 原始实现、[mouyong](https://github.com/mouyong) 的 #462 旧格式对照，以及 [ywarmy](https://github.com/ywarmy) 的 #459 迁移与配置恢复证据。感谢 Dependabot 的 #464/#465/#466。问题证据与代码作者分开记录；原始提交和此前署名全部保留。
+感谢 [coytus](https://github.com/coytus) 的 #451 反馈，以及 [leavrcn](https://github.com/leavrcn) 在 #451 提供的原生身份对照、复现和候选验证；感谢 [mingyangtech666](https://github.com/mingyangtech666) 的 #463 反馈与 #458 原始实现、[mouyong](https://github.com/mouyong) 的 #462 旧格式对照，以及 [ywarmy](https://github.com/ywarmy) 的 #459 迁移与配置恢复证据。感谢 Dependabot 的 #464/#465/#466。问题证据与代码作者分开记录；原始提交和此前署名全部保留。
