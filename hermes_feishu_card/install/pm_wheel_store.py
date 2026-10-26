@@ -18,6 +18,7 @@ from typing import Any, Iterator
 from . import posix_transaction as io
 
 _REFUSAL = 'PM external wheel ownership cannot be verified'
+_LEGACY_REFUSAL = 'legacy PM wheel store ownership cannot be verified'
 _POSIX_PERMISSIONS = os.name != 'nt'
 _WHEEL_NAME = re.compile(
     r'hermes_feishu_streaming_card-[A-Za-z0-9_.!+]+(?:-[0-9][A-Za-z0-9_]*)?'
@@ -31,8 +32,22 @@ def is_reparse(metadata: os.stat_result) -> bool:
                 & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400))
 
 
+def _has_flat_legacy_wheel(path: Path) -> bool:
+    """True only when the shared store still contains a PR458 flat wheel."""
+    try:
+        for entry in path.iterdir():
+            if not entry.name.endswith('.whl'):
+                continue
+            metadata = entry.lstat()
+            if stat.S_ISREG(metadata.st_mode) and not is_reparse(metadata):
+                return True
+    except OSError:
+        return False
+    return False
+
+
 @contextmanager
-def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
+def _directory(path: Path, home: Path, *, create: bool, legacy: bool = False) -> Iterator[int | None]:
     identities: dict[Path, tuple[int, int]] = {}
     descriptors: list[int] = []
     try:
@@ -53,8 +68,22 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
                 raise ValueError(_REFUSAL)
             if managed and _POSIX_PERMISSIONS and hasattr(os, 'getuid') and metadata.st_uid != os.getuid():
                 raise ValueError(_REFUSAL)
-            if managed and _POSIX_PERMISSIONS and (stat.S_IMODE(metadata.st_mode) & 0o077):
-                raise ValueError('PM wheel store directory must be private')
+            if managed and _POSIX_PERMISSIONS:
+                mode = stat.S_IMODE(metadata.st_mode)
+                # PR458 created the flat wheel-store with mkdir() and a normal
+                # umask, so 0755 is part of that exact historical layout. The
+                # relaxation is limited to a shared parent that still contains
+                # a flat legacy wheel; a fresh schema-2 store, or one without
+                # that evidence, must stay 0700. Digest subdirectories are 0700.
+                allow_group_other_read = (
+                    current.name == 'wheel-store'
+                    and (legacy or _has_flat_legacy_wheel(current))
+                )
+                refused = mode & (0o022 if allow_group_other_read else 0o077)
+                if refused:
+                    raise ValueError(
+                        _LEGACY_REFUSAL if legacy else 'PM wheel store directory must be private'
+                    )
             identities[current] = metadata.st_dev, metadata.st_ino
             if io.DIRFD_BINDING_SUPPORTED:
                 descriptor = os.open(str(current) if parent_fd is None else current.name,
@@ -77,7 +106,7 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
             os.close(descriptor)
 
 
-def _read(path: Path, parent_fd: int | None) -> bytes:
+def _read(path: Path, parent_fd: int | None, *, legacy: bool = False) -> bytes:
     if is_reparse(path.lstat()):
         raise ValueError(_REFUSAL)
     binding = None
@@ -94,7 +123,14 @@ def _read(path: Path, parent_fd: int | None) -> bytes:
             changed_refusal=_REFUSAL, wrap_read_error=True)
         if is_reparse(path.lstat()):
             raise ValueError(_REFUSAL)
-        if mode is None or (_POSIX_PERMISSIONS and mode & 0o077) or payload is None:
+        if legacy:
+            metadata = path.lstat()
+            if (_POSIX_PERMISSIONS and hasattr(os, 'getuid')
+                    and metadata.st_uid != os.getuid()):
+                raise ValueError(_LEGACY_REFUSAL)
+            if mode is None or (_POSIX_PERMISSIONS and mode & 0o022) or payload is None:
+                raise ValueError(_LEGACY_REFUSAL)
+        elif mode is None or (_POSIX_PERMISSIONS and mode & 0o077) or payload is None:
             raise ValueError(_REFUSAL)
         if binding:
             io.assert_path_parent(binding, ValueError, _REFUSAL)
@@ -117,6 +153,30 @@ def validate(home: Path, reference: Any) -> Path:
     with _directory(path.parent, home, create=False) as parent_fd:
         if sha256(_read(path, parent_fd)).hexdigest() != digest:
             raise ValueError(_REFUSAL)
+    return path
+
+
+def validate_legacy(home: Path, filename: str, digest: str) -> Path:
+    """Validate only the exact PR458 flat ``wheel-store/<name>.whl`` layout.
+
+    The historical writer did not record a digest directory and created the
+    flat store with the process umask. This accepts that one format while
+    requiring the current user's ownership, no reparse point, no group/world
+    write permission and the member owner's wheel digest. It is not a general
+    external-file trust helper.
+    """
+    if (not isinstance(filename, str) or Path(filename).name != filename
+            or _WHEEL_NAME.fullmatch(filename) is None):
+        raise ValueError(_LEGACY_REFUSAL)
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(c not in '0123456789abcdef' for c in digest)):
+        raise ValueError(_LEGACY_REFUSAL)
+    path = home / '.hermes_feishu_card' / 'wheel-store' / filename
+    if path.parent != home / '.hermes_feishu_card' / 'wheel-store':
+        raise ValueError(_LEGACY_REFUSAL)
+    with _directory(path.parent, home, create=False, legacy=True) as parent_fd:
+        if sha256(_read(path, parent_fd, legacy=True)).hexdigest() != digest:
+            raise ValueError(_LEGACY_REFUSAL)
     return path
 
 

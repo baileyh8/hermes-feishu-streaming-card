@@ -3507,6 +3507,39 @@ def test_v425_docs_map_every_audit_fix_and_release_gate():
 
 
 
+def test_pm_recovery_documents_legacy_schema1_cli_and_service_boundaries():
+    recovery = read_doc("docs/wiki/pm-recovery.md")
+    maintenance = read_doc("docs/wiki/maintenance-guide.md")
+
+    for text in (recovery,):
+        for marker in (
+            "--hermes-dir",
+            "--hermes-home",
+            "v5.0.7",
+            "rebind-legacy",
+            "management CLI",
+            "git+https",
+            "VCS",
+            "KeepAlive",
+            "health",
+            "PID",
+            "CAS",
+            "--rebind-target",
+            "schema 1",
+            "flat",
+            "archive_info",
+            "wheel-store",
+            "integrity_ack_rebind_target_required",
+            "integrity_ack_fence_changed",
+            "integrity_ack_sidecar_running",
+            "legacy_rebind_schema1_source_unverified",
+            "legacy_rebind_wheel_resources_unverified",
+            "不要",
+        ):
+            assert marker in text
+    assert "pm-recovery.md" in maintenance
+
+
 def test_readmes_keep_onboarding_concise_and_references_reachable():
     for name, headings, history in (
         ("README.md", ("## 为什么使用 HFC", "## 快速安装", "## 配置方法", "## 近期更新", "## 贡献者"), "docs/release-history.md"),
