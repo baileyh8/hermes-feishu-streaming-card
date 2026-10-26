@@ -80,7 +80,12 @@ def _rebased_preimage(before: bytes, post: bytes, current: bytes) -> bytes:
 def _verify_runtime(binding: plugin.HermesRuntimeBinding) -> None:
     member = binding.hermes_home / "plugins" / pm_dependency.NAME
     # _owned validates the member's source ownership, not just its version.
-    owner = pm_dependency._owned(member)
+    try:
+        owner = pm_dependency._owned(member)
+    except pm_dependency.PMDependencySourceUnverified as exc:
+        raise RebindRefused("legacy_rebind_schema1_source_unverified") from exc
+    except ValueError as exc:
+        raise RebindRefused("legacy_rebind_pm_owner_unverified") from exc
     if owner is None:
         raise RebindRefused("legacy_rebind_pm_owner_required")
     if not pm_dependency.verify_installed(member, binding.runtime_python):
