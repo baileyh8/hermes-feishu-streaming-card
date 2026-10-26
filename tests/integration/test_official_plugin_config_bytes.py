@@ -141,13 +141,14 @@ def _diagnostic_plan_child():
     child = plugin_config_bytes._CHILD
     helper = r'''
 def _hfc_trace_subprocess(frame, command, executable):
-    known_modules = {
+    upstream_modules = {
         'hermes_cli.boot_bootstrap', 'hermes_cli.version_info',
         'hermes_cli.post_update', 'hermes_cli.config',
         'hermes_cli.plugins_cmd', 'hermes_cli.plugins_cmd_capabilities',
         'hermes_yaml', 'pm.paths', 'pm._uv', 'pm.install', 'pm.client',
-        'pm.environments', 'utils', 'platform',
+        'pm.environments', 'utils',
     }
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))
     def safe(value):
         if not isinstance(value, str) or not value or len(value) > 200:
             return None
@@ -156,6 +157,30 @@ def _hfc_trace_subprocess(frame, command, executable):
         except UnicodeEncodeError:
             return None
         return value if all(ch.isalnum() or ch in '._' for ch in value) else None
+    def allowed(module):
+        return (module == 'sitecustomize' or module in upstream_modules
+                or module.split('.', 1)[0] in stdlib)
+    def describe(candidate):
+        if candidate is None:
+            return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
+        module = safe(candidate.f_globals.get('__name__', ''))
+        if module is None or module in {'__main__', 'subprocess'} or not allowed(module):
+            return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
+        function = safe(candidate.f_code.co_name) or 'unknown'
+        qualname = safe(getattr(candidate.f_code, 'co_qualname', None)) or function
+        if function == 'unknown':
+            return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
+        return {'module': module, 'function': function, 'qualname': qualname}
+    caller_frames = []
+    current = frame
+    while current is not None and len(caller_frames) < 3:
+        module = safe(current.f_globals.get('__name__', ''))
+        if module not in {'__main__', 'subprocess'}:
+            caller_frames.append(describe(current))
+        current = current.f_back
+    first = caller_frames[0] if caller_frames else {
+        'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'
+    }
     git = request.get('git')
     matches = False
     if isinstance(git, str) and git:
@@ -163,15 +188,12 @@ def _hfc_trace_subprocess(frame, command, executable):
         matches = command == expected
         if not matches and sys.platform == 'win32' and isinstance(command, str):
             matches = command == subprocess.list2cmdline(expected)
-    module_raw = frame.f_globals.get('__name__', '') if frame else ''
-    module = module_raw if module_raw in known_modules else 'unknown'
-    function = safe(frame.f_code.co_name) if frame and module != 'unknown' else 'unknown'
-    qualname = safe(getattr(frame.f_code, 'co_qualname', None)) if frame and module != 'unknown' else 'unknown'
-    source = f'{module}.{qualname or function}' if module != 'unknown' and (qualname or function) else 'unknown'
+    source = f"{first['module']}.{first['qualname']}" if first['module'] != 'unknown' else 'unknown'
     report = {
-        'caller_module': module,
-        'caller_function': function,
-        'caller_qualname': qualname,
+        'caller_module': first['module'],
+        'caller_function': first['function'],
+        'caller_qualname': first['qualname'],
+        'caller_frames': caller_frames,
         'command_kind': safe(type(command).__name__) or 'other',
         'command_matches_boot_git': matches,
         'executable_is_none': executable is None,
@@ -196,13 +218,30 @@ def _hfc_trace_subprocess(frame, command, executable):
 
 def _parse_plan_trace(stderr):
     prefix = b"HFC_CONFIG_PLAN_TRACE "
-    known_modules = {
+    upstream_modules = {
         "hermes_cli.boot_bootstrap", "hermes_cli.version_info",
         "hermes_cli.post_update", "hermes_cli.config",
         "hermes_cli.plugins_cmd", "hermes_cli.plugins_cmd_capabilities",
         "hermes_yaml", "pm.paths", "pm._uv", "pm.install", "pm.client",
-        "pm.environments", "utils", "platform", "unknown",
+        "pm.environments", "utils",
     }
+    stdlib = set(getattr(sys, "stdlib_module_names", ()))
+    stdlib.update({
+        "os", "platform", "uuid", "subprocess", "sys", "pathlib",
+        "importlib", "json", "hashlib", "stat", "shutil", "tempfile",
+        "re", "io", "asyncio", "sitecustomize",
+    })
+    def allowed_module(value):
+        return value == "unknown" or (
+            isinstance(value, str)
+            and len(value) <= 200
+            and re.fullmatch(r"[A-Za-z0-9_.]+", value) is not None
+            and (
+                value == "sitecustomize"
+                or value in upstream_modules
+                or value.split(".", 1)[0] in stdlib
+            )
+        )
     string_fields = {"caller_module", "caller_function", "caller_qualname"}
     type_fields = {"command_kind", "executable_kind"}
     bool_fields = {"command_matches_boot_git", "executable_is_none"}
@@ -213,7 +252,9 @@ def _parse_plan_trace(stderr):
             payload = json.loads(line[len(prefix):].decode("ascii"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             continue
-        if type(payload) is not dict or set(payload) != string_fields | type_fields | bool_fields:
+        if type(payload) is not dict or set(payload) != (
+            string_fields | type_fields | bool_fields | {"caller_frames"}
+        ):
             continue
         safe = {}
         valid = True
@@ -226,10 +267,50 @@ def _parse_plan_trace(stderr):
             ):
                 valid = False
                 break
-            if name == "caller_module" and value not in known_modules:
+            if name == "caller_module" and not allowed_module(value):
                 valid = False
                 break
             safe[name] = value
+        if safe.get("caller_module") == "unknown" and (
+            safe.get("caller_function") != "unknown"
+            or safe.get("caller_qualname") != "unknown"
+        ):
+            valid = False
+        frames = payload.get("caller_frames")
+        if not isinstance(frames, list) or len(frames) > 3:
+            valid = False
+        else:
+            safe_frames = []
+            for frame in frames:
+                if type(frame) is not dict or set(frame) != {
+                    "module", "function", "qualname",
+                }:
+                    valid = False
+                    break
+                module = frame["module"]
+                function = frame["function"]
+                qualname = frame["qualname"]
+                if not allowed_module(module):
+                    valid = False
+                    break
+                if (
+                    not isinstance(function, str)
+                    or len(function) > 200
+                    or not re.fullmatch(r"[A-Za-z0-9_.]+", function)
+                    or not isinstance(qualname, str)
+                    or len(qualname) > 200
+                    or not re.fullmatch(r"[A-Za-z0-9_.]+", qualname)
+                ):
+                    valid = False
+                    break
+                if module == "unknown" and (function != "unknown" or qualname != "unknown"):
+                    valid = False
+                    break
+                safe_frames.append({
+                    "module": module, "function": function, "qualname": qualname,
+                })
+            if valid:
+                safe["caller_frames"] = safe_frames
         for name in type_fields:
             value = payload[name]
             if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_]+", value):
@@ -278,9 +359,13 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         b'"caller_qualname":"read_git_head","command_kind":"str",'
         b'"command_matches_boot_git":false,"executable_is_none":true,'
         b'"executable_kind":"none"}\n'
-        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"read_git_head",'
-        b'"caller_module":"hermes_cli.boot_bootstrap",'
-        b'"caller_qualname":"read_git_head","command_kind":"str",'
+        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"popen",'
+        b'"caller_module":"os","caller_qualname":"popen",'
+        b'"caller_frames":['
+        b'{"function":"popen","module":"os","qualname":"popen"},'
+        b'{"function":"_syscmd_ver","module":"platform","qualname":"_syscmd_ver"},'
+        b'{"function":"uuid4","module":"uuid","qualname":"uuid4"}],'
+        b'"command_kind":"str",'
         b'"command_matches_boot_git":false,"executable_is_none":true,'
         b'"executable_kind":"none"}\n'
         b"ModuleNotFoundError: No module named 'ruamel.yaml'\n"
@@ -318,9 +403,14 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         "plain_exit_exception": "OSError",
         "plain_exit_missing_modules": ["ruamel.yaml"],
         "plan_subprocess_trace": {
-            "caller_function": "read_git_head",
-            "caller_module": "hermes_cli.boot_bootstrap",
-            "caller_qualname": "read_git_head",
+            "caller_function": "popen",
+            "caller_module": "os",
+            "caller_qualname": "popen",
+            "caller_frames": [
+                {"function": "popen", "module": "os", "qualname": "popen"},
+                {"function": "_syscmd_ver", "module": "platform", "qualname": "_syscmd_ver"},
+                {"function": "uuid4", "module": "uuid", "qualname": "uuid4"},
+            ],
             "command_kind": "str",
             "command_matches_boot_git": False,
             "executable_is_none": True,
