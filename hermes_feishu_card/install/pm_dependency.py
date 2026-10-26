@@ -124,6 +124,14 @@ def _project_source(version: str, reference: dict[str, str]) -> str:
             f'hermes-feishu-streaming-card = {{ path = {json.dumps(reference["path"])} }}\n')
 
 
+def _pr458_project_source(version: str, wheel_path: str) -> str:
+    """Exact bb447f6 f-string text, including a raw non-ASCII path."""
+    return ('[project]\nname = "hfc-runtime-dependency"\nversion = "0"\n'
+            f'dependencies = ["hermes-feishu-streaming-card=={version}"]\n'
+            '[tool.uv]\npackage = false\n[tool.uv.sources]\n'
+            f'hermes-feishu-streaming-card = {{ path = "{wheel_path}" }}\n')
+
+
 def _pr458_flat_wheel(member: Path, owner: dict[str, Any]) -> tuple[Path, str] | None:
     """Return the exact PR458 flat wheel path, or None for other schema-1 layouts."""
     if (set(owner) != {'schema', 'version', 'spec_sha256', 'files', 'selection_added'}
@@ -144,7 +152,7 @@ def _pr458_flat_wheel(member: Path, owner: dict[str, Any]) -> tuple[Path, str] |
     wheel_name = wheels[0]
     home = member.parent.parent
     store = home / '.hermes_feishu_card' / 'wheel-store'
-    expected = _project_source(owner['version'], {'path': (store / wheel_name).as_posix()})
+    expected = _pr458_project_source(owner['version'], (store / wheel_name).as_posix())
     declared_path = member / 'pyproject.toml'
     try:
         metadata = declared_path.lstat()

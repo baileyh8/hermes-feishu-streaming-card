@@ -660,6 +660,60 @@ def test_pr458_schema1_flat_store_is_proven_by_owner_declaration_and_digest(tmp_
     )
 
 
+def test_pr458_schema1_flat_store_with_non_ascii_home_is_verified(tmp_path):
+    home = tmp_path / '中文-Hermes'
+    home.mkdir()
+    wheel_bytes = _schema1_wheel()
+    member, owner, store_wheel = _schema1_member(home, wheel_bytes=wheel_bytes)
+    declared = (member / 'pyproject.toml').read_text()
+
+    # bb447f6 wrote the raw as_posix() path through an f-string. This is not
+    # the schema-2 json.dumps(ensure_ascii=True) representation.
+    assert '中文-Hermes' in declared
+    assert '\\u' not in declared
+    assert declared != pm._project_source(
+        SCHEMA1_VERSION, {'path': store_wheel.as_posix()}
+    )
+    assert pm._pr458_flat_wheel(member, owner) is not None
+    assert pm._owned(member) == owner
+    assert pm.legacy_external_wheel(member, owner) == {
+        'path': str(store_wheel),
+        'sha256': sha256(wheel_bytes).hexdigest(),
+    }
+    python, _site = _installed_runtime(
+        tmp_path, wheel_bytes, SCHEMA1_VERSION,
+        {'url': store_wheel.as_uri(), 'archive_info': {}},
+    )
+    assert pm.verify_installed(member, python) is True
+
+
+def test_pr458_schema1_non_ascii_home_passes_rebind_runtime_verification(
+    tmp_path, monkeypatch
+):
+    from hermes_feishu_card.install import legacy_rebind, plugin
+    home = tmp_path / '中文-Hermes'
+    home.mkdir()
+    wheel_bytes = _schema1_wheel()
+    member, owner, store_wheel = _schema1_member(home, wheel_bytes=wheel_bytes)
+    python, _site = _installed_runtime(
+        tmp_path, wheel_bytes, SCHEMA1_VERSION,
+        {'url': store_wheel.as_uri(), 'archive_info': {}},
+    )
+    probes = []
+    monkeypatch.setattr(
+        plugin,
+        'probe_plugin_entrypoint',
+        lambda target, *, expected_version: probes.append(expected_version)
+        or SimpleNamespace(status='verified'),
+    )
+    binding = SimpleNamespace(hermes_home=home, runtime_python=python)
+
+    legacy_rebind._verify_runtime(binding)
+
+    assert pm._owned(member) == owner
+    assert probes == [SCHEMA1_VERSION]
+
+
 def test_schema1_non_flat_declaration_is_not_treated_as_flat(tmp_path):
     home = tmp_path / 'home'
     home.mkdir()
@@ -849,6 +903,22 @@ def test_pr458_schema1_member_upgrades_without_deleting_flat_store(pm_env):
     assert pm._owned(receipt.member)['schema'] == 2
     assert store_wheel.is_file()
     assert store_wheel.read_bytes() == old_wheel
+
+
+def test_schema2_registration_with_non_ascii_home_keeps_serialized_declaration(pm_env):
+    old_home = pm_env.home
+    new_home = old_home.parent / '中文-home'
+    old_home.rename(new_home)
+    pm_env.home = new_home
+    pm_env.state['home'] = str(new_home)
+
+    receipt = register(pm_env)
+
+    assert receipt is not None
+    assert pm._owned(receipt.member)['schema'] == 2
+    declared = (receipt.member / 'pyproject.toml').read_text()
+    assert '\\u4e2d\\u6587' in declared
+    receipt.finish()
 
 
 def test_pr458_schema1_owned_runtime_passes_rebind_runtime_verification(
