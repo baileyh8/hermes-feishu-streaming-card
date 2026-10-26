@@ -25,12 +25,14 @@ def test_byte_reads_and_stages_request_platform_binary_mode(tmp_path, monkeypatc
     target = tmp_path / "target.bin"
     target.write_bytes(b"before\r\n\x1aafter")
     injected = 0x40000000
+    platform_binary = getattr(os, "O_BINARY", 0)
     seen = []
     real_open = io.os.open
 
     def opened(path, flags, *args, **kwargs):
         seen.append(flags)
-        return real_open(path, flags & ~injected, *args, **kwargs)
+        real_flags = (flags & ~injected) | platform_binary
+        return real_open(path, real_flags, *args, **kwargs)
 
     monkeypatch.setattr(io, "BINARY_FLAG", injected)
     monkeypatch.setattr(portable, "BINARY_FLAG", injected)
@@ -68,7 +70,7 @@ def test_portable_family_evidence_failure_restores_the_whole_set(tmp_path, monke
         root / ".hermes_feishu_card_manifest": '{"manifest": true}\r\n',
     }
     for path, value in values.items():
-        path.write_text(value, encoding="utf-8")
+        path.write_bytes(value.encode("utf-8"))
     identities, directories = portable._snapshot_restore_evidence(
         root, {path.name: path for path in values}
     )
@@ -82,7 +84,7 @@ def test_portable_family_evidence_failure_restores_the_whole_set(tmp_path, monke
     evidence_checks = []
 
     def open_delete(path):
-        descriptor = real_open(path, os.O_RDONLY)
+        descriptor = real_open(path, os.O_RDONLY | portable.BINARY_FLAG)
         opened[descriptor] = Path(path)
         return descriptor
 
@@ -145,7 +147,7 @@ def test_portable_evidence_recreation_refuses_replaced_directory(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
     evidence = root / "run.py.hermes_feishu_card.bak"
-    evidence.write_text("original\r\n", encoding="utf-8")
+    evidence.write_bytes(b"original\r\n")
     identities, directories = portable._snapshot_restore_evidence(
         root, {"backup": evidence}
     )
