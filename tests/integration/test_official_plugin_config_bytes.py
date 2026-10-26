@@ -1346,3 +1346,76 @@ def test_private_new_family_compiles_verified_source_instead_of_cached_code(tmp_
     )
     assert child.returncode == 0
     assert marker.exists() is (family == "pm-0224")
+
+
+def test_pm_0225_shadow_acl_uses_real_failure_path_without_success_cache(tmp_path):
+    """The actual pinned helper catches refusal; mkdir still works without ACL credit."""
+    variable, expected_head = ROOTS["pm-0225"]
+    configured = os.environ.get(variable)
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: " + variable)
+        pytest.skip("pinned writer source missing: " + variable)
+    root = Path(configured).resolve()
+    assert subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True, timeout=10,
+    ).strip() == expected_head
+    assert not subprocess.check_output(
+        ["git", "-C", str(root), "status", "--porcelain"], text=True, timeout=10,
+    ).strip()
+    sources = plugin_config_bytes.FAMILIES["pm-0225"]
+    before = {name: (root / name).read_bytes() for name in sources}
+    assert all(hashlib.sha256(value).hexdigest() == sources[name]
+               for name, value in before.items())
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    original_home = {"config.yaml": b"# private sentinel\n", ".env": b"PRIVATE_SENTINEL=keep\n"}
+    for name, value in original_home.items():
+        (real_home / name).write_bytes(value)
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "request.json").write_text(json.dumps({
+        "real_home": str(real_home), "family": "pm-0225", "sources": sources,
+    }))
+    # Execute the complete production guard and ACL binding in a real subprocess.
+    # Force only adapter admission on non-Windows hosts; upstream stays unmodified.
+    child = plugin_config_bytes._CHILD.split("migrate_on_boot=request.get", 1)[0]
+    child = child.replace(
+        "sys.platform=='win32' and request['family']=='pm-0225'",
+        "request['family']=='pm-0225'",
+    )
+    child += r'''
+acl=sys.modules['hermes_dir_acl']
+assert acl._grant is _refuse_shadow_acl_grant
+assert not acl._granted
+existing=home/'existing'
+existing.mkdir()
+assert acl.grant_user_access(existing,elevated=True,repair_children=True) is False
+assert not acl._granted
+created=home/'parent'/'created'
+assert acl.make_user_dir(created,parents=True,elevated=True)==created
+assert created.is_dir() and not acl._granted
+assert acl.make_user_dir(created,exist_ok=True,elevated=True)==created
+assert not acl._granted
+try:
+    acl.make_user_dir(created,elevated=True)
+except FileExistsError:
+    pass
+else:
+    raise AssertionError('mkdir must retain FileExistsError')
+assert not acl._granted
+print(json.dumps({'grant':False,'cache_entries':len(acl._granted),'mkdir_preserved':True}))
+'''
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", child, str(root), str(shadow)],
+        env=plugin_config_bytes.isolated_child_env(shadow),
+        capture_output=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert json.loads(result.stdout) == {
+        "grant": False, "cache_entries": 0, "mkdir_preserved": True,
+    }
+    # This log comes from the upstream Exception catch, not an early host return.
+    assert b"ACL changes are outside private config planning" in result.stderr
+    assert {name: (root / name).read_bytes() for name in sources} == before
+    assert {p.name: p.read_bytes() for p in real_home.iterdir()} == original_home

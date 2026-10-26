@@ -1,6 +1,8 @@
 """Byte ownership at the official-enable boundary; config semantics are not receipts."""
 
 import json
+import ast
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -12,6 +14,117 @@ import pytest
 import yaml
 
 from hermes_feishu_card.install import plugin
+
+
+@pytest.fixture
+def shadow_acl(tmp_path):
+    """Execute the actual adapter against a source-bound upstream-shaped helper."""
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    source = (
+        "def _grant(path, is_dir=True, expected=None, subtree_has_link=None):\n"
+        "    raise AssertionError('native ACL implementation must not execute')\n"
+    )
+    path = tmp_path / "hermes_dir_acl.py"
+    path.write_bytes(source.encode())
+    acl = SimpleNamespace(__name__="hermes_dir_acl", __file__=str(path))
+    namespace = {"__name__": "hermes_dir_acl"}
+    exec(compile(source, str(path), "exec"), namespace)
+    acl._grant = namespace["_grant"]
+
+    class Refused(Exception):
+        pass
+
+    def deny(reason, stage, member):
+        assert (reason, stage, member) == (
+            "acl-helper-drift", "plan", "hermes_dir_acl.py"
+        )
+        raise Refused(reason)
+
+    names = {"_refuse_shadow_acl_grant", "_restrict_shadow_acl"}
+    tree = ast.parse(planner._CHILD)
+    functions = ast.Module(
+        body=[node for node in tree.body if isinstance(node, ast.FunctionDef)
+              and node.name in names], type_ignores=[],
+    )
+    scope = {
+        "root": tmp_path, "Path": Path, "hashlib": hashlib, "deny": deny,
+        "request": {"sources": {"hermes_dir_acl.py": hashlib.sha256(path.read_bytes()).hexdigest()}},
+    }
+    exec(compile(functions, "<private-planner-adapter>", "exec"), scope)
+    return acl, scope["_restrict_shadow_acl"], Refused, path
+
+
+def test_shadow_acl_fails_without_entering_native_implementation(shadow_acl):
+    acl, restrict, _, _ = shadow_acl
+    restrict(acl)
+    for kwargs in ({}, {"is_dir": False, "expected": "bound", "subtree_has_link": True}):
+        with pytest.raises(PermissionError, match="^ACL changes are outside private config planning$"):
+            acl._grant("private-home", **kwargs)
+
+
+@pytest.mark.parametrize("drift", ["source", "origin", "module", "replacement", "code", "defaults", "bool-default", "kwdefaults"])
+def test_shadow_acl_refuses_source_or_callable_drift(shadow_acl, drift):
+    acl, restrict, refused, path = shadow_acl
+    original = acl._grant
+    if drift == "source":
+        path.write_bytes(path.read_bytes() + b"# changed\n")
+    elif drift == "origin":
+        acl.__file__ = str(path.parent / "other.py")
+    elif drift == "module":
+        acl.__name__ = "unverified"
+    elif drift == "replacement":
+        acl._grant = Mock()
+    elif drift == "code":
+        original.__code__ = (lambda *args, **kwargs: True).__code__
+    elif drift == "defaults":
+        original.__defaults__ = (False, None, None)
+    elif drift == "bool-default":
+        original.__defaults__ = (1, None, None)
+    else:
+        original.__kwdefaults__ = {"extra": None}
+    before = acl._grant
+    with pytest.raises(refused):
+        restrict(acl)
+    assert acl._grant is before
+
+
+@pytest.mark.parametrize("name", ["_grant_with_pywin32", "_grant_with_icacls", "_whoami_sid"])
+def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, name):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"), "family": "pm-0225",
+        "sources": planner.FAMILIES["pm-0225"],
+    }))
+    guard = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
+    # Exercise the Windows branch on every host, in a fresh real child only.
+    guard = guard.replace(
+        "sys.platform=='win32' and request['family']=='pm-0225'",
+        "request['family']=='pm-0225'",
+    )
+    probe = guard + (
+        "\nscope={'__name__':'hermes_dir_acl','sentinel':home/'entered'}\n"
+        f"exec(\"def {name}():\\n    sentinel.write_text('bad')\",scope)\n"
+        "try:\n"
+        f"    scope[{name!r}]()\n"
+        "except BaseException:\n    pass\n"
+        "(home/'continued').write_text('bad')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(tmp_path), str(shadow)],
+        env=planner.isolated_child_env(shadow), capture_output=True, timeout=10,
+    )
+    assert result.returncode == 73
+    assert not (shadow / "entered").exists()
+    assert not (shadow / "continued").exists()
+    marker = b"HFC_CONFIG_PLAN_DENY "
+    line = next(line for line in result.stderr.splitlines() if line.startswith(marker))
+    assert json.loads(line[len(marker):]) == {
+        "reason": "acl-grant-attempt", "stage": "profile", "source": "hermes_dir_acl.py"
+    }
 
 
 @pytest.fixture
