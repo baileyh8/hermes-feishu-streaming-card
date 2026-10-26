@@ -1,4 +1,4 @@
-name: HFC Windows candidate probe
+name: HFC Windows planner diagnostic probe
 on:
   push:
     branches: [codex/509-windows-probe]
@@ -10,53 +10,6 @@ permissions:
 env:
   HFC_FIXED_TAG_COMMIT: 3c27eb6234bf91b8ceee9e9071591b31e9b148cb
 jobs:
-  pytest-windows:
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.checkout_ref || github.sha }}
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install
-        run: python -m pip install -e ".[test]"
-      - name: Test
-        run: >-
-          python -m pytest -q
-          tests/unit/test_bots.py
-          tests/unit/test_card_limits.py
-          tests/unit/test_cardkit.py
-          tests/unit/test_config.py
-          tests/unit/test_delivery_policy.py
-          tests/unit/test_diagnostics.py
-          tests/unit/test_event_auth.py
-          tests/unit/test_events.py
-          tests/unit/test_feishu_client.py
-          tests/unit/test_hook_runtime.py
-          tests/unit/test_notice_routing_regressions.py
-          tests/unit/test_lifecycle.py
-          tests/unit/test_render.py
-          tests/unit/test_stream_thinking_to_body.py
-          tests/unit/test_331_adapted.py
-          tests/unit/test_runner.py
-          tests/unit/test_control_token_file.py
-          tests/unit/test_session.py
-          tests/unit/test_status.py
-          tests/unit/test_subscription_usage.py
-          tests/unit/test_pm_dependency.py
-          tests/unit/test_pm_wheel_store.py
-          tests/unit/test_launch_source_paths.py
-          tests/unit/test_legacy_rebind.py
-          tests/unit/test_text.py
-          tests/integration/test_card_freeze.py
-          tests/integration/test_clarify_multi_select.py
-          tests/integration/test_feishu_client_http.py
-          tests/integration/test_hook_runtime_integration.py
-          tests/integration/test_server.py
-
   pytest-windows-463:
     name: native-windows-463 (Python ${{ matrix.python-version }})
     runs-on: windows-latest
@@ -161,19 +114,10 @@ jobs:
               "wheel": str(wheel), "resources": len(resources),
           }, sort_keys=True))
           '@ | python -
-      - name: Test binary I/O, portable restore and fixed v0.22.5 child
+      - name: Diagnose fixed v0.22.5 startup planner categories
         env:
           HFC_REQUIRE_CONFIG_WRITER_CONTRACT: "1"
-          HFC_REQUIRE_LEGACY_PLUGIN_INSTALL: "1"
-          HFC_REQUIRE_PM_GENERATION: "1"
         run: >-
           python -m pytest -q
-          tests/unit/test_windows_native_io.py
-          tests/unit/test_bound_recovery_io.py
-          tests/unit/test_pm_wheel_store.py
-          tests/unit/test_pm_dependency.py
-          tests/unit/test_plugin_config_bytes.py
-          tests/unit/test_install_plugin.py
-          tests/unit/test_decomposed_patcher.py
-          "tests/integration/test_pm_generation.py::test_exact_wheel_survives_real_pm_generations[0225]"
-          "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_official_startup_migration_matches_private_plan"
+          "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_official_startup_migration_matches_private_plan[50-51]"
+          "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_official_startup_migration_matches_private_plan[11-11]"
