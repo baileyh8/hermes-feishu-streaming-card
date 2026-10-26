@@ -35,6 +35,8 @@ ACK-capable handoff 只在默认 profile 且受管的 Hermes 0.19 `gateway/run.p
 
 Hermes `5fc490e2b34123212d73ef316086f939567a725a` 的 Session Authority 在独立、可连续处理多轮的 drain Task 执行 admission。`admission_completion` 仅在完整 ingress/authority 源 SHA、实际 loaded function code、原 row/claim stamp、当前 DB runtime epoch/instance、authority epoch、独立的 runner generation、profile/bot/chat/thread/sender 与 canonical ingress 全部一致时，把冻结 terminal payload 放入原 event 的单用 display carrier。原 `_hand_over_turn_marker` maps 与精确 `_move_marker` 调用位置负责转交；75 秒 TTL、失效或重复消费会清空该 carrier。它不持久化、不建立 execution registry，也不放宽普通 task-local stage 的 Task gate。
 
+当前候选分支把 admission 的原始 `source.user_id` 单独携带为 `admission_user_id`；`sender_open_id` 继续只表示飞书 mention/旧 payload 身份。`prepare()` 优先核对独立字段，仅在旧 payload 没有该字段时回退到 `sender_open_id`；显式字段非法或冲突时不会改用旧字段。空用户或原始/当前 source 用户不一致时，首次卡片策略就保持 native，已有卡事件或 `card_sent` 不授予 completion 抑制权。该边界尚未进入新 release。
+
 消费发生在完整受检 Base `_extract_response_content` 实际完成之后；waiter 与 no-waiter 都复用原 Base obligation/ACK、媒体提取和 TTS。无 standalone text 的 no-waiter 路径仅在原附件交付函数返回后发送 completion-only，不授予 native-text ACK；异常则清理，保留原生失败行为。共享群 route 的 LiveSession 保留首 sender，当前 sender 取本轮 row native payload/恢复 event；消费时重新核对该 row 的 source、canonical ingress 与完整 route，不把同群旁观者视为该轮 owner。消费时原 executing stamp 已删除是正常生命周期；改查同一 DB row 已 terminal，failed/interrupted 必须与冻结的 `turn_outcome` 一致。未知源码/loaded code、过期、route/owner 变化或不确定结算均保留 native。纯 source/AST harness 的 DB、模型和 I/O 端口是替身；真实 SQLite、普通 wheel child、loopback HTTP、真实 Gateway/model/Feishu 是分别验收的证据层级。
 
 

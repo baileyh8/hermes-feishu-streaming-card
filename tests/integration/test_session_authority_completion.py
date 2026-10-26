@@ -570,6 +570,58 @@ async def deliver(harness, *, waiter=False, event=None):
     return event, authority
 
 
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_internal_source_user_id_completes_one_card_at_original_base_seam(harness):
+    event = Event(source=Source(user_id="a1b2c3d4"))
+    await deliver(harness, event=event)
+
+    assert harness.staged == [True]
+    assert len(harness.posts) == 1
+    assert harness.posts[0]["data"]["admission_user_id"] == "a1b2c3d4"
+    assert "sender_open_id" not in harness.posts[0]["data"]
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize("field", ["user_id", "profile_id", "thread_id"])
+async def test_internal_admission_identity_drift_keeps_native(harness, field):
+    event = Event(source=Source(user_id="a1b2c3d4"))
+    harness.rebuild_source = True
+    harness.mutate_source = lambda source: setattr(source, field, "other")
+
+    await deliver(harness, event=event)
+
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize("first_event", ["message.started", "system.notice"])
+async def test_empty_source_user_id_keeps_native_before_card_policy(
+    harness, monkeypatch, first_event
+):
+    event = Event(source=Source(user_id=""))
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+
+    async def started(runner, event, source):
+        assert not await h.emit_from_hermes_locals_async(
+            {
+                "self": runner,
+                "event": event,
+                "source": source,
+                "content": "system notice",
+            },
+            first_event,
+        )
+
+    harness.before_response = started
+    await deliver(harness, event=event)
+
+    assert harness.posts == []
+    assert harness.staged == [False]
+    assert harness.native == ["complete answer"]
+
+
 @pytest.mark.parametrize("waiter", [True, False])
 async def test_reconstructed_source_keeps_full_admission_identity(harness, waiter):
     harness.rebuild_source = True
@@ -794,6 +846,18 @@ async def test_duplicate_and_late_original_delivery_do_not_replay_card(harness):
     _, authority = await deliver(harness)
     await harness.ingress.deliver_settled(authority, authority.row["admission_id"])
     assert len(harness.posts) == 1
+    assert h._exact_completion_stage_for_current_task() is None
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_internal_identity_duplicate_and_late_completion_do_not_replay(harness):
+    event = Event(source=Source(user_id="a1b2c3d4"))
+    _, authority = await deliver(harness, event=event)
+
+    await harness.ingress.deliver_settled(authority, authority.row["admission_id"])
+
+    assert len(harness.posts) == 1
+    assert harness.native == []
     assert h._exact_completion_stage_for_current_task() is None
 
 

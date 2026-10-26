@@ -2560,11 +2560,19 @@ async def _recover_exact_terminal_native_handoff(
 
 
 def admission_completion_mode(local_vars: dict[str, Any]) -> str:
-    from .admission_completion import extractor_available, mode, unsupported_reason
+    from .admission_completion import (
+        admission_identity_ready,
+        extractor_available,
+        mode,
+        unsupported_reason,
+    )
     value = mode(local_vars)
     if value == "native":
         _hfc_warn("admission completion retains native: " + unsupported_reason())
     if value == "handoff":
+        if not admission_identity_ready(local_vars):
+            _hfc_warn("admission completion retains native: unverified-admission-identity")
+            return "native"
         runner = local_vars.get("self")
         try:
             adapter = runner._adapter_for_source(local_vars.get("source"))
@@ -3082,6 +3090,18 @@ def _message_sender_open_id(
         if type(candidate) is str and _FEISHU_OPEN_ID_RE.fullmatch(candidate)
         else ""
     )
+
+
+def _message_admission_user_id(source_obj: Any) -> str:
+    """Keep the native admission identity separate from a Feishu mention open_id."""
+    candidate = getattr(source_obj, "user_id", None)
+    if (
+        type(candidate) is str
+        and candidate.strip()
+        and len(candidate) <= 256
+    ):
+        return candidate
+    return ""
 
 
 def _parse_hfc_command(text: str) -> str | None:
@@ -10530,6 +10550,9 @@ def _event_data(
         "profile_id": profile_id,
         "profile_source": profile_source,
     }
+    admission_user_id = _message_admission_user_id(source_obj)
+    if admission_user_id:
+        data["admission_user_id"] = admission_user_id
     # Any event can open a session when message.started is unavailable.
     # Preserve requester identity on those fallback paths as well.
     sender_open_id = _message_sender_open_id(
