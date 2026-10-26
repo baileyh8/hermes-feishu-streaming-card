@@ -1,18 +1,18 @@
 # PM 运行环境迁移与 wheel 来源恢复
 
-本页描述 v5.0.8 之后的 PM 恢复候选（#458/#459/#462）。管理 CLI、`integrity rebind-legacy` 和受控 restore 基线来自 v5.0.8；schema 1 flat wheel 接纳、精确旧声明校验和 ack 固定类别是本候选新增行为，已发布的 v5.0.8 发行说明未包含这些新增项。v5.0.7 不包含 `integrity rebind-legacy`。
+本页描述当前 509 候选的 PM 恢复行为（#458/#459/#462）。`integrity rebind-legacy` 与受控 restore 的命令基线来自 v5.0.8；schema 1 flat wheel 接纳、精确旧声明校验和 ack 固定类别是当前 509 候选新增行为。v5.0.8 只支持其已发布布局，不包含这些新增项；v5.0.7 不包含 `integrity rebind-legacy`。
 
 ## 先区分管理 CLI、runtime 与 member
 
-重绑命令来自 v5.0.8 的 management CLI，被核验的 runtime 仍可以是旧版本。v5.0.8 CLI 会读取已归属 PM member 的 owner 版本，要求 runtime entry point、安装包资源、缓存 wheel 与该版本一致；普通 install 探针仍要求当前 HFC 版本。因此可以用 v5.0.8 CLI 核验 v5.0.7 的 owned runtime，再执行受控 restore 和升级。
+本候选的重绑命令来自当前 509 management CLI，被核验的 runtime 仍可以是旧版本。509 CLI 会读取已归属 PM member 的 owner 版本，要求 runtime entry point、安装包资源、缓存 wheel 与该版本一致；普通 install 探针仍要求当前 HFC 版本。因此可以用 509 CLI 核验 v5.0.7 的 owned runtime，再执行受控 restore 和升级。v5.0.8 的 rebind 命令仍作为历史基线保留，但其 verifier 不包含 schema 1 flat 接纳。
 
-不要先用 v5.0.7 CLI 尝试重绑：该版本没有这个子命令，`--help` 不会显示它。也不要在重绑前直接升级 member；member 记录钉着旧 wheel，升级后 runtime 资源与 owner 版本不一致，rebind 和 setup 会互相卡住。推荐顺序是：停止实际服务管理器与自动更新器 → 用 v5.0.8 management CLI 重绑旧 runtime → 受控 restore → fresh install 或升级 → 启动并验收。
+不要先用 v5.0.7 CLI 尝试重绑：该版本没有这个子命令，`--help` 不会显示它。也不要在重绑前直接升级 member；member 记录钉着旧 wheel，升级后 runtime 资源与 owner 版本不一致，rebind 和 setup 会互相卡住。推荐顺序是：停止实际服务管理器与自动更新器 → 用当前 509 management CLI 重绑旧 runtime → 受控 restore → fresh install 或升级 → 启动并验收。
 
 从 `git+https://...` 安装的 distribution 不能证明旧 owned wheel 的来源。`direct_url.json` 里的 VCS 信息不等于 member 缓存 wheel 的归属；重绑要求安装来源指向已验证的 owned wheel 文件，而不是任意 Git checkout。VCS 安装、源码 checkout 和同一版本号都不是旧 wheel 归属的替代证据。
 
 ## 重绑参数与只读预览
 
-当前 CLI 的两条示例都同时包含 `--hermes-dir` 和 `--hermes-home`。旧发布说明或第三方笔记只写一个参数，是文档遗漏，不是当前命令缺参。若旧二进制报缺少 `--hermes-home`，先用 v5.0.8 的 `--help` 确认实际入口。
+当前 509 CLI 的两条示例都同时包含 `--hermes-dir` 和 `--hermes-home`。旧发布说明或第三方笔记只写一个参数，是文档遗漏，不是当前命令缺参。若旧二进制报缺少 `--hermes-home`，先用当前 509 的 `--help` 确认实际入口；v5.0.8 示例只适用于其已发布布局。
 
 ```sh
 hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-home /actual/home
@@ -33,7 +33,7 @@ hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-
 
 macOS 上 `launchctl kill TERM` 不够：KeepAlive 会在进程退出后重新拉起。需要按实际 label 执行 `launchctl bootout gui/$(id -u)/<actual-label>` 或等价的实际服务卸载，确认 health 不可达且 PID 文件不存在；完成后用同一实际 plist 恢复。Linux 上停止并禁用实际 unit 与自动更新器，避免 systemd 或定时器重新启动。
 
-`integrity acknowledge-review` 的双门槛是 health 与 PID 同时满足：sidecar `/health` 必须不可达，state 目录的 PID 文件必须不存在，并在提交前后各检查一次。KeepAlive、残留进程或陈旧 PID 文件都会让 ack 保持关闭。CLI 不会替你停止用户服务，也不会复制硬编码 service 来猜 owner。
+`integrity acknowledge-review` 的双门槛是 health 与 PID 同时满足：sidecar `/health` 必须不可达，state 目录的 PID 文件必须不存在，并在 CAS 提交前连续检查两次；CLI 不在提交后再查 health/PID。KeepAlive、残留进程或陈旧 PID 文件都会让 ack 保持关闭。CLI 不会替你停止用户服务，也不会复制硬编码 service 来猜 owner。
 
 ## 旧 fence 的 target CAS
 
@@ -81,7 +81,7 @@ PM dependency member 的 `tool.uv.sources` 引用 HOME 内 workspace 之外的�
 
 新安装与迁移使用 schema 2 摘要目录；旧 flat store 可能仍被旧 PM generation 引用，finish、rollback 和 uninstall 保守保留它。此流程不扫描未知 PM 状态，也不提供自动垃圾回收；不要手工删除仍被代次使用的对象。保存的对象不是 HFC runtime producer，不会重复注册事件。
 
-创建与读取校验目录身份、普通文件和摘要；POSIX 校验属主与权限，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接、Windows junction/reparse point 与不确定文件状态。共享 `wheel-store` 父目录只有在仍包含 PR458 flat wheel 时才允许保留 0755，且不得 group/world 可写；新建 schema 2 store、没有 flat wheel 证据的父目录，以及每个 schema 2 摘要子目录仍要求 0700。
+创建与读取校验目录身份、普通文件和摘要；POSIX 校验属主与权限，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接、Windows junction/reparse point 与不确定文件状态。已证明的 PR458 schema 1 flat 迁移会在发布 schema 2 前把共享 `wheel-store` 收紧到 0700；新建 schema 2 store、没有 PR458 owner/声明/摘要证明的父目录，以及每个 schema 2 摘要子目录仍要求 0700。只有 exact legacy validator 可以读取原始 0755 flat store，group/world 写始终拒绝。
 
 ## PM 启动与配置写入
 

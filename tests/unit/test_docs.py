@@ -3534,10 +3534,17 @@ def test_pm_recovery_documents_legacy_schema1_cli_and_service_boundaries():
             "integrity_ack_sidecar_running",
             "legacy_rebind_schema1_source_unverified",
             "legacy_rebind_wheel_resources_unverified",
+            "当前 509",
+            "CAS 提交前连续检查两次",
+            "不在提交后再查 health/PID",
+            "v5.0.8 的 rebind 命令仍作为历史基线保留",
+            "v5.0.8 只支持其已发布布局",
             "不要",
         ):
             assert marker in text
+        assert "提交前后各检查一次" not in text
     assert "pm-recovery.md" in maintenance
+    assert "当前 509 management CLI" in maintenance
 
 
 def test_readmes_keep_onboarding_concise_and_references_reachable():
