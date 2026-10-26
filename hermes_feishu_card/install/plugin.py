@@ -754,6 +754,8 @@ def _require_regular_file(path: Path, label: str) -> Path:
 
 
 def _probe_runtime_identity(launcher: Path) -> dict[str, object]:
+    from .plugin_config_bytes import isolated_child_env
+
     code = (
         "import json,sys,sysconfig;"
         "print(json.dumps({'executable':sys.executable,'prefix':sys.prefix,"
@@ -769,7 +771,7 @@ def _probe_runtime_identity(launcher: Path) -> dict[str, object]:
             stderr=subprocess.PIPE,
             text=True,
             timeout=20,
-            env={"HOME": str(launcher.parents[2])},
+            env=isolated_child_env(launcher.parents[2], include_path=True),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeBindingRefused("Hermes runtime Python probe failed") from exc
@@ -807,6 +809,8 @@ def _validate_runtime_identity(
 
 
 def _run_entrypoint_probe(binding: HermesRuntimeBinding) -> dict[str, object]:
+    from .plugin_config_bytes import isolated_child_env
+
     code = r'''
 import importlib.metadata
 import importlib.util
@@ -838,7 +842,7 @@ print(json.dumps({
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
-            env={"HOME": str(binding.hermes_home), "HERMES_HOME": str(binding.hermes_home)},
+            env=isolated_child_env(binding.hermes_home, include_path=True),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeBindingRefused("entry point probe failed") from exc

@@ -2833,6 +2833,7 @@ def restore_decomposed(detection):
             _commit_recovery_changes(detection, fresh, changes)
             return
         from .file_transaction import (
+            _assert_restore_evidence_set_unchanged,
             _remove_targets_portably,
             _snapshot_restore_evidence,
             _write_targets_portably,
@@ -2848,21 +2849,23 @@ def restore_decomposed(detection):
         identities, directories = _snapshot_restore_evidence(detection.root, evidence)
         if decomposed_ownership._fingerprint(decomposed_ownership._snapshot(detection.root)) != fresh.fingerprint:
             raise ValueError("decomposed evidence changed before portable restore")
+        post_write = _write_targets_portably(
+            changes,
+            expected_identities=identities,
+            expected_directories=directories,
+            preserve_earlier_writes_on_rollback_failure=True,
+        )
+        source_expected = {}
+        for name, raw in originals.items():
+            path = detection.root / name
+            expected = post_write.get(path, identities.get(path))
+            if expected is None or expected[2] != sha256(raw).hexdigest():
+                raise ValueError("portable restore could not verify original source")
+            source_expected[path] = expected
+        # This is a read-only fence before cleanup. It never becomes rollback
+        # authorization; only the controlled post-write snapshots below may.
+        _assert_restore_evidence_set_unchanged(source_expected)
         try:
-            _write_targets_portably(
-                changes,
-                expected_identities=identities,
-                expected_directories=directories,
-                preserve_earlier_writes_on_rollback_failure=True,
-            )
-            restored_identities, _ = _snapshot_restore_evidence(
-                detection.root,
-                {name: detection.root / name for name in originals},
-            )
-            for name, raw in originals.items():
-                current = restored_identities[detection.root / name]
-                if current is None or current[2] != sha256(raw).hexdigest():
-                    raise ValueError("portable restore could not verify original source")
             cleanup = [detection.root / (name + BACKUP_SUFFIX) for name in originals]
             cleanup.append(detection.root / MANIFEST_NAME)
             cleanup_contents = {
@@ -2878,23 +2881,27 @@ def restore_decomposed(detection):
             )
         except (OSError, UnicodeError, ValueError) as exc:
             # A failed evidence deletion must leave the original owned state,
-            # not restored source plus a partial backup/manifest family.
-            current_identities, _ = _snapshot_restore_evidence(
-                detection.root,
-                {name: detection.root / name for name in originals},
-            )
+            # not restored source plus a partial backup/manifest family. Roll
+            # back only files this transaction wrote and only while their
+            # controlled post-write snapshot still matches.
             rollback = [
                 (detection.root / name, snapshot[name].decode("utf-8"))
                 for name in originals
-                if snapshot[name] is not None
+                if snapshot[name] is not None and snapshot[name] != originals[name]
             ]
+            rollback_expected = {
+                detection.root / name: post_write[detection.root / name]
+                for name in originals
+                if snapshot[name] is not None and snapshot[name] != originals[name]
+            }
             try:
-                _write_targets_portably(
-                    rollback,
-                    expected_identities=current_identities,
-                    expected_directories=directories,
-                    preserve_earlier_writes_on_rollback_failure=True,
-                )
+                if rollback:
+                    _write_targets_portably(
+                        rollback,
+                        expected_identities=rollback_expected,
+                        expected_directories=directories,
+                        preserve_earlier_writes_on_rollback_failure=True,
+                    )
             except (OSError, UnicodeError, ValueError) as rollback_exc:
                 raise ValueError(
                     "portable restore rollback failed; manual review required"
