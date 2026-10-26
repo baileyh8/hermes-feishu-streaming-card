@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.9`; this batch repairs #451/#459/#462/#463 and integrates #464/#465/#466 through #467. Independent QA/review, exact final CI, native Windows, ordinary wheel/public install and release assets are separate pending gates. Actual Gateway/model and desktop/Android visual/click acceptance are unverified; iOS/new-user trials are excluded. Final evidence will be linked from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.9).
+This branch targets `5.0.9`; this batch repairs #451/#459/#462/#463 and integrates #464/#465/#466 through #467. Independent QA/review, exact final CI, native Windows, ordinary wheel/public install and release assets are separate release gates, with each result bound to its actual commit and recorded in Release. Actual Gateway/model and desktop/Android visual/click acceptance are unverified; iOS/new-user trials are excluded. Final evidence will be linked from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.9).
 
 ## Historical records through v5.0.8
 

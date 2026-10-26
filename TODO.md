@@ -8,7 +8,7 @@
 - #463：Windows 二进制 I/O、配置子进程与可核验的恢复事务；原生 Windows 3.12/3.14 为独立验收门禁。
 - #459/#462：精确 PR458 schema 1 flat wheel、旧 runtime 恢复顺序及固定 ack 类别；既有 workspace/schema 2 校验保持严格。
 - #464/#465/#466/#467：保留 bot 原提交，更新审计过的依赖与确定性并发确认测试。
-- 独立 QA/review、精确完整 CI、普通 wheel、公开安装和资产尚待最终候选验收，见[发行说明](docs/release-notes-v5.0.9.md)。
+- 独立 QA/review、精确完整 CI、普通 wheel、公开安装和资产分别作为发布门禁，见[发行说明](docs/release-notes-v5.0.9.md)。
 
 ## V5.0.8
 
