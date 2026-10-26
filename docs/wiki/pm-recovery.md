@@ -81,7 +81,7 @@ PM dependency member 的 `tool.uv.sources` 引用 HOME 内 workspace 之外的�
 
 新安装与迁移使用 schema 2 摘要目录；旧 flat store 可能仍被旧 PM generation 引用，finish、rollback 和 uninstall 保守保留它。此流程不扫描未知 PM 状态，也不提供自动垃圾回收；不要手工删除仍被代次使用的对象。保存的对象不是 HFC runtime producer，不会重复注册事件。
 
-创建与读取校验目录身份、普通文件和摘要；POSIX 校验属主与权限，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接、Windows junction/reparse point 与不确定文件状态。已证明的 PR458 schema 1 flat 迁移会在发布 schema 2 前把共享 `wheel-store` 收紧到 0700；新建 schema 2 store、没有 PR458 owner/声明/摘要证明的父目录，以及每个 schema 2 摘要子目录仍要求 0700。只有 exact legacy validator 可以读取原始 0755 flat store，group/world 写始终拒绝。
+创建与读取校验目录身份、普通文件和摘要；POSIX 校验属主与权限，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接、Windows junction/reparse point 与不确定文件状态。已证明的 PR458 schema 1 flat 迁移会把预先记录的 store 身份带入同一目录绑定，重新验证 exact member/声明/flat digest 后才收紧到 0700；rename、同路径替换或错 digest 不会修改替换目录的权限或内容。新建 schema 2 store、没有 PR458 owner/声明/摘要证明的父目录，以及每个 schema 2 摘要子目录仍要求 0700。只有 exact legacy validator 可以读取原始 0755 flat store，group/world 写始终拒绝。
 
 ## PM 启动与配置写入
 

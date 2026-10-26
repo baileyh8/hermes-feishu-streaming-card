@@ -666,6 +666,18 @@ def test_pr458_schema1_flat_store_is_proven_by_owner_declaration_and_digest(tmp_
     )
 
 
+def test_pr458_flat_proof_is_read_only(tmp_path):
+    home = tmp_path / 'home'
+    home.mkdir()
+    member, owner, store_wheel = _schema1_member(home)
+
+    proof = pm.pr458_flat_proof(member, owner)
+
+    assert proof is not None
+    assert proof.store_wheel == store_wheel
+    assert stat.S_IMODE(store_wheel.parent.lstat().st_mode) == 0o755
+
+
 def test_pr458_schema1_flat_store_with_non_ascii_home_is_verified(tmp_path):
     home = tmp_path / '中文-Hermes'
     home.mkdir()
@@ -949,7 +961,7 @@ def test_schema1_flat_upgrade_tighten_failure_preserves_old_member(pm_env, monke
     monkeypatch.setattr(
         pm.pm_wheel_store,
         'tighten_legacy_parent',
-        lambda *_: (_ for _ in ()).throw(ValueError('tighten refused')),
+        lambda *_, **__: (_ for _ in ()).throw(ValueError('tighten refused')),
     )
 
     with pytest.raises(ValueError, match='tighten refused'):
@@ -975,7 +987,7 @@ def test_schema1_flat_upgrade_publish_failure_restores_parent_mode(pm_env, monke
     monkeypatch.setattr(
         pm.pm_wheel_store,
         'publish',
-        lambda *_: (_ for _ in ()).throw(ValueError('publish refused')),
+        lambda *_, **__: (_ for _ in ()).throw(ValueError('publish refused')),
     )
 
     with pytest.raises(ValueError, match='publish refused'):
@@ -1040,6 +1052,99 @@ def test_schema1_flat_upgrade_unknown_admission_keeps_tightened_parent(pm_env, m
     assert pm._owned(member)['schema'] == 2
 
 
+def test_schema1_flat_upgrade_store_replacement_before_tighten_refuses(pm_env, monkeypatch):
+    old_wheel = _schema1_wheel()
+    member, owner, store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    store = store_wheel.parent
+    old_store = store.with_name('known-old-store')
+    replacement = b'unverified replacement wheel'
+    original = pm.pm_wheel_store.tighten_legacy_parent
+
+    def swap(home, **kwargs):
+        store.rename(old_store)
+        store.mkdir()
+        store.chmod(0o755)
+        (store / store_wheel.name).write_bytes(replacement)
+        return original(home, **kwargs)
+
+    monkeypatch.setattr(pm.pm_wheel_store, 'tighten_legacy_parent', swap)
+    with pytest.raises(ValueError):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+    assert (store / store_wheel.name).read_bytes() == replacement
+    assert (old_store / store_wheel.name).read_bytes() == old_wheel
+    assert json.loads((member / pm.OWNER).read_text()) == owner
+    assert (member / store_wheel.name).read_bytes() == old_wheel
+    assert not list((pm_env.home / 'plugins').glob('.hfc-runtime-*'))
+
+
+def test_schema1_flat_upgrade_same_path_wrong_digest_refuses_without_chmod(
+    pm_env, monkeypatch
+):
+    old_wheel = _schema1_wheel()
+    member, owner, store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    store = store_wheel.parent
+    wrong = b'wrong flat wheel digest'
+    original = pm.pm_wheel_store.tighten_legacy_parent
+
+    def corrupt(home, **kwargs):
+        store_wheel.write_bytes(wrong)
+        return original(home, **kwargs)
+
+    monkeypatch.setattr(pm.pm_wheel_store, 'tighten_legacy_parent', corrupt)
+    with pytest.raises(ValueError):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+    assert store_wheel.read_bytes() == wrong
+    assert json.loads((member / pm.OWNER).read_text()) == owner
+    assert (member / store_wheel.name).read_bytes() == old_wheel
+    assert not list((pm_env.home / 'plugins').glob('.hfc-runtime-*'))
+
+
+def test_schema1_flat_upgrade_store_replacement_after_tighten_refuses(pm_env, monkeypatch):
+    old_wheel = _schema1_wheel()
+    member, owner, store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    store = store_wheel.parent
+    old_store = store.with_name('known-old-store-after-tighten')
+    replacement = b'unverified replacement after tighten'
+    original = pm.pm_wheel_store.publish
+
+    def swap(home, filename, payload, **kwargs):
+        store.rename(old_store)
+        store.mkdir()
+        store.chmod(0o755)
+        (store / store_wheel.name).write_bytes(replacement)
+        return original(home, filename, payload, **kwargs)
+
+    monkeypatch.setattr(pm.pm_wheel_store, 'publish', swap)
+    with pytest.raises(ValueError):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+    assert (store / store_wheel.name).read_bytes() == replacement
+    assert (old_store / store_wheel.name).read_bytes() == old_wheel
+    assert json.loads((member / pm.OWNER).read_text()) == owner
+    assert (member / store_wheel.name).read_bytes() == old_wheel
+    assert not list((pm_env.home / 'plugins').glob('.hfc-runtime-*'))
+
+
 def test_legacy_parent_guard_does_not_tighten_non_flat_schema1(pm_env):
     old_wheel = _schema1_wheel()
     member, owner, store_wheel = _schema1_member(
@@ -1056,7 +1161,9 @@ def test_legacy_parent_guard_does_not_tighten_non_flat_schema1(pm_env):
     store = pm_env.home / '.hermes_feishu_card' / 'wheel-store'
 
     assert pm._owned(member) == owner
-    with pm._legacy_parent_guard(pm_env.home, member, owner):
+    with pm._legacy_parent_guard(
+        pm_env.home, member, owner, pm.pr458_flat_proof(member, owner)
+    ):
         pass
 
     assert stat.S_IMODE(store.lstat().st_mode) == 0o755
@@ -1078,7 +1185,13 @@ def test_tighten_legacy_parent_refuses_unsafe_store(tmp_path, damage):
         store.chmod(0o777)
 
     with pytest.raises(ValueError):
-        pm.pm_wheel_store.tighten_legacy_parent(home)
+        pm.pm_wheel_store.tighten_legacy_parent(
+            home,
+            expected_identity=(0, 0),
+            wheel_name=f'hermes_feishu_streaming_card-{VERSION}-py3-none-any.whl',
+            digest='a' * 64,
+            reprove=lambda: True,
+        )
 
 
 def test_schema2_registration_with_non_ascii_home_keeps_serialized_declaration(pm_env):

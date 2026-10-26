@@ -31,15 +31,37 @@ class PMDependencySourceUnverified(ValueError):
     """A schema-1 flat member declaration exists but its source is unproven."""
 
 
+@dataclass(frozen=True)
+class LegacyParentProof:
+    store_identity: tuple[int, int]
+    mode: int
+    store_wheel: Path
+    wheel_name: str
+    wheel_digest: str
+
+
 @contextmanager
 def _legacy_parent_guard(selected_home: Path, member: Path,
-                         old: dict[str, Any] | None) -> Iterator[None]:
+                         old: dict[str, Any] | None,
+                         proof: LegacyParentProof | None) -> Iterator[None]:
     """Tighten a proven PR458 parent and restore its prior mode on failure."""
-    if (old is None or old.get('schema') != 1
-            or _pr458_flat_wheel(member, old) is None):
+    if old is None or proof is None:
         yield
         return
-    snapshot = pm_wheel_store.tighten_legacy_parent(selected_home)
+    def reprove() -> bool:
+        try:
+            return (_owned(member) == old
+                    and _pr458_flat_wheel(member, old) == (
+                        proof.store_wheel, proof.wheel_name))
+        except (OSError, ValueError):
+            return False
+    snapshot = pm_wheel_store.tighten_legacy_parent(
+        selected_home,
+        expected_identity=proof.store_identity,
+        wheel_name=proof.wheel_name,
+        digest=proof.wheel_digest,
+        reprove=reprove,
+    )
     try:
         yield
     except BaseException:
@@ -208,6 +230,19 @@ def legacy_external_wheel(member: Path, owner: dict[str, Any]) -> dict[str, str]
     if verified != store_wheel:
         raise ValueError('legacy PM wheel store path changed')
     return {'path': str(verified), 'sha256': owner['files'][wheel_name]}
+
+
+def pr458_flat_proof(member: Path, owner: dict[str, Any]) -> LegacyParentProof | None:
+    """Capture the pre-migration flat-store identity and digest."""
+    flat = _pr458_flat_wheel(member, owner)
+    if flat is None:
+        return None
+    store_wheel, wheel_name = flat
+    digest = owner['files'][wheel_name]
+    dev, ino, mode = pm_wheel_store.prove_legacy_parent(
+        member.parent.parent, wheel_name, digest
+    )
+    return LegacyParentProof((dev, ino), mode, store_wheel, wheel_name, digest)
 
 
 def _owned(path: Path) -> dict[str, Any] | None:
@@ -432,6 +467,8 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
     member = selected_home / "plugins" / NAME
     _safe_directory(selected_home)
     old = _owned(member)
+    legacy_proof = (pr458_flat_proof(member, old)
+                    if old is not None and old.get('schema') == 1 else None)
     if NAME in probe['disabled']:
         raise ValueError("HFC PM dependency member is explicitly disabled")
     spec_digest = _install_spec_digest(spec)
@@ -478,8 +515,12 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         # Stage a second wheel copy in this hermes home's install state (never
         # part of a workspace member), and point the source at that absolute
         # path so the requirement stays an ordinary index-style pin.
-        with _legacy_parent_guard(selected_home, member, old):
-            external_wheel = pm_wheel_store.publish(selected_home, wheel_name, (staging / 'runtime.whl').read_bytes())
+        with _legacy_parent_guard(selected_home, member, old, legacy_proof):
+            external_wheel = pm_wheel_store.publish(
+                selected_home, wheel_name, (staging / 'runtime.whl').read_bytes(),
+                expected_parent_identity=(legacy_proof.store_identity
+                                          if legacy_proof is not None else None),
+            )
             project = _project_source(version, external_wheel)
             # Ownership uses a fixed logical wheel key; actual filename is recorded below.
             (staging / 'pyproject.toml').write_text(project)
