@@ -579,7 +579,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install Windows acceptance dependencies
-        run: python -m pip install -e ".[test]" "uv==0.11.7"
+        run: >-
+          python -m pip install -e ".[test]" "uv==0.11.7"
+          ruamel.yaml tomli-w packaging wheel rich python-dotenv requests
+          prompt_toolkit "cryptography==48.0.0"
       - name: Prepare ordinary wheel and reusable official runtime
         shell: pwsh
         run: |

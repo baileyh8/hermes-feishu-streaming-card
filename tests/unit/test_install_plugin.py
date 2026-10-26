@@ -14,6 +14,9 @@ import yaml
 from hermes_feishu_card.install import plugin, plugin_config_bytes
 
 
+_POSIX_MODES = os.name != "nt"
+
+
 def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
     try:
         path.symlink_to(target, target_is_directory=directory)
@@ -21,6 +24,10 @@ def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
         if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
             pytest.skip("Windows symlink creation requires privilege (WinError 1314)")
         raise
+
+
+def _write_utf8(path: Path, text: str) -> None:
+    path.write_bytes(text.encode("utf-8"))
 
 
 def _exact_plan(postimage: bytes):
@@ -36,7 +43,7 @@ def _checkout(tmp_path: Path) -> tuple[Path, Path]:
     checkout = home / "hermes-agent"
     home.mkdir(exist_ok=True)
     checkout.mkdir(parents=True)
-    (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    _write_utf8(home / "config.yaml", "plugins: {}\n")
     prefix = checkout / ".venv"
     if os.name == "nt":
         subprocess.run(
@@ -115,7 +122,7 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
     )
     real_home = tmp_path / "real-home"
     real_home.mkdir()
-    (real_home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    _write_utf8(real_home / "config.yaml", "plugins: {}\n")
     linked_home = tmp_path / "linked-home"
     _symlink_or_skip_windows_privilege(linked_home, real_home, directory=True)
 
@@ -171,7 +178,7 @@ def test_runtime_binding_rejects_nonexecutable_posix_target(tmp_path, monkeypatc
     launcher = _venv_python(checkout / ".venv")
     launcher.unlink()
     target = tmp_path / "python-target"
-    target.write_text("not executable", encoding="utf-8")
+    _write_utf8(target, "not executable")
     target.chmod(stat.S_IRUSR | stat.S_IWUSR)
     launcher.symlink_to(target)
     with pytest.raises(plugin.RuntimeBindingRefused, match="executable"):
@@ -339,7 +346,7 @@ def _binding(tmp_path: Path, monkeypatch, config_text: str) -> plugin.HermesRunt
         "_plan_enabled_config_bytes",
         lambda b, p, raw, desired, enabled: _exact_plan(yaml.safe_dump(desired).encode()),
     )
-    (home / "config.yaml").write_text(config_text, encoding="utf-8")
+    _write_utf8(home / "config.yaml", config_text)
     monkeypatch.setattr(
         plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
     )
@@ -354,9 +361,10 @@ def test_prepare_plugin_config_creates_private_exact_preimage(tmp_path, monkeypa
 
     preimage = plugin.prepare_plugin_config(binding)
 
-    assert stat.S_IMODE(preimage.state_dir.stat().st_mode) == 0o700
-    assert stat.S_IMODE(preimage.backup_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(preimage.journal_path.stat().st_mode) == 0o600
+    if _POSIX_MODES:
+        assert stat.S_IMODE(preimage.state_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(preimage.backup_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(preimage.journal_path.stat().st_mode) == 0o600
     assert preimage.backup_path.read_text(encoding="utf-8") == config_text
     assert preimage.config_backup_id.startswith("hfc-config-preimage-")
     assert str(binding.hermes_home) not in json.dumps(preimage.sanitized())
@@ -461,7 +469,7 @@ def test_enable_plugin_allows_only_exact_plugin_config_change(tmp_path, monkeypa
         plugins.setdefault("entries", {}).setdefault("hermes-feishu-card", {})[
             "allow_tool_override"
         ] = False
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
@@ -487,9 +495,9 @@ def test_enable_plugin_rejects_unrelated_semantic_drift_and_preserves_edit(
     preimage = plugin.prepare_plugin_config(binding)
 
     def drifting_enable(candidate):
-        candidate.config_path.write_text(
+        _write_utf8(
+            candidate.config_path,
             "token: CHANGED\nplugins:\n  enabled: [hermes-feishu-card]\n",
-            encoding="utf-8",
         )
         return 0
 
@@ -506,9 +514,9 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
     preimage = plugin.prepare_plugin_config(binding)
 
     def official_enable(candidate):
-        candidate.config_path.write_text(
+        _write_utf8(
+            candidate.config_path,
             "plugins:\n  enabled: [hermes-feishu-card]\n  disabled: []\n  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n",
-            encoding="utf-8",
         )
         return 0
 
@@ -516,7 +524,7 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
     postimage = b"plugins:\n  enabled: [hermes-feishu-card]\n  disabled: []\n  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n"
     monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda *a: _exact_plan(postimage))
     ownership = plugin.enable_plugin(binding, preimage)
-    binding.config_path.write_text("plugins: {}\nuser_change: true\n", encoding="utf-8")
+    _write_utf8(binding.config_path, "plugins: {}\nuser_change: true\n")
 
     with pytest.raises(plugin.PluginConfigRefused, match="changed"):
         plugin.restore_plugin_config(binding, preimage, ownership)
@@ -531,8 +539,9 @@ def test_runtime_binding_uses_pm_committed_venv_with_real_child(tmp_path, legacy
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(managed)], check=True)
     pm = checkout / "pm"
     pm.mkdir()
-    (pm / "__init__.py").write_text("")
-    (pm / "environments.py").write_text(
+    _write_utf8(pm / "__init__.py", "")
+    _write_utf8(
+        pm / "environments.py",
         "from pathlib import Path\n"
         f"def committed_venv(root): return Path({str(managed)!r})\n"
     )
@@ -580,7 +589,7 @@ def test_enable_plugin_accepts_exact_already_enabled_official_branch(
         section.setdefault("entries", {}).setdefault(plugin.PLUGIN_KEY, {})[
             "allow_tool_override"
         ] = False
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
@@ -631,7 +640,7 @@ def test_enable_plugin_already_enabled_rejects_non_derived_delta_and_preserves_e
             section["disabled"] = []
         else:
             section["entries"][plugin.PLUGIN_KEY]["allow_tool_override"] = True
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", drifting_enable)
@@ -650,7 +659,7 @@ def test_enable_plugin_not_enabled_rejects_entry_only_shortcut(tmp_path, monkeyp
     def entry_only(candidate):
         config = yaml.safe_load(candidate.config_path.read_bytes())
         config["plugins"]["entries"] = {plugin.PLUGIN_KEY: {"allow_tool_override": False}}
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", entry_only)
@@ -676,7 +685,7 @@ def test_enable_plugin_already_enabled_rejects_mixed_list_normalization(
         section = config["plugins"]
         section[normalize_only] = sorted(set(section[normalize_only]))
         section["entries"] = {plugin.PLUGIN_KEY: {"allow_tool_override": False}}
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", partial_enable)
@@ -711,7 +720,7 @@ def test_enable_failure_rolls_back_only_verified_official_postimage(tmp_path, mo
     preimage = plugin.prepare_plugin_config(binding)
     def failed_enable(candidate):
         expected, _ = plugin._expected_enabled_config(yaml.safe_load(original))
-        candidate.config_path.write_text(yaml.safe_dump(expected))
+        _write_utf8(candidate.config_path, yaml.safe_dump(expected))
         if outcome == "exception":
             raise OSError("synthetic failure after official config write")
         return 1

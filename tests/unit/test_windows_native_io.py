@@ -27,6 +27,7 @@ def _payload() -> bytes:
 
 def test_real_and_random_wheels_keep_exact_bytes_on_windows(tmp_path):
     home = tmp_path / "home with spaces" / "用户-463"
+    home.mkdir(parents=True)
     payload = _payload()
     name = "hermes_feishu_streaming_card-5.0.8-py3-none-any.whl"
     reference = store.publish(home, name, payload)

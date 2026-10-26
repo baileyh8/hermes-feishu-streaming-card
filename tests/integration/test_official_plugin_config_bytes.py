@@ -151,7 +151,7 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     failure,
     monkeypatch,
 ):
-    _, python, prefix, path_file = official_runtime
+    _, python, _prefix, site, path_file = official_runtime
     variable, expected_head = ROOTS[family]
     configured = os.environ.get(variable)
     if not configured:
@@ -220,7 +220,7 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     # Keep the runtime outside the source tree: a .venv symlink would make the
     # interpreter's sysconfig library roots symlinks under the checkout, which
     # the launch/library boundary deliberately rejects.
-    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    purelib = site
     binding = plugin.HermesRuntimeBinding(
         checkout_root=root,
         runtime_python=python,
@@ -296,7 +296,7 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     official_runtime, tmp_path, seed_version, expected_version  # noqa: F811
 ):
     """Compose the exact boot migration helper with the unmodified writer."""
-    _, python, prefix, path_file = official_runtime
+    _, python, _prefix, site, path_file = official_runtime
     configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
@@ -329,7 +329,7 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     (home / "hfc-pm-tools.json").write_text(
         json.dumps({"uv": uv, "python": str(python), "project": str(project)})
     )
-    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    purelib = site
     binding = plugin.HermesRuntimeBinding(
         checkout_root=root,
         runtime_python=python,
@@ -410,7 +410,7 @@ def test_pm_0225_floor_boundary_requires_new_migration_sources(
     official_runtime, tmp_path  # noqa: F811
 ):
     """A below-floor config is untouched; the first auto-migrated schema is bounded."""
-    _, python, _, _ = official_runtime
+    _, python, *_ = official_runtime
     configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
@@ -451,7 +451,7 @@ def test_pm_0225_boot_record_gates_startup_schema_migration(
     official_runtime, tmp_path, record_identity, expected_version  # noqa: F811
 ):
     """The private plan follows Hermes' one-bootstrap-per-install-identity gate."""
-    _, python, _, _ = official_runtime
+    _, python, *_ = official_runtime
     configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
@@ -690,7 +690,7 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
             pytest.fail("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
         pytest.skip("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
-    _, python, _, _ = official_runtime
+    _, python, *_ = official_runtime
     source = Path(configured)
     root = tmp_path / "source"
     shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
@@ -726,7 +726,7 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
         return subprocess.run(
             [str(python), "-I", "-c", code, str(root), str(shadow)],
             cwd=root,
-            env={"HOME": str(shadow), "HERMES_HOME": str(shadow)},
+            env=plugin_config_bytes.isolated_child_env(shadow),
             capture_output=True,
             timeout=30,
             check=False,
@@ -856,7 +856,7 @@ def test_local_source_guard_is_private_child_and_new_family_only(
     code = setup + "\nimport decimal,yaml\nsys.path.insert(0,str(root))\nimport unbound\n"
     child = subprocess.run(
         [sys.executable, "-I", "-c", code, str(root), str(home)],
-        env={"HOME": str(home), "HERMES_HOME": str(home)},
+        env=plugin_config_bytes.isolated_child_env(home),
         capture_output=True, timeout=30,
     )
     assert child.returncode == expected_code
@@ -903,7 +903,7 @@ def test_private_new_family_compiles_verified_source_instead_of_cached_code(tmp_
     child = subprocess.run(
         [sys.executable, "-I", "-c", setup + "\nsys.path.insert(0,str(root))\nimport bound\n",
          str(root), str(home)],
-        env={"HOME": str(home), "HERMES_HOME": str(home)},
+        env=plugin_config_bytes.isolated_child_env(home),
         capture_output=True, timeout=30,
     )
     assert child.returncode == 0
