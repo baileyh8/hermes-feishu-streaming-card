@@ -718,7 +718,9 @@ def test_acquire_os_lock_retries_windows_contention(monkeypatch, tmp_path):
 
     fake_msvcrt = SimpleNamespace(LK_NBLCK=7, locking=locking)
     monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
-    monkeypatch.setattr(recovery.os, "name", "nt")
+    # Keep pathlib and pytest on the real host while this module takes its Windows branch.
+    windows_os = SimpleNamespace(**{**vars(recovery.os), "name": "nt"})
+    monkeypatch.setattr(recovery, "os", windows_os)
     monkeypatch.setattr(recovery.time, "sleep", sleeps.append)
     lock_path = tmp_path / "lock"
 

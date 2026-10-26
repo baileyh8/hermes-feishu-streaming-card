@@ -146,7 +146,9 @@ def test_portable_family_evidence_failure_restores_the_whole_set(tmp_path, monke
             flags |= os.O_CREAT | os.O_EXCL
         return real_open(path, flags, 0o600)
 
-    monkeypatch.setattr(portable.os, "name", "nt")
+    # Keep pathlib and pytest on the real host while this module takes its Windows branch.
+    windows_os = SimpleNamespace(**{**vars(portable.os), "name": "nt"})
+    monkeypatch.setattr(portable, "os", windows_os)
     original_check = portable._assert_restore_evidence_set_unchanged
     monkeypatch.setattr(
         portable,

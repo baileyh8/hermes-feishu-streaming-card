@@ -393,7 +393,9 @@ def test_official_enable_uses_private_windows_home_environment(tmp_path, monkeyp
         hermes_home=home,
     )
     monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *a, **k: None)
-    monkeypatch.setattr(plugin.os, "name", "nt")
+    # The environment builder owns the Windows branch; do not mutate global os.name.
+    windows_os = SimpleNamespace(**{**vars(plugin_config_bytes.os), "name": "nt"})
+    monkeypatch.setattr(plugin_config_bytes, "os", windows_os)
     monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
     monkeypatch.setenv("WINDIR", r"C:\Windows")
     monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")

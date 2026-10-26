@@ -335,7 +335,9 @@ def test_isolated_child_environment_is_bounded_and_windows_home_safe(tmp_path, m
     home = tmp_path / "home with spaces" / "用户"
     root = tmp_path / "checkout with spaces"
     monkeypatch.setenv("HFC_PRIVATE_SECRET", "do-not-inherit")
-    monkeypatch.setattr(planner.os, "name", "nt")
+    # Keep pathlib and pytest on the real host while this module takes its Windows branch.
+    windows_os = SimpleNamespace(**{**vars(planner.os), "name": "nt"})
+    monkeypatch.setattr(planner, "os", windows_os)
     monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
     monkeypatch.setenv("WINDIR", r"C:\Windows")
     monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
