@@ -13,6 +13,11 @@ import subprocess
 import sys
 import zipfile
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9/3.10 test extra supplies tomli.
+    import tomli as tomllib
+
 import pytest
 
 from hermes_feishu_card import cli
@@ -112,7 +117,13 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     assert pm.verify_installed(member, python2)
     # The copied workspace member must retain the immutable external source.
     copied_projects = list(second.parent.glob("workspace/**/pyproject.toml"))
-    assert any(str(external) in project.read_text() for project in copied_projects)
+    copied_sources = (
+        tomllib.loads(project.read_text(encoding="utf-8"))
+        .get("tool", {}).get("uv", {}).get("sources", {})
+        .get("hermes-feishu-streaming-card", {}).get("path")
+        for project in copied_projects
+    )
+    assert any(isinstance(path, str) and Path(path) == external for path in copied_sources)
     assert external.read_bytes() == external_bytes
     assert pm.ensure(root, Path(sys.executable), home=home, spec=str(wheel),
                      version=cli.PACKAGE_VERSION) is None
