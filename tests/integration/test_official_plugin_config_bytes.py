@@ -67,6 +67,440 @@ def _run_with_failure_diagnostic(run, *args, **kwargs):
     return result
 
 
+def _record_plan_child_failure_diagnostic(monkeypatch):
+    """Record only bounded planner-child failure facts; return the real result."""
+    original = plugin_config_bytes.subprocess.run
+
+    def recorded(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", ())
+        result = original(*args, **kwargs)
+        if (
+            isinstance(command, (list, tuple))
+            and len(command) >= 4
+            and list(command[1:3]) == ["-I", "-c"]
+            and command[3] == plugin_config_bytes._CHILD
+            and result.returncode
+        ):
+            stderr = result.stderr or b""
+            if isinstance(stderr, str):
+                stderr = stderr.encode("utf-8", errors="replace")
+            trace = _parse_plan_trace(stderr)
+            refusal = plugin_config_bytes._child_refusal(
+                stderr, result.returncode
+            )
+            fallback = (
+                result.returncode == 73
+                and refusal.code == "audit-refused"
+                and refusal.stage == "audit"
+            ) or (
+                result.returncode != 73
+                and refusal.code == "child-exit"
+                and refusal.stage == "child"
+            )
+            report = {
+                "plan_child_returncode": result.returncode,
+                "plan_child_stderr_bytes": len(stderr),
+                "deny_envelope_valid": not fallback,
+            }
+            if trace is not None:
+                report["plan_subprocess_trace"] = trace
+            if not fallback:
+                report.update({
+                    "deny_reason": refusal.code,
+                    "deny_stage": refusal.stage,
+                })
+                if refusal.source is not None:
+                    report["deny_source"] = refusal.source
+            else:
+                missing = re.findall(
+                    rb"(?m)^ModuleNotFoundError: No module named "
+                    rb"'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)'\r?$",
+                    stderr,
+                )
+                report["plain_exit_missing_modules"] = sorted({
+                    name.decode("ascii") for name in missing if len(name) <= 200
+                })[:10]
+                lines = stderr.splitlines()
+                if lines:
+                    last = lines[-1].strip()
+                    match = re.fullmatch(
+                        rb"([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Interrupt))"
+                        rb"(?::.*)?",
+                        last,
+                    )
+                    if match is not None and len(match.group(1)) <= 200:
+                        report["plain_exit_exception"] = match.group(1).decode("ascii")
+            print(json.dumps(report, sort_keys=True), flush=True)
+        return result
+
+    monkeypatch.setattr(plugin_config_bytes.subprocess, "run", recorded)
+
+
+def _diagnostic_plan_child():
+    """Add a bounded trace before the product's subprocess denial."""
+    child = plugin_config_bytes._CHILD
+    helper = r'''
+def _hfc_trace_subprocess(frame, command, executable):
+    upstream_modules = {
+        'hermes_cli.boot_bootstrap', 'hermes_cli.version_info',
+        'hermes_cli.post_update', 'hermes_cli.config',
+        'hermes_cli.plugins_cmd', 'hermes_cli.plugins_cmd_capabilities',
+        'hermes_yaml', 'pm.paths', 'pm._uv', 'pm.install', 'pm.client',
+        'pm.environments', 'utils',
+    }
+    for filename in request.get('sources', {}):
+        if filename.endswith('.py'):
+            name = filename[:-3].replace('/', '.')
+            if name.endswith('.__init__'):
+                name = name[:-9]
+            if name:
+                upstream_modules.add(name)
+    upstream_roots = {
+        'hermes_cli', 'pm', 'agent', 'providers', 'gateway', 'tools',
+        'plugins', 'hermes_feishu_card', 'hermes_platform', 'hermes_constants',
+    }
+    stdlib = set(getattr(sys, 'stdlib_module_names', ()))
+    def safe(value):
+        if not isinstance(value, str) or not value or len(value) > 200:
+            return None
+        try:
+            value.encode('ascii')
+        except UnicodeEncodeError:
+            return None
+        return value if all(ch.isalnum() or ch in '._' for ch in value) else None
+    def allowed(module):
+        return (module == 'sitecustomize' or module in upstream_modules
+                or module.split('.', 1)[0] in upstream_roots
+                or module.split('.', 1)[0] in stdlib)
+    def describe(candidate):
+        if candidate is None:
+            return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
+        module = safe(candidate.f_globals.get('__name__', ''))
+        if module is None or module in {'__main__', 'subprocess'} or not allowed(module):
+            return {'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'}
+        raw_function = candidate.f_code.co_name
+        function = 'module_scope' if raw_function == '<module>' else (safe(raw_function) or 'unknown')
+        raw_qualname = getattr(candidate.f_code, 'co_qualname', None)
+        qualname = 'module_scope' if raw_qualname == '<module>' else (safe(raw_qualname) or function)
+        return {'module': module, 'function': function, 'qualname': qualname}
+    caller_frames = []
+    current = frame
+    while current is not None and len(caller_frames) < 3:
+        module = safe(current.f_globals.get('__name__', ''))
+        if module not in {'__main__', 'subprocess'}:
+            caller_frames.append(describe(current))
+        current = current.f_back
+    first = caller_frames[0] if caller_frames else {
+        'module': 'unknown', 'function': 'unknown', 'qualname': 'unknown'
+    }
+    git = request.get('git')
+    matches = False
+    if isinstance(git, str) and git:
+        expected = [git, '-C', str(root), 'rev-parse', 'HEAD']
+        matches = command == expected
+        if not matches and sys.platform == 'win32' and isinstance(command, str):
+            matches = command == subprocess.list2cmdline(expected)
+    source = f"{first['module']}.{first['qualname']}" if first['module'] != 'unknown' else 'unknown'
+    report = {
+        'caller_module': first['module'],
+        'caller_function': first['function'],
+        'caller_qualname': first['qualname'],
+        'caller_frames': caller_frames,
+        'command_kind': safe(type(command).__name__) or 'other',
+        'command_matches_boot_git': matches,
+        'executable_is_none': executable is None,
+        'executable_kind': 'none' if executable is None else (safe(type(executable).__name__) or 'other'),
+    }
+    sys.stderr.write('HFC_CONFIG_PLAN_TRACE ' + json.dumps(report, sort_keys=True, separators=(',', ':')) + '\n')
+    sys.stderr.flush()
+    return source
+'''
+    marker = "def audit(event,args):"
+    assert child.count(marker) == 1
+    child = child.replace(marker, helper + "\n" + marker, 1)
+    denial = "            deny('subprocess','process')"
+    assert child.count(denial) == 1
+    return child.replace(
+        denial,
+        "            source = _hfc_trace_subprocess(frame, args[1], args[0])\n"
+        "            deny('subprocess','process',source)\n",
+        1,
+    )
+
+
+def _parse_plan_trace(stderr):
+    prefix = b"HFC_CONFIG_PLAN_TRACE "
+    upstream_modules = {
+        "hermes_cli.boot_bootstrap", "hermes_cli.version_info",
+        "hermes_cli.post_update", "hermes_cli.config",
+        "hermes_cli.plugins_cmd", "hermes_cli.plugins_cmd_capabilities",
+        "hermes_yaml", "pm.paths", "pm._uv", "pm.install", "pm.client",
+        "pm.environments", "utils",
+    }
+    for sources in plugin_config_bytes.FAMILIES.values():
+        for filename in sources:
+            if filename.endswith(".py"):
+                name = filename[:-3].replace("/", ".")
+                if name.endswith(".__init__"):
+                    name = name[:-9]
+                if name:
+                    upstream_modules.add(name)
+    upstream_roots = {
+        "hermes_cli", "pm", "agent", "providers", "gateway", "tools",
+        "plugins", "hermes_feishu_card", "hermes_platform", "hermes_constants",
+    }
+    stdlib = set(getattr(sys, "stdlib_module_names", ()))
+    stdlib.update({
+        "os", "platform", "uuid", "subprocess", "sys", "pathlib",
+        "importlib", "json", "hashlib", "stat", "shutil", "tempfile",
+        "re", "io", "asyncio", "sitecustomize",
+    })
+    def allowed_module(value):
+        return value == "unknown" or (
+            isinstance(value, str)
+            and len(value) <= 200
+            and re.fullmatch(r"[A-Za-z0-9_.]+", value) is not None
+            and (
+                value == "sitecustomize"
+                or value in upstream_modules
+                or value.split(".", 1)[0] in upstream_roots
+                or value.split(".", 1)[0] in stdlib
+            )
+        )
+    string_fields = {"caller_module", "caller_function", "caller_qualname"}
+    type_fields = {"command_kind", "executable_kind"}
+    bool_fields = {"command_matches_boot_git", "executable_is_none"}
+    for line in stderr.splitlines():
+        if not line.startswith(prefix):
+            continue
+        try:
+            payload = json.loads(line[len(prefix):].decode("ascii"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if type(payload) is not dict or set(payload) != (
+            string_fields | type_fields | bool_fields | {"caller_frames"}
+        ):
+            continue
+        safe = {}
+        valid = True
+        for name in string_fields:
+            value = payload[name]
+            if (
+                not isinstance(value, str)
+                or len(value) > 200
+                or not re.fullmatch(r"[A-Za-z0-9_.]+", value)
+            ):
+                valid = False
+                break
+            if name == "caller_module" and not allowed_module(value):
+                valid = False
+                break
+            safe[name] = value
+        if safe.get("caller_module") == "unknown" and (
+            safe.get("caller_function") != "unknown"
+            or safe.get("caller_qualname") != "unknown"
+        ):
+            valid = False
+        frames = payload.get("caller_frames")
+        if not isinstance(frames, list) or len(frames) > 3:
+            valid = False
+        else:
+            safe_frames = []
+            for frame in frames:
+                if type(frame) is not dict or set(frame) != {
+                    "module", "function", "qualname",
+                }:
+                    valid = False
+                    break
+                module = frame["module"]
+                function = frame["function"]
+                qualname = frame["qualname"]
+                if not allowed_module(module):
+                    valid = False
+                    break
+                if (
+                    not isinstance(function, str)
+                    or len(function) > 200
+                    or not re.fullmatch(r"[A-Za-z0-9_.]+", function)
+                    or not isinstance(qualname, str)
+                    or len(qualname) > 200
+                    or not re.fullmatch(r"[A-Za-z0-9_.]+", qualname)
+                ):
+                    valid = False
+                    break
+                if module == "unknown" and (function != "unknown" or qualname != "unknown"):
+                    valid = False
+                    break
+                safe_frames.append({
+                    "module": module, "function": function, "qualname": qualname,
+                })
+            if valid:
+                safe["caller_frames"] = safe_frames
+        for name in type_fields:
+            value = payload[name]
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_]+", value):
+                valid = False
+                break
+            safe[name] = value
+        for name in bool_fields:
+            if type(payload[name]) is not bool:
+                valid = False
+                break
+            safe[name] = payload[name]
+        if valid:
+            return safe
+    return None
+
+
+
+def test_plan_trace_executes_module_scope_and_keeps_unknown_private():
+    import ast
+    import io
+    from types import SimpleNamespace
+
+    child = ast.parse(_diagnostic_plan_child())
+    function = next(node for node in child.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "_hfc_trace_subprocess")
+    stream = io.StringIO()
+    namespace = {
+        "sys": SimpleNamespace(stderr=stream, platform=sys.platform,
+                               stdlib_module_names=getattr(sys, "stdlib_module_names", ())),
+        "request": {"git": None, "sources": {"hermes_cli/config.py": "fixed"}},
+        "root": Path("/unused-trace-root"), "subprocess": subprocess, "json": json,
+    }
+    exec(compile(ast.Module(body=[function], type_ignores=[]),
+                 "<isolated-trace-function>", "exec"), namespace)
+    frame = SimpleNamespace(
+        f_globals={"__name__": "hermes_cli.config"},
+        f_code=SimpleNamespace(co_name="<module>", co_qualname="<module>"),
+        f_back=None,
+    )
+    trace = namespace["_hfc_trace_subprocess"]
+    assert trace(frame, ["unmatched"], None) == "hermes_cli.config.module_scope"
+    report = _parse_plan_trace(stream.getvalue().encode("ascii"))
+    assert report["caller_frames"] == [{
+        "module": "hermes_cli.config", "function": "module_scope",
+        "qualname": "module_scope",
+    }]
+    frame.f_globals["__name__"] = "PRIVATE_MODULE_CANARY"
+    stream.seek(0)
+    stream.truncate(0)
+    assert trace(frame, ["unmatched"], None) == "unknown"
+    assert "PRIVATE_MODULE_CANARY" not in stream.getvalue()
+
+
+def _plan_with_failure_diagnostic(plan, **kwargs):
+    """Preserve the original refusal while exposing only sanitized fields."""
+    try:
+        return plan(**kwargs)
+    except plugin_config_bytes.ConfigBytesRefused as exc:
+        report = {
+            "plan_failure_code": exc.code,
+            "plan_failure_stage": exc.stage,
+        }
+        if exc.source is not None:
+            report["plan_failure_source"] = exc.source
+        print(json.dumps(report, sort_keys=True), flush=True)
+        raise
+
+
+def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
+    tmp_path, monkeypatch, capsys
+):
+    secret = "PRIVATE-CANARY"
+    compile(_diagnostic_plan_child(), "<diagnostic-child>", "exec")
+    valid_stderr = (
+        b"HFC_CONFIG_PLAN_DENY "
+        b'{"reason":"plugin-load","source":"hermes_cli/example.py",'
+        b'"stage":"profile"}\n'
+        + secret.encode()
+    )
+    invalid_stderr = (
+        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"read_git_head",'
+        b'"caller_module":"PRIVATE-CANARY",'
+        b'"caller_qualname":"read_git_head","command_kind":"str",'
+        b'"command_matches_boot_git":false,"executable_is_none":true,'
+        b'"executable_kind":"none"}\n'
+        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"popen",'
+        b'"caller_module":"os","caller_qualname":"popen",'
+        b'"caller_frames":['
+        b'{"function":"popen","module":"os","qualname":"popen"},'
+        b'{"function":"_syscmd_ver","module":"platform","qualname":"_syscmd_ver"},'
+        b'{"function":"uuid4","module":"uuid","qualname":"uuid4"}],'
+        b'"command_kind":"str",'
+        b'"command_matches_boot_git":false,"executable_is_none":true,'
+        b'"executable_kind":"none"}\n'
+        b"ModuleNotFoundError: No module named 'ruamel.yaml'\n"
+        b"ModuleNotFoundError: No module named 'bad/" + secret.encode() + b"'\n"
+        b"ModuleNotFoundError: No module named '" + b"a" * 201 + b"'\n"
+        b"OSError: " + secret.encode() + b" C:\\private\\path\n"
+    )
+    current = [subprocess.CompletedProcess([], 73, stderr=valid_stderr)]
+    monkeypatch.setattr(
+        plugin_config_bytes.subprocess, "run", lambda *args, **kwargs: current[0]
+    )
+    _record_plan_child_failure_diagnostic(monkeypatch)
+    command = [sys.executable, "-I", "-c", plugin_config_bytes._CHILD, str(tmp_path)]
+
+    returned = plugin_config_bytes.subprocess.run(command)
+    assert returned is current[0]
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "deny_envelope_valid": True,
+        "deny_reason": "plugin-load",
+        "deny_source": "hermes_cli/example.py",
+        "deny_stage": "profile",
+        "plan_child_returncode": 73,
+        "plan_child_stderr_bytes": len(valid_stderr),
+    }
+
+    current[0] = subprocess.CompletedProcess([], 1, stderr=invalid_stderr)
+    returned = plugin_config_bytes.subprocess.run(command)
+    assert returned is current[0]
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "deny_envelope_valid": False,
+        "plan_child_returncode": 1,
+        "plan_child_stderr_bytes": len(invalid_stderr),
+        "plain_exit_exception": "OSError",
+        "plain_exit_missing_modules": ["ruamel.yaml"],
+        "plan_subprocess_trace": {
+            "caller_function": "popen",
+            "caller_module": "os",
+            "caller_qualname": "popen",
+            "caller_frames": [
+                {"function": "popen", "module": "os", "qualname": "popen"},
+                {"function": "_syscmd_ver", "module": "platform", "qualname": "_syscmd_ver"},
+                {"function": "uuid4", "module": "uuid", "qualname": "uuid4"},
+            ],
+            "command_kind": "str",
+            "command_matches_boot_git": False,
+            "executable_is_none": True,
+            "executable_kind": "none",
+        },
+    }
+    assert secret not in json.dumps(report)
+
+    refusal = plugin_config_bytes.ConfigBytesRefused(
+        "official config byte plan failed",
+        code="plugin-load",
+        stage="profile",
+        source="hermes_cli/example.py",
+    )
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused) as caught:
+        _plan_with_failure_diagnostic(
+            lambda **_kwargs: (_ for _ in ()).throw(refusal)
+        )
+    assert caught.value is refusal
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "plan_failure_code": "plugin-load",
+        "plan_failure_source": "hermes_cli/example.py",
+        "plan_failure_stage": "profile",
+    }
+    assert secret not in json.dumps(report)
+
+
 @pytest.fixture
 def official_enable_diagnostics(monkeypatch):
     original = subprocess.run
@@ -151,7 +585,7 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     failure,
     monkeypatch,
 ):
-    _, python, prefix, path_file = official_runtime
+    _, python, _prefix, site, path_file = official_runtime
     variable, expected_head = ROOTS[family]
     configured = os.environ.get(variable)
     if not configured:
@@ -220,7 +654,7 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     # Keep the runtime outside the source tree: a .venv symlink would make the
     # interpreter's sysconfig library roots symlinks under the checkout, which
     # the launch/library boundary deliberately rejects.
-    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    purelib = site
     binding = plugin.HermesRuntimeBinding(
         checkout_root=root,
         runtime_python=python,
@@ -293,10 +727,11 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
 
 @pytest.mark.parametrize("seed_version,expected_version", [(50, 51), (11, 11)])
 def test_pm_0225_official_startup_migration_matches_private_plan(
-    official_runtime, tmp_path, seed_version, expected_version  # noqa: F811
+    official_runtime, tmp_path, seed_version, expected_version,  # noqa: F811
+    monkeypatch,
 ):
     """Compose the exact boot migration helper with the unmodified writer."""
-    _, python, prefix, path_file = official_runtime
+    _, python, _prefix, site, path_file = official_runtime
     configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
@@ -329,7 +764,7 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     (home / "hfc-pm-tools.json").write_text(
         json.dumps({"uv": uv, "python": str(python), "project": str(project)})
     )
-    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    purelib = site
     binding = plugin.HermesRuntimeBinding(
         checkout_root=root,
         runtime_python=python,
@@ -344,7 +779,10 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     desired, enabled_before = plugin._expected_enabled_config(
         plugin._load_config_mapping(original)
     )
-    plan = plugin_config_bytes.plan_enabled_bytes(
+    monkeypatch.setattr(plugin_config_bytes, "_CHILD", _diagnostic_plan_child())
+    _record_plan_child_failure_diagnostic(monkeypatch)
+    plan = _plan_with_failure_diagnostic(
+        plugin_config_bytes.plan_enabled_bytes,
         root=root,
         python=python,
         home=home,
@@ -368,9 +806,9 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
         ],
         cwd=root,
         env={
-            "HOME": str(home),
-            "HERMES_HOME": str(home),
-            "HERMES_INSTALL_ROOT": str(root),
+            **plugin_config_bytes.isolated_child_env(
+                home, install_root=root, include_path=True
+            ),
             "PYTHONDONTWRITEBYTECODE": "1",
         },
         capture_output=True,
@@ -410,7 +848,7 @@ def test_pm_0225_floor_boundary_requires_new_migration_sources(
     official_runtime, tmp_path  # noqa: F811
 ):
     """A below-floor config is untouched; the first auto-migrated schema is bounded."""
-    _, python, _, _ = official_runtime
+    _, python, *_ = official_runtime
     configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
@@ -451,7 +889,7 @@ def test_pm_0225_boot_record_gates_startup_schema_migration(
     official_runtime, tmp_path, record_identity, expected_version  # noqa: F811
 ):
     """The private plan follows Hermes' one-bootstrap-per-install-identity gate."""
-    _, python, _, _ = official_runtime
+    _, python, *_ = official_runtime
     configured = os.environ.get("HFC_CONFIG_WRITER_0225_ROOT")
     if not configured:
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
@@ -690,7 +1128,7 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
         if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
             pytest.fail("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
         pytest.skip("pinned writer source missing: HFC_CONFIG_WRITER_0225_ROOT")
-    _, python, _, _ = official_runtime
+    _, python, *_ = official_runtime
     source = Path(configured)
     root = tmp_path / "source"
     shutil.copytree(source, root, ignore=shutil.ignore_patterns(".git", "__pycache__"))
@@ -726,7 +1164,7 @@ def test_pm_0225_trusted_interpreter_library_boundary(official_runtime, tmp_path
         return subprocess.run(
             [str(python), "-I", "-c", code, str(root), str(shadow)],
             cwd=root,
-            env={"HOME": str(shadow), "HERMES_HOME": str(shadow)},
+            env=plugin_config_bytes.isolated_child_env(shadow),
             capture_output=True,
             timeout=30,
             check=False,
@@ -856,7 +1294,7 @@ def test_local_source_guard_is_private_child_and_new_family_only(
     code = setup + "\nimport decimal,yaml\nsys.path.insert(0,str(root))\nimport unbound\n"
     child = subprocess.run(
         [sys.executable, "-I", "-c", code, str(root), str(home)],
-        env={"HOME": str(home), "HERMES_HOME": str(home)},
+        env=plugin_config_bytes.isolated_child_env(home),
         capture_output=True, timeout=30,
     )
     assert child.returncode == expected_code
@@ -903,8 +1341,81 @@ def test_private_new_family_compiles_verified_source_instead_of_cached_code(tmp_
     child = subprocess.run(
         [sys.executable, "-I", "-c", setup + "\nsys.path.insert(0,str(root))\nimport bound\n",
          str(root), str(home)],
-        env={"HOME": str(home), "HERMES_HOME": str(home)},
+        env=plugin_config_bytes.isolated_child_env(home),
         capture_output=True, timeout=30,
     )
     assert child.returncode == 0
     assert marker.exists() is (family == "pm-0224")
+
+
+def test_pm_0225_shadow_acl_uses_real_failure_path_without_success_cache(tmp_path):
+    """The actual pinned helper catches refusal; mkdir still works without ACL credit."""
+    variable, expected_head = ROOTS["pm-0225"]
+    configured = os.environ.get(variable)
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("pinned writer source missing: " + variable)
+        pytest.skip("pinned writer source missing: " + variable)
+    root = Path(configured).resolve()
+    assert subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True, timeout=10,
+    ).strip() == expected_head
+    assert not subprocess.check_output(
+        ["git", "-C", str(root), "status", "--porcelain"], text=True, timeout=10,
+    ).strip()
+    sources = plugin_config_bytes.FAMILIES["pm-0225"]
+    before = {name: (root / name).read_bytes() for name in sources}
+    assert all(hashlib.sha256(value).hexdigest() == sources[name]
+               for name, value in before.items())
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    original_home = {"config.yaml": b"# private sentinel\n", ".env": b"PRIVATE_SENTINEL=keep\n"}
+    for name, value in original_home.items():
+        (real_home / name).write_bytes(value)
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "request.json").write_text(json.dumps({
+        "real_home": str(real_home), "family": "pm-0225", "sources": sources,
+    }))
+    # Execute the complete production guard and ACL binding in a real subprocess.
+    # Force only adapter admission on non-Windows hosts; upstream stays unmodified.
+    child = plugin_config_bytes._CHILD.split("migrate_on_boot=request.get", 1)[0]
+    child = child.replace(
+        "sys.platform=='win32' and request['family']=='pm-0225'",
+        "request['family']=='pm-0225'",
+    )
+    child += r'''
+acl=sys.modules['hermes_dir_acl']
+assert acl._grant is _refuse_shadow_acl_grant
+assert not acl._granted
+existing=home/'existing'
+existing.mkdir()
+assert acl.grant_user_access(existing,elevated=True,repair_children=True) is False
+assert not acl._granted
+created=home/'parent'/'created'
+assert acl.make_user_dir(created,parents=True,elevated=True)==created
+assert created.is_dir() and not acl._granted
+assert acl.make_user_dir(created,exist_ok=True,elevated=True)==created
+assert not acl._granted
+try:
+    acl.make_user_dir(created,elevated=True)
+except FileExistsError:
+    pass
+else:
+    raise AssertionError('mkdir must retain FileExistsError')
+assert not acl._granted
+print(json.dumps({'grant':False,'cache_entries':len(acl._granted),'mkdir_preserved':True}))
+'''
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", child, str(root), str(shadow)],
+        env=plugin_config_bytes.isolated_child_env(shadow),
+        capture_output=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert json.loads(result.stdout) == {
+        "grant": False, "cache_entries": 0, "mkdir_preserved": True,
+    }
+    # This log comes from the upstream Exception catch, not an early host return.
+    assert b"ACL changes are outside private config planning" in result.stderr
+    assert {name: (root / name).read_bytes() for name in sources} == before
+    assert {p.name: p.read_bytes() for p in real_home.iterdir()} == original_home

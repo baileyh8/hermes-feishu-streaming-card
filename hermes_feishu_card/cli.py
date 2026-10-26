@@ -3115,66 +3115,154 @@ def _run_integrity(args: argparse.Namespace) -> int:
     return 0
 
 
+def _integrity_ack_refused(category: str, hint: str | None = None) -> int:
+    """Print a fixed, redacted acknowledgement refusal and its next action."""
+    print(
+        "error: manual review fence could not be acknowledged safely "
+        f"(category={category})",
+        file=sys.stderr,
+    )
+    if hint:
+        print(f"next: {hint}", file=sys.stderr)
+    return 1
+
+
+def _integrity_ack_sidecar_running() -> int:
+    print(
+        "error: stop the sidecar before acknowledging manual review "
+        "(category=integrity_ack_sidecar_running)",
+        file=sys.stderr,
+    )
+    print(
+        "next: stop the actual service manager or auto-updater and confirm both "
+        "health is unreachable and the sidecar PID file is absent; a KeepAlive "
+        "restart keeps this gate closed",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def _run_integrity_acknowledge_review(args: argparse.Namespace) -> int:
     try:
         first_binding = _verified_integrity_acknowledgement_binding(
             args.hermes_dir
         )
+    except Exception:
+        return _integrity_ack_refused(
+            "integrity_ack_plan_unverified",
+            "verify the installed Hermes plan and rerun doctor; keep the marker, "
+            "manifest, preimage and journal",
+        )
+    try:
         config = (
             load_config(args.config, env_file=args.env_file)
             if args.env_file is not None
             else load_config(args.config)
         )
+    except Exception:
+        return _integrity_ack_refused(
+            "integrity_ack_config_unverified",
+            "verify the config path and its private environment without printing "
+            "tokens or raw paths",
+        )
+    try:
         target_state = _integrity_state_directory(args)
         review = inspect_runtime_integrity_review(target_state)
-        if not _integrity_acknowledgement_process_stopped(target_state, config):
-            print(
-                "error: stop the sidecar before acknowledging manual review",
-                file=sys.stderr,
-            )
-            return 1
+    except Exception:
+        return _integrity_ack_refused(
+            "integrity_ack_fence_unreadable",
+            "preserve the private state directory and inspect the fence with the "
+            "supported diagnosis path",
+        )
+    try:
+        stopped = _integrity_acknowledgement_process_stopped(target_state, config)
+    except Exception:
+        return _integrity_ack_sidecar_running()
+    if not stopped:
+        return _integrity_ack_sidecar_running()
+    try:
         second_binding = _verified_integrity_acknowledgement_binding(
             args.hermes_dir
         )
-        if second_binding != first_binding:
-            raise ValueError("runtime integrity acknowledgement binding changed")
-        if not _integrity_acknowledgement_process_stopped(target_state, config):
-            print(
-                "error: stop the sidecar before acknowledging manual review",
-                file=sys.stderr,
+    except Exception:
+        return _integrity_ack_refused(
+            "integrity_ack_plan_unverified",
+            "verify the installed Hermes plan and rerun doctor; keep the marker, "
+            "manifest, preimage and journal",
+        )
+    if second_binding != first_binding:
+        return _integrity_ack_refused(
+            "integrity_ack_binding_changed",
+            "the Hermes plan changed during the check; stop, rerun doctor and "
+            "preserve the current fence",
+        )
+    try:
+        stopped = _integrity_acknowledgement_process_stopped(target_state, config)
+    except Exception:
+        return _integrity_ack_sidecar_running()
+    if not stopped:
+        return _integrity_ack_sidecar_running()
+    acknowledgement_options = {
+        "expected_state_token": review.state_token,
+        "expected_binding": first_binding,
+        "allow_legacy_unbound_empty_restart": bool(
+            args.yes is True and review.legacy_unbound_empty_restart
+        ),
+    }
+    if (
+        args.yes is True
+        and review.binding is not None
+        and review.binding != first_binding
+        and review.binding.target_identity == first_binding.target_identity
+    ):
+        acknowledgement_options["allow_same_target_plan_transition"] = True
+    rebind_target = getattr(args, "rebind_target", None)
+    if rebind_target is not None:
+        if (args.yes is not True or review.binding is None
+                or rebind_target != review.binding.target_identity
+                or not review.manual_review_required):
+            return _integrity_ack_refused(
+                "integrity_ack_rebind_target_mismatch",
+                "use the exact old 64-character target identity recorded by the "
+                "pending fence; this command does not clear an unverified fence",
             )
-            return 1
-        acknowledgement_options = {
-            "expected_state_token": review.state_token,
-            "expected_binding": first_binding,
-            "allow_legacy_unbound_empty_restart": bool(
-                args.yes is True and review.legacy_unbound_empty_restart
-            ),
-        }
-        if (
-            args.yes is True
-            and review.binding is not None
-            and review.binding != first_binding
-            and review.binding.target_identity == first_binding.target_identity
-        ):
-            acknowledgement_options["allow_same_target_plan_transition"] = True
-        rebind_target = getattr(args, "rebind_target", None)
-        if rebind_target is not None:
-            if (args.yes is not True or review.binding is None
-                    or rebind_target != review.binding.target_identity
-                    or not review.manual_review_required):
-                raise ValueError("explicit old target does not match the pending fence")
-            acknowledgement_options["rebind_from_target_identity"] = rebind_target
+        acknowledgement_options["rebind_from_target_identity"] = rebind_target
+    elif (
+        review.manual_review_required
+        and review.binding is not None
+        and review.binding != first_binding
+        and review.binding.target_identity != first_binding.target_identity
+    ):
+        return _integrity_ack_refused(
+            "integrity_ack_rebind_target_required",
+            "the pending fence belongs to a different Hermes target; read its "
+            "exact old target identity and rerun with --rebind-target "
+            "<old-target-identity> --yes; do not edit or delete the fence",
+        )
+    try:
         changed = acknowledge_runtime_integrity_review(
             target_state,
             **acknowledgement_options,
         )
-    except (OSError, RuntimeError, ValueError):
-        print(
-            "error: manual review fence could not be acknowledged safely",
-            file=sys.stderr,
+    except Exception:
+        try:
+            after = inspect_runtime_integrity_review(target_state)
+        except Exception:
+            return _integrity_ack_refused(
+                "integrity_ack_fence_unreadable",
+                "preserve the private state directory and inspect the fence with "
+                "the supported diagnosis path",
+            )
+        if after.state_token != review.state_token:
+            return _integrity_ack_refused(
+                "integrity_ack_fence_changed",
+                "the fence changed during acknowledgement; preserve it and rerun "
+                "doctor before another attempt",
+            )
+        return _integrity_ack_refused(
+            "integrity_ack_refused",
+            "preserve the fence and evidence; do not hand-edit the fence",
         )
-        return 1
     print(
         "integrity manual review: acknowledged"
         if changed

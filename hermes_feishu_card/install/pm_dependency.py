@@ -6,6 +6,7 @@ It has no plugin manifest or register function and cannot be a second producer.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
@@ -16,7 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Iterator
 import zipfile
 from email.parser import BytesParser
 
@@ -24,6 +25,54 @@ from . import pm_wheel_store
 
 NAME = "hfc-runtime-dependency"
 OWNER = ".hfc-owner.json"
+
+
+class PMDependencySourceUnverified(ValueError):
+    """A schema-1 flat member declaration exists but its source is unproven."""
+
+
+@dataclass(frozen=True)
+class LegacyParentProof:
+    store_identity: tuple[int, int]
+    mode: int
+    store_wheel: Path
+    wheel_name: str
+    wheel_digest: str
+
+
+@contextmanager
+def _legacy_parent_guard(selected_home: Path, member: Path,
+                         old: dict[str, Any] | None,
+                         proof: LegacyParentProof | None) -> Iterator[None]:
+    """Tighten a proven PR458 parent and restore its prior mode on failure."""
+    if old is None or proof is None:
+        yield
+        return
+    def reprove() -> bool:
+        try:
+            return (_owned(member) == old
+                    and _pr458_flat_wheel(member, old) == (
+                        proof.store_wheel, proof.wheel_name))
+        except (OSError, ValueError):
+            return False
+    snapshot = pm_wheel_store.tighten_legacy_parent(
+        selected_home,
+        expected_identity=proof.store_identity,
+        wheel_name=proof.wheel_name,
+        digest=proof.wheel_digest,
+        reprove=reprove,
+    )
+    try:
+        yield
+    except BaseException:
+        try:
+            if _owned(member) == old:
+                pm_wheel_store.restore_legacy_parent(selected_home, snapshot)
+        except (OSError, ValueError):
+            # Keep the safer 0700 state if the prior mode cannot be restored
+            # without crossing an unknown or swapped directory.
+            pass
+        raise
 
 # Read only in probe mode; mutation goes through upstream's public admission.
 _CHILD = '''
@@ -120,6 +169,82 @@ def _project_source(version: str, reference: dict[str, str]) -> str:
             f'hermes-feishu-streaming-card = {{ path = {json.dumps(reference["path"])} }}\n')
 
 
+def _pr458_project_source(version: str, wheel_path: str) -> str:
+    """Exact bb447f6 f-string text, including a raw non-ASCII path."""
+    return ('[project]\nname = "hfc-runtime-dependency"\nversion = "0"\n'
+            f'dependencies = ["hermes-feishu-streaming-card=={version}"]\n'
+            '[tool.uv]\npackage = false\n[tool.uv.sources]\n'
+            f'hermes-feishu-streaming-card = {{ path = "{wheel_path}" }}\n')
+
+
+def _pr458_flat_wheel(member: Path, owner: dict[str, Any]) -> tuple[Path, str] | None:
+    """Return the exact PR458 flat wheel path, or None for other schema-1 layouts."""
+    if (set(owner) != {'schema', 'version', 'spec_sha256', 'files', 'selection_added'}
+            or type(owner.get('schema')) is not int or owner['schema'] != 1
+            or not isinstance(owner.get('version'), str)
+            or not isinstance(owner.get('spec_sha256'), str)
+            or len(owner['spec_sha256']) != 64
+            or any(c not in '0123456789abcdef' for c in owner['spec_sha256'])
+            or type(owner.get('selection_added')) is not bool
+            or member.parent.name != 'plugins'):
+        return None
+    files = owner.get('files')
+    if not isinstance(files, dict):
+        return None
+    wheels = [name for name in files if isinstance(name, str) and name.endswith('.whl')]
+    if len(wheels) != 1:
+        return None
+    wheel_name = wheels[0]
+    home = member.parent.parent
+    store = home / '.hermes_feishu_card' / 'wheel-store'
+    expected = _pr458_project_source(owner['version'], (store / wheel_name).as_posix())
+    declared_path = member / 'pyproject.toml'
+    try:
+        metadata = declared_path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or pm_wheel_store.is_reparse(metadata):
+            return None
+        declared = declared_path.read_text(encoding='utf-8')
+    except (OSError, UnicodeError):
+        return None
+    if declared != expected:
+        return None
+    return store / wheel_name, wheel_name
+
+
+def legacy_external_wheel(member: Path, owner: dict[str, Any]) -> dict[str, str]:
+    """Return the exact PR458 flat wheel source for a schema-1 owned member.
+
+    The proof is the historical member declaration plus the member owner's
+    digest, not merely matching package resources or the existence of any file
+    with the same name. Schema 2 uses the digest directory validated by
+    :mod:`pm_wheel_store`; this function only accepts the one flat layout
+    written by commit bb447f66946def97d43fa722132c9a98a432afb3.
+    """
+    flat = _pr458_flat_wheel(member, owner)
+    if flat is None:
+        raise ValueError('legacy PM dependency is not the PR458 schema-1 member')
+    store_wheel, wheel_name = flat
+    verified = pm_wheel_store.validate_legacy(
+        member.parent.parent, wheel_name, owner['files'][wheel_name]
+    )
+    if verified != store_wheel:
+        raise ValueError('legacy PM wheel store path changed')
+    return {'path': str(verified), 'sha256': owner['files'][wheel_name]}
+
+
+def pr458_flat_proof(member: Path, owner: dict[str, Any]) -> LegacyParentProof | None:
+    """Capture the pre-migration flat-store identity and digest."""
+    flat = _pr458_flat_wheel(member, owner)
+    if flat is None:
+        return None
+    store_wheel, wheel_name = flat
+    digest = owner['files'][wheel_name]
+    dev, ino, mode = pm_wheel_store.prove_legacy_parent(
+        member.parent.parent, wheel_name, digest
+    )
+    return LegacyParentProof((dev, ino), mode, store_wheel, wheel_name, digest)
+
+
 def _owned(path: Path) -> dict[str, Any] | None:
     try:
         path.lstat()
@@ -151,7 +276,19 @@ def _owned(path: Path) -> dict[str, Any] | None:
             if ((path / 'pyproject.toml').read_text() != _project_source(data['version'], data['external_wheel'])
                     or files.get(wheel.name) != data['external_wheel']['sha256']):
                 raise ValueError("PM external wheel differs from member wheel")
+        elif _pr458_flat_wheel(path, data) is not None:
+            # Only the exact PR458 flat declaration opts into flat-store proof.
+            # Other historical schema-1 workspace members keep their original
+            # member ownership checks and are verified by verify_installed().
+            try:
+                legacy_external_wheel(path, data)
+            except (OSError, ValueError) as exc:
+                raise PMDependencySourceUnverified(
+                    "legacy PM flat wheel source cannot be verified"
+                ) from exc
         return data
+    except PMDependencySourceUnverified:
+        raise
     except (ValueError, TypeError, KeyError) as exc:
         raise ValueError("PM dependency ownership cannot be verified") from exc
 
@@ -330,6 +467,8 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
     member = selected_home / "plugins" / NAME
     _safe_directory(selected_home)
     old = _owned(member)
+    legacy_proof = (pr458_flat_proof(member, old)
+                    if old is not None and old.get('schema') == 1 else None)
     if NAME in probe['disabled']:
         raise ValueError("HFC PM dependency member is explicitly disabled")
     spec_digest = _install_spec_digest(spec)
@@ -376,34 +515,39 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         # Stage a second wheel copy in this hermes home's install state (never
         # part of a workspace member), and point the source at that absolute
         # path so the requirement stays an ordinary index-style pin.
-        external_wheel = pm_wheel_store.publish(selected_home, wheel_name, (staging / 'runtime.whl').read_bytes())
-        project = _project_source(version, external_wheel)
-        # Ownership uses a fixed logical wheel key; actual filename is recorded below.
-        (staging / 'pyproject.toml').write_text(project)
-        (staging / 'runtime.whl').rename(staging / wheel_name)
-        owner = {"schema": 2, "external_wheel": external_wheel, "version": version, "spec_sha256": spec_digest,
-                 "selection_added": old['selection_added'] if old else added,
-                 "files": {name: sha256((staging / name).read_bytes()).hexdigest()
-                           for name in ('pyproject.toml', wheel_name)}}
-        (staging / OWNER).write_text(json.dumps(owner))
-        backup = _publish_member(member, staging, old, parent_identity, old_identity)
-        registration = Registration(root, python, selected_home, member, backup, added, old is None)
-        try:
-            _call(root, python, selected_home, {"operation": "add", "name": NAME,
-                                               "expected": probe['expected']})
-        except ValueError:
-            # Re-read through the official reader. Only an unchanged selection
-            # proves a refused admission; unknown outcomes retain their source.
-            current = _call(root, python, selected_home, {"operation": "probe"})
-            if (current["expected"] == probe["expected"]
-                    and current.get("generation") == probe.get("generation")):
-                _owned(member)
-                shutil.rmtree(member)
-                if backup is not None:
-                    backup.rename(member)
-                raise ValueError("PM admission refused; previous dependency source preserved") from None
-            raise ValueError("PM admission outcome uncertain; owned dependency source retained for diagnosis") from None
-        return registration
+        with _legacy_parent_guard(selected_home, member, old, legacy_proof):
+            external_wheel = pm_wheel_store.publish(
+                selected_home, wheel_name, (staging / 'runtime.whl').read_bytes(),
+                expected_parent_identity=(legacy_proof.store_identity
+                                          if legacy_proof is not None else None),
+            )
+            project = _project_source(version, external_wheel)
+            # Ownership uses a fixed logical wheel key; actual filename is recorded below.
+            (staging / 'pyproject.toml').write_text(project)
+            (staging / 'runtime.whl').rename(staging / wheel_name)
+            owner = {"schema": 2, "external_wheel": external_wheel, "version": version, "spec_sha256": spec_digest,
+                     "selection_added": old['selection_added'] if old else added,
+                     "files": {name: sha256((staging / name).read_bytes()).hexdigest()
+                               for name in ('pyproject.toml', wheel_name)}}
+            (staging / OWNER).write_text(json.dumps(owner))
+            backup = _publish_member(member, staging, old, parent_identity, old_identity)
+            registration = Registration(root, python, selected_home, member, backup, added, old is None)
+            try:
+                _call(root, python, selected_home, {"operation": "add", "name": NAME,
+                                                   "expected": probe['expected']})
+            except ValueError:
+                # Re-read through the official reader. Only an unchanged selection
+                # proves a refused admission; unknown outcomes retain their source.
+                current = _call(root, python, selected_home, {"operation": "probe"})
+                if (current["expected"] == probe["expected"]
+                        and current.get("generation") == probe.get("generation")):
+                    _owned(member)
+                    shutil.rmtree(member)
+                    if backup is not None:
+                        backup.rename(member)
+                    raise ValueError("PM admission refused; previous dependency source preserved") from None
+                raise ValueError("PM admission outcome uncertain; owned dependency source retained for diagnosis") from None
+            return registration
     finally:
         if sys.exc_info()[0] is not PMDependencyRollbackFailed:
             try:
@@ -446,16 +590,23 @@ request = json.loads(sys.stdin.read())
 root = Path(package.__file__).parent.parent
 wheel = json.loads(metadata.distribution('hermes-feishu-streaming-card').read_text('direct_url.json') or '{}')
 source = urlsplit(wheel.get('url', ''))
-actual = wheel.get('archive_info', {}).get('hashes', {}).get('sha256')
+archive = wheel.get('archive_info')
+if archive is None:
+    archive = {}
+hashes = archive.get('hashes') if isinstance(archive, dict) else None
+actual = hashes.get('sha256') if isinstance(hashes, dict) else None
 external = request.get('external_wheel')
 source_ok = True
+archive_ok = isinstance(archive, dict) and (hashes is None or isinstance(hashes, dict))
 if external is not None:
+    external_path = Path(external['path'])
     source_ok = (source.scheme == 'file' and not source.netloc and not source.query
-                 and not source.fragment and Path(url2pathname(source.path)) == Path(external['path']))
-    if source_ok and actual is None:
-        path = Path(external['path'])
+                 and not source.fragment and external_path.is_absolute()
+                 and Path(url2pathname(source.path)) == external_path)
+    if source_ok:
+        path = external_path
         before = path.lstat()
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0))
         try:
             opened = os.fstat(descriptor)
             digest = hashlib.sha256()
@@ -469,13 +620,24 @@ if external is not None:
                             for item in (before, opened, after))
                 and (before.st_dev,before.st_ino) == (opened.st_dev,opened.st_ino)
                 == (after.st_dev,after.st_ino)):
-            actual = digest.hexdigest()
+            source_ok = digest.hexdigest() == request['wheel_sha256']
+        else:
+            source_ok = False
+    if actual is not None and actual != request['wheel_sha256']:
+        archive_ok = False
 elif actual is None and source.scheme == 'file' and not source.netloc:
     path = Path(url2pathname(source.path)).resolve()
     workspace = Path(sys.prefix).parent / 'workspace'
     if workspace.resolve() in path.parents:
         actual = hashlib.sha256(path.read_bytes()).hexdigest()
-ok = source_ok and not wheel.get('dir_info', {}).get('editable') and actual == request['wheel_sha256'] and all(
+if external is None:
+    archive_ok = actual == request['wheel_sha256']
+dir_info = wheel.get('dir_info') or {}
+editable = dir_info.get('editable') if isinstance(dir_info, dict) else True
+expected_version = request.get('wheel_version')
+version_ok = (expected_version is None
+              or metadata.version('hermes-feishu-streaming-card') == expected_version)
+ok = source_ok and archive_ok and version_ok and not editable and all(
     (root / name).is_file() and hashlib.sha256((root / name).read_bytes()).hexdigest() == digest
     for name, digest in request['files'].items())
 print(json.dumps({'ok': ok}))
@@ -485,11 +647,34 @@ print(json.dumps({'ok': ok}))
 def verify_installed(member: Path, python: Path) -> bool:
     """Compare every package resource with the exact cached ordinary wheel."""
     identity = member.lstat()
-    owner = _owned(member)
+    try:
+        owner = _owned(member)
+    except (OSError, ValueError):
+        return False
     if owner is None:
         return False
     wheel_name = next(name for name in owner['files'] if name.endswith('.whl'))
     wheel = member / wheel_name
+    external: dict[str, Any] | None
+    wheel_version: str | None
+    flat = False
+    if owner['schema'] == 1:
+        flat = _pr458_flat_wheel(member, owner) is not None
+        if flat:
+            try:
+                external = legacy_external_wheel(member, owner)
+            except (OSError, ValueError):
+                return False
+            wheel_version = owner['version']
+        else:
+            # Preserve the original schema-1 workspace verification path. The
+            # child accepts an archive hash or a file URL below the runtime's
+            # sibling workspace directory, exactly as v5.0.8 did.
+            external = None
+            wheel_version = None
+    else:
+        external = owner.get('external_wheel')
+        wheel_version = owner['version']
     with zipfile.ZipFile(wheel) as archive:
         hashes = {name: sha256(archive.read(name)).hexdigest() for name in archive.namelist()
                   if name.startswith('hermes_feishu_card/') and not name.endswith('/')}
@@ -500,11 +685,12 @@ def verify_installed(member: Path, python: Path) -> bool:
             return False
         result = subprocess.run([str(python), '-I', '-c', _VERIFY_CHILD], input=json.dumps(
             {'wheel_sha256': owner['files'][wheel_name], 'files': hashes,
-             'external_wheel': owner.get('external_wheel')}),
+             'external_wheel': external, 'wheel_version': wheel_version}),
             capture_output=True, text=True, cwd=str(member), timeout=30)
         after = member.lstat()
         return (result.returncode == 0 and json.loads(result.stdout)['ok'] is True
                 and (identity.st_dev, identity.st_ino) == (after.st_dev, after.st_ino)
-                and _owned(member) == owner)
+                and _owned(member) == owner
+                and (not flat or legacy_external_wheel(member, owner) == external))
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return False

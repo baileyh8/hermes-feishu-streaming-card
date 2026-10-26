@@ -3,6 +3,7 @@ import asyncio
 from hashlib import sha256
 import json
 import logging
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -15,6 +16,19 @@ from hermes_feishu_card.install import decomposed, decomposed_ownership, patcher
 from hermes_feishu_card.install.detect import detect_hermes
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/hermes_decomposed"
+_SECURE_DIRFD_ONLY = pytest.mark.skipif(
+    not recovery._secure_dirfd_transactions_supported(),
+    reason="secure recovery and integrity mutations require POSIX directory handles",
+)
+
+
+def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires privilege (WinError 1314)")
+        raise
 
 
 @pytest.fixture
@@ -56,6 +70,246 @@ def test_decomposed_cli_install_doctor_repeat_remove_roundtrip(hermes, monkeypat
     assert not list(hermes.rglob("*.hermes_feishu_card.bak"))
     assert not (hermes / decomposed.MANIFEST_NAME).exists()
     assert recovery.plan_recovery(detect_hermes(hermes)).state == "clean"
+
+
+def test_portable_restore_uses_bound_writer_and_exact_evidence(hermes, monkeypatch):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    before = sources(hermes)
+    recovery.install_decomposed(detection)
+    removed = []
+
+    def remove(paths, *, expected_identities, expected_directories, recovery_contents):
+        assert all(expected_identities[path] is not None for path in paths)
+        assert set(recovery_contents) == set(paths)
+        assert set(paths) == {
+            hermes / (name + ".hermes_feishu_card.bak") for name in before
+        } | {hermes / ".hermes_feishu_card_manifest"}
+        file_transaction._assert_restore_evidence_set_unchanged(
+            {path: expected_identities[path] for path in paths}
+        )
+        removed.extend(paths)
+        for path in paths:
+            path.unlink()
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_remove_targets_portably", remove)
+
+    recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert removed
+    assert sources(hermes) == before
+    assert recovery.plan_recovery(detect_hermes(hermes)).state == "clean"
+
+
+def test_unsupported_restore_refuses_before_lock_or_state_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: False)
+    monkeypatch.setattr(
+        recovery,
+        "_root_lock",
+        lambda _root: pytest.fail("unsupported restore must not acquire a lock"),
+    )
+    with pytest.raises(ValueError, match="directory-relative"):
+        recovery.restore_decomposed(SimpleNamespace(root=tmp_path))
+
+
+def test_portable_restore_deletion_failure_rolls_back_source_family(hermes, monkeypatch):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    before = sources(hermes)
+    recovery.install_decomposed(detection)
+    installed = sources(hermes)
+    backups = {
+        path: path.read_bytes()
+        for path in hermes.rglob("*.hermes_feishu_card.bak")
+    }
+    manifest = (hermes / ".hermes_feishu_card_manifest").read_bytes()
+
+    def fail_last_delete(paths, **kwargs):
+        raise OSError("injected last evidence deletion failure")
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_remove_targets_portably", fail_last_delete)
+
+    with pytest.raises(OSError, match="last evidence deletion failure"):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert sources(hermes) == installed
+    assert {path: path.read_bytes() for path in backups} == backups
+    assert (hermes / ".hermes_feishu_card_manifest").read_bytes() == manifest
+    assert recovery.plan_recovery(detect_hermes(hermes)).state == "installed"
+
+
+def test_portable_restore_rollback_failure_preserves_complete_evidence(hermes, monkeypatch):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    recovery.install_decomposed(detection)
+    backups = {
+        path: path.read_bytes()
+        for path in hermes.rglob("*.hermes_feishu_card.bak")
+    }
+    manifest = (hermes / ".hermes_feishu_card_manifest").read_bytes()
+    real_write = file_transaction._write_targets_portably
+    writes = 0
+
+    def fail_rollback(changes, **kwargs):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise OSError("injected source rollback failure")
+        return real_write(changes, **kwargs)
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_remove_targets_portably",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("delete failed")))
+    monkeypatch.setattr(file_transaction, "_write_targets_portably", fail_rollback)
+
+    with pytest.raises(ValueError, match="rollback failed; manual review required"):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert writes == 2
+    assert {path: path.read_bytes() for path in backups} == backups
+    assert (hermes / ".hermes_feishu_card_manifest").read_bytes() == manifest
+    assert recovery.plan_recovery(detect_hermes(hermes)).state in {
+        "installed", "owned_incomplete"
+    }
+
+
+@pytest.mark.parametrize("edit_kind", ["bytes", "inode", "directory"])
+def test_portable_cleanup_failure_never_claims_a_concurrent_source_edit(
+    hermes, tmp_path, monkeypatch, edit_kind
+):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    recovery.install_decomposed(detection)
+    target = next(
+        hermes / name for name in decomposed.SOURCE_TARGETS
+        if (hermes / name).exists()
+    )
+    user_edit = target.read_bytes() + b"\n# concurrent user edit during cleanup\n"
+    backups = {
+        path: path.read_bytes()
+        for path in hermes.rglob("*.hermes_feishu_card.bak")
+    }
+    manifest = (hermes / ".hermes_feishu_card_manifest").read_bytes()
+
+    def fail_after_edit(paths, **kwargs):
+        if edit_kind == "bytes":
+            target.write_bytes(user_edit)
+        elif edit_kind == "inode":
+            replacement = tmp_path / "replacement-source"
+            replacement.write_bytes(user_edit)
+            os.replace(replacement, target)
+        else:
+            moved = target.parent.with_name(target.parent.name + "-moved")
+            target.parent.rename(moved)
+            target.parent.mkdir()
+            target.write_bytes(user_edit)
+        raise OSError("injected cleanup failure after user edit")
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_remove_targets_portably", fail_after_edit)
+
+    with pytest.raises((OSError, ValueError)):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert target.read_bytes() == user_edit
+    if edit_kind == "directory":
+        moved_parent = target.parent.with_name(target.parent.name + "-moved")
+        moved_backups = {
+            moved_parent / path.relative_to(target.parent): value
+            for path, value in backups.items() if target.parent in path.parents
+        }
+        assert {path: path.read_bytes() for path in moved_backups} == moved_backups
+        unchanged = {
+            path: value for path, value in backups.items()
+            if target.parent not in path.parents
+        }
+        assert {path: path.read_bytes() for path in unchanged} == unchanged
+    else:
+        assert {path: path.read_bytes() for path in backups} == backups
+    assert (hermes / ".hermes_feishu_card_manifest").read_bytes() == manifest
+
+
+def test_portable_initial_write_failure_does_not_attempt_a_second_claim(hermes, monkeypatch):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    recovery.install_decomposed(detection)
+    target = next(
+        hermes / name for name in decomposed.SOURCE_TARGETS
+        if (hermes / name).exists()
+    )
+    user_edit = target.read_bytes() + b"\n# concurrent edit before initial write failure\n"
+    calls = []
+
+    def fail_initial(changes, **kwargs):
+        calls.append(changes)
+        target.write_bytes(user_edit)
+        raise OSError("injected initial portable write failure")
+
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(file_transaction, "_write_targets_portably", fail_initial)
+
+    with pytest.raises(OSError, match="initial portable write failure"):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert len(calls) == 1
+    assert target.read_bytes() == user_edit
+    assert list(hermes.rglob("*.hermes_feishu_card.bak"))
+    assert (hermes / ".hermes_feishu_card_manifest").is_file()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows handles")
+def test_windows_restore_partial_delete_failure_restores_installed_family(hermes, monkeypatch):
+    from hermes_feishu_card.install import file_transaction
+
+    detection = detect_hermes(hermes)
+    recovery.install_decomposed(detection)
+    installed = sources(hermes)
+    backups = {
+        path: path.read_bytes()
+        for path in hermes.rglob("*.hermes_feishu_card.bak")
+    }
+    manifest = (hermes / ".hermes_feishu_card_manifest").read_bytes()
+    original_open = file_transaction._open_portable_delete_fd
+    original_close = file_transaction.os.close
+    delete_fds = []
+    failed = False
+
+    def open_delete(path):
+        descriptor = original_open(path)
+        delete_fds.append(descriptor)
+        return descriptor
+
+    def fail_last_delete_close(descriptor):
+        nonlocal failed
+        if descriptor in delete_fds and descriptor == delete_fds[-1] and not failed:
+            failed = True
+            raise OSError("injected last evidence close failure")
+        return original_close(descriptor)
+
+    monkeypatch.setattr(file_transaction, "_open_portable_delete_fd", open_delete)
+    monkeypatch.setattr(file_transaction.os, "close", fail_last_delete_close)
+
+    with pytest.raises(ValueError, match="original evidence restored"):
+        recovery.restore_decomposed(detect_hermes(hermes))
+
+    assert failed
+    assert sources(hermes) == installed
+    assert {path: path.read_bytes() for path in backups} == backups
+    assert (hermes / ".hermes_feishu_card_manifest").read_bytes() == manifest
+    assert recovery.plan_recovery(detect_hermes(hermes)).state == "installed"
 
 
 @pytest.mark.parametrize("target,old,new", [
@@ -118,6 +372,7 @@ def test_each_owned_file_is_required_for_restore(hermes, target):
     assert sources(hermes) == edited
 
 
+@_SECURE_DIRFD_ONLY
 def test_multifile_transaction_rolls_back_on_late_write_failure(hermes, monkeypatch):
     before = sources(hermes)
     replace = recovery._atomic_replace
@@ -146,11 +401,16 @@ def test_owned_missing_hooks_repair_and_no_repair(hermes):
     assert plan.state == "owned_incomplete" and plan.executable
     with pytest.raises(ValueError, match="no-repair"):
         decomposed.install(detection, no_repair=True)
+    if not recovery._secure_dirfd_transactions_supported():
+        with pytest.raises(recovery.RecoveryRefused, match="directory-relative"):
+            recovery.execute_recovery(detection, expected_fingerprint=plan.fingerprint)
+        assert (hermes / target).read_bytes() != installed
+        return
     recovery.execute_recovery(detection, expected_fingerprint=plan.fingerprint)
     assert (hermes / target).read_bytes() == installed
 
 
-def test_manifest_path_escape_and_symlink_refused(hermes, tmp_path):
+def test_manifest_path_escape_refused(hermes):
     detection = detect_hermes(hermes)
     decomposed.install(detection)
     manifest_path = hermes / decomposed.MANIFEST_NAME
@@ -159,9 +419,14 @@ def test_manifest_path_escape_and_symlink_refused(hermes, tmp_path):
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="ownership"):
         decomposed.restore(detection)
+
+
+def test_manifest_symlink_target_not_supported(hermes, tmp_path):
+    detection = detect_hermes(hermes)
+    decomposed.install(detection)
     target = hermes / "gateway/run_busy.py"
     target.unlink()
-    target.symlink_to(tmp_path / "outside")
+    _symlink_or_skip_windows_privilege(target, tmp_path / "outside")
     assert not detect_hermes(hermes).supported
 
 
@@ -375,6 +640,7 @@ def test_byte_exact_reinstall_after_uninstall(hermes, newline):
         assert sources(hermes) == before
 
 
+@_SECURE_DIRFD_ONLY
 def test_upgrade_requires_explicit_acceptance_and_binds_all_evidence(hermes):
     detection = detect_hermes(hermes)
     decomposed.install(detection)
@@ -474,6 +740,7 @@ def _write_legacy_upgrade_evidence(hermes, version=2):
 
 
 @pytest.mark.parametrize("version", [1, 2])
+@_SECURE_DIRFD_ONLY
 def test_legacy_updater_layout_migration_requires_acceptance_and_restores_new_source(hermes, version):
     original = sources(hermes)
     _write_legacy_upgrade_evidence(hermes, version)
@@ -552,12 +819,17 @@ def test_renderer_upgrade_refreshes_manifest_without_losing_originals(hermes):
 
 
 def test_explicit_install_uses_verified_portable_writer_without_dirfd(hermes, monkeypatch):
+    before = sources(hermes)
     monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
     assert decomposed.install(detect_hermes(hermes))
     assert recovery.plan_recovery(detect_hermes(hermes)).state == "installed"
     assert not decomposed.install(detect_hermes(hermes))
-    with pytest.raises(ValueError, match="directory-relative"):
+    if recovery._portable_restore_supported():
         decomposed.restore(detect_hermes(hermes))
+        assert sources(hermes) == before
+    else:
+        with pytest.raises(ValueError, match="directory-relative"):
+            decomposed.restore(detect_hermes(hermes))
 
 
 def test_old_owned_template_is_detectable_and_repairable(hermes):
@@ -600,6 +872,7 @@ def test_no_git_install_has_verified_snapshot_without_upgrade_authority(hermes):
     assert plan.reason == "decomposed_upgrade_requires_explicit_install"
 
 
+@_SECURE_DIRFD_ONLY
 def test_decomposed_migration_all_targets_permits_fence_acknowledgement(hermes):
     from hermes_feishu_card.install.integrity import (
         migrate_integrity_manifest, plan_integrity_repair, integrity_acknowledgement_eligible,
@@ -621,6 +894,7 @@ def test_decomposed_migration_all_targets_permits_fence_acknowledgement(hermes):
 
 
 @pytest.mark.parametrize("kind", ["source", "backup", "missing", "symlink"])
+@_SECURE_DIRFD_ONLY
 def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
     from hermes_feishu_card.install.integrity import migrate_integrity_manifest, IntegrityRepairRefused
     decomposed.install(detect_hermes(hermes))
@@ -631,7 +905,7 @@ def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
         target.unlink()
     elif kind == "symlink":
         target.unlink()
-        target.symlink_to(hermes / "gateway/run.py")
+        _symlink_or_skip_windows_privilege(target, hermes / "gateway/run.py")
     else:
         target.write_bytes(target.read_bytes() + b"\n# user edit\n")
     manifest = (hermes / decomposed.MANIFEST_NAME).read_bytes()
@@ -640,6 +914,7 @@ def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
     assert (hermes / decomposed.MANIFEST_NAME).read_bytes() == manifest
 
 
+@_SECURE_DIRFD_ONLY
 def test_decomposed_migration_rechecks_sibling_before_manifest_commit(hermes, monkeypatch):
     from hermes_feishu_card.install import integrity
     decomposed.install(detect_hermes(hermes))

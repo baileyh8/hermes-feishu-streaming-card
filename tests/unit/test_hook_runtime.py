@@ -7230,6 +7230,39 @@ def test_message_lifecycle_event_carries_only_strict_feishu_sender_open_id(
     assert "sender_open_id" not in invalid_payload["data"]
 
 
+@pytest.mark.parametrize(
+    "source_user_id,mention_open_id,expected_admission,expected_sender",
+    [
+        ("a1b2c3d4", "ou_mention", "a1b2c3d4", "ou_mention"),
+        ("ou_legacy", None, "ou_legacy", "ou_legacy"),
+        ("", "ou_mention", None, "ou_mention"),
+    ],
+)
+def test_completion_keeps_admission_user_separate_from_mention_open_id(
+    source_user_id, mention_open_id, expected_admission, expected_sender
+):
+    source = SimpleNamespace(
+        chat_type="group",
+        user_id=source_user_id,
+    )
+    local_vars = {
+        "platform": "feishu",
+        "chat_id": "oc_abc",
+        "conversation_id": "conversation-sender",
+        "source": source,
+        "event": SimpleNamespace(source=source),
+        "message_id": "om_completed_identity",
+        "answer": "done",
+    }
+    if mention_open_id is not None:
+        local_vars["sender_open_id"] = mention_open_id
+
+    payload = hook_runtime.build_event("message.completed", local_vars)
+
+    assert payload["data"].get("admission_user_id") == expected_admission
+    assert payload["data"].get("sender_open_id") == expected_sender
+
+
 def test_post_interaction_event_does_not_retry_transport_failure(monkeypatch):
     calls = []
 

@@ -282,6 +282,10 @@ def test_runtime_verification_uses_owned_member_version(tmp_path, monkeypatch):
     owner = {"schema": 1, "version": "5.0.7"}
     probes = []
     monkeypatch.setattr(pm_dependency, "_owned", lambda _: owner)
+    monkeypatch.setattr(
+        pm_dependency, "legacy_external_wheel",
+        lambda *_: {"path": "/verified/flat.whl", "sha256": "a" * 64},
+    )
     monkeypatch.setattr(pm_dependency, "verify_installed", lambda *a: True)
     monkeypatch.setattr(
         plugin,
@@ -297,6 +301,26 @@ def test_runtime_verification_uses_owned_member_version(tmp_path, monkeypatch):
     assert probes == [(binding, "5.0.7")]
 
 
+def test_schema1_rebind_refuses_unprovable_flat_source_with_fixed_category(
+    tmp_path, monkeypatch
+):
+    from hermes_feishu_card.install import legacy_rebind, pm_dependency
+    binding = SimpleNamespace(hermes_home=tmp_path, runtime_python=Path(sys.executable))
+    monkeypatch.setattr(
+        pm_dependency,
+        "_owned",
+        lambda _: (_ for _ in ()).throw(
+            pm_dependency.PMDependencySourceUnverified("/private/owned/wheel")
+        ),
+    )
+
+    with pytest.raises(legacy_rebind.RebindRefused) as refused:
+        legacy_rebind._verify_runtime(binding)
+
+    assert str(refused.value) == "legacy_rebind_schema1_source_unverified"
+    assert str(tmp_path) not in str(refused.value)
+
+
 @pytest.mark.parametrize("status", ["failed", "unknown"])
 def test_runtime_verification_rejects_unverified_owned_entrypoint(
     tmp_path, monkeypatch, status
@@ -305,6 +329,10 @@ def test_runtime_verification_rejects_unverified_owned_entrypoint(
     binding = SimpleNamespace(hermes_home=tmp_path, runtime_python=Path(sys.executable))
     owner = {"schema": 1, "version": "5.0.7"}
     monkeypatch.setattr(pm_dependency, "_owned", lambda _: owner)
+    monkeypatch.setattr(
+        pm_dependency, "legacy_external_wheel",
+        lambda *_: {"path": "/verified/flat.whl", "sha256": "a" * 64},
+    )
     monkeypatch.setattr(pm_dependency, "verify_installed", lambda *a: True)
     monkeypatch.setattr(
         plugin,
@@ -322,6 +350,10 @@ def test_runtime_verification_rejects_owner_change_during_probe(tmp_path, monkey
     owner = {"schema": 1, "version": "5.0.7"}
     owners = iter((owner, {**owner, "version": "5.0.8"}))
     monkeypatch.setattr(pm_dependency, "_owned", lambda _: next(owners))
+    monkeypatch.setattr(
+        pm_dependency, "legacy_external_wheel",
+        lambda *_: {"path": "/verified/flat.whl", "sha256": "a" * 64},
+    )
     monkeypatch.setattr(pm_dependency, "verify_installed", lambda *a: True)
     monkeypatch.setattr(
         plugin,

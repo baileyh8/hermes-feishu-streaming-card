@@ -2,6 +2,14 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
+## V5.0.9
+
+- #451：独立 native admission 身份与 mention open_id，未知身份在卡片接管前保留原生交付。
+- #463：Windows 二进制 I/O、配置子进程与可核验的恢复事务；原生 Windows 3.12/3.14 为独立验收门禁。
+- #459/#462：精确 PR458 schema 1 flat wheel、旧 runtime 恢复顺序及固定 ack 类别；既有 workspace/schema 2 校验保持严格。
+- #464/#465/#466/#467：保留 bot 原提交，更新审计过的依赖与确定性并发确认测试。
+- 独立 QA/review、精确完整 CI、普通 wheel、公开安装和资产分别作为发布门禁，见[发行说明](docs/release-notes-v5.0.9.md)。
+
 ## V5.0.8
 
 - #458/#461：内容寻址的外部 wheel、精确来源/包资源校验与 Windows junction 拒绝，保留原贡献提交和历史署名。

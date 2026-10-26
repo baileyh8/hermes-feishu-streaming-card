@@ -32,6 +32,8 @@ python tools/preflight.py --suite full
 
 V5.0.7 新增独立 `issue456_0225` 来源，固定提交 `bf0203a794a07aac3ff764972ab9087baa4e4f4e`；保留 v0.22.4 与所有历史来源。官方 writer/PM 使用 `HFC_CONFIG_WRITER_0225_ROOT`，生成的完成/回调契约测试使用 `HFC_UPSTREAM_ISSUE456_0225_ROOT`；未知或漂移来源继续拒绝。
 
+Issue #463 的 `native-windows-463` job 在 Python 3.12/3.14 上运行真实 Windows 字节 I/O、portable restore、PM dependency 和固定未改 family 的 v0.22.5 官方 enable。checkout 使用进程级 `GIT_CONFIG_COUNT=1`、`GIT_CONFIG_KEY_0=core.autocrlf`、`GIT_CONFIG_VALUE_0=false`，不修改 runner 的 global Git 配置；源码、wheel、runtime 和临时路径由 PowerShell/Python 写入 `GITHUB_ENV` 为 Windows 原生绝对路径，随后读回两个固定 SHA、普通 wheel 的每个包资源及 `direct_url.json` 摘要。该 job 的结果才是原生 Windows 验收证据；本机 POSIX 的 handle 语义模拟只证明事务控制流。
+
 ## 单元测试
 
 固定上游矩阵在 2026-10-22 更新到 Hermes `v0.22.4`

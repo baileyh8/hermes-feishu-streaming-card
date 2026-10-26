@@ -8,15 +8,21 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import zipfile
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9/3.10 test extra supplies tomli.
+    import tomli as tomllib
+
 import pytest
 
 from hermes_feishu_card import cli
-from hermes_feishu_card.install import pm_dependency as pm
+from hermes_feishu_card.install import plugin_config_bytes, pm_dependency as pm
 
 
 PM_ROOTS = {
@@ -25,6 +31,69 @@ PM_ROOTS = {
     "0225": ("HFC_CONFIG_WRITER_0225_ROOT", "bf0203a794a07aac3ff764972ab9087baa4e4f4e"),
     "main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
+
+
+def _record_child_failure_diagnostic(monkeypatch):
+    """Keep a safe missing-module signal without exposing child stderr."""
+    original = pm.subprocess.run
+
+    def recorded(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", ())
+        result = original(*args, **kwargs)
+        if (
+            isinstance(command, (list, tuple))
+            and len(command) >= 4
+            and list(command[1:3]) == ["-I", "-c"]
+            and command[3] == pm._CHILD
+            and result.returncode
+        ):
+            stderr = result.stderr or b""
+            if isinstance(stderr, str):
+                stderr = stderr.encode("utf-8", errors="replace")
+            missing = re.findall(
+                rb"(?m)^ModuleNotFoundError: No module named "
+                rb"'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)'\r?$",
+                stderr,
+            )
+            print(json.dumps({
+                "pm_child_returncode": result.returncode,
+                "missing_modules": sorted(
+                    {name.decode("ascii") for name in missing if len(name) <= 200}
+                ),
+                "stderr_bytes": len(stderr),
+            }, sort_keys=True), flush=True)
+        return result
+
+    monkeypatch.setattr(pm.subprocess, "run", recorded)
+
+
+def test_pm_child_failure_diagnostic_is_bounded_and_redacted(
+    tmp_path, monkeypatch, capsys
+):
+    secret = "PRIVATE-CANARY"
+    stderr = (
+        "ModuleNotFoundError: No module named 'ruamel.yaml'\n"
+        "ModuleNotFoundError: No module named 'cryptography.hazmat'\n"
+        "ModuleNotFoundError: No module named 'bad/" + secret + "'\n"
+        "ModuleNotFoundError: No module named '" + "a" * 201 + "'\n"
+        "Error: " + secret + "\n"
+    ).encode("utf-8")
+    result = subprocess.CompletedProcess([], 7, stderr=stderr)
+    monkeypatch.setattr(pm.subprocess, "run", lambda *args, **kwargs: result)
+    _record_child_failure_diagnostic(monkeypatch)
+
+    returned = pm.subprocess.run([
+        sys.executable, "-I", "-c", pm._CHILD, str(tmp_path),
+    ])
+
+    assert returned is result
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "pm_child_returncode": 7,
+        "missing_modules": ["cryptography.hazmat", "ruamel.yaml"],
+        "stderr_bytes": len(stderr),
+    }
+    assert secret not in json.dumps(report)
 
 
 @pytest.mark.parametrize("snapshot", PM_ROOTS)
@@ -63,6 +132,7 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     )
     child = pm._CHILD.replace('from hermes_constants import get_hermes_home', injection + 'from hermes_constants import get_hermes_home')
     monkeypatch.setattr(pm, '_CHILD', child)
+    _record_child_failure_diagnostic(monkeypatch)
     monkeypatch.setenv('HERMES_HOME', str(home))
     monkeypatch.setenv('HERMES_RUNTIME_DIR', str(tmp_path / 'tools'))
     receipt = pm.ensure(root, Path(sys.executable), home=home, spec=str(wheel), version=cli.PACKAGE_VERSION)
@@ -112,7 +182,13 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     assert pm.verify_installed(member, python2)
     # The copied workspace member must retain the immutable external source.
     copied_projects = list(second.parent.glob("workspace/**/pyproject.toml"))
-    assert any(str(external) in project.read_text() for project in copied_projects)
+    copied_sources = (
+        tomllib.loads(project.read_text(encoding="utf-8"))
+        .get("tool", {}).get("uv", {}).get("sources", {})
+        .get("hermes-feishu-streaming-card", {}).get("path")
+        for project in copied_projects
+    )
+    assert any(isinstance(path, str) and Path(path) == external for path in copied_sources)
     assert external.read_bytes() == external_bytes
     assert pm.ensure(root, Path(sys.executable), home=home, spec=str(wheel),
                      version=cli.PACKAGE_VERSION) is None
@@ -193,7 +269,8 @@ receipt.finish()
 from pm.environments import committed_venv
 first=committed_venv(root)
 member=home/'plugins'/package.NAME
-assert package.verify_installed(member,first/'bin/python')
+python_name='Scripts/python.exe' if os.name == 'nt' else 'bin/python'
+assert package.verify_installed(member,first/python_name)
 future=home/'plugins'/'future';future.mkdir()
 (future/'future').mkdir()
 (future/'future'/'__init__.py').write_text('__version__ = "1"\n')
@@ -203,7 +280,7 @@ probe=package._call(root,Path(sys.executable),home,{'operation':'probe'})
 package._call(root,Path(sys.executable),home,{'operation':'add','name':package.NAME,'expected':probe['expected']})
 second=committed_venv(root)
 assert first!=second
-assert package.verify_installed(member,second/'bin/python')
+assert package.verify_installed(member,second/python_name)
 print('ordinary-installed PM branch crossed generations')
 '''
     installed_result = subprocess.run([str(python2), '-I', '-c', installed_script,
@@ -249,7 +326,7 @@ def test_pinned_pm_metadata_only_and_installable_member_predicates(
     def candidate():
         result = subprocess.run(
             [sys.executable, "-I", "-c", code], cwd=tmp_path,
-            env={"HOME": str(tmp_path), "HERMES_HOME": str(tmp_path)},
+            env=plugin_config_bytes.isolated_child_env(tmp_path),
             capture_output=True, text=True, check=True, timeout=30,
         )
         return result.stdout.strip() == "true"

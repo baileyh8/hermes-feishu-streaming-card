@@ -13,11 +13,12 @@ import re
 from pathlib import Path
 import stat
 import tempfile
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from . import posix_transaction as io
 
 _REFUSAL = 'PM external wheel ownership cannot be verified'
+_LEGACY_REFUSAL = 'legacy PM wheel store ownership cannot be verified'
 _POSIX_PERMISSIONS = os.name != 'nt'
 _WHEEL_NAME = re.compile(
     r'hermes_feishu_streaming_card-[A-Za-z0-9_.!+]+(?:-[0-9][A-Za-z0-9_]*)?'
@@ -32,7 +33,8 @@ def is_reparse(metadata: os.stat_result) -> bool:
 
 
 @contextmanager
-def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
+def _directory(path: Path, home: Path, *, create: bool, legacy: bool = False,
+               expected_identities: dict[Path, tuple[int, int]] | None = None) -> Iterator[int | None]:
     identities: dict[Path, tuple[int, int]] = {}
     descriptors: list[int] = []
     try:
@@ -51,10 +53,23 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
                 metadata = current.lstat()
             if not stat.S_ISDIR(metadata.st_mode) or is_reparse(metadata):
                 raise ValueError(_REFUSAL)
+            if expected_identities is not None and current in expected_identities:
+                if (metadata.st_dev, metadata.st_ino) != expected_identities[current]:
+                    raise ValueError(_REFUSAL)
             if managed and _POSIX_PERMISSIONS and hasattr(os, 'getuid') and metadata.st_uid != os.getuid():
                 raise ValueError(_REFUSAL)
-            if managed and _POSIX_PERMISSIONS and (stat.S_IMODE(metadata.st_mode) & 0o077):
-                raise ValueError('PM wheel store directory must be private')
+            if managed and _POSIX_PERMISSIONS:
+                mode = stat.S_IMODE(metadata.st_mode)
+                # PR458 created the flat wheel-store with mkdir() and a normal
+                # umask, so 0755 is part of that exact historical layout. Only
+                # the exact legacy validator may open that mode; schema-2
+                # publication and validation require the parent at 0700.
+                allow_group_other_read = legacy and current.name == 'wheel-store'
+                refused = mode & (0o022 if allow_group_other_read else 0o077)
+                if refused:
+                    raise ValueError(
+                        _LEGACY_REFUSAL if legacy else 'PM wheel store directory must be private'
+                    )
             identities[current] = metadata.st_dev, metadata.st_ino
             if io.DIRFD_BINDING_SUPPORTED:
                 descriptor = os.open(str(current) if parent_fd is None else current.name,
@@ -77,7 +92,7 @@ def _directory(path: Path, home: Path, *, create: bool) -> Iterator[int | None]:
             os.close(descriptor)
 
 
-def _read(path: Path, parent_fd: int | None) -> bytes:
+def _read(path: Path, parent_fd: int | None, *, legacy: bool = False) -> bytes:
     if is_reparse(path.lstat()):
         raise ValueError(_REFUSAL)
     binding = None
@@ -94,7 +109,14 @@ def _read(path: Path, parent_fd: int | None) -> bytes:
             changed_refusal=_REFUSAL, wrap_read_error=True)
         if is_reparse(path.lstat()):
             raise ValueError(_REFUSAL)
-        if mode is None or (_POSIX_PERMISSIONS and mode & 0o077) or payload is None:
+        if legacy:
+            metadata = path.lstat()
+            if (_POSIX_PERMISSIONS and hasattr(os, 'getuid')
+                    and metadata.st_uid != os.getuid()):
+                raise ValueError(_LEGACY_REFUSAL)
+            if mode is None or (_POSIX_PERMISSIONS and mode & 0o022) or payload is None:
+                raise ValueError(_LEGACY_REFUSAL)
+        elif mode is None or (_POSIX_PERMISSIONS and mode & 0o077) or payload is None:
             raise ValueError(_REFUSAL)
         if binding:
             io.assert_path_parent(binding, ValueError, _REFUSAL)
@@ -120,13 +142,144 @@ def validate(home: Path, reference: Any) -> Path:
     return path
 
 
-def publish(home: Path, filename: str, payload: bytes) -> dict[str, str]:
+def _legacy_path(home: Path, filename: str, digest: str) -> Path:
+    if (not isinstance(filename, str) or Path(filename).name != filename
+            or _WHEEL_NAME.fullmatch(filename) is None):
+        raise ValueError(_LEGACY_REFUSAL)
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(c not in '0123456789abcdef' for c in digest)):
+        raise ValueError(_LEGACY_REFUSAL)
+    path = home / '.hermes_feishu_card' / 'wheel-store' / filename
+    if path.parent != home / '.hermes_feishu_card' / 'wheel-store':
+        raise ValueError(_LEGACY_REFUSAL)
+    return path
+
+
+def prove_legacy_parent(home: Path, filename: str, digest: str) -> tuple[int, int, int]:
+    """Prove the exact flat wheel through the currently bound parent directory."""
+    path = _legacy_path(home, filename, digest)
+    with _directory(path.parent, home, create=False, legacy=True) as parent_fd:
+        metadata = os.fstat(parent_fd) if parent_fd is not None else path.parent.lstat()
+        if not stat.S_ISDIR(metadata.st_mode) or is_reparse(metadata):
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and metadata.st_uid != os.getuid():
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise ValueError(_LEGACY_REFUSAL)
+        if sha256(_read(path, parent_fd, legacy=True)).hexdigest() != digest:
+            raise ValueError(_LEGACY_REFUSAL)
+        return metadata.st_dev, metadata.st_ino, stat.S_IMODE(metadata.st_mode)
+
+
+def validate_legacy(home: Path, filename: str, digest: str) -> Path:
+    """Validate only the exact PR458 flat ``wheel-store/<name>.whl`` layout."""
+    path = _legacy_path(home, filename, digest)
+    prove_legacy_parent(home, filename, digest)
+    return path
+
+
+def tighten_legacy_parent(home: Path, *, expected_identity: tuple[int, int],
+                          wheel_name: str, digest: str,
+                          reprove: Callable[[], bool]) -> tuple[int, int, int]:
+    """Tighten the pre-proven PR458 parent after same-binding re-proof.
+
+    The caller supplies the identity captured before the wheel build. This
+    function opens the current path, requires that identity, re-reads the flat
+    wheel through the same directory descriptor, and calls ``reprove`` before
+    and after chmod. A renamed/replaced path or changed digest refuses before
+    changing the replacement's mode.
+    """
+    path = _legacy_path(home, wheel_name, digest)
+    store = path.parent
+    with _directory(store, home, create=False, legacy=True,
+                    expected_identities={store: expected_identity}) as parent_fd:
+        metadata = os.fstat(parent_fd) if parent_fd is not None else store.lstat()
+        if (not stat.S_ISDIR(metadata.st_mode) or is_reparse(metadata)
+                or (metadata.st_dev, metadata.st_ino) != expected_identity):
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and metadata.st_uid != os.getuid():
+            raise ValueError(_LEGACY_REFUSAL)
+        previous_mode = stat.S_IMODE(metadata.st_mode)
+        if _POSIX_PERMISSIONS and previous_mode & 0o022:
+            raise ValueError(_LEGACY_REFUSAL)
+        if not reprove():
+            raise ValueError(_LEGACY_REFUSAL)
+        if sha256(_read(path, parent_fd, legacy=True)).hexdigest() != digest:
+            raise ValueError(_LEGACY_REFUSAL)
+        if not reprove():
+            raise ValueError(_LEGACY_REFUSAL)
+        current = store.lstat()
+        if (current.st_dev, current.st_ino) != expected_identity:
+            raise ValueError(_LEGACY_REFUSAL)
+        try:
+            if _POSIX_PERMISSIONS and previous_mode != 0o700:
+                if parent_fd is not None:
+                    os.fchmod(parent_fd, 0o700)
+                else:
+                    store.chmod(0o700)
+            after = os.fstat(parent_fd) if parent_fd is not None else store.lstat()
+            if (after.st_dev, after.st_ino) != expected_identity:
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and stat.S_IMODE(after.st_mode) != 0o700:
+                raise ValueError(_LEGACY_REFUSAL)
+            if not reprove():
+                raise ValueError(_LEGACY_REFUSAL)
+            current = store.lstat()
+            if (current.st_dev, current.st_ino) != expected_identity:
+                raise ValueError(_LEGACY_REFUSAL)
+        except BaseException:
+            if _POSIX_PERMISSIONS and previous_mode != 0o700:
+                try:
+                    if parent_fd is not None:
+                        os.fchmod(parent_fd, previous_mode)
+                    else:
+                        store.chmod(previous_mode)
+                except OSError:
+                    pass
+            raise
+        return expected_identity[0], expected_identity[1], previous_mode
+
+
+def restore_legacy_parent(home: Path, snapshot: tuple[int, int, int]) -> None:
+    """Best-effort restore of the proven parent mode on a failed migration."""
+    path = home / '.hermes_feishu_card' / 'wheel-store'
+    with _directory(path, home, create=False, legacy=True) as parent_fd:
+        if parent_fd is not None:
+            before = os.fstat(parent_fd)
+            if (before.st_dev, before.st_ino) != snapshot[:2]:
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and before.st_uid != os.getuid():
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and stat.S_IMODE(before.st_mode) != snapshot[2]:
+                os.fchmod(parent_fd, snapshot[2])
+            after = os.fstat(parent_fd)
+        else:
+            before = path.lstat()
+            if ((before.st_dev, before.st_ino) != snapshot[:2]
+                    or not stat.S_ISDIR(before.st_mode) or is_reparse(before)):
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and before.st_uid != os.getuid():
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and stat.S_IMODE(before.st_mode) != snapshot[2]:
+                path.chmod(snapshot[2])
+            after = path.lstat()
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and stat.S_IMODE(after.st_mode) != snapshot[2]:
+            raise ValueError(_LEGACY_REFUSAL)
+
+
+def publish(home: Path, filename: str, payload: bytes, *,
+            expected_parent_identity: tuple[int, int] | None = None) -> dict[str, str]:
     if Path(filename).name != filename or _WHEEL_NAME.fullmatch(filename) is None:
         raise ValueError(_REFUSAL)
     digest = sha256(payload).hexdigest()
     path = home / '.hermes_feishu_card' / 'wheel-store' / digest / filename
     reference = {'path': str(path), 'sha256': digest}
-    with _directory(path.parent, home, create=True) as parent_fd:
+    expected = ({path.parent.parent: expected_parent_identity}
+                if expected_parent_identity is not None else None)
+    with _directory(path.parent, home, create=True,
+                    expected_identities=expected) as parent_fd:
         ancestry = {entry: io.read_directory_identity(entry, ValueError, _REFUSAL)
                     for entry in (path.parent, *path.parent.parents)}
         def check_ancestry() -> None:

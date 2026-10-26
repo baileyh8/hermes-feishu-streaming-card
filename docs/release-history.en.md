@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v4.7.7](release-notes-v4.7.7.en.md) | Opt-in native tables; preserve long cells and indivisible Markdown tables |
 | [v4.7.6](release-notes-v4.7.6.en.md) | Split HOME binding, multi-instance ownership and diagnostics |
 | [v4.7.5](release-notes-v4.7.5.en.md) | PM runtime binding, DM card admission and layout limitations |
 | [v4.7.3](release-notes-v4.7.3.en.md) | Bounded heartbeat scans, responsive health snapshots and recovery guidance |

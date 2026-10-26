@@ -513,3 +513,227 @@ def test_rebind_checks_evidence_before_cas(tmp_path, monkeypatch, failure):
         rebind_target="f" * 64 if failure == "wrong_old" else previous.target_identity)
     assert card_cli._run_integrity_acknowledge_review(args) == 1
     assert calls == []
+
+
+def _ack_args(tmp_path, *, rebind_target=None):
+    return SimpleNamespace(
+        hermes_dir=str(tmp_path / "hermes"),
+        config=str(tmp_path / "config.yaml"),
+        env_file=None,
+        state_dir=str(tmp_path / "state"),
+        yes=True,
+        rebind_target=rebind_target,
+    )
+
+
+def _ack_evidence(monkeypatch, tmp_path, *, review, current=None, stopped=True):
+    current = current or RuntimeIntegrityFenceBinding("c" * 64, "d" * 64)
+    monkeypatch.setattr(
+        card_cli, "_verified_integrity_acknowledgement_binding", lambda _: current
+    )
+    monkeypatch.setattr(card_cli, "load_config", lambda *_a, **_kw: object())
+    monkeypatch.setattr(card_cli, "inspect_runtime_integrity_review", lambda _: review)
+    monkeypatch.setattr(
+        card_cli, "_integrity_acknowledgement_process_stopped", lambda *_: stopped
+    )
+    return current
+
+
+def test_acknowledge_review_reports_fixed_redacted_plan_category(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(
+        card_cli,
+        "_verified_integrity_acknowledgement_binding",
+        lambda _: (_ for _ in ()).throw(ValueError("/private/secret/target")),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_plan_unverified" in error
+    assert "/private/secret/target" not in error
+
+
+def test_acknowledge_review_reports_fixed_redacted_config_category(
+    tmp_path, monkeypatch, capsys
+):
+    _ack_evidence(
+        monkeypatch,
+        tmp_path,
+        review=RuntimeIntegrityReviewSnapshot(
+            "e" * 64, True, True, False,
+            RuntimeIntegrityFenceBinding("a" * 64, "b" * 64), False,
+        ),
+    )
+    monkeypatch.setattr(
+        card_cli,
+        "load_config",
+        lambda *_a, **_kw: (_ for _ in ()).throw(ValueError("/private/config/token")),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_config_unverified" in error
+    assert "/private/config/token" not in error
+
+
+def test_acknowledge_review_reports_fixed_redacted_fence_category(
+    tmp_path, monkeypatch, capsys
+):
+    _ack_evidence(
+        monkeypatch,
+        tmp_path,
+        review=RuntimeIntegrityReviewSnapshot(
+            "e" * 64, True, True, False,
+            RuntimeIntegrityFenceBinding("a" * 64, "b" * 64), False,
+        ),
+    )
+    monkeypatch.setattr(
+        card_cli,
+        "inspect_runtime_integrity_review",
+        lambda _: (_ for _ in ()).throw(ValueError("/private/fence/token")),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_fence_unreadable" in error
+    assert "/private/fence/token" not in error
+
+
+def test_acknowledge_review_reports_running_sidecar_category(
+    tmp_path, monkeypatch, capsys
+):
+    _ack_evidence(
+        monkeypatch,
+        tmp_path,
+        review=RuntimeIntegrityReviewSnapshot(
+            "e" * 64, True, True, False,
+            RuntimeIntegrityFenceBinding("a" * 64, "b" * 64), False,
+        ),
+        stopped=False,
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "stop the sidecar" in error
+    assert "category=integrity_ack_sidecar_running" in error
+
+
+def test_acknowledge_review_health_check_error_stays_redacted(
+    tmp_path, monkeypatch, capsys
+):
+    _ack_evidence(
+        monkeypatch,
+        tmp_path,
+        review=RuntimeIntegrityReviewSnapshot(
+            "e" * 64, True, True, False,
+            RuntimeIntegrityFenceBinding("a" * 64, "b" * 64), False,
+        ),
+    )
+    monkeypatch.setattr(
+        card_cli,
+        "_integrity_acknowledgement_process_stopped",
+        lambda *_: (_ for _ in ()).throw(OSError("/private/health/token")),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_sidecar_running" in error
+    assert "/private/health/token" not in error
+
+
+def test_acknowledge_review_requires_explicit_rebind_target_without_leaking_it(
+    tmp_path, monkeypatch, capsys
+):
+    old = RuntimeIntegrityFenceBinding("a" * 64, "b" * 64)
+    review = RuntimeIntegrityReviewSnapshot("e" * 64, True, True, False, old, False)
+    _ack_evidence(
+        monkeypatch, tmp_path, review=review,
+        current=RuntimeIntegrityFenceBinding("c" * 64, "d" * 64),
+    )
+    calls = []
+    monkeypatch.setattr(
+        card_cli, "acknowledge_runtime_integrity_review",
+        lambda *a, **kw: calls.append(kw),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_rebind_target_required" in error
+    assert "--rebind-target" in error
+    assert old.target_identity not in error
+    assert calls == []
+
+
+def test_acknowledge_review_rejects_wrong_rebind_target_without_calling_store(
+    tmp_path, monkeypatch, capsys
+):
+    old = RuntimeIntegrityFenceBinding("a" * 64, "b" * 64)
+    review = RuntimeIntegrityReviewSnapshot("e" * 64, True, True, False, old, False)
+    _ack_evidence(monkeypatch, tmp_path, review=review)
+    calls = []
+    monkeypatch.setattr(
+        card_cli, "acknowledge_runtime_integrity_review",
+        lambda *a, **kw: calls.append(kw),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(
+        _ack_args(tmp_path, rebind_target="f" * 64)
+    ) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_rebind_target_mismatch" in error
+    assert "f" * 64 not in error
+    assert calls == []
+
+
+def test_acknowledge_review_classifies_cas_change_without_raw_exception(
+    tmp_path, monkeypatch, capsys
+):
+    old = RuntimeIntegrityFenceBinding("a" * 64, "b" * 64)
+    review = RuntimeIntegrityReviewSnapshot("e" * 64, True, True, False, old, False)
+    changed = RuntimeIntegrityReviewSnapshot("f" * 64, True, True, False, old, False)
+    current = _ack_evidence(monkeypatch, tmp_path, review=review, current=old)
+    snapshots = iter((review, changed))
+    monkeypatch.setattr(
+        card_cli, "inspect_runtime_integrity_review", lambda _: next(snapshots)
+    )
+    monkeypatch.setattr(
+        card_cli, "acknowledge_runtime_integrity_review",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            RuntimeError("/private/fence/token changed")
+        ),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_fence_changed" in error
+    assert "/private/fence/token" not in error
+    assert current.target_identity not in error
+
+
+def test_acknowledge_review_classifies_generic_store_refusal(
+    tmp_path, monkeypatch, capsys
+):
+    old = RuntimeIntegrityFenceBinding("a" * 64, "b" * 64)
+    review = RuntimeIntegrityReviewSnapshot("e" * 64, True, True, False, old, False)
+    _ack_evidence(monkeypatch, tmp_path, review=review, current=old)
+    monkeypatch.setattr(
+        card_cli, "acknowledge_runtime_integrity_review",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            ValueError("/private/state/raw token")
+        ),
+    )
+
+    assert card_cli._run_integrity_acknowledge_review(_ack_args(tmp_path)) == 1
+
+    error = capsys.readouterr().err
+    assert "category=integrity_ack_refused" in error
+    assert "/private/state/raw token" not in error

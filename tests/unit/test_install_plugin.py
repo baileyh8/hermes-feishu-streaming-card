@@ -1,14 +1,33 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import stat
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from hermes_feishu_card.install import plugin, plugin_config_bytes
+
+
+_POSIX_MODES = os.name != "nt"
+
+
+def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires privilege (WinError 1314)")
+        raise
+
+
+def _write_utf8(path: Path, text: str) -> None:
+    path.write_bytes(text.encode("utf-8"))
 
 
 def _exact_plan(postimage: bytes):
@@ -22,26 +41,48 @@ def _exact_plan(postimage: bytes):
 def _checkout(tmp_path: Path) -> tuple[Path, Path]:
     home = tmp_path / "home"
     checkout = home / "hermes-agent"
-    (checkout / ".venv" / "bin").mkdir(parents=True)
     home.mkdir(exist_ok=True)
-    (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
-    launcher = checkout / ".venv" / "bin" / "python"
-    launcher.symlink_to("/usr/bin/python3")
+    checkout.mkdir(parents=True)
+    _write_utf8(home / "config.yaml", "plugins: {}\n")
+    prefix = checkout / ".venv"
+    if os.name == "nt":
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(prefix)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    else:
+        launcher = _venv_python(prefix)
+        launcher.parent.mkdir(parents=True)
+        launcher.symlink_to(sys.executable)
+        _venv_purelib(prefix).mkdir(parents=True, exist_ok=True)
     return checkout, home
+
+
+def _venv_python(prefix: Path) -> Path:
+    return prefix / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def _venv_purelib(prefix: Path) -> Path:
+    if os.name == "nt":
+        return prefix / "Lib" / "site-packages"
+    return prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
 
 
 def _runtime_payload(checkout: Path) -> dict[str, object]:
     prefix = checkout / ".venv"
-    purelib = prefix / "lib" / "python3.12" / "site-packages"
+    purelib = _venv_purelib(prefix)
     return {
-        "executable": str(checkout / ".venv" / "bin" / "python"),
+        "executable": str(_venv_python(prefix)),
         "prefix": str(prefix),
-        "base_prefix": "/usr",
+        "base_prefix": sys.base_prefix,
         "purelib": str(purelib),
         "platlib": str(purelib),
     }
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink launcher case")
 def test_runtime_binding_accepts_verified_posix_venv_symlink(tmp_path, monkeypatch):
     checkout, home = _checkout(tmp_path)
     monkeypatch.setattr(
@@ -57,8 +98,21 @@ def test_runtime_binding_accepts_verified_posix_venv_symlink(tmp_path, monkeypat
     assert binding.checkout_root == checkout
     assert binding.hermes_home == home
     assert binding.config_path == home / "config.yaml"
-    assert binding.runtime_python == checkout / ".venv" / "bin" / "python"
+    assert binding.runtime_python == _venv_python(checkout / ".venv")
     assert binding.python_identity.startswith("sha256:")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows venv launcher case")
+def test_runtime_binding_accepts_native_venv_launcher(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    binding = plugin.resolve_runtime_binding(
+        checkout_root=checkout, hermes_home=home, profile_id=None
+    )
+    assert binding.runtime_python == _venv_python(checkout / ".venv")
+    assert binding.runtime_python.is_file()
 
 
 def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch):
@@ -68,9 +122,9 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
     )
     real_home = tmp_path / "real-home"
     real_home.mkdir()
-    (real_home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    _write_utf8(real_home / "config.yaml", "plugins: {}\n")
     linked_home = tmp_path / "linked-home"
-    linked_home.symlink_to(real_home, target_is_directory=True)
+    _symlink_or_skip_windows_privilege(linked_home, real_home, directory=True)
 
     with pytest.raises(plugin.RuntimeBindingRefused, match="Hermes home"):
         plugin.resolve_runtime_binding(
@@ -78,7 +132,9 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
         )
 
     (home / "config.yaml").unlink()
-    (home / "config.yaml").symlink_to(real_home / "config.yaml")
+    _symlink_or_skip_windows_privilege(
+        home / "config.yaml", real_home / "config.yaml"
+    )
     with pytest.raises(plugin.RuntimeBindingRefused, match="config"):
         plugin.resolve_runtime_binding(
             checkout_root=checkout, hermes_home=home, profile_id=None
@@ -97,9 +153,7 @@ def test_runtime_binding_profile_id_never_selects_home(tmp_path, monkeypatch):
         )
 
 
-def test_runtime_binding_rejects_wrong_prefix_and_nonexecutable_target(
-    tmp_path, monkeypatch
-):
+def test_runtime_binding_rejects_wrong_prefix(tmp_path, monkeypatch):
     checkout, home = _checkout(tmp_path)
     monkeypatch.setattr(
         plugin,
@@ -114,13 +168,35 @@ def test_runtime_binding_rejects_wrong_prefix_and_nonexecutable_target(
             checkout_root=checkout, hermes_home=home, profile_id=None
         )
 
-    launcher = checkout / ".venv" / "bin" / "python"
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable-bit case")
+def test_runtime_binding_rejects_nonexecutable_posix_target(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    launcher = _venv_python(checkout / ".venv")
     launcher.unlink()
     target = tmp_path / "python-target"
-    target.write_text("not executable", encoding="utf-8")
+    _write_utf8(target, "not executable")
     target.chmod(stat.S_IRUSR | stat.S_IWUSR)
     launcher.symlink_to(target)
     with pytest.raises(plugin.RuntimeBindingRefused, match="executable"):
+        plugin.resolve_runtime_binding(
+            checkout_root=checkout, hermes_home=home, profile_id=None
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows nonregular launcher case")
+def test_runtime_binding_rejects_nonregular_native_launcher(tmp_path, monkeypatch):
+    checkout, home = _checkout(tmp_path)
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    launcher = _venv_python(checkout / ".venv")
+    launcher.unlink()
+    launcher.mkdir()
+    with pytest.raises(plugin.RuntimeBindingRefused, match="nonregular"):
         plugin.resolve_runtime_binding(
             checkout_root=checkout, hermes_home=home, profile_id=None
         )
@@ -270,7 +346,7 @@ def _binding(tmp_path: Path, monkeypatch, config_text: str) -> plugin.HermesRunt
         "_plan_enabled_config_bytes",
         lambda b, p, raw, desired, enabled: _exact_plan(yaml.safe_dump(desired).encode()),
     )
-    (home / "config.yaml").write_text(config_text, encoding="utf-8")
+    _write_utf8(home / "config.yaml", config_text)
     monkeypatch.setattr(
         plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
     )
@@ -285,9 +361,10 @@ def test_prepare_plugin_config_creates_private_exact_preimage(tmp_path, monkeypa
 
     preimage = plugin.prepare_plugin_config(binding)
 
-    assert stat.S_IMODE(preimage.state_dir.stat().st_mode) == 0o700
-    assert stat.S_IMODE(preimage.backup_path.stat().st_mode) == 0o600
-    assert stat.S_IMODE(preimage.journal_path.stat().st_mode) == 0o600
+    if _POSIX_MODES:
+        assert stat.S_IMODE(preimage.state_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(preimage.backup_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(preimage.journal_path.stat().st_mode) == 0o600
     assert preimage.backup_path.read_text(encoding="utf-8") == config_text
     assert preimage.config_backup_id.startswith("hfc-config-preimage-")
     assert str(binding.hermes_home) not in json.dumps(preimage.sanitized())
@@ -304,6 +381,37 @@ def test_official_enable_refuses_unverified_checkout_before_child(tmp_path, monk
 
     with pytest.raises(plugin.PluginConfigRefused, match="enable root is invalid"):
         plugin._run_official_enable(binding)
+
+
+def test_official_enable_uses_private_windows_home_environment(tmp_path, monkeypatch):
+    checkout, home = tmp_path / "checkout with spaces", tmp_path / "home with spaces"
+    checkout.mkdir()
+    home.mkdir()
+    binding = SimpleNamespace(
+        checkout_root=checkout,
+        runtime_python=Path(sys.executable),
+        hermes_home=home,
+    )
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *a, **k: None)
+    # The environment builder owns the Windows branch; do not mutate global os.name.
+    windows_os = SimpleNamespace(**{**vars(plugin_config_bytes.os), "name": "nt"})
+    monkeypatch.setattr(plugin_config_bytes, "os", windows_os)
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("HFC_PRIVATE_SECRET", "do-not-inherit")
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(plugin.subprocess, "run", run)
+    assert plugin._run_official_enable(binding) == 0
+    assert captured["env"]["HOME"] == captured["env"]["HERMES_HOME"] == str(home)
+    assert captured["env"]["USERPROFILE"] == str(home)
+    assert captured["env"]["HERMES_INSTALL_ROOT"] == str(checkout)
+    assert "HFC_PRIVATE_SECRET" not in captured["env"]
 
 
 def test_official_enable_refusal_keeps_only_safe_diagnostic(tmp_path, monkeypatch):
@@ -363,7 +471,7 @@ def test_enable_plugin_allows_only_exact_plugin_config_change(tmp_path, monkeypa
         plugins.setdefault("entries", {}).setdefault("hermes-feishu-card", {})[
             "allow_tool_override"
         ] = False
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
@@ -389,9 +497,9 @@ def test_enable_plugin_rejects_unrelated_semantic_drift_and_preserves_edit(
     preimage = plugin.prepare_plugin_config(binding)
 
     def drifting_enable(candidate):
-        candidate.config_path.write_text(
+        _write_utf8(
+            candidate.config_path,
             "token: CHANGED\nplugins:\n  enabled: [hermes-feishu-card]\n",
-            encoding="utf-8",
         )
         return 0
 
@@ -408,9 +516,9 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
     preimage = plugin.prepare_plugin_config(binding)
 
     def official_enable(candidate):
-        candidate.config_path.write_text(
+        _write_utf8(
+            candidate.config_path,
             "plugins:\n  enabled: [hermes-feishu-card]\n  disabled: []\n  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n",
-            encoding="utf-8",
         )
         return 0
 
@@ -418,7 +526,7 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
     postimage = b"plugins:\n  enabled: [hermes-feishu-card]\n  disabled: []\n  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n"
     monkeypatch.setattr(plugin, "_plan_enabled_config_bytes", lambda *a: _exact_plan(postimage))
     ownership = plugin.enable_plugin(binding, preimage)
-    binding.config_path.write_text("plugins: {}\nuser_change: true\n", encoding="utf-8")
+    _write_utf8(binding.config_path, "plugins: {}\nuser_change: true\n")
 
     with pytest.raises(plugin.PluginConfigRefused, match="changed"):
         plugin.restore_plugin_config(binding, preimage, ownership)
@@ -426,25 +534,23 @@ def test_restore_plugin_config_refuses_postimage_drift(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_runtime_binding_uses_pm_committed_venv_with_real_child(tmp_path, legacy):
-    import subprocess
-    import sys
-
     checkout, home = _checkout(tmp_path)
     if not legacy:
-        (checkout / ".venv" / "bin" / "python").unlink()
+        _venv_python(checkout / ".venv").unlink()
     managed = tmp_path / "managed environment" / "venv"
     subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(managed)], check=True)
     pm = checkout / "pm"
     pm.mkdir()
-    (pm / "__init__.py").write_text("")
-    (pm / "environments.py").write_text(
+    _write_utf8(pm / "__init__.py", "")
+    _write_utf8(
+        pm / "environments.py",
         "from pathlib import Path\n"
         f"def committed_venv(root): return Path({str(managed)!r})\n"
     )
     binding = plugin.resolve_runtime_binding(
         checkout_root=checkout, hermes_home=home, profile_id=None,
     )
-    assert binding.runtime_python == managed / "bin" / "python"
+    assert binding.runtime_python == _venv_python(managed)
     assert binding.purelib.is_relative_to(managed)
     assert binding.hermes_home == home
 
@@ -485,7 +591,7 @@ def test_enable_plugin_accepts_exact_already_enabled_official_branch(
         section.setdefault("entries", {}).setdefault(plugin.PLUGIN_KEY, {})[
             "allow_tool_override"
         ] = False
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
@@ -536,7 +642,7 @@ def test_enable_plugin_already_enabled_rejects_non_derived_delta_and_preserves_e
             section["disabled"] = []
         else:
             section["entries"][plugin.PLUGIN_KEY]["allow_tool_override"] = True
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", drifting_enable)
@@ -555,7 +661,7 @@ def test_enable_plugin_not_enabled_rejects_entry_only_shortcut(tmp_path, monkeyp
     def entry_only(candidate):
         config = yaml.safe_load(candidate.config_path.read_bytes())
         config["plugins"]["entries"] = {plugin.PLUGIN_KEY: {"allow_tool_override": False}}
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", entry_only)
@@ -581,7 +687,7 @@ def test_enable_plugin_already_enabled_rejects_mixed_list_normalization(
         section = config["plugins"]
         section[normalize_only] = sorted(set(section[normalize_only]))
         section["entries"] = {plugin.PLUGIN_KEY: {"allow_tool_override": False}}
-        candidate.config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
         return 0
 
     monkeypatch.setattr(plugin, "_run_official_enable", partial_enable)
@@ -616,7 +722,7 @@ def test_enable_failure_rolls_back_only_verified_official_postimage(tmp_path, mo
     preimage = plugin.prepare_plugin_config(binding)
     def failed_enable(candidate):
         expected, _ = plugin._expected_enabled_config(yaml.safe_load(original))
-        candidate.config_path.write_text(yaml.safe_dump(expected))
+        _write_utf8(candidate.config_path, yaml.safe_dump(expected))
         if outcome == "exception":
             raise OSError("synthetic failure after official config write")
         return 1

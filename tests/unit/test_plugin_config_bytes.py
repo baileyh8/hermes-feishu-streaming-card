@@ -1,7 +1,11 @@
 """Byte ownership at the official-enable boundary; config semantics are not receipts."""
 
 import json
+import ast
+import hashlib
+import os
 from pathlib import Path
+import subprocess
 import sys
 from unittest.mock import Mock
 from types import SimpleNamespace
@@ -10,6 +14,117 @@ import pytest
 import yaml
 
 from hermes_feishu_card.install import plugin
+
+
+@pytest.fixture
+def shadow_acl(tmp_path):
+    """Execute the actual adapter against a source-bound upstream-shaped helper."""
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    source = (
+        "def _grant(path, is_dir=True, expected=None, subtree_has_link=None):\n"
+        "    raise AssertionError('native ACL implementation must not execute')\n"
+    )
+    path = tmp_path / "hermes_dir_acl.py"
+    path.write_bytes(source.encode())
+    acl = SimpleNamespace(__name__="hermes_dir_acl", __file__=str(path))
+    namespace = {"__name__": "hermes_dir_acl"}
+    exec(compile(source, str(path), "exec"), namespace)
+    acl._grant = namespace["_grant"]
+
+    class Refused(Exception):
+        pass
+
+    def deny(reason, stage, member):
+        assert (reason, stage, member) == (
+            "acl-helper-drift", "plan", "hermes_dir_acl.py"
+        )
+        raise Refused(reason)
+
+    names = {"_refuse_shadow_acl_grant", "_restrict_shadow_acl"}
+    tree = ast.parse(planner._CHILD)
+    functions = ast.Module(
+        body=[node for node in tree.body if isinstance(node, ast.FunctionDef)
+              and node.name in names], type_ignores=[],
+    )
+    scope = {
+        "root": tmp_path, "Path": Path, "hashlib": hashlib, "deny": deny,
+        "request": {"sources": {"hermes_dir_acl.py": hashlib.sha256(path.read_bytes()).hexdigest()}},
+    }
+    exec(compile(functions, "<private-planner-adapter>", "exec"), scope)
+    return acl, scope["_restrict_shadow_acl"], Refused, path
+
+
+def test_shadow_acl_fails_without_entering_native_implementation(shadow_acl):
+    acl, restrict, _, _ = shadow_acl
+    restrict(acl)
+    for kwargs in ({}, {"is_dir": False, "expected": "bound", "subtree_has_link": True}):
+        with pytest.raises(PermissionError, match="^ACL changes are outside private config planning$"):
+            acl._grant("private-home", **kwargs)
+
+
+@pytest.mark.parametrize("drift", ["source", "origin", "module", "replacement", "code", "defaults", "bool-default", "kwdefaults"])
+def test_shadow_acl_refuses_source_or_callable_drift(shadow_acl, drift):
+    acl, restrict, refused, path = shadow_acl
+    original = acl._grant
+    if drift == "source":
+        path.write_bytes(path.read_bytes() + b"# changed\n")
+    elif drift == "origin":
+        acl.__file__ = str(path.parent / "other.py")
+    elif drift == "module":
+        acl.__name__ = "unverified"
+    elif drift == "replacement":
+        acl._grant = Mock()
+    elif drift == "code":
+        original.__code__ = (lambda *args, **kwargs: True).__code__
+    elif drift == "defaults":
+        original.__defaults__ = (False, None, None)
+    elif drift == "bool-default":
+        original.__defaults__ = (1, None, None)
+    else:
+        original.__kwdefaults__ = {"extra": None}
+    before = acl._grant
+    with pytest.raises(refused):
+        restrict(acl)
+    assert acl._grant is before
+
+
+@pytest.mark.parametrize("name", ["_grant_with_pywin32", "_grant_with_icacls", "_whoami_sid"])
+def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, name):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"), "family": "pm-0225",
+        "sources": planner.FAMILIES["pm-0225"],
+    }))
+    guard = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
+    # Exercise the Windows branch on every host, in a fresh real child only.
+    guard = guard.replace(
+        "sys.platform=='win32' and request['family']=='pm-0225'",
+        "request['family']=='pm-0225'",
+    )
+    probe = guard + (
+        "\nscope={'__name__':'hermes_dir_acl','sentinel':home/'entered'}\n"
+        f"exec(\"def {name}():\\n    sentinel.write_text('bad')\",scope)\n"
+        "try:\n"
+        f"    scope[{name!r}]()\n"
+        "except BaseException:\n    pass\n"
+        "(home/'continued').write_text('bad')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(tmp_path), str(shadow)],
+        env=planner.isolated_child_env(shadow), capture_output=True, timeout=10,
+    )
+    assert result.returncode == 73
+    assert not (shadow / "entered").exists()
+    assert not (shadow / "continued").exists()
+    marker = b"HFC_CONFIG_PLAN_DENY "
+    line = next(line for line in result.stderr.splitlines() if line.startswith(marker))
+    assert json.loads(line[len(marker):]) == {
+        "reason": "acl-grant-attempt", "stage": "profile", "source": "hermes_dir_acl.py"
+    }
 
 
 @pytest.fixture
@@ -183,14 +298,17 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
 
     def failed_child(argv, **kwargs):
         shadow = Path(argv[-1])
-        assert stat.S_IMODE(shadow.stat().st_mode) == 0o700
-        assert stat.S_IMODE(shadow.parent.stat().st_mode) == 0o700
-        assert stat.S_IMODE((shadow / "config.yaml").stat().st_mode) == 0o600
-        assert stat.S_IMODE((shadow / "request.json").stat().st_mode) == 0o600
+        if os.name != "nt":
+            assert stat.S_IMODE(shadow.stat().st_mode) == 0o700
+            assert stat.S_IMODE(shadow.parent.stat().st_mode) == 0o700
+            assert stat.S_IMODE((shadow / "config.yaml").stat().st_mode) == 0o600
+            assert stat.S_IMODE((shadow / "request.json").stat().st_mode) == 0o600
         request = json.loads((shadow / "request.json").read_text())
         assert request["family"] in planner.FAMILIES
         assert request["sources"] == planner.FAMILIES[request["family"]]
-        assert kwargs["env"] == {"HOME": str(shadow), "HERMES_HOME": str(shadow)}
+        assert kwargs["env"] == planner.isolated_child_env(
+            shadow, temp_dir=shadow / "tmp"
+        )
         assert "SYNTHETIC-CONFIG-SECRET" not in repr(argv)
         return subprocess.CompletedProcess(argv, 73, stderr=b"SYNTHETIC-STDERR-SECRET")
 
@@ -209,6 +327,111 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
     assert not list(state.iterdir())
     assert (home / "config.yaml").read_bytes() == before
     assert "SYNTHETIC" not in repr(planner.ConfigBytesPlan(before, root, "fixed"))
+
+
+def test_isolated_child_environment_is_bounded_and_windows_home_safe(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    home = tmp_path / "home with spaces" / "用户"
+    root = tmp_path / "checkout with spaces"
+    monkeypatch.setenv("HFC_PRIVATE_SECRET", "do-not-inherit")
+    # Keep pathlib and pytest on the real host while this module takes its Windows branch.
+    windows_os = SimpleNamespace(**{**vars(planner.os), "name": "nt"})
+    monkeypatch.setattr(planner, "os", windows_os)
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    monkeypatch.setenv("TEMP", r"C:\private-temp")
+    monkeypatch.setenv("TMP", r"C:\private-temp")
+    environment = planner.isolated_child_env(
+        home, install_root=root, temp_dir=home / "tmp", include_path=True
+    )
+    assert environment["HOME"] == environment["HERMES_HOME"] == str(home)
+    assert environment["USERPROFILE"] == str(home)
+    assert environment["HERMES_INSTALL_ROOT"] == str(root)
+    assert environment["TEMP"] == environment["TMP"] == str(home / "tmp")
+    assert environment["SYSTEMROOT"] == environment["WINDIR"] == r"C:\Windows"
+    assert environment["COMSPEC"] == r"C:\Windows\System32\cmd.exe"
+    assert environment["PATH"] == r"C:\Windows\System32"
+    assert "HFC_PRIVATE_SECRET" not in environment
+
+
+def test_private_child_neutralizes_platform_version_probe(tmp_path):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"),
+        "family": "pm-0224",
+        "sources": {},
+        "desired": {},
+        "enabled_before": False,
+    }))
+    setup = planner._CHILD.split("root=Path(sys.argv[1])", 1)[0]
+    setup = setup.replace("sys.platform=='win32'", "True")
+    probe = setup + "\nassert platform._syscmd_ver('a','b','c') == ('a','b','c')\n"
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", probe, str(tmp_path), str(shadow)],
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_git_audit_accepts_only_the_exact_bound_windows_argv(tmp_path):
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    root, home = tmp_path / "checkout with spaces", tmp_path / "shadow"
+    root.mkdir()
+    home.mkdir()
+    git = r"C:\Program Files\Git\cmd\git.exe"
+    (home / "request.json").write_text(json.dumps({
+        "real_home": str(tmp_path / "real"),
+        "family": "pm-0224",
+        "sources": {},
+        "git": git,
+        "desired": {},
+        "enabled_before": False,
+    }))
+    setup = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
+    setup = setup.replace(
+        "and sys.platform=='win32' and isinstance(command,str)",
+        "and isinstance(command,str)",
+    )
+    expected = [git, "-C", str(root), "rev-parse", "HEAD"]
+    accepted = setup + (
+        "\nscope={'__name__':'hermes_cli.boot_bootstrap','audit':audit,"
+        "'subprocess':subprocess,'root':root,'expected':" + repr(expected) + "}\n"
+        "exec(\"def read_git_head():\\n"
+        "    audit('subprocess.Popen',(expected[0],expected,str(root),{}))\\n"
+        "    audit('subprocess.Popen',(expected[0],subprocess.list2cmdline(expected),str(root),{}))\",scope)\n"
+        "scope['read_git_head']()\n(home/'accepted').write_text('yes')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", accepted, str(root), str(home)],
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (home / "accepted").read_text() == "yes"
+
+    refused = setup + (
+        "\nscope={'__name__':'hermes_cli.boot_bootstrap','audit':audit,"
+        "'subprocess':subprocess,'root':root,'expected':" + repr(expected) + "}\n"
+        "exec(\"def read_git_head():\\n"
+        "    audit('subprocess.Popen',(expected[0],expected+['--format=evil'],str(root),{}))\",scope)\n"
+        "scope['read_git_head']()\n(home/'continued').write_text('bad')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", refused, str(root), str(home)],
+        capture_output=True,
+        timeout=10,
+    )
+    assert result.returncode == 73
+    assert not (home / "continued").exists()
 
 
 @pytest.mark.parametrize("family", ["pm-0224", "pm-0225"])
@@ -246,7 +469,7 @@ scope['_discover_providers']()
     )
     result = subprocess.run(
         [sys.executable, "-I", "-c", probe, str(tmp_path), str(shadow)],
-        env={"HOME": str(shadow), "HERMES_HOME": str(shadow)},
+        env=planner.isolated_child_env(shadow),
         capture_output=True,
         timeout=10,
     )

@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.0.9 — 2026-10-26
+
+- Separate verified native admission user identity from Feishu mention open IDs; retain native delivery before card acceptance when identity is unknown (#451).
+- Correct raw Windows byte I/O, isolated official config children and verified recovery transactions (#463).
+- Recover provable PR458 schema-1 flat wheels while preserving workspace schema-1 and content-addressed schema-2 ownership; add fixed recovery acknowledgement categories and migration guidance (#459/#462).
+- Integrate audited Ruff/CodeQL/setup-python updates and deterministic concurrent repair confirmation tests (#464/#465/#466/#467).
+- Candidate verification and remaining boundaries are recorded in the [release notes](docs/release-notes-v5.0.9.en.md); previous tags, assets, commits and credits remain intact.
+
 ## v5.0.8 — 2026-10-25
 
 - Combine owned external PM wheels and verified legacy observer rebinding (#458/#459/#461), preserving original authors and recovery evidence.

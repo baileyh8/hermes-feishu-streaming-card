@@ -159,6 +159,7 @@ Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py
 - CLI 与插件 binding 共用 `install/runtime_python.py` 的隔离 PM 探测。存在 committed venv 时优先选择它并保留 venv launcher 路径；探测失败、相对路径或已删除的 generation 必须拒绝，不能落回旧 `.venv`。只有没有 PM 模块或 PM 明确返回无选择时保留 legacy 行为；插件仍验证 prefix/site-packages/可执行目标，显式 Hermes home 传给 PM 探测。
 - Hermes PM 重建会删除旧环境；独立 sidecar 不能假定长驻解释器路径永远存在。可用 `service.python_executable` 绑定独立 HFC venv；setup/start/enable 均遵守此选择，先验证 Hermes hook，再验证侧车的版本与普通 site-packages 来源。配置缺省保持原行为；指定环境失效必须拒绝启动，不静默切回 PM。
 - 旧侧车仍响应 health 不代表运行文件可用。升级后的恢复顺序是检查当前 PM 与进程来源，备份并停止侧车，通过官方 install 修复已验证的升级状态；仅 installed 且侧车停止时 acknowledge-review，再启动侧车与 Gateway。不得清除未知围栏或手工改 hook。
+- PM 迁移、schema 1 flat wheel、旧 runtime 重绑、VCS 安装边界、实际服务管理器/KeepAlive 与旧 fence target CAS 的完整顺序见 [PM 恢复](pm-recovery.md)。当前 509 management CLI 负责本候选的 schema 1 flat 重绑；v5.0.8 命令基线保留为历史，v5.0.7 CLI 没有 `rebind-legacy`。
 - `auto` 不得探测 system bus、调用 sudo/pkexec、写 `/etc` 或静默 fallback 到 system manager；`systemd-system` 只能显式使用 transient unit。
 - macOS `enable` 不可用时只提供平台解释。自建登录 LaunchAgent 可用 `RunAtLoad=true` 一次运行会分离子进程的 `start`，不可推荐 `KeepAlive=true`。无 verified pidfile 必须先确认进程归属；只有证实自建 LaunchAgent 直接运行 runner 才提供对应 `launchctl` 停止路径，不据 pidfile 缺失推断 launchd。
 - guided `setup` 在 `service.manager=auto|systemd-user`、user manager 可用且 `loginctl ... Linger=yes` 时默认进入 persistent systemd user 路径；不可用时必须显式警告重启风险并给出精确 `enable` 命令，`--transient` 是显式 opt-out。不得自动 enable linger、调用 sudo 或进入 system manager。随后以 exact Hermes venv Python、absolute config/env/Hermes root 渲染 unit；unit 与 `persistent-service.json` 都必须为 owner-only regular file，并以 `unit_sha256` 互证。
@@ -356,7 +357,7 @@ Hermes 对已启用的插件可只更新 `allow_tool_override: false`，不排�
 
 V5.0.4 的 legacy `output_rate` 由 observe-only 插件供数，legacy 仍是唯一事件 producer。`install/legacy_observer.py` 管理 checkout 下 `.hermes_feishu_card_observer.json`（协议 `hfc-legacy-observer-v1`），绑定精确 HOME、runtime Python identity 和官方 config preimage/journal；它与原 v1/v2/v4 源码 manifest 分开版本化，不改写旧 manifest 语义。旧安装无此记录时重新 install 可迁移；重复 install 验证现有记录，不重复 enable 或覆盖 preimage。不要手工创建记录或修改 Hermes config。
 
-配置写入走 `install/plugin.py` 的官方 enable，源码写入仍由既有 patcher/事务拥有。新增 enable/marker 在源码事务之前完成；已核验归属的普通失败按逆序回滚配置和 PM registration；未知配置保留并拒绝继续。doctor/repair 拒绝配置或记录漂移，未知版本、非普通文件和不可检查 metadata 均不猜测。restore/uninstall 先核验并恢复配置原始字节，再恢复源码，成功后删除观察记录与 preimage；源码恢复失败时保留记录供重试，不重新启用插件。Windows 的 decomposed 源码恢复仍受原 POSIX dirfd 门禁限制；配置恢复成功不能称为 hooks 卸载成功。降级旧 HFC 前先用当前版本 restore，旧版本不知道此 companion ownership。
+配置写入走 `install/plugin.py` 的官方 enable，源码写入仍由既有 patcher/事务拥有。新增 enable/marker 在源码事务之前完成；已核验归属的普通失败按逆序回滚配置和 PM registration；未知配置保留并拒绝继续。doctor/repair 拒绝配置或记录漂移，未知版本、非普通文件和不可检查 metadata 均不猜测。restore/uninstall 先核验并恢复配置原始字节，再恢复源码，成功后删除观察记录与 preimage；源码恢复失败时保留记录供重试，不重新启用插件。Windows 的显式 install/restore/uninstall 使用 portable 独占 handle，绑定原 bytes、摘要、目录身份与 reparse 状态；清理也经同一 handle 校验后删除，不能回退为任意路径 unlink。restore 的源码写入、backup/manifest 删除是一个 family 事务：删除失败会先恢复已删证据，再把源码回滚到首阶段返回的 controlled post snapshots；只回滚仍匹配本事务写入的 source，不重新 snapshot 认领当前文件。并发字节修改、inode 替换或目录 swap 均保留用户改动并转 manual review；初写失败不进入第二次盲目回滚。源回滚失败则保留完整证据，不能留下已还原源码但缺 backup/manifest 的组合。自动 recovery 与 `integrity migrate-safe` 仍只支持 POSIX dirfd，并在取锁或读状态前拒绝。降级旧 HFC 前先用当前版本 restore，旧版本不知道此 companion ownership。
 
 `plugins.isolation: host` 不提供进程内指标，也不改变隔离设置。插件启动只读取记录；不补装、不修复、不发送 hello/heartbeat，不新增 sidecar runtime owner。具体计量、容量与失败显示规则见[观测耗时](observed-timing.md)。
 

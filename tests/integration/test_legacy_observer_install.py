@@ -99,15 +99,16 @@ def official_runtime(tmp_path_factory):
     assert not path_file.exists()
     try:
         smoke = tmp_path_factory.mktemp("sensor-smoke")
+        from hermes_feishu_card.install.plugin_config_bytes import isolated_child_env
         probe = subprocess.run([str(python), "-I", "-c",
             "from hermes_feishu_card.hermes_plugin_runtime import read_transport_root_secret\n"
             "try: read_transport_root_secret()\n"
             "except RuntimeError: pass\n"],
-            cwd=smoke, env={"HOME": str(smoke), "HERMES_HOME": str(smoke)},
+            cwd=smoke, env=isolated_child_env(smoke, include_path=True),
             capture_output=True, text=True, timeout=20)
         assert probe.returncode == 0, probe.stdout + probe.stderr
         assert "read_transport_root_secret" in (smoke / "hfc-forbidden.jsonl").read_text()
-        yield source, python, prefix, path_file
+        yield source, python, prefix, site, path_file
     finally:
         sensor.unlink()
         path_file.unlink(missing_ok=True)
@@ -167,7 +168,7 @@ def _run(python, root, home, code, *args, expected=0, stage, timeout=180):
 
 @pytest.mark.parametrize("command,migrate", [("restore", False), ("uninstall", True)])
 def test_official_enable_legacy_install_repeat_doctor_exact_restore(official_runtime, tmp_path, command, migrate):
-    source, python, prefix, path_file = official_runtime
+    source, python, prefix, _site, path_file = official_runtime
     root, home = tmp_path / "hermes", tmp_path / "home"
     # Copy only immutable tracked source. No existing .venv, private state or
     # production HOME can enter this fixture.

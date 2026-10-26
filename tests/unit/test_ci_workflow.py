@@ -220,11 +220,11 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
 def test_official_actions_are_sha_pinned_to_node24_capable_releases():
     expected = {
         "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
+        "actions/setup-python": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
         "actions/upload-artifact": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
         "actions/download-artifact": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
-        "github/codeql-action/init": "24c54180a607b1449ed407dd24f251e4e9147c8d",
-        "github/codeql-action/analyze": "24c54180a607b1449ed407dd24f251e4e9147c8d",
+        "github/codeql-action/init": "9b3254085494b55a0f7c4c2b3d2d52cc712ce370",
+        "github/codeql-action/analyze": "9b3254085494b55a0f7c4c2b3d2d52cc712ce370",
     }
     workflow_paths = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
 

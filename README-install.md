@@ -9,7 +9,7 @@ load the new protocol. See the [runtime configuration guide](docs/user-guide.en.
 
 [中文](README.md) | [English](README.en.md)
 
-**Release version: v5.0.8.** The default `latest` installer selects the published stable release. Supports explicitly bound split source/HOME layouts and preserves instance ownership; see [release notes](docs/release-notes-v5.0.8.en.md).
+**Release version: v5.0.9.** The default `latest` installer selects the published stable release. Supports explicitly bound split source/HOME layouts and preserves instance ownership; see [release notes](docs/release-notes-v5.0.9.en.md).
 
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
@@ -310,20 +310,20 @@ unknown same-name units, drift, or unsafe shutdown. Remove the owned unit with
 ## Extracting release assets (v5.0.6 and later)
 
 Use a new dedicated extraction directory and verify the published checksums first.
-Each archive contains nine files under `hermes-feishu-card-v5.0.8-linux/`,
-`hermes-feishu-card-v5.0.8-macos/` or `hermes-feishu-card-v5.0.8-windows/`.
+Each archive contains nine files under `hermes-feishu-card-v5.0.9-linux/`,
+`hermes-feishu-card-v5.0.9-macos/` or `hermes-feishu-card-v5.0.9-windows/`.
 The old flat layout allowed `./install.sh` immediately in the extraction target;
 enter the versioned platform directory first with these assets.
 
 ```bash
-mkdir hfc-install-v5.0.8
-tar -xzf hermes-feishu-card-v5.0.8-linux.tar.gz -C hfc-install-v5.0.8
-cd hfc-install-v5.0.8/hermes-feishu-card-v5.0.8-linux
-./install.sh --version v5.0.8
+mkdir hfc-install-v5.0.9
+tar -xzf hermes-feishu-card-v5.0.9-linux.tar.gz -C hfc-install-v5.0.9
+cd hfc-install-v5.0.9/hermes-feishu-card-v5.0.9-linux
+./install.sh --version v5.0.9
 ```
 
 For macOS, use the `macos` asset and subdirectory. On Windows, extract the ZIP,
-enter `hermes-feishu-card-v5.0.8-windows`, then run `.\install.ps1`.
+enter `hermes-feishu-card-v5.0.9-windows`, then run `.\install.ps1`.
 Tar metadata uses uid/gid 0, directories and shell installers 0755, other regular
 files 0644. These archive modes do not represent Windows ACL validation.
 Published v5.0.6 and earlier assets and tags are retained. See the [v5.0.6 release notes](docs/release-notes-v5.0.6.en.md)
@@ -340,6 +340,20 @@ bash install.sh
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+Native Windows uses the portable transaction boundary for explicit PM
+install, restore and uninstall: every byte read or write requests `O_BINARY`,
+existing files are opened with an exclusive handle, and the original bytes,
+digest, directory identity and reparse state are rechecked before replacement
+or cleanup. Source restoration and backup/manifest deletion form one family
+transaction: a failed or interrupted evidence deletion restores the verified
+installed source bytes and exact evidence before reporting failure. Unknown
+Hermes sources remain refused. Automatic recovery and
+`integrity migrate-safe` still require POSIX directory-relative operations;
+stop before those steps and use the documented explicit restore flow instead
+of deleting ownership evidence by hand. The Windows CI entry runs the fixed,
+unmodified Hermes v0.22.5 fixture on Python 3.12 and 3.14; a local POSIX mock is
+not native Windows acceptance evidence.
 
 ## Environment Variables
 
@@ -380,7 +394,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.8
+export HFC_VERSION=v5.0.9
 bash install-docker.sh
 ```
 

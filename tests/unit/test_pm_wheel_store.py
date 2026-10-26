@@ -27,6 +27,22 @@ def test_immutable_publication_and_reuse(tmp_path, monkeypatch, dirfd):
 
 
 @pytest.mark.parametrize('dirfd', [True, False])
+def test_ctrl_z_crlf_random_bytes_and_unicode_paths_keep_exact_digest(tmp_path, monkeypatch, dirfd):
+    if dirfd and not _REAL_DIRFD:
+        pytest.skip('directory descriptor operations unavailable')
+    monkeypatch.setattr(io, 'DIRFD_BINDING_SUPPORTED', dirfd)
+    payload = b'prefix\r\n\x1a' + bytes(range(256)) * 4096 + b'\x00\r\nsuffix'
+    home = tmp_path / 'home with spaces' / '用户-463'
+    home.mkdir(parents=True)
+    reference = store.publish(home, NAME, payload)
+    path = Path(reference['path'])
+    assert reference['sha256'] == sha256(payload).hexdigest()
+    assert path.read_bytes() == payload
+    assert store.validate(home, reference) == path
+    assert store.publish(home, NAME, payload) == reference
+
+
+@pytest.mark.parametrize('dirfd', [True, False])
 def test_exclusive_publish_destination_race_keeps_unowned_bytes(tmp_path, monkeypatch, dirfd):
     if dirfd and not _REAL_DIRFD:
         pytest.skip('directory descriptor operations unavailable')

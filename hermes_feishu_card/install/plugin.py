@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 import yaml
 
+from .file_transaction import BINARY_FLAG
 from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
 
 
@@ -508,6 +509,8 @@ def _expected_enabled_config(
 
 def _run_official_enable(binding: HermesRuntimeBinding) -> int:
     _verify_official_enable_source(binding.checkout_root)
+    from .plugin_config_bytes import isolated_child_env
+
     try:
         completed = subprocess.run(
             [
@@ -527,11 +530,11 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
-            env={
-                "HOME": str(binding.hermes_home),
-                "HERMES_HOME": str(binding.hermes_home),
-                "HERMES_INSTALL_ROOT": str(binding.checkout_root),
-            },
+            env=isolated_child_env(
+                binding.hermes_home,
+                install_root=binding.checkout_root,
+                include_path=True,
+            ),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PluginConfigRefused("official plugin enable failed") from exc
@@ -591,7 +594,7 @@ def _ensure_private_directory(path: Path) -> None:
 
 
 def _write_private_new(path: Path, value: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY_FLAG
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags, 0o600)
@@ -751,6 +754,8 @@ def _require_regular_file(path: Path, label: str) -> Path:
 
 
 def _probe_runtime_identity(launcher: Path) -> dict[str, object]:
+    from .plugin_config_bytes import isolated_child_env
+
     code = (
         "import json,sys,sysconfig;"
         "print(json.dumps({'executable':sys.executable,'prefix':sys.prefix,"
@@ -766,7 +771,7 @@ def _probe_runtime_identity(launcher: Path) -> dict[str, object]:
             stderr=subprocess.PIPE,
             text=True,
             timeout=20,
-            env={"HOME": str(launcher.parents[2])},
+            env=isolated_child_env(launcher.parents[2], include_path=True),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeBindingRefused("Hermes runtime Python probe failed") from exc
@@ -804,6 +809,8 @@ def _validate_runtime_identity(
 
 
 def _run_entrypoint_probe(binding: HermesRuntimeBinding) -> dict[str, object]:
+    from .plugin_config_bytes import isolated_child_env
+
     code = r'''
 import importlib.metadata
 import importlib.util
@@ -835,7 +842,7 @@ print(json.dumps({
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
-            env={"HOME": str(binding.hermes_home), "HERMES_HOME": str(binding.hermes_home)},
+            env=isolated_child_env(binding.hermes_home, include_path=True),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeBindingRefused("entry point probe failed") from exc
