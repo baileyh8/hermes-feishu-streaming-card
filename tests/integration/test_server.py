@@ -5201,6 +5201,8 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(
     report = operations_report()
     detection = SimpleNamespace(root=Path("/private/hermes"))
     calls = []
+    repair_started = threading.Event()
+    release_repair = threading.Event()
 
     monkeypatch.setattr(
         sidecar_server,
@@ -5210,6 +5212,8 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(
 
     def fake_execute(current_detection, expected_fingerprint=None):
         calls.append((current_detection, expected_fingerprint))
+        repair_started.set()
+        assert release_repair.wait(10), "repair was not released by the test"
         return SimpleNamespace(status="repaired", message="Verified recovery completed.")
 
     monkeypatch.setattr(sidecar_server, "execute_recovery", fake_execute)
@@ -5249,20 +5253,35 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(
                 ),
             )
 
+        responses = [await confirm_once(0)]
+        await _wait_until(repair_started.is_set)
+        first_body = await responses[0].json()
+        assert first_body["ok"] is True
+        assert "正在安全修复" in str(first_body["card"])
+        assert first_body["operation_id"] == executing_operation_id
         if after_completion:
-            responses = [await confirm_once(0)]
+            release_repair.set()
             await wait_for_card_update(feishu_client, "安全修复已完成")
-            responses.extend(
-                await asyncio.gather(*(confirm_once(i) for i in range(1, 8)))
-            )
-        else:
-            responses = await asyncio.gather(*(confirm_once(i) for i in range(8)))
+        responses.extend(
+            await asyncio.gather(*(confirm_once(i) for i in range(1, 8)))
+        )
         bodies = [await response.json() for response in responses]
+        if not after_completion:
+            # The worker remains behind the barrier until every duplicate has
+            # returned its exact executing owner. Fast completion cannot hide
+            # a missing in-progress assertion.
+            assert not release_repair.is_set()
+            for body in bodies:
+                assert body["ok"] is True
+                assert "正在安全修复" in str(body["card"])
+                assert body["operation_id"] == executing_operation_id
+            release_repair.set()
         await wait_for_card_update(feishu_client, "安全修复已完成")
         current_deliveries = app[sidecar_server.OPERATIONS_DELIVERIES_KEY]
         assert len(current_deliveries) == 1
         completed_operation_id = next(iter(current_deliveries))
     finally:
+        release_repair.set()
         await test_client.close()
 
     assert len(calls) == 1
@@ -5272,19 +5291,11 @@ async def test_private_repair_is_exactly_once_under_concurrent_confirmation(
     assert len(feishu_client.sent) == 1
     assert completed_operation_id != executing_operation_id
     assert all(response.status == 200 for response in responses)
-    # A fast repair can finish before every concurrent callback arrives. Late
-    # confirmations must follow its exact successor without another mutation.
-    for body in bodies:
-        assert body["ok"] is True
-        if "正在安全修复" in str(body["card"]):
-            assert body["operation_id"] == executing_operation_id
-        else:
+    if after_completion:
+        for body in bodies[1:]:
+            assert body["ok"] is True
             assert "安全修复已完成" in str(body["card"])
             assert body["operation_id"] == completed_operation_id
-    if after_completion:
-        assert all(
-            body["operation_id"] == completed_operation_id for body in bodies[1:]
-        )
     assert "安全修复已完成" in str(feishu_client.updated[-1][1])
 
 
