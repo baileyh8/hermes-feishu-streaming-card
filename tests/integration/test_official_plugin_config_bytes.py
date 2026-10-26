@@ -84,6 +84,7 @@ def _record_plan_child_failure_diagnostic(monkeypatch):
             stderr = result.stderr or b""
             if isinstance(stderr, str):
                 stderr = stderr.encode("utf-8", errors="replace")
+            trace = _parse_plan_trace(stderr)
             refusal = plugin_config_bytes._child_refusal(
                 stderr, result.returncode
             )
@@ -101,6 +102,8 @@ def _record_plan_child_failure_diagnostic(monkeypatch):
                 "plan_child_stderr_bytes": len(stderr),
                 "deny_envelope_valid": not fallback,
             }
+            if trace is not None:
+                report["plan_subprocess_trace"] = trace
             if not fallback:
                 report.update({
                     "deny_reason": refusal.code,
@@ -133,6 +136,116 @@ def _record_plan_child_failure_diagnostic(monkeypatch):
     monkeypatch.setattr(plugin_config_bytes.subprocess, "run", recorded)
 
 
+def _diagnostic_plan_child():
+    """Add a bounded trace before the product's subprocess denial."""
+    child = plugin_config_bytes._CHILD
+    helper = r'''
+def _hfc_trace_subprocess(frame, command, executable):
+    known_modules = {
+        'hermes_cli.boot_bootstrap', 'hermes_cli.version_info',
+        'hermes_cli.post_update', 'hermes_cli.config',
+        'hermes_cli.plugins_cmd', 'hermes_cli.plugins_cmd_capabilities',
+        'hermes_yaml', 'pm.paths', 'pm._uv', 'pm.install', 'pm.client',
+        'pm.environments', 'utils', 'platform',
+    }
+    def safe(value):
+        if not isinstance(value, str) or not value or len(value) > 200:
+            return None
+        try:
+            value.encode('ascii')
+        except UnicodeEncodeError:
+            return None
+        return value if all(ch.isalnum() or ch in '._' for ch in value) else None
+    git = request.get('git')
+    matches = False
+    if isinstance(git, str) and git:
+        expected = [git, '-C', str(root), 'rev-parse', 'HEAD']
+        matches = command == expected
+        if not matches and sys.platform == 'win32' and isinstance(command, str):
+            matches = command == subprocess.list2cmdline(expected)
+    module_raw = frame.f_globals.get('__name__', '') if frame else ''
+    module = module_raw if module_raw in known_modules else 'unknown'
+    function = safe(frame.f_code.co_name) if frame and module != 'unknown' else 'unknown'
+    qualname = safe(getattr(frame.f_code, 'co_qualname', None)) if frame and module != 'unknown' else 'unknown'
+    source = f'{module}.{qualname or function}' if module != 'unknown' and (qualname or function) else 'unknown'
+    report = {
+        'caller_module': module,
+        'caller_function': function,
+        'caller_qualname': qualname,
+        'command_kind': safe(type(command).__name__) or 'other',
+        'command_matches_boot_git': matches,
+        'executable_is_none': executable is None,
+        'executable_kind': 'none' if executable is None else (safe(type(executable).__name__) or 'other'),
+    }
+    sys.stderr.write('HFC_CONFIG_PLAN_TRACE ' + json.dumps(report, sort_keys=True, separators=(',', ':')) + '\n')
+    sys.stderr.flush()
+    return source
+'''
+    marker = "def audit(event,args):"
+    assert child.count(marker) == 1
+    child = child.replace(marker, helper + "\n" + marker, 1)
+    denial = "            deny('subprocess','process')"
+    assert child.count(denial) == 1
+    return child.replace(
+        denial,
+        "            source = _hfc_trace_subprocess(frame, args[1], args[0])\n"
+        "            deny('subprocess','process',source)\n",
+        1,
+    )
+
+
+def _parse_plan_trace(stderr):
+    prefix = b"HFC_CONFIG_PLAN_TRACE "
+    known_modules = {
+        "hermes_cli.boot_bootstrap", "hermes_cli.version_info",
+        "hermes_cli.post_update", "hermes_cli.config",
+        "hermes_cli.plugins_cmd", "hermes_cli.plugins_cmd_capabilities",
+        "hermes_yaml", "pm.paths", "pm._uv", "pm.install", "pm.client",
+        "pm.environments", "utils", "platform", "unknown",
+    }
+    string_fields = {"caller_module", "caller_function", "caller_qualname"}
+    type_fields = {"command_kind", "executable_kind"}
+    bool_fields = {"command_matches_boot_git", "executable_is_none"}
+    for line in stderr.splitlines():
+        if not line.startswith(prefix):
+            continue
+        try:
+            payload = json.loads(line[len(prefix):].decode("ascii"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if type(payload) is not dict or set(payload) != string_fields | type_fields | bool_fields:
+            continue
+        safe = {}
+        valid = True
+        for name in string_fields:
+            value = payload[name]
+            if (
+                not isinstance(value, str)
+                or len(value) > 200
+                or not re.fullmatch(r"[A-Za-z0-9_.]+", value)
+            ):
+                valid = False
+                break
+            if name == "caller_module" and value not in known_modules:
+                valid = False
+                break
+            safe[name] = value
+        for name in type_fields:
+            value = payload[name]
+            if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_]+", value):
+                valid = False
+                break
+            safe[name] = value
+        for name in bool_fields:
+            if type(payload[name]) is not bool:
+                valid = False
+                break
+            safe[name] = payload[name]
+        if valid:
+            return safe
+    return None
+
+
 def _plan_with_failure_diagnostic(plan, **kwargs):
     """Preserve the original refusal while exposing only sanitized fields."""
     try:
@@ -152,6 +265,7 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
     tmp_path, monkeypatch, capsys
 ):
     secret = "PRIVATE-CANARY"
+    compile(_diagnostic_plan_child(), "<diagnostic-child>", "exec")
     valid_stderr = (
         b"HFC_CONFIG_PLAN_DENY "
         b'{"reason":"plugin-load","source":"hermes_cli/example.py",'
@@ -159,6 +273,16 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         + secret.encode()
     )
     invalid_stderr = (
+        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"read_git_head",'
+        b'"caller_module":"PRIVATE-CANARY",'
+        b'"caller_qualname":"read_git_head","command_kind":"str",'
+        b'"command_matches_boot_git":false,"executable_is_none":true,'
+        b'"executable_kind":"none"}\n'
+        b'HFC_CONFIG_PLAN_TRACE {"caller_function":"read_git_head",'
+        b'"caller_module":"hermes_cli.boot_bootstrap",'
+        b'"caller_qualname":"read_git_head","command_kind":"str",'
+        b'"command_matches_boot_git":false,"executable_is_none":true,'
+        b'"executable_kind":"none"}\n'
         b"ModuleNotFoundError: No module named 'ruamel.yaml'\n"
         b"ModuleNotFoundError: No module named 'bad/" + secret.encode() + b"'\n"
         b"ModuleNotFoundError: No module named '" + b"a" * 201 + b"'\n"
@@ -193,6 +317,15 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         "plan_child_stderr_bytes": len(invalid_stderr),
         "plain_exit_exception": "OSError",
         "plain_exit_missing_modules": ["ruamel.yaml"],
+        "plan_subprocess_trace": {
+            "caller_function": "read_git_head",
+            "caller_module": "hermes_cli.boot_bootstrap",
+            "caller_qualname": "read_git_head",
+            "command_kind": "str",
+            "command_matches_boot_git": False,
+            "executable_is_none": True,
+            "executable_kind": "none",
+        },
     }
     assert secret not in json.dumps(report)
 
@@ -494,6 +627,7 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     desired, enabled_before = plugin._expected_enabled_config(
         plugin._load_config_mapping(original)
     )
+    monkeypatch.setattr(plugin_config_bytes, "_CHILD", _diagnostic_plan_child())
     _record_plan_child_failure_diagnostic(monkeypatch)
     plan = _plan_with_failure_diagnostic(
         plugin_config_bytes.plan_enabled_bytes,
