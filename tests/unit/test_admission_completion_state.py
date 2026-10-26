@@ -285,6 +285,56 @@ def test_native_source_copy_compares_every_declared_field_including_noncompare(m
     assert not ac._same_source(source, SimpleNamespace(**source.__dict__))
 
 
+@pytest.mark.parametrize(
+    "data,user_id,accepted",
+    [
+        ({"admission_user_id": "a1b2c3d4"}, "a1b2c3d4", True),
+        (
+            {
+                "admission_user_id": "a1b2c3d4",
+                "sender_open_id": "ou_mention",
+            },
+            "a1b2c3d4",
+            True,
+        ),
+        ({"sender_open_id": "ou_legacy"}, "ou_legacy", True),
+        ({"admission_user_id": "forged"}, "a1b2c3d4", False),
+        (
+            {"admission_user_id": "forged", "sender_open_id": "ou_legacy"},
+            "ou_legacy",
+            False,
+        ),
+        ({"admission_user_id": ""}, "a1b2c3d4", False),
+        ({"sender_open_id": "ou_other"}, "ou_legacy", False),
+        ({}, "a1b2c3d4", False),
+    ],
+)
+def test_admission_identity_uses_original_user_and_keeps_legacy_open_id(data, user_id, accepted):
+    route = ("default", "chat", "thread", user_id, "ingress")
+    assert ac._admission_identity_matches(data, route) is accepted
+
+
+@pytest.mark.parametrize(
+    "source_user,current_user,ready",
+    [
+        ("a1b2c3d4", "a1b2c3d4", True),
+        ("ou_legacy", "ou_legacy", True),
+        ("", "", False),
+        ("a1b2c3d4", "other", False),
+        ("a1b2c3d4", None, False),
+        (None, "a1b2c3d4", False),
+    ],
+)
+def test_admission_identity_ready_requires_matching_original_user(
+    source_user, current_user, ready
+):
+    values = {
+        "source": Box(user_id=source_user),
+        "event": Box(source=Box(user_id=current_user)),
+    }
+    assert ac.admission_identity_ready(values) is ready
+
+
 @pytest.mark.parametrize("disposition", ["card", "native"])
 def test_admission_readiness_never_rewrites_existing_turn_policy(
     monkeypatch, disposition

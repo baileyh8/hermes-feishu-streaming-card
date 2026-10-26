@@ -513,6 +513,37 @@ def _same_source(source: Any, current: Any) -> bool:
         return False
 
 
+def _admission_identity_matches(data: Any, route: tuple[str, ...]) -> bool:
+    """Match the native admission user, retaining the old ou_ payload fallback."""
+    if not isinstance(data, dict) or len(route) < 4:
+        return False
+    if "admission_user_id" in data:
+        candidate = data.get("admission_user_id")
+    else:
+        candidate = data.get("sender_open_id")
+    return (
+        type(candidate) is str
+        and _text(candidate) is not None
+        and candidate == route[3]
+    )
+
+
+def admission_identity_ready(values: dict[str, Any]) -> bool:
+    """Require the original and current source to name the same admission user."""
+    source = values.get("source")
+    event = values.get("event")
+    current = getattr(event, "source", None)
+    original_user = getattr(source, "user_id", None)
+    current_user = getattr(current, "user_id", None)
+    return (
+        type(original_user) is str
+        and _text(original_user) is not None
+        and type(current_user) is str
+        and _text(current_user) is not None
+        and current_user == original_user
+    )
+
+
 def _warn_attempt(offer: Completion, reason: str) -> None:
     """One fixed-category observation per admission attempt; never identifiers or text."""
     try:
@@ -591,7 +622,7 @@ def prepare(
         or not isinstance(row, dict)
         or getattr(ref, "session_id", None) != owner[0]
         or row.get("generation") != owner[1]
-        or data.get("sender_open_id") != route[3]
+        or not _admission_identity_matches(data, route)
         or (payload.get("thread_id") or "") != route[2]
         or str(data.get("profile_source", "")).startswith("sanitized_")
     ):
