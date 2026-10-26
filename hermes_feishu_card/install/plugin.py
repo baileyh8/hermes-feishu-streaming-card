@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 import yaml
 
+from .file_transaction import BINARY_FLAG
 from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
 
 
@@ -508,6 +509,8 @@ def _expected_enabled_config(
 
 def _run_official_enable(binding: HermesRuntimeBinding) -> int:
     _verify_official_enable_source(binding.checkout_root)
+    from .plugin_config_bytes import isolated_child_env
+
     try:
         completed = subprocess.run(
             [
@@ -527,11 +530,11 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
             stderr=subprocess.PIPE,
             text=True,
             timeout=30,
-            env={
-                "HOME": str(binding.hermes_home),
-                "HERMES_HOME": str(binding.hermes_home),
-                "HERMES_INSTALL_ROOT": str(binding.checkout_root),
-            },
+            env=isolated_child_env(
+                binding.hermes_home,
+                install_root=binding.checkout_root,
+                include_path=True,
+            ),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PluginConfigRefused("official plugin enable failed") from exc
@@ -591,7 +594,7 @@ def _ensure_private_directory(path: Path) -> None:
 
 
 def _write_private_new(path: Path, value: bytes) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY_FLAG
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags, 0o600)

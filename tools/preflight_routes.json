@@ -47,6 +47,7 @@
       "tests/integration/test_session_authority_completion.py",
       "tests/unit/test_admission_completion_detection.py",
       "tests/unit/test_pm_wheel_store.py",
+      "tests/unit/test_windows_native_io.py",
       "tests/unit/test_legacy_rebind.py",
       "tests/integration/test_legacy_observer_install.py",
       "tests/integration/test_pm_rebind.py",
@@ -234,6 +235,7 @@
       "tests/unit/test_hybrid_gateway_ownership.py",
       "tests/unit/test_bound_recovery_io.py",
       "tests/unit/test_recovery.py",
+      "tests/unit/test_windows_native_io.py",
       "tests/unit/test_clarify_delivery_admission.py"
     ],
     "loaded_config": [

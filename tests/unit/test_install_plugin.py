@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import stat
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -304,6 +305,35 @@ def test_official_enable_refuses_unverified_checkout_before_child(tmp_path, monk
 
     with pytest.raises(plugin.PluginConfigRefused, match="enable root is invalid"):
         plugin._run_official_enable(binding)
+
+
+def test_official_enable_uses_private_windows_home_environment(tmp_path, monkeypatch):
+    checkout, home = tmp_path / "checkout with spaces", tmp_path / "home with spaces"
+    checkout.mkdir()
+    home.mkdir()
+    binding = SimpleNamespace(
+        checkout_root=checkout,
+        runtime_python=Path(sys.executable),
+        hermes_home=home,
+    )
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *a, **k: None)
+    monkeypatch.setattr(plugin.os, "name", "nt")
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("WINDIR", r"C:\Windows")
+    monkeypatch.setenv("COMSPEC", r"C:\Windows\System32\cmd.exe")
+    monkeypatch.setenv("HFC_PRIVATE_SECRET", "do-not-inherit")
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(plugin.subprocess, "run", run)
+    assert plugin._run_official_enable(binding) == 0
+    assert captured["env"]["HOME"] == captured["env"]["HERMES_HOME"] == str(home)
+    assert captured["env"]["USERPROFILE"] == str(home)
+    assert captured["env"]["HERMES_INSTALL_ROOT"] == str(checkout)
+    assert "HFC_PRIVATE_SECRET" not in captured["env"]
 
 
 def test_official_enable_refusal_keeps_only_safe_diagnostic(tmp_path, monkeypatch):

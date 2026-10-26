@@ -3,11 +3,166 @@ from __future__ import annotations
 
 import errno
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from hermes_feishu_card.install import integrity, posix_transaction as io, recovery
+from hermes_feishu_card.install import (
+    file_transaction as portable,
+    integrity,
+    posix_transaction as io,
+    recovery,
+)
+
+
+def test_platform_binary_flag_is_zero_on_posix():
+    if os.name != "nt":
+        assert portable.BINARY_FLAG == io.BINARY_FLAG == 0
+
+
+def test_byte_reads_and_stages_request_platform_binary_mode(tmp_path, monkeypatch):
+    target = tmp_path / "target.bin"
+    target.write_bytes(b"before\r\n\x1aafter")
+    injected = 0x40000000
+    seen = []
+    real_open = io.os.open
+
+    def opened(path, flags, *args, **kwargs):
+        seen.append(flags)
+        return real_open(path, flags & ~injected, *args, **kwargs)
+
+    monkeypatch.setattr(io, "BINARY_FLAG", injected)
+    monkeypatch.setattr(portable, "BINARY_FLAG", injected)
+    monkeypatch.setattr(io.os, "open", opened)
+
+    identity = io.read_path_snapshot(target, ValueError, "read refused")
+    assert portable._read_restore_text(target, identity) == "before\r\n\x1aafter"
+    descriptor = portable._open_portable_exclusive_fd(target, create=False)
+    os.close(descriptor)
+    staged = io.stage_file(
+        target,
+        b"new\r\n\x1abytes",
+        binding=None,
+        mode=0o600,
+        durable_text=False,
+        refused=ValueError,
+        staging_refusal="stage refused",
+        target_refusal="target refused",
+        stage_refusal="stage refused",
+    )
+    try:
+        assert staged.path.read_bytes() == b"new\r\n\x1abytes"
+    finally:
+        staged.cleanup()
+    assert sum(bool(flags & injected) for flags in seen) >= 4
+
+
+@pytest.mark.parametrize("failure", ["last-mark", "last-close"])
+def test_portable_family_evidence_failure_restores_the_whole_set(tmp_path, monkeypatch, failure):
+    root = tmp_path / "family"
+    root.mkdir()
+    values = {
+        root / "run.py.hermes_feishu_card.bak": "run\r\n",
+        root / "cron.py.hermes_feishu_card.bak": "cron\r\n",
+        root / ".hermes_feishu_card_manifest": '{"manifest": true}\r\n',
+    }
+    for path, value in values.items():
+        path.write_text(value, encoding="utf-8")
+    identities, directories = portable._snapshot_restore_evidence(
+        root, {path.name: path for path in values}
+    )
+    paths = list(values)
+    opened: dict[int, Path] = {}
+    marked: set[int] = set()
+    real_open, real_close = portable.os.open, portable.os.close
+    marks = 0
+    closes = 0
+    failed = False
+    evidence_checks = []
+
+    def open_delete(path):
+        descriptor = real_open(path, os.O_RDONLY)
+        opened[descriptor] = Path(path)
+        return descriptor
+
+    def set_delete(descriptor, enabled):
+        nonlocal marks, failed
+        if enabled:
+            marks += 1
+            if failure == "last-mark" and marks == len(paths) and not failed:
+                failed = True
+                raise OSError("injected last mark failure")
+            marked.add(descriptor)
+        else:
+            marked.discard(descriptor)
+
+    def close(descriptor):
+        nonlocal closes, failed
+        closes += 1
+        if failure == "last-close" and closes == len(paths) and not failed:
+            failed = True
+            raise OSError("injected last close failure")
+        path = opened.pop(descriptor, None)
+        deleting = descriptor in marked
+        marked.discard(descriptor)
+        real_close(descriptor)
+        if deleting and path is not None:
+            path.unlink()
+
+    def open_exclusive(path, *, create):
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        if create:
+            flags |= os.O_CREAT | os.O_EXCL
+        return real_open(path, flags, 0o600)
+
+    monkeypatch.setattr(portable.os, "name", "nt")
+    original_check = portable._assert_restore_evidence_set_unchanged
+    monkeypatch.setattr(
+        portable,
+        "_assert_restore_evidence_set_unchanged",
+        lambda selected: evidence_checks.append(len(opened)) or original_check(selected),
+    )
+    monkeypatch.setattr(portable, "_open_portable_delete_fd", open_delete)
+    monkeypatch.setattr(portable, "_set_portable_delete", set_delete)
+    monkeypatch.setattr(portable, "_open_portable_exclusive_fd", open_exclusive)
+    monkeypatch.setattr(portable.os, "close", close)
+
+    with pytest.raises((OSError, ValueError)):
+        portable._remove_targets_portably(
+            paths,
+            expected_identities=identities,
+            expected_directories=directories,
+            recovery_contents=values,
+        )
+    assert {path: path.read_bytes() for path in paths} == {
+        path: value.encode("utf-8") for path, value in values.items()
+    }
+    assert evidence_checks == [0]
+
+
+def test_portable_evidence_recreation_refuses_replaced_directory(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    evidence = root / "run.py.hermes_feishu_card.bak"
+    evidence.write_text("original\r\n", encoding="utf-8")
+    identities, directories = portable._snapshot_restore_evidence(
+        root, {"backup": evidence}
+    )
+    moved = tmp_path / "root-moved"
+    root.rename(moved)
+    root.mkdir()
+    replacement = root / evidence.name
+
+    error = portable._restore_portable_evidence(
+        [replacement],
+        {replacement: identities[evidence]},
+        {replacement: "original\r\n"},
+        directories,
+    )
+
+    assert error is not None
+    assert not list(root.iterdir())
 
 
 @pytest.mark.skipif(not io.DIRFD_BINDING_SUPPORTED, reason="requires secure POSIX directory-relative I/O")

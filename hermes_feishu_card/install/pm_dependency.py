@@ -455,7 +455,7 @@ if external is not None:
     if source_ok and actual is None:
         path = Path(external['path'])
         before = path.lstat()
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_BINARY', 0))
         try:
             opened = os.fstat(descriptor)
             digest = hashlib.sha256()

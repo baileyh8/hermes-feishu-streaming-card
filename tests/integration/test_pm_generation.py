@@ -193,7 +193,8 @@ receipt.finish()
 from pm.environments import committed_venv
 first=committed_venv(root)
 member=home/'plugins'/package.NAME
-assert package.verify_installed(member,first/'bin/python')
+python_name='Scripts/python.exe' if os.name == 'nt' else 'bin/python'
+assert package.verify_installed(member,first/python_name)
 future=home/'plugins'/'future';future.mkdir()
 (future/'future').mkdir()
 (future/'future'/'__init__.py').write_text('__version__ = "1"\n')
@@ -203,7 +204,7 @@ probe=package._call(root,Path(sys.executable),home,{'operation':'probe'})
 package._call(root,Path(sys.executable),home,{'operation':'add','name':package.NAME,'expected':probe['expected']})
 second=committed_venv(root)
 assert first!=second
-assert package.verify_installed(member,second/'bin/python')
+assert package.verify_installed(member,second/python_name)
 print('ordinary-installed PM branch crossed generations')
 '''
     installed_result = subprocess.run([str(python2), '-I', '-c', installed_script,

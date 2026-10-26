@@ -15,6 +15,15 @@ from typing import cast
 _RestoreIdentity = tuple[int, int]
 _RestoreEvidenceSnapshot = tuple[int, int, str]
 _CLI_SNAPSHOT_UNSET = object()
+BINARY_FLAG = getattr(os, "O_BINARY", 0)
+
+
+def _is_reparse(metadata: os.stat_result) -> bool:
+    """Windows junctions/mount points are links even when lstat omits S_ISLNK."""
+    return bool(
+        getattr(metadata, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
 
 
 def _snapshot_restore_evidence(
@@ -35,7 +44,7 @@ def _snapshot_restore_evidence(
         except FileNotFoundError:
             directory_identities[path] = None
             continue
-        if stat.S_ISLNK(snapshot.st_mode):
+        if stat.S_ISLNK(snapshot.st_mode) or _is_reparse(snapshot):
             raise ValueError(f"{label} must not be a symlink")
         if not stat.S_ISDIR(snapshot.st_mode):
             raise ValueError(f"{label} must be a directory")
@@ -48,7 +57,7 @@ def _snapshot_restore_evidence(
         except FileNotFoundError:
             identities[path] = None
             continue
-        if stat.S_ISLNK(snapshot.st_mode):
+        if stat.S_ISLNK(snapshot.st_mode) or _is_reparse(snapshot):
             raise ValueError(f"{label} must not be a symlink")
         if not stat.S_ISREG(snapshot.st_mode):
             raise ValueError(f"{label} must be a regular file")
@@ -77,7 +86,7 @@ def _read_restore_text(
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     fd: int | None = None
     try:
-        fd = os.open(path, os.O_RDONLY | nofollow)
+        fd = os.open(path, os.O_RDONLY | nofollow | BINARY_FLAG)
         opened = os.fstat(fd)
         if (
             not stat.S_ISREG(opened.st_mode)
@@ -88,6 +97,7 @@ def _read_restore_text(
             current = path.lstat()
             if (
                 stat.S_ISLNK(current.st_mode)
+                or _is_reparse(current)
                 or (current.st_dev, current.st_ino) != expected_identity
             ):
                 raise ValueError(
@@ -100,6 +110,7 @@ def _read_restore_text(
             current = path.lstat()
             if (
                 stat.S_ISLNK(current.st_mode)
+                or _is_reparse(current)
                 or (current.st_dev, current.st_ino) != expected_identity
             ):
                 raise ValueError(
@@ -136,6 +147,7 @@ def _assert_restore_evidence_unchanged(
     if (
         expected_snapshot is None
         or stat.S_ISLNK(current.st_mode)
+        or _is_reparse(current)
         or not stat.S_ISREG(current.st_mode)
     ):
         raise ValueError(f"{path.name} changed during restore; refusing to clean up")
@@ -166,6 +178,7 @@ def _assert_restore_directory_ancestry_unchanged(
             ) from exc
         if (
             expected_identity is None
+            or _is_reparse(current)
             or not stat.S_ISDIR(current.st_mode)
             or (current.st_dev, current.st_ino) != expected_identity
         ):
@@ -182,7 +195,7 @@ def _portable_target_state(
         metadata = path.lstat()
     except FileNotFoundError:
         return None, None, None
-    if stat.S_ISLNK(metadata.st_mode):
+    if stat.S_ISLNK(metadata.st_mode) or _is_reparse(metadata):
         raise ValueError("refusing to replace a symbolic link")
     if not stat.S_ISREG(metadata.st_mode):
         raise ValueError("refusing to replace a non-regular file")
@@ -201,7 +214,7 @@ def _write_targets_portably(
     expected_identities: dict[Path, _RestoreEvidenceSnapshot | None],
     expected_directories: dict[Path, _RestoreIdentity | None],
     preserve_earlier_writes_on_rollback_failure: bool = False,
-) -> None:
+) -> dict[Path, _RestoreEvidenceSnapshot | None]:
     current_identities = dict(expected_identities)
     previous_states: dict[Path, tuple[str | None, int | None]] = {}
 
@@ -234,6 +247,7 @@ def _write_targets_portably(
             written.append(path)
             assert_directories_unchanged(path)
         _assert_restore_evidence_set_unchanged(current_identities)
+        return dict(current_identities)
     except (OSError, UnicodeError, ValueError) as exc:
         rollback_failed = False
         for path in reversed(written):
@@ -296,6 +310,7 @@ def _atomic_write_text_portable(
         current_path = path.lstat()
         if (
             stat.S_ISLNK(current_path.st_mode)
+            or _is_reparse(current_path)
             or not stat.S_ISREG(current_path.st_mode)
             or (current_path.st_dev, current_path.st_ino) != opened_identity
         ):
@@ -395,6 +410,7 @@ def _verify_portable_exclusive_bytes(
     committed_path = path.lstat()
     if (
         stat.S_ISLNK(committed_path.st_mode)
+        or _is_reparse(committed_path)
         or not stat.S_ISREG(committed_path.st_mode)
         or (committed_path.st_dev, committed_path.st_ino) != expected_identity
     ):
@@ -446,13 +462,13 @@ def _open_portable_exclusive_fd(path: Path, *, create: bool) -> int:
         try:
             return cast(int, msvcrt.open_osfhandle(  # type: ignore[attr-defined]
                 handle,
-                os.O_RDWR | getattr(os, "O_BINARY", 0),
+                os.O_RDWR | BINARY_FLAG,
             ))
         except Exception:
             close_handle(handle)
             raise
 
-    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | BINARY_FLAG
     if create:
         flags |= os.O_CREAT | os.O_EXCL
     fd = os.open(path, flags, 0o600)
@@ -466,3 +482,265 @@ def _open_portable_exclusive_fd(path: Path, *, create: bool) -> int:
     except Exception:
         os.close(fd)
         raise
+
+
+def _open_portable_delete_fd(path: Path) -> int:
+    """Open a verified Windows file exclusively for read-and-delete."""
+    if os.name != "nt":
+        raise ValueError("portable deletion requires Windows")
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+
+    generic_read = 0x80000000
+    delete = 0x00010000
+    open_existing = 3
+    file_attribute_normal = 0x00000080
+    file_flag_open_reparse_point = 0x00200000
+    handle = create_file(
+        str(path),
+        generic_read | delete,
+        0,
+        None,
+        open_existing,
+        file_attribute_normal | file_flag_open_reparse_point,
+        None,
+    )
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+    try:
+        return cast(
+            int,
+            msvcrt.open_osfhandle(  # type: ignore[attr-defined]
+                handle,
+                os.O_RDONLY | BINARY_FLAG,
+            ),
+        )
+    except Exception:
+        close_handle(handle)
+        raise
+
+
+def _set_portable_delete(fd: int, enabled: bool) -> None:
+    if os.name != "nt":
+        raise ValueError("portable deletion requires Windows")
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _FileDispositionInfo(ctypes.Structure):
+        _fields_ = [("DeleteFile", wintypes.BOOL)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    set_info = kernel32.SetFileInformationByHandle
+    set_info.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    )
+    set_info.restype = wintypes.BOOL
+    disposition = _FileDispositionInfo(DeleteFile=bool(enabled))
+    handle = msvcrt.get_osfhandle(fd)  # type: ignore[attr-defined]
+    if not set_info(
+        handle,
+        4,  # FileDispositionInfo
+        ctypes.byref(disposition),
+        ctypes.sizeof(disposition),
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+
+
+def _remove_targets_portably(
+    paths: list[Path],
+    *,
+    expected_identities: dict[Path, _RestoreEvidenceSnapshot | None],
+    expected_directories: dict[Path, _RestoreIdentity | None],
+    recovery_contents: dict[Path, str] | None = None,
+) -> None:
+    """Delete only the exact verified files on Windows, with all handles bound first.
+
+    Every target is opened without sharing and re-read before any disposition is
+    set. The handle owns both the identity check and deletion, so a path swap
+    cannot redirect cleanup to a replacement file. If closing a bound handle
+    fails after an earlier target was deleted, ``recovery_contents`` restores the
+    exact family evidence before the error is returned.
+    """
+    if os.name != "nt":
+        raise ValueError("portable deletion requires Windows")
+    if not paths or len(paths) != len(set(paths)):
+        raise ValueError("portable deletion targets are invalid")
+    if recovery_contents is not None and set(recovery_contents) != set(paths):
+        raise ValueError("portable deletion recovery evidence is incomplete")
+    selected = {path: expected_identities.get(path) for path in paths}
+    _assert_restore_evidence_set_unchanged(selected)
+    descriptors: dict[Path, int] = {}
+    marked: list[Path] = []
+    failure: Exception | None = None
+    try:
+        for path in paths:
+            _assert_restore_directory_ancestry_unchanged(path, expected_directories)
+            expected = selected[path]
+            if expected is None:
+                try:
+                    path.lstat()
+                except FileNotFoundError:
+                    continue
+                raise ValueError("refusing to remove changed restore evidence")
+            fd = _open_portable_delete_fd(path)
+            descriptors[path] = fd
+            opened = os.fstat(fd)
+            current = path.lstat()
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+                or _is_reparse(current)
+                or not stat.S_ISREG(current.st_mode)
+                or (opened.st_dev, opened.st_ino) != expected[:2]
+                or (current.st_dev, current.st_ino) != expected[:2]
+            ):
+                raise ValueError("refusing to remove changed restore evidence")
+            os.lseek(fd, 0, os.SEEK_SET)
+            payload = bytearray()
+            while True:
+                chunk = os.read(fd, 1024 * 1024)
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            contents = bytes(payload).decode("utf-8")
+            if _restore_text_sha256(contents) != expected[2]:
+                raise ValueError("refusing to remove changed restore evidence")
+        # Every target is now held with share mode 0. Re-opening them here
+        # would fail with a Windows sharing violation; verify the bound
+        # descriptors and directory identities without acquiring new handles.
+        for path, fd in descriptors.items():
+            _assert_restore_directory_ancestry_unchanged(path, expected_directories)
+            expected = selected[path]
+            if expected is None:
+                raise ValueError("refusing to remove changed restore evidence")
+            opened = os.fstat(fd)
+            current = path.lstat()
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or stat.S_ISLNK(current.st_mode)
+                or _is_reparse(current)
+                or not stat.S_ISREG(current.st_mode)
+                or (opened.st_dev, opened.st_ino) != expected[:2]
+                or (current.st_dev, current.st_ino) != expected[:2]
+            ):
+                raise ValueError("refusing to remove changed restore evidence")
+        for path in paths:
+            _assert_restore_directory_ancestry_unchanged(path, expected_directories)
+            delete_fd = descriptors.get(path)
+            if delete_fd is None:
+                continue
+            _set_portable_delete(delete_fd, True)
+            marked.append(path)
+    except (OSError, UnicodeError, ValueError) as exc:
+        failure = exc
+
+    unmark_error: OSError | None = None
+    if failure is not None:
+        for path in reversed(marked):
+            delete_fd = descriptors.get(path)
+            if delete_fd is None:
+                continue
+            try:
+                _set_portable_delete(delete_fd, False)
+            except OSError as exc:
+                unmark_error = unmark_error or exc
+
+    close_error: OSError | None = None
+    for path, fd in list(descriptors.items()):
+        try:
+            os.close(fd)
+        except OSError as exc:
+            close_error = close_error or exc
+            try:
+                _set_portable_delete(fd, False)
+            except OSError as unmark_exc:
+                unmark_error = unmark_error or unmark_exc
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        descriptors.pop(path, None)
+
+    if failure is not None or unmark_error is not None or close_error is not None:
+        repair_error = _restore_portable_evidence(
+            paths, selected, recovery_contents, expected_directories
+        )
+        if repair_error is not None:
+            raise ValueError(
+                "restore cleanup rollback failed; manual review required"
+            ) from repair_error
+        if failure is not None:
+            raise failure
+        raise ValueError(
+            "portable evidence deletion failed; original evidence restored"
+        ) from (unmark_error or close_error)
+
+    for path in paths:
+        _assert_restore_directory_ancestry_unchanged(path, expected_directories)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise ValueError("portable deletion left changed evidence")
+
+
+def _restore_portable_evidence(
+    paths: list[Path],
+    expected: dict[Path, _RestoreEvidenceSnapshot | None],
+    recovery_contents: dict[Path, str] | None,
+    expected_directories: dict[Path, _RestoreIdentity | None],
+) -> Exception | None:
+    """Restore exact evidence after a partial portable deletion."""
+    first_error: Exception | None = None
+    for path in paths:
+        wanted = expected[path]
+        try:
+            _assert_restore_directory_ancestry_unchanged(path, expected_directories)
+            snapshot, _contents, _mode = _portable_target_state(path)
+        except (OSError, UnicodeError, ValueError) as exc:
+            first_error = first_error or exc
+            continue
+        if snapshot is not None:
+            if wanted is None or snapshot[2] != wanted[2]:
+                first_error = first_error or ValueError(
+                    "portable evidence changed during cleanup"
+                )
+            continue
+        if wanted is None:
+            continue
+        if recovery_contents is None or path not in recovery_contents:
+            first_error = first_error or ValueError(
+                "portable evidence recovery content is missing"
+            )
+            continue
+        try:
+            _assert_restore_directory_ancestry_unchanged(path, expected_directories)
+            _atomic_write_text_portable(
+                path,
+                recovery_contents[path],
+                expected_before=None,
+            )
+        except (OSError, UnicodeError, ValueError) as exc:
+            first_error = first_error or exc
+    return first_error
