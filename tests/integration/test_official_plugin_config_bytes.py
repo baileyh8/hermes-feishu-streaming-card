@@ -108,6 +108,25 @@ def _record_plan_child_failure_diagnostic(monkeypatch):
                 })
                 if refusal.source is not None:
                     report["deny_source"] = refusal.source
+            else:
+                missing = re.findall(
+                    rb"(?m)^ModuleNotFoundError: No module named "
+                    rb"'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)'\r?$",
+                    stderr,
+                )
+                report["plain_exit_missing_modules"] = sorted({
+                    name.decode("ascii") for name in missing if len(name) <= 200
+                })[:10]
+                lines = stderr.splitlines()
+                if lines:
+                    last = lines[-1].strip()
+                    match = re.fullmatch(
+                        rb"([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Interrupt))"
+                        rb"(?::.*)?",
+                        last,
+                    )
+                    if match is not None and len(match.group(1)) <= 200:
+                        report["plain_exit_exception"] = match.group(1).decode("ascii")
             print(json.dumps(report, sort_keys=True), flush=True)
         return result
 
@@ -139,7 +158,12 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         b'"stage":"profile"}\n'
         + secret.encode()
     )
-    invalid_stderr = b"Error: " + secret.encode() + b"\n"
+    invalid_stderr = (
+        b"ModuleNotFoundError: No module named 'ruamel.yaml'\n"
+        b"ModuleNotFoundError: No module named 'bad/" + secret.encode() + b"'\n"
+        b"ModuleNotFoundError: No module named '" + b"a" * 201 + b"'\n"
+        b"OSError: " + secret.encode() + b" C:\\private\\path\n"
+    )
     current = [subprocess.CompletedProcess([], 73, stderr=valid_stderr)]
     monkeypatch.setattr(
         plugin_config_bytes.subprocess, "run", lambda *args, **kwargs: current[0]
@@ -167,6 +191,8 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
         "deny_envelope_valid": False,
         "plan_child_returncode": 1,
         "plan_child_stderr_bytes": len(invalid_stderr),
+        "plain_exit_exception": "OSError",
+        "plain_exit_missing_modules": ["ruamel.yaml"],
     }
     assert secret not in json.dumps(report)
 
@@ -416,7 +442,8 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
 
 @pytest.mark.parametrize("seed_version,expected_version", [(50, 51), (11, 11)])
 def test_pm_0225_official_startup_migration_matches_private_plan(
-    official_runtime, tmp_path, seed_version, expected_version  # noqa: F811
+    official_runtime, tmp_path, seed_version, expected_version,  # noqa: F811
+    monkeypatch,
 ):
     """Compose the exact boot migration helper with the unmodified writer."""
     _, python, _prefix, site, path_file = official_runtime
