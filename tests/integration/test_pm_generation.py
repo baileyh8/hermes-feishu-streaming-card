@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,7 @@ except ModuleNotFoundError:  # Python 3.9/3.10 test extra supplies tomli.
 import pytest
 
 from hermes_feishu_card import cli
-from hermes_feishu_card.install import pm_dependency as pm
+from hermes_feishu_card.install import plugin_config_bytes, pm_dependency as pm
 
 
 PM_ROOTS = {
@@ -30,6 +31,36 @@ PM_ROOTS = {
     "0225": ("HFC_CONFIG_WRITER_0225_ROOT", "bf0203a794a07aac3ff764972ab9087baa4e4f4e"),
     "main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
+
+
+def _record_child_failure_diagnostic(monkeypatch):
+    """Keep a safe missing-module signal without exposing child stderr."""
+    original = pm.subprocess.run
+
+    def recorded(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", ())
+        result = original(*args, **kwargs)
+        if (
+            isinstance(command, (list, tuple))
+            and len(command) >= 4
+            and list(command[1:3]) == ["-I", "-c"]
+            and command[3] == pm._CHILD
+            and result.returncode
+        ):
+            stderr = result.stderr or ""
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode("utf-8", errors="replace")
+            missing = re.findall(
+                r"(?m)^ModuleNotFoundError: No module named '([^']+)'\r?$", stderr
+            )
+            print(json.dumps({
+                "pm_child_returncode": result.returncode,
+                "missing_modules": sorted(set(missing)),
+                "stderr_bytes": len(stderr.encode("utf-8")),
+            }, sort_keys=True), flush=True)
+        return result
+
+    monkeypatch.setattr(pm.subprocess, "run", recorded)
 
 
 @pytest.mark.parametrize("snapshot", PM_ROOTS)
@@ -68,6 +99,7 @@ def test_exact_wheel_survives_real_pm_generations(tmp_path, monkeypatch, snapsho
     )
     child = pm._CHILD.replace('from hermes_constants import get_hermes_home', injection + 'from hermes_constants import get_hermes_home')
     monkeypatch.setattr(pm, '_CHILD', child)
+    _record_child_failure_diagnostic(monkeypatch)
     monkeypatch.setenv('HERMES_HOME', str(home))
     monkeypatch.setenv('HERMES_RUNTIME_DIR', str(tmp_path / 'tools'))
     receipt = pm.ensure(root, Path(sys.executable), home=home, spec=str(wheel), version=cli.PACKAGE_VERSION)
@@ -261,7 +293,7 @@ def test_pinned_pm_metadata_only_and_installable_member_predicates(
     def candidate():
         result = subprocess.run(
             [sys.executable, "-I", "-c", code], cwd=tmp_path,
-            env={"HOME": str(tmp_path), "HERMES_HOME": str(tmp_path)},
+            env=plugin_config_bytes.isolated_child_env(tmp_path),
             capture_output=True, text=True, check=True, timeout=30,
         )
         return result.stdout.strip() == "true"

@@ -21,7 +21,7 @@ def test_platform_binary_flag_is_zero_on_posix():
         assert portable.BINARY_FLAG == io.BINARY_FLAG == 0
 
 
-def test_byte_reads_and_stages_request_platform_binary_mode(tmp_path, monkeypatch):
+def test_byte_reads_request_platform_binary_mode(tmp_path, monkeypatch):
     target = tmp_path / "target.bin"
     target.write_bytes(b"before\r\n\x1aafter")
     injected = 0x40000000
@@ -40,8 +40,23 @@ def test_byte_reads_and_stages_request_platform_binary_mode(tmp_path, monkeypatc
 
     identity = io.read_path_snapshot(target, ValueError, "read refused")
     assert portable._read_restore_text(target, identity) == "before\r\n\x1aafter"
-    descriptor = portable._open_portable_exclusive_fd(target, create=False)
-    os.close(descriptor)
+    assert sum(bool(flags & injected) for flags in seen) >= 2
+
+
+@pytest.mark.skipif(not io.DIRFD_BINDING_SUPPORTED, reason="POSIX directory-fd staging")
+def test_posix_stage_file_requests_platform_binary_mode(tmp_path, monkeypatch):
+    target = tmp_path / "target.bin"
+    target.write_bytes(b"before\r\n\x1aafter")
+    injected = 0x40000000
+    seen = []
+    real_open = io.os.open
+
+    def opened(path, flags, *args, **kwargs):
+        seen.append(flags)
+        return real_open(path, flags & ~injected, *args, **kwargs)
+
+    monkeypatch.setattr(io, "BINARY_FLAG", injected)
+    monkeypatch.setattr(io.os, "open", opened)
     staged = io.stage_file(
         target,
         b"new\r\n\x1abytes",
@@ -57,7 +72,20 @@ def test_byte_reads_and_stages_request_platform_binary_mode(tmp_path, monkeypatc
         assert staged.path.read_bytes() == b"new\r\n\x1abytes"
     finally:
         staged.cleanup()
-    assert sum(bool(flags & injected) for flags in seen) >= 4
+    assert sum(bool(flags & injected) for flags in seen) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows CreateFile exclusive path")
+def test_native_exclusive_fd_preserves_binary_bytes(tmp_path):
+    target = tmp_path / "native.bin"
+    payload = b"before\r\n\x1a" + bytes(range(256)) * 64
+    target.write_bytes(payload)
+    descriptor = portable._open_portable_exclusive_fd(target, create=False)
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        assert os.read(descriptor, len(payload) + 1) == payload
+    finally:
+        os.close(descriptor)
 
 
 @pytest.mark.parametrize("failure", ["last-mark", "last-close"])
@@ -113,7 +141,7 @@ def test_portable_family_evidence_failure_restores_the_whole_set(tmp_path, monke
             path.unlink()
 
     def open_exclusive(path, *, create):
-        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | portable.BINARY_FLAG
         if create:
             flags |= os.O_CREAT | os.O_EXCL
         return real_open(path, flags, 0o600)

@@ -16,6 +16,19 @@ from hermes_feishu_card.install import decomposed, decomposed_ownership, patcher
 from hermes_feishu_card.install.detect import detect_hermes
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/hermes_decomposed"
+_SECURE_DIRFD_ONLY = pytest.mark.skipif(
+    not recovery._secure_dirfd_transactions_supported(),
+    reason="secure recovery and integrity mutations require POSIX directory handles",
+)
+
+
+def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires privilege (WinError 1314)")
+        raise
 
 
 @pytest.fixture
@@ -359,6 +372,7 @@ def test_each_owned_file_is_required_for_restore(hermes, target):
     assert sources(hermes) == edited
 
 
+@_SECURE_DIRFD_ONLY
 def test_multifile_transaction_rolls_back_on_late_write_failure(hermes, monkeypatch):
     before = sources(hermes)
     replace = recovery._atomic_replace
@@ -387,11 +401,16 @@ def test_owned_missing_hooks_repair_and_no_repair(hermes):
     assert plan.state == "owned_incomplete" and plan.executable
     with pytest.raises(ValueError, match="no-repair"):
         decomposed.install(detection, no_repair=True)
+    if not recovery._secure_dirfd_transactions_supported():
+        with pytest.raises(recovery.RecoveryRefused, match="directory-relative"):
+            recovery.execute_recovery(detection, expected_fingerprint=plan.fingerprint)
+        assert (hermes / target).read_bytes() != installed
+        return
     recovery.execute_recovery(detection, expected_fingerprint=plan.fingerprint)
     assert (hermes / target).read_bytes() == installed
 
 
-def test_manifest_path_escape_and_symlink_refused(hermes, tmp_path):
+def test_manifest_path_escape_refused(hermes):
     detection = detect_hermes(hermes)
     decomposed.install(detection)
     manifest_path = hermes / decomposed.MANIFEST_NAME
@@ -400,9 +419,14 @@ def test_manifest_path_escape_and_symlink_refused(hermes, tmp_path):
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="ownership"):
         decomposed.restore(detection)
+
+
+def test_manifest_symlink_target_not_supported(hermes, tmp_path):
+    detection = detect_hermes(hermes)
+    decomposed.install(detection)
     target = hermes / "gateway/run_busy.py"
     target.unlink()
-    target.symlink_to(tmp_path / "outside")
+    _symlink_or_skip_windows_privilege(target, tmp_path / "outside")
     assert not detect_hermes(hermes).supported
 
 
@@ -616,6 +640,7 @@ def test_byte_exact_reinstall_after_uninstall(hermes, newline):
         assert sources(hermes) == before
 
 
+@_SECURE_DIRFD_ONLY
 def test_upgrade_requires_explicit_acceptance_and_binds_all_evidence(hermes):
     detection = detect_hermes(hermes)
     decomposed.install(detection)
@@ -715,6 +740,7 @@ def _write_legacy_upgrade_evidence(hermes, version=2):
 
 
 @pytest.mark.parametrize("version", [1, 2])
+@_SECURE_DIRFD_ONLY
 def test_legacy_updater_layout_migration_requires_acceptance_and_restores_new_source(hermes, version):
     original = sources(hermes)
     _write_legacy_upgrade_evidence(hermes, version)
@@ -793,12 +819,17 @@ def test_renderer_upgrade_refreshes_manifest_without_losing_originals(hermes):
 
 
 def test_explicit_install_uses_verified_portable_writer_without_dirfd(hermes, monkeypatch):
+    before = sources(hermes)
     monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
     assert decomposed.install(detect_hermes(hermes))
     assert recovery.plan_recovery(detect_hermes(hermes)).state == "installed"
     assert not decomposed.install(detect_hermes(hermes))
-    with pytest.raises(ValueError, match="directory-relative"):
+    if recovery._portable_restore_supported():
         decomposed.restore(detect_hermes(hermes))
+        assert sources(hermes) == before
+    else:
+        with pytest.raises(ValueError, match="directory-relative"):
+            decomposed.restore(detect_hermes(hermes))
 
 
 def test_old_owned_template_is_detectable_and_repairable(hermes):
@@ -841,6 +872,7 @@ def test_no_git_install_has_verified_snapshot_without_upgrade_authority(hermes):
     assert plan.reason == "decomposed_upgrade_requires_explicit_install"
 
 
+@_SECURE_DIRFD_ONLY
 def test_decomposed_migration_all_targets_permits_fence_acknowledgement(hermes):
     from hermes_feishu_card.install.integrity import (
         migrate_integrity_manifest, plan_integrity_repair, integrity_acknowledgement_eligible,
@@ -862,6 +894,7 @@ def test_decomposed_migration_all_targets_permits_fence_acknowledgement(hermes):
 
 
 @pytest.mark.parametrize("kind", ["source", "backup", "missing", "symlink"])
+@_SECURE_DIRFD_ONLY
 def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
     from hermes_feishu_card.install.integrity import migrate_integrity_manifest, IntegrityRepairRefused
     decomposed.install(detect_hermes(hermes))
@@ -872,7 +905,7 @@ def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
         target.unlink()
     elif kind == "symlink":
         target.unlink()
-        target.symlink_to(hermes / "gateway/run.py")
+        _symlink_or_skip_windows_privilege(target, hermes / "gateway/run.py")
     else:
         target.write_bytes(target.read_bytes() + b"\n# user edit\n")
     manifest = (hermes / decomposed.MANIFEST_NAME).read_bytes()
@@ -881,6 +914,7 @@ def test_decomposed_migration_refuses_sibling_drift(hermes, kind):
     assert (hermes / decomposed.MANIFEST_NAME).read_bytes() == manifest
 
 
+@_SECURE_DIRFD_ONLY
 def test_decomposed_migration_rechecks_sibling_before_manifest_commit(hermes, monkeypatch):
     from hermes_feishu_card.install import integrity
     decomposed.install(detect_hermes(hermes))

@@ -1,6 +1,7 @@
 """Byte ownership at the official-enable boundary; config semantics are not receipts."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -184,10 +185,11 @@ def test_private_shadow_modes_cleanup_and_stderr_redaction(tmp_path, monkeypatch
 
     def failed_child(argv, **kwargs):
         shadow = Path(argv[-1])
-        assert stat.S_IMODE(shadow.stat().st_mode) == 0o700
-        assert stat.S_IMODE(shadow.parent.stat().st_mode) == 0o700
-        assert stat.S_IMODE((shadow / "config.yaml").stat().st_mode) == 0o600
-        assert stat.S_IMODE((shadow / "request.json").stat().st_mode) == 0o600
+        if os.name != "nt":
+            assert stat.S_IMODE(shadow.stat().st_mode) == 0o700
+            assert stat.S_IMODE(shadow.parent.stat().st_mode) == 0o700
+            assert stat.S_IMODE((shadow / "config.yaml").stat().st_mode) == 0o600
+            assert stat.S_IMODE((shadow / "request.json").stat().st_mode) == 0o600
         request = json.loads((shadow / "request.json").read_text())
         assert request["family"] in planner.FAMILIES
         assert request["sources"] == planner.FAMILIES[request["family"]]
@@ -352,7 +354,7 @@ scope['_discover_providers']()
     )
     result = subprocess.run(
         [sys.executable, "-I", "-c", probe, str(tmp_path), str(shadow)],
-        env={"HOME": str(shadow), "HERMES_HOME": str(shadow)},
+        env=planner.isolated_child_env(shadow),
         capture_output=True,
         timeout=10,
     )
