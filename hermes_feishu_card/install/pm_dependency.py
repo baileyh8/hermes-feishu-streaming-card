@@ -6,6 +6,7 @@ It has no plugin manifest or register function and cannot be a second producer.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
@@ -16,7 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Iterator
 import zipfile
 from email.parser import BytesParser
 
@@ -28,6 +29,28 @@ OWNER = ".hfc-owner.json"
 
 class PMDependencySourceUnverified(ValueError):
     """A schema-1 flat member declaration exists but its source is unproven."""
+
+
+@contextmanager
+def _legacy_parent_guard(selected_home: Path, member: Path,
+                         old: dict[str, Any] | None) -> Iterator[None]:
+    """Tighten a proven PR458 parent and restore its prior mode on failure."""
+    if (old is None or old.get('schema') != 1
+            or _pr458_flat_wheel(member, old) is None):
+        yield
+        return
+    snapshot = pm_wheel_store.tighten_legacy_parent(selected_home)
+    try:
+        yield
+    except BaseException:
+        try:
+            if _owned(member) == old:
+                pm_wheel_store.restore_legacy_parent(selected_home, snapshot)
+        except (OSError, ValueError):
+            # Keep the safer 0700 state if the prior mode cannot be restored
+            # without crossing an unknown or swapped directory.
+            pass
+        raise
 
 # Read only in probe mode; mutation goes through upstream's public admission.
 _CHILD = '''
@@ -455,34 +478,35 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         # Stage a second wheel copy in this hermes home's install state (never
         # part of a workspace member), and point the source at that absolute
         # path so the requirement stays an ordinary index-style pin.
-        external_wheel = pm_wheel_store.publish(selected_home, wheel_name, (staging / 'runtime.whl').read_bytes())
-        project = _project_source(version, external_wheel)
-        # Ownership uses a fixed logical wheel key; actual filename is recorded below.
-        (staging / 'pyproject.toml').write_text(project)
-        (staging / 'runtime.whl').rename(staging / wheel_name)
-        owner = {"schema": 2, "external_wheel": external_wheel, "version": version, "spec_sha256": spec_digest,
-                 "selection_added": old['selection_added'] if old else added,
-                 "files": {name: sha256((staging / name).read_bytes()).hexdigest()
-                           for name in ('pyproject.toml', wheel_name)}}
-        (staging / OWNER).write_text(json.dumps(owner))
-        backup = _publish_member(member, staging, old, parent_identity, old_identity)
-        registration = Registration(root, python, selected_home, member, backup, added, old is None)
-        try:
-            _call(root, python, selected_home, {"operation": "add", "name": NAME,
-                                               "expected": probe['expected']})
-        except ValueError:
-            # Re-read through the official reader. Only an unchanged selection
-            # proves a refused admission; unknown outcomes retain their source.
-            current = _call(root, python, selected_home, {"operation": "probe"})
-            if (current["expected"] == probe["expected"]
-                    and current.get("generation") == probe.get("generation")):
-                _owned(member)
-                shutil.rmtree(member)
-                if backup is not None:
-                    backup.rename(member)
-                raise ValueError("PM admission refused; previous dependency source preserved") from None
-            raise ValueError("PM admission outcome uncertain; owned dependency source retained for diagnosis") from None
-        return registration
+        with _legacy_parent_guard(selected_home, member, old):
+            external_wheel = pm_wheel_store.publish(selected_home, wheel_name, (staging / 'runtime.whl').read_bytes())
+            project = _project_source(version, external_wheel)
+            # Ownership uses a fixed logical wheel key; actual filename is recorded below.
+            (staging / 'pyproject.toml').write_text(project)
+            (staging / 'runtime.whl').rename(staging / wheel_name)
+            owner = {"schema": 2, "external_wheel": external_wheel, "version": version, "spec_sha256": spec_digest,
+                     "selection_added": old['selection_added'] if old else added,
+                     "files": {name: sha256((staging / name).read_bytes()).hexdigest()
+                               for name in ('pyproject.toml', wheel_name)}}
+            (staging / OWNER).write_text(json.dumps(owner))
+            backup = _publish_member(member, staging, old, parent_identity, old_identity)
+            registration = Registration(root, python, selected_home, member, backup, added, old is None)
+            try:
+                _call(root, python, selected_home, {"operation": "add", "name": NAME,
+                                                   "expected": probe['expected']})
+            except ValueError:
+                # Re-read through the official reader. Only an unchanged selection
+                # proves a refused admission; unknown outcomes retain their source.
+                current = _call(root, python, selected_home, {"operation": "probe"})
+                if (current["expected"] == probe["expected"]
+                        and current.get("generation") == probe.get("generation")):
+                    _owned(member)
+                    shutil.rmtree(member)
+                    if backup is not None:
+                        backup.rename(member)
+                    raise ValueError("PM admission refused; previous dependency source preserved") from None
+                raise ValueError("PM admission outcome uncertain; owned dependency source retained for diagnosis") from None
+            return registration
     finally:
         if sys.exc_info()[0] is not PMDependencyRollbackFailed:
             try:

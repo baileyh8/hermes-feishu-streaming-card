@@ -2,6 +2,7 @@
 from hashlib import sha256
 import json
 import os
+import stat
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.9/3.10
@@ -887,6 +888,23 @@ def test_schema2_store_parent_0755_without_flat_wheel_refuses(pm_env):
         )
 
 
+def test_schema2_parent_0755_with_unrelated_wheel_still_refuses(pm_env):
+    from hermes_feishu_card.install import pm_wheel_store
+    state = pm_env.home / '.hermes_feishu_card'
+    state.mkdir(mode=0o700)
+    store = state / 'wheel-store'
+    store.mkdir()
+    store.chmod(0o755)
+    (store / 'unrelated.whl').write_bytes(b'not owned PR458 evidence')
+
+    with pytest.raises(ValueError):
+        pm_wheel_store.publish(
+            pm_env.home,
+            f'hermes_feishu_streaming_card-{VERSION}-py3-none-any.whl',
+            b'payload',
+        )
+
+
 def test_pr458_schema1_member_upgrades_without_deleting_flat_store(pm_env):
     old_wheel = _schema1_wheel()
     member, owner, store_wheel = _schema1_member(
@@ -900,9 +918,162 @@ def test_pr458_schema1_member_upgrades_without_deleting_flat_store(pm_env):
     )
 
     assert receipt is not None
-    assert pm._owned(receipt.member)['schema'] == 2
+    upgraded = pm._owned(receipt.member)
+    assert upgraded['schema'] == 2
+    store = pm_env.home / '.hermes_feishu_card' / 'wheel-store'
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o700
+    assert pm.pm_wheel_store.validate(pm_env.home, upgraded['external_wheel'])
     assert store_wheel.is_file()
     assert store_wheel.read_bytes() == old_wheel
+    receipt.finish()
+    assert pm._owned(receipt.member) == upgraded
+    assert pm.pm_wheel_store.validate(pm_env.home, upgraded['external_wheel'])
+    assert pm.ensure(
+        pm_env.root, Path('/fixture/python'), home=pm_env.home,
+        spec=None, version=VERSION,
+    ) is None
+    assert pm._owned(receipt.member) == upgraded
+
+
+def test_schema1_flat_upgrade_tighten_failure_preserves_old_member(pm_env, monkeypatch):
+    old_wheel = _schema1_wheel()
+    member, owner, _store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    before = {path.name: path.read_bytes() for path in member.iterdir()}
+    monkeypatch.setattr(
+        pm.pm_wheel_store,
+        'tighten_legacy_parent',
+        lambda *_: (_ for _ in ()).throw(ValueError('tighten refused')),
+    )
+
+    with pytest.raises(ValueError, match='tighten refused'):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert pm._owned(member) == owner
+    assert {path.name: path.read_bytes() for path in member.iterdir()} == before
+    assert not list((pm_env.home / 'plugins').glob('.hfc-runtime-*'))
+    assert pm_env.state['enabled'] == ['other']
+
+
+def test_schema1_flat_upgrade_publish_failure_restores_parent_mode(pm_env, monkeypatch):
+    old_wheel = _schema1_wheel()
+    member, owner, _store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    store = pm_env.home / '.hermes_feishu_card' / 'wheel-store'
+    before = {path.name: path.read_bytes() for path in member.iterdir()}
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+    monkeypatch.setattr(
+        pm.pm_wheel_store,
+        'publish',
+        lambda *_: (_ for _ in ()).throw(ValueError('publish refused')),
+    )
+
+    with pytest.raises(ValueError, match='publish refused'):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+    assert pm._owned(member) == owner
+    assert {path.name: path.read_bytes() for path in member.iterdir()} == before
+    assert not list((pm_env.home / 'plugins').glob('.hfc-runtime-*'))
+
+
+def test_schema1_flat_upgrade_refused_admission_restores_parent_mode(pm_env, monkeypatch):
+    old_wheel = _schema1_wheel()
+    member, owner, _store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    store = pm_env.home / '.hermes_feishu_card' / 'wheel-store'
+    original_call = pm_env.call
+
+    def refuse(root, python, home, request):
+        if request['operation'] == 'add':
+            raise ValueError('resolver conflict')
+        return original_call(root, python, home, request)
+
+    monkeypatch.setattr(pm, '_call', refuse)
+    with pytest.raises(ValueError, match='previous dependency source preserved'):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+    assert pm._owned(member) == owner
+    assert not list((pm_env.home / 'plugins').glob('.hfc-runtime-*'))
+
+
+def test_schema1_flat_upgrade_unknown_admission_keeps_tightened_parent(pm_env, monkeypatch):
+    old_wheel = _schema1_wheel()
+    member, _owner, _store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    store = pm_env.home / '.hermes_feishu_card' / 'wheel-store'
+    original_call = pm_env.call
+
+    def uncertain(root, python, home, request):
+        response = original_call(root, python, home, request)
+        if request['operation'] == 'add':
+            raise ValueError('transport lost after commit')
+        return response
+
+    monkeypatch.setattr(pm, '_call', uncertain)
+    with pytest.raises(ValueError, match='outcome uncertain'):
+        pm.ensure(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            spec='/fixture/new.whl', version=VERSION,
+        )
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o700
+    assert pm._owned(member)['schema'] == 2
+
+
+def test_legacy_parent_guard_does_not_tighten_non_flat_schema1(pm_env):
+    old_wheel = _schema1_wheel()
+    member, owner, store_wheel = _schema1_member(
+        pm_env.home, SCHEMA1_VERSION, old_wheel
+    )
+    workspace_wheel = pm_env.home / 'workspace.whl'
+    workspace_wheel.write_bytes(old_wheel)
+    project = (member / 'pyproject.toml').read_text().replace(
+        store_wheel.as_posix(), workspace_wheel.as_posix()
+    )
+    (member / 'pyproject.toml').write_text(project)
+    owner['files']['pyproject.toml'] = sha256(project.encode()).hexdigest()
+    (member / pm.OWNER).write_text(json.dumps(owner))
+    store = pm_env.home / '.hermes_feishu_card' / 'wheel-store'
+
+    assert pm._owned(member) == owner
+    with pm._legacy_parent_guard(pm_env.home, member, owner):
+        pass
+
+    assert stat.S_IMODE(store.lstat().st_mode) == 0o755
+
+
+@pytest.mark.parametrize('damage', ['symlink', 'world_writable'])
+def test_tighten_legacy_parent_refuses_unsafe_store(tmp_path, damage):
+    home = tmp_path / 'home'
+    home.mkdir()
+    state = home / '.hermes_feishu_card'
+    state.mkdir(mode=0o700)
+    store = state / 'wheel-store'
+    if damage == 'symlink':
+        outside = tmp_path / 'outside-store'
+        outside.mkdir()
+        _symlink_or_skip_windows_privilege(store, outside, directory=True)
+    else:
+        store.mkdir()
+        store.chmod(0o777)
+
+    with pytest.raises(ValueError):
+        pm.pm_wheel_store.tighten_legacy_parent(home)
 
 
 def test_schema2_registration_with_non_ascii_home_keeps_serialized_declaration(pm_env):

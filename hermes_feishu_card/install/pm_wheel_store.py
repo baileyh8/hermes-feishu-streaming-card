@@ -32,20 +32,6 @@ def is_reparse(metadata: os.stat_result) -> bool:
                 & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400))
 
 
-def _has_flat_legacy_wheel(path: Path) -> bool:
-    """True only when the shared store still contains a PR458 flat wheel."""
-    try:
-        for entry in path.iterdir():
-            if not entry.name.endswith('.whl'):
-                continue
-            metadata = entry.lstat()
-            if stat.S_ISREG(metadata.st_mode) and not is_reparse(metadata):
-                return True
-    except OSError:
-        return False
-    return False
-
-
 @contextmanager
 def _directory(path: Path, home: Path, *, create: bool, legacy: bool = False) -> Iterator[int | None]:
     identities: dict[Path, tuple[int, int]] = {}
@@ -71,14 +57,10 @@ def _directory(path: Path, home: Path, *, create: bool, legacy: bool = False) ->
             if managed and _POSIX_PERMISSIONS:
                 mode = stat.S_IMODE(metadata.st_mode)
                 # PR458 created the flat wheel-store with mkdir() and a normal
-                # umask, so 0755 is part of that exact historical layout. The
-                # relaxation is limited to a shared parent that still contains
-                # a flat legacy wheel; a fresh schema-2 store, or one without
-                # that evidence, must stay 0700. Digest subdirectories are 0700.
-                allow_group_other_read = (
-                    current.name == 'wheel-store'
-                    and (legacy or _has_flat_legacy_wheel(current))
-                )
+                # umask, so 0755 is part of that exact historical layout. Only
+                # the exact legacy validator may open that mode; schema-2
+                # publication and validation require the parent at 0700.
+                allow_group_other_read = legacy and current.name == 'wheel-store'
                 refused = mode & (0o022 if allow_group_other_read else 0o077)
                 if refused:
                     raise ValueError(
@@ -178,6 +160,94 @@ def validate_legacy(home: Path, filename: str, digest: str) -> Path:
         if sha256(_read(path, parent_fd, legacy=True)).hexdigest() != digest:
             raise ValueError(_LEGACY_REFUSAL)
     return path
+
+
+def tighten_legacy_parent(home: Path) -> tuple[int, int, int]:
+    """Tighten a proven PR458 flat store to 0700 before schema-2 publication.
+
+    Callers must first prove the exact schema-1 member/owner/declaration and
+    matching flat wheel digest. This function only revalidates the directory
+    identity, owner and no-reparse boundary, then removes group/other read and
+    execute bits. It never creates the store and never follows links.
+    """
+    path = home / '.hermes_feishu_card' / 'wheel-store'
+    with _directory(path, home, create=False, legacy=True) as parent_fd:
+        if parent_fd is not None:
+            before = os.fstat(parent_fd)
+            previous_mode = stat.S_IMODE(before.st_mode)
+            if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and before.st_uid != os.getuid():
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and previous_mode & 0o022:
+                raise ValueError(_LEGACY_REFUSAL)
+            try:
+                if _POSIX_PERMISSIONS and previous_mode != 0o700:
+                    os.fchmod(parent_fd, 0o700)
+                after = os.fstat(parent_fd)
+                if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+                    raise ValueError(_LEGACY_REFUSAL)
+                if _POSIX_PERMISSIONS and stat.S_IMODE(after.st_mode) != 0o700:
+                    raise ValueError(_LEGACY_REFUSAL)
+            except BaseException:
+                if _POSIX_PERMISSIONS and previous_mode != 0o700:
+                    try:
+                        os.fchmod(parent_fd, previous_mode)
+                    except OSError:
+                        pass
+                raise
+            return before.st_dev, before.st_ino, previous_mode
+        before = path.lstat()
+        previous_mode = stat.S_IMODE(before.st_mode)
+        if not stat.S_ISDIR(before.st_mode) or is_reparse(before):
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and before.st_uid != os.getuid():
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and previous_mode & 0o022:
+            raise ValueError(_LEGACY_REFUSAL)
+        try:
+            if _POSIX_PERMISSIONS and previous_mode != 0o700:
+                path.chmod(0o700)
+            after = path.lstat()
+            if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and stat.S_IMODE(after.st_mode) != 0o700:
+                raise ValueError(_LEGACY_REFUSAL)
+        except BaseException:
+            if _POSIX_PERMISSIONS and previous_mode != 0o700:
+                try:
+                    path.chmod(previous_mode)
+                except OSError:
+                    pass
+            raise
+        return before.st_dev, before.st_ino, previous_mode
+
+
+def restore_legacy_parent(home: Path, snapshot: tuple[int, int, int]) -> None:
+    """Best-effort restore of the proven parent mode on a failed migration."""
+    path = home / '.hermes_feishu_card' / 'wheel-store'
+    with _directory(path, home, create=False, legacy=True) as parent_fd:
+        if parent_fd is not None:
+            before = os.fstat(parent_fd)
+            if (before.st_dev, before.st_ino) != snapshot[:2]:
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and before.st_uid != os.getuid():
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and stat.S_IMODE(before.st_mode) != snapshot[2]:
+                os.fchmod(parent_fd, snapshot[2])
+            after = os.fstat(parent_fd)
+        else:
+            before = path.lstat()
+            if ((before.st_dev, before.st_ino) != snapshot[:2]
+                    or not stat.S_ISDIR(before.st_mode) or is_reparse(before)):
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and hasattr(os, 'getuid') and before.st_uid != os.getuid():
+                raise ValueError(_LEGACY_REFUSAL)
+            if _POSIX_PERMISSIONS and stat.S_IMODE(before.st_mode) != snapshot[2]:
+                path.chmod(snapshot[2])
+            after = path.lstat()
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError(_LEGACY_REFUSAL)
+        if _POSIX_PERMISSIONS and stat.S_IMODE(after.st_mode) != snapshot[2]:
+            raise ValueError(_LEGACY_REFUSAL)
 
 
 def publish(home: Path, filename: str, payload: bytes) -> dict[str, str]:
