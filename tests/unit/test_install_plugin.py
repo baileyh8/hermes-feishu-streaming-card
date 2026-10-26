@@ -14,6 +14,15 @@ import yaml
 from hermes_feishu_card.install import plugin, plugin_config_bytes
 
 
+def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation requires privilege (WinError 1314)")
+        raise
+
+
 def _exact_plan(postimage: bytes):
     return SimpleNamespace(
         postimage=postimage,
@@ -108,10 +117,7 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
     real_home.mkdir()
     (real_home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
     linked_home = tmp_path / "linked-home"
-    try:
-        linked_home.symlink_to(real_home, target_is_directory=True)
-    except OSError as exc:
-        pytest.skip(f"symlink creation unavailable: {exc.__class__.__name__}")
+    _symlink_or_skip_windows_privilege(linked_home, real_home, directory=True)
 
     with pytest.raises(plugin.RuntimeBindingRefused, match="Hermes home"):
         plugin.resolve_runtime_binding(
@@ -119,10 +125,9 @@ def test_runtime_binding_rejects_symlinked_home_or_config(tmp_path, monkeypatch)
         )
 
     (home / "config.yaml").unlink()
-    try:
-        (home / "config.yaml").symlink_to(real_home / "config.yaml")
-    except OSError as exc:
-        pytest.skip(f"symlink creation unavailable: {exc.__class__.__name__}")
+    _symlink_or_skip_windows_privilege(
+        home / "config.yaml", real_home / "config.yaml"
+    )
     with pytest.raises(plugin.RuntimeBindingRefused, match="config"):
         plugin.resolve_runtime_binding(
             checkout_root=checkout, hermes_home=home, profile_id=None
