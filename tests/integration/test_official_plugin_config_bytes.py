@@ -67,6 +67,129 @@ def _run_with_failure_diagnostic(run, *args, **kwargs):
     return result
 
 
+def _record_plan_child_failure_diagnostic(monkeypatch):
+    """Record only bounded planner-child failure facts; return the real result."""
+    original = plugin_config_bytes.subprocess.run
+
+    def recorded(*args, **kwargs):
+        command = args[0] if args else kwargs.get("args", ())
+        result = original(*args, **kwargs)
+        if (
+            isinstance(command, (list, tuple))
+            and len(command) >= 4
+            and list(command[1:3]) == ["-I", "-c"]
+            and command[3] == plugin_config_bytes._CHILD
+            and result.returncode
+        ):
+            stderr = result.stderr or b""
+            if isinstance(stderr, str):
+                stderr = stderr.encode("utf-8", errors="replace")
+            refusal = plugin_config_bytes._child_refusal(
+                stderr, result.returncode
+            )
+            fallback = (
+                result.returncode == 73
+                and refusal.code == "audit-refused"
+                and refusal.stage == "audit"
+            ) or (
+                result.returncode != 73
+                and refusal.code == "child-exit"
+                and refusal.stage == "child"
+            )
+            report = {
+                "plan_child_returncode": result.returncode,
+                "plan_child_stderr_bytes": len(stderr),
+                "deny_envelope_valid": not fallback,
+            }
+            if not fallback:
+                report.update({
+                    "deny_reason": refusal.code,
+                    "deny_stage": refusal.stage,
+                })
+                if refusal.source is not None:
+                    report["deny_source"] = refusal.source
+            print(json.dumps(report, sort_keys=True), flush=True)
+        return result
+
+    monkeypatch.setattr(plugin_config_bytes.subprocess, "run", recorded)
+
+
+def _plan_with_failure_diagnostic(plan, **kwargs):
+    """Preserve the original refusal while exposing only sanitized fields."""
+    try:
+        return plan(**kwargs)
+    except plugin_config_bytes.ConfigBytesRefused as exc:
+        report = {
+            "plan_failure_code": exc.code,
+            "plan_failure_stage": exc.stage,
+        }
+        if exc.source is not None:
+            report["plan_failure_source"] = exc.source
+        print(json.dumps(report, sort_keys=True), flush=True)
+        raise
+
+
+def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
+    tmp_path, monkeypatch, capsys
+):
+    secret = "PRIVATE-CANARY"
+    valid_stderr = (
+        b"HFC_CONFIG_PLAN_DENY "
+        b'{"reason":"plugin-load","source":"hermes_cli/example.py",'
+        b'"stage":"profile"}\n'
+        + secret.encode()
+    )
+    invalid_stderr = b"Error: " + secret.encode() + b"\n"
+    current = [subprocess.CompletedProcess([], 73, stderr=valid_stderr)]
+    monkeypatch.setattr(
+        plugin_config_bytes.subprocess, "run", lambda *args, **kwargs: current[0]
+    )
+    _record_plan_child_failure_diagnostic(monkeypatch)
+    command = [sys.executable, "-I", "-c", plugin_config_bytes._CHILD, str(tmp_path)]
+
+    returned = plugin_config_bytes.subprocess.run(command)
+    assert returned is current[0]
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "deny_envelope_valid": True,
+        "deny_reason": "plugin-load",
+        "deny_source": "hermes_cli/example.py",
+        "deny_stage": "profile",
+        "plan_child_returncode": 73,
+        "plan_child_stderr_bytes": len(valid_stderr),
+    }
+
+    current[0] = subprocess.CompletedProcess([], 1, stderr=invalid_stderr)
+    returned = plugin_config_bytes.subprocess.run(command)
+    assert returned is current[0]
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "deny_envelope_valid": False,
+        "plan_child_returncode": 1,
+        "plan_child_stderr_bytes": len(invalid_stderr),
+    }
+    assert secret not in json.dumps(report)
+
+    refusal = plugin_config_bytes.ConfigBytesRefused(
+        "official config byte plan failed",
+        code="plugin-load",
+        stage="profile",
+        source="hermes_cli/example.py",
+    )
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused) as caught:
+        _plan_with_failure_diagnostic(
+            lambda **_kwargs: (_ for _ in ()).throw(refusal)
+        )
+    assert caught.value is refusal
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "plan_failure_code": "plugin-load",
+        "plan_failure_source": "hermes_cli/example.py",
+        "plan_failure_stage": "profile",
+    }
+    assert secret not in json.dumps(report)
+
+
 @pytest.fixture
 def official_enable_diagnostics(monkeypatch):
     original = subprocess.run
@@ -344,7 +467,9 @@ def test_pm_0225_official_startup_migration_matches_private_plan(
     desired, enabled_before = plugin._expected_enabled_config(
         plugin._load_config_mapping(original)
     )
-    plan = plugin_config_bytes.plan_enabled_bytes(
+    _record_plan_child_failure_diagnostic(monkeypatch)
+    plan = _plan_with_failure_diagnostic(
+        plugin_config_bytes.plan_enabled_bytes,
         root=root,
         python=python,
         home=home,
