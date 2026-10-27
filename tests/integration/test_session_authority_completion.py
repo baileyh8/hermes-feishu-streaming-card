@@ -1360,15 +1360,16 @@ async def test_applied_terminal_ack_only_suppresses_its_original_native_send(
 
 
 @pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
-@pytest.mark.parametrize("change", ["stage", "stage-replaced", "payload", "event", "generation", "adapter"])
+@pytest.mark.parametrize("change", ["stage", "payload", "event", "generation", "adapter"])
 async def test_applied_ack_cannot_claim_replaced_request_or_identity(harness, monkeypatch, change):
+    calls = []
+
     async def post(url, payload, timeout):
+        calls.append("entered")
         stage = h._HFC_EXACT_COMPLETION_STAGE.get()
         assert stage is not None
         if change == "stage":
             stage["payload"]["data"]["answer"] = "changed"
-        elif change == "stage-replaced":
-            h._HFC_EXACT_COMPLETION_STAGE.set(dict(stage))
         elif change == "payload":
             payload["data"]["answer"] = "changed"
         elif change == "event":
@@ -1377,11 +1378,63 @@ async def test_applied_ack_cannot_claim_replaced_request_or_identity(harness, mo
             stage["_admission_claim"].runtime_generation += 1
         else:
             harness.adapter._app_id = "other"
+        calls.append("applied")
         return {"ok": True, "applied": True}
 
     monkeypatch.setattr(h, "_post_json_response", post)
     await deliver(harness)
 
+    assert calls == ["entered", "applied"]
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_http_child_context_replacement_does_not_change_parent_stage(harness, monkeypatch):
+    calls = []
+
+    async def post(url, payload, timeout):
+        calls.append("entered")
+
+        async def child():
+            calls.append("child-entered")
+            stage = h._HFC_EXACT_COMPLETION_STAGE.get()
+            assert stage is not None
+            h._HFC_EXACT_COMPLETION_STAGE.set(dict(stage))
+            harness.posts.append(payload)
+            calls.append("applied")
+            return {"ok": True, "applied": True}
+
+        return await asyncio.create_task(child())
+
+    monkeypatch.setattr(h, "_post_json_response", post)
+    await deliver(harness)
+
+    assert calls == ["entered", "child-entered", "applied"]
+    assert [post["event"] for post in harness.posts] == ["message.completed"]
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_parent_context_stage_replacement_cannot_consume_old_ack(harness, monkeypatch):
+    original = h._post_admission_terminal
+    calls = []
+
+    async def replace_parent_stage(*args):
+        calls.append("entered")
+        result, attempt = await original(*args)
+        stage = h._HFC_EXACT_COMPLETION_STAGE.get()
+        assert stage is args[0]
+        assert result == {"ok": True, "applied": True}
+        assert attempt is not None
+        h._HFC_EXACT_COMPLETION_STAGE.set(dict(stage))
+        calls.append("replaced")
+        return result, attempt
+
+    monkeypatch.setattr(h, "_post_admission_terminal", replace_parent_stage)
+    await deliver(harness)
+
+    assert calls == ["entered", "replaced"]
+    assert [post["event"] for post in harness.posts] == ["message.completed"]
     assert harness.native == ["complete answer"]
 
 
