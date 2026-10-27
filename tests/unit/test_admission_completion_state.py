@@ -1,6 +1,7 @@
 """Display carrier boundary tests; the DB/topology adapters here are explicit ports."""
 
 import asyncio
+import gc
 from types import ModuleType, SimpleNamespace
 import weakref
 
@@ -236,6 +237,68 @@ async def test_applied_attempt_is_single_use_and_cannot_authorize_a_new_send(sta
     assert attempt.consume({"ok": True, "applied": True})
     assert not attempt.consume({"ok": True, "applied": True})
     assert ac.begin_applied_attempt(stage, payload, values, state.adapter) is None
+
+
+async def test_applied_ack_survives_original_producer_and_event_collection(state, monkeypatch):
+    # The old producer and source event can finish before a different task
+    # receives the terminal POST's response. They are not the target event.
+    producer = asyncio.create_task(asyncio.sleep(0))
+    await producer
+    original_event = Box()
+    producer_ref, original_ref = weakref.ref(producer), weakref.ref(original_event)
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()), "payload": {"data": {}},
+        "base_context": {}, "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    attempt = ac.begin_applied_attempt(stage, payload, values, state.adapter)
+    assert attempt is not None
+    del producer, original_event
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert producer_ref() is not None
+    assert original_ref() is not None
+    assert attempt.consume({"ok": True, "applied": True})
+    assert not attempt.consume({"ok": True, "applied": True})
+    gc.collect()
+    assert producer_ref() is None
+    assert original_ref() is None
+
+
+@pytest.mark.parametrize("changed", ["producer", "source_event", "revoked"])
+async def test_applied_ack_rejects_replaced_or_revoked_identity(state, monkeypatch, changed):
+    producer, original_event, replacement = Box(), Box(), Box()
+    producer_ref, original_ref = weakref.ref(producer), weakref.ref(original_event)
+    state.offer.producer = producer_ref
+    state.offer.source_event = original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()), "payload": {"data": {}},
+        "base_context": {}, "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    attempt = ac.begin_applied_attempt(stage, payload, values, state.adapter)
+    assert attempt is not None
+    del producer, original_event
+    if changed == "revoked":
+        attempt.revoke()
+    else:
+        setattr(state.offer, changed, weakref.ref(replacement))
+    assert not attempt.consume({"ok": True, "applied": True})
+    gc.collect()
+    assert producer_ref() is None
+    assert original_ref() is None
 
 
 async def test_terminal_queue_rechecks_current_after_bounded_send_lock(state, monkeypatch):

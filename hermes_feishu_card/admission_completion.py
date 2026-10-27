@@ -1053,17 +1053,24 @@ def _attempt_fingerprint(stage: dict[str, Any], payload: dict[str, Any], values:
                              ensure_ascii=True, allow_nan=False).encode()).hexdigest()
 
 
-def _offer_binding(offer: Completion) -> tuple[Any, ...]:
+def _offer_referents(offer: Completion) -> tuple[Any, ...]:
+    return (
+        offer.runner(), offer.adapter(), offer.producer(), offer.source_event(), offer.target(),
+        offer.authority() if offer.authority is not None else None,
+        offer.live() if offer.live is not None else None,
+        offer.db() if offer.db is not None else None,
+    )
+
+
+def _offer_binding(offer: Completion, referents: tuple[Any, ...] | None = None) -> tuple[Any, ...]:
+    if referents is None:
+        referents = _offer_referents(offer)
     return (
         offer.route, offer.authority_owner, offer.runtime_generation, offer.session_key,
         offer.physical_session, offer.native_response, offer.expires, offer.admission_id,
         offer.epoch, offer.app_id, offer.instance_id, offer.authority_profile,
         offer.profile_source, offer.turn_outcome,
-        id(offer.runner()), id(offer.adapter()), id(offer.producer()),
-        id(offer.source_event()), id(offer.target()),
-        id(offer.authority() if offer.authority is not None else None),
-        id(offer.live() if offer.live is not None else None),
-        id(offer.db() if offer.db is not None else None),
+        *(id(value) for value in referents),
     )
 
 
@@ -1080,10 +1087,12 @@ class AppliedAttempt:
     task: Any
     binding: tuple[Any, ...]
     fingerprint: str
+    referents: tuple[Any, ...]
     spent: bool = False
 
     def revoke(self) -> None:
         self.spent = True
+        self.referents = ()
         if self.offer.state == "consumed":
             self.offer.abort()
 
@@ -1113,6 +1122,8 @@ class AppliedAttempt:
             return True
         except Exception:
             return False
+        finally:
+            self.referents = ()
 
 
 def begin_applied_attempt(stage: dict[str, Any], payload: dict[str, Any],
@@ -1131,8 +1142,12 @@ def begin_applied_attempt(stage: dict[str, Any], payload: dict[str, Any],
             or not valid_consumed(stage)
         ):
             return None
+        # Preserve weakly borrowed objects only for this one bounded request.
+        # A legitimate producer may otherwise be collected while its ACK is in flight.
+        referents = _offer_referents(offer)
         return AppliedAttempt(stage, payload, values, offer, event, adapter, task,
-                              _offer_binding(offer), _attempt_fingerprint(stage, payload, values))
+                              _offer_binding(offer, referents),
+                              _attempt_fingerprint(stage, payload, values), referents)
     except Exception:
         return None
 
