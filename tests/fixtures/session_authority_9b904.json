@@ -1,0 +1,32 @@
+{
+  "commit": "9b904dcc22c23fe8b82834339bbdd96495072e59",
+  "archive_sha256": "2f515157e6d97ecff37edb48ef0c304cf44633f5145c772e1b00341b78df6ae4",
+  "files": {
+    "cron/scheduler.py": "c1c318d9e3642266d549352b5865706bab4bc17d9c24847f2be25e75cbb2b129",
+    "cron/scheduler_delivery.py": "00ef74f57cddb3d3efd273fc1708be80d525941f2d6ec1b5ef3d57480c7fd9c7",
+    "gateway/platforms/base.py": "04b35ae43a5b1abb6fb20a68c54b39a660d270ff6ccc16b74a001346c1446dab",
+    "gateway/run.py": "ad39e6c077ef838bace0f711508accdb7d8c26b3c08546e1d1668bd7fa36e86e",
+    "gateway/run_busy.py": "57d2ab617c90d70f01c296128d7b8b1e22948f1f7bdab392ae956eb045be2695",
+    "gateway/run_inbound.py": "e1148cc822a69802c60c07c03afea08a3661975e6d16d57798673e1e87937d60",
+    "gateway/run_notifications.py": "490a6f854845df9e5a8e93d98e2bcc3dd03b7f3b8834e4a4d1f8ef65c66e51b8",
+    "gateway/run_startup.py": "e81a9d0b471c07be810038497fa27a58bda2a9bafdeb59b95d42a6e8cbaeab27",
+    "gateway/run_turn.py": "168e24d57186c401cbf2210444fd818b52d7d927520390b56e625a801a342c29",
+    "gateway/run_turn_hygiene.py": "de22242a30fd948693b0b09170e25530f7bc3cbd70ef4ded1621a860e3aa01ed",
+    "gateway/run_turn_persistence.py": "5d660788e83c11b72cd33dce99b87d46a1209bbb0b04cf69341bf5c87c5ea45e",
+    "gateway/run_turn_prepare.py": "a25a4ea24ff44ea77cd7331421b046b252c157ca4c67df9293bb075b41edea9f",
+    "gateway/run_turn_runner.py": "23fee696d5090fbef9d1841c4eccaea9cb93b4204cc9dcf4c2a49ac198a50aaf",
+    "gateway/session.py": "2e0f161b4ef5a810df7e39026a11b671e6ad0a2edbfbf990fd4374d0905d349a",
+    "gateway/session_authority.py": "c8bd11dbdda29b04a8ebf54e6471be197602615c9549e9dd5cea7e01c6df4f59",
+    "gateway/session_automation.py": "b757fe96507163ab7e2042701287cdc68ac997722c971d353ad080233c12535b",
+    "gateway/session_envelope.py": "8f72b085f2b89950663735e4a1b44d4c6b1d31b7a2cf3de0d150c7f062e2d29c",
+    "gateway/session_ingress.py": "06b27f2312014adbfb98dccda06c3e69ccdb9182d8103d29d858631722acdd2e",
+    "gateway/session_route_recovery.py": "a111472be088d9dd49ae10bf54852b26d6b5a67607c84e117cea6ffdb725bd59",
+    "hermes_state_runtime.py": "1553a9e5091413092dd30d7613b9aaa7338919bfc5a5d3ac3f4cf8c57de4411b"
+  },
+  "source_url": "https://github.com/NousResearch/hermes-agent/tree/9b904dcc22c23fe8b82834339bbdd96495072e59",
+  "license": "session_authority_5fc490e.LICENSE",
+  "description": "Unmodified pinned Hermes source for issue 471. Full-module compiled admission functions run with explicit DB/model/I/O ports; not live Gateway acceptance. Additional authority, route, automation and state modules are included for ownership and contract tests.",
+  "admission_cohort_commits": {
+    "issue471-main": "9b904dcc22c23fe8b82834339bbdd96495072e59"
+  }
+}

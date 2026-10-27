@@ -1161,10 +1161,34 @@ def _int_from_env(
     return parsed
 
 
+def _first_card_admission_guard(
+    local_vars: dict[str, Any], event_name: str
+) -> Callable[[], bool] | None:
+    if event_name not in SUPPORTED_RUNTIME_EVENTS:
+        return None
+    mode = admission_completion_mode(local_vars)
+    if mode == "ordinary":
+        return None
+    if mode == "handoff":
+        from .admission_completion import first_card_guard, _prepare_failed
+
+        profile, source = _profile_identity(
+            local_vars, local_vars.get("source"), local_vars.get("message")
+        )
+        if not source.startswith("sanitized_"):
+            guard = first_card_guard(local_vars, profile)
+            if guard is not None:
+                return guard
+        _prepare_failed("authority-unverified")
+    return lambda: False
+
+
 def _policy_gate_sync(
     config: RuntimeConfig,
     local_vars: dict[str, Any],
     event_name: str,
+    *,
+    _admission_guard: Callable[[], bool] | None = None,
 ) -> _PolicyGateResult:
     identity = _policy_identity(config, local_vars, event_name)
     if identity is None:
@@ -1176,10 +1200,10 @@ def _policy_gate_sync(
         with query_lock:
             disposition = _pinned_policy_disposition(identity)
             if disposition is None:
-                if (
-                    event_name in SUPPORTED_RUNTIME_EVENTS
-                    and admission_completion_mode(local_vars) == "native"
-                ):
+                guard = _admission_guard
+                if guard is None:
+                    guard = _first_card_admission_guard(local_vars, event_name)
+                if guard is not None and not guard():
                     # Refuse before any card event claims this turn. The
                     # existing turn policy owns this decision, never the chat.
                     disposition = "native"
@@ -1199,6 +1223,10 @@ def _policy_gate_sync(
                         _cache_policy_disposition(identity, disposition, ttl_seconds)
                     else:
                         disposition = cached
+                    # A route can move while the sidecar policy request waits.
+                    # Recheck under the same single-flight lock before pinning.
+                    if disposition == "card" and guard is not None and not guard():
+                        disposition = "native"
                 _pin_policy_disposition(identity, disposition)
     result = _PolicyGateResult(disposition == "card", identity)
     if not result.card:
@@ -1241,11 +1269,12 @@ async def _policy_gate_async(
             # Never hold the shared threading.Lock in the event-loop thread
             # across an await: a synchronous callback on that loop could block
             # waiting for it and prevent the async owner from resuming.
+            # Borrow the native frame in its original Task before moving the
+            # policy query to a worker; the worker rechecks before pinning.
+            guard = _first_card_admission_guard(local_vars, event_name)
+            kwargs = {"_admission_guard": guard} if guard is not None else {}
             result = await asyncio.to_thread(
-                _policy_gate_sync,
-                config,
-                local_vars,
-                event_name,
+                _policy_gate_sync, config, local_vars, event_name, **kwargs
             )
     if not result.card:
         # ContextVar writes in the worker's copied context do not flow back to
