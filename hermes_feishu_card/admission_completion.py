@@ -688,13 +688,17 @@ def prepare(
     generation = values.get("run_generation")
     key = _text(values.get("session_key"))
     owner = getattr(event, "_claimed_owner", None)
-    automation_owner = (
-        _automation_owner(event, ref, row, key)
-        if owner is None and claim.get("event") is event
-        else None
-    )
-    if automation_owner is not None:
+    internal = getattr(event, "internal", False)
+    if internal is True:
+        automation_owner = (
+            _automation_owner(event, ref, row, key)
+            if claim.get("event") is event else None
+        )
+        if owner is not None and owner != automation_owner:
+            return _prepare_failed("claim-owner-unverified")
         owner = automation_owner
+    elif internal is not False:
+        return _prepare_failed("claim-owner-unverified")
     physical = _text(getattr(values.get("session_entry"), "session_id", None))
     response = values.get("response")
     if route is None:

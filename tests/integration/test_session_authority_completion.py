@@ -661,6 +661,32 @@ async def test_automation_claim_drift_cannot_suppress_native(harness, changed):
 
 
 @pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize("changed", ["row", "owner"])
+async def test_internal_claimed_owner_cannot_bypass_automation_proof(harness, changed):
+    event = Event(
+        source=Source(user_id="a1b2c3d4"),
+        message_id='["async_delegation","delegation-a",""]',
+        internal=True,
+    )
+    authority = harness.Authority(event)
+    if changed == "row":
+        authority.row["principal_id"] = "messaging:other"
+    restore = harness.ingress.restore_native
+
+    def restored(*args):
+        value = restore(*args)
+        value._claimed_owner = (
+            ("other", 7) if changed == "owner" else (authority.ref.session_id, 7)
+        )
+        return value
+
+    harness.ingress.restore_native = restored
+    await authority._drain(authority.ref)
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
 @pytest.mark.parametrize("field", ["user_id", "profile_id", "thread_id"])
 async def test_internal_admission_identity_drift_keeps_native(harness, field):
     event = Event(source=Source(user_id="a1b2c3d4"))
