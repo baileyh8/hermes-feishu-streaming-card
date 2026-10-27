@@ -2678,6 +2678,7 @@ async def prepare_exact_base_final_delivery(
     stage = _exact_completion_stage_for_current_task()
     if stage is None or adapter is None or not content:
         return fallback
+    attempt = None
     try:
         obligation_id = str(local_vars.get("obligation_id") or "").strip()
         plan_fingerprint = _native_handoff_plan_fingerprint(adapter)
@@ -2710,7 +2711,6 @@ async def prepare_exact_base_final_delivery(
             )
         event_url = str(stage["event_url"])
         timeout = float(stage["timeout_seconds"])
-        attempt = None
         try:
             if "_admission_claim" in stage:
                 result, attempt = await _post_admission_terminal(
@@ -2745,6 +2745,8 @@ async def prepare_exact_base_final_delivery(
                 diagnose_attempt(stage, "ack-stage-invalidated")
                 return fallback
         if not applied:
+            if attempt is not None:
+                attempt.revoke()
             diagnose_attempt(stage, "ack-not-applied")
         if ack_capable and not applied:
             registered = _register_native_handoff_descriptor(payload, result)
@@ -2769,6 +2771,11 @@ async def prepare_exact_base_final_delivery(
         _HFC_NATIVE_HANDOFF_CONTEXT.set(None)
         return fallback
     finally:
+        if attempt is not None:
+            try:
+                attempt.revoke()
+            except BaseException:
+                pass
         if _HFC_EXACT_COMPLETION_STAGE.get() is stage:
             _HFC_EXACT_COMPLETION_STAGE.set(None)
 
@@ -2783,6 +2790,7 @@ async def _post_admission_terminal(
     deadline = time.monotonic() + timeout
     lock = _send_lock(url, payload)
     acquired = False
+    attempt = None
     try:
         if lock is not None:
             await asyncio.wait_for(lock.acquire(), timeout=max(0.0, deadline - time.monotonic()))
@@ -2799,6 +2807,13 @@ async def _post_admission_terminal(
             _post_json_response(url, payload, remaining), timeout=remaining
         )
         return result, attempt
+    except BaseException:
+        if attempt is not None:
+            try:
+                attempt.revoke()
+            except BaseException:
+                pass
+        raise
     finally:
         if acquired:
             lock.release()

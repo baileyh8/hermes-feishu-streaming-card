@@ -301,6 +301,185 @@ async def test_applied_ack_rejects_replaced_or_revoked_identity(state, monkeypat
     assert original_ref() is None
 
 
+@pytest.mark.parametrize("outcome", ["timeout", "cancel", "error", "base-error"])
+@pytest.mark.parametrize("cleanup_raises", [False, True])
+async def test_failed_terminal_post_releases_borrowed_references_even_if_task_is_retained(
+    state, monkeypatch, outcome, cleanup_raises
+):
+    from hermes_feishu_card import hook_runtime as h
+
+    class SyntheticBaseError(BaseException):
+        pass
+
+    producer, original_event = Box(), Box()
+    producer_ref, original_ref = weakref.ref(producer), weakref.ref(original_event)
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "payload": {"data": {}}, "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    started, finish = asyncio.Event(), asyncio.Event()
+    expected = SyntheticBaseError("base") if outcome == "base-error" else RuntimeError("error")
+    retained_attempts = []
+    begin = ac.begin_applied_attempt
+
+    def capture_attempt(*args):
+        attempt = begin(*args)
+        assert attempt is not None
+        retained_attempts.append(attempt)
+        return attempt
+
+    async def blocked_post(*args):
+        started.set()
+        await finish.wait()
+        if outcome in {"error", "base-error"}:
+            raise expected
+        raise AssertionError("unexpected completion")
+
+    monkeypatch.setattr(ac, "begin_applied_attempt", capture_attempt)
+    monkeypatch.setattr(h, "_post_json_response", blocked_post)
+    if cleanup_raises:
+        original_revoke = ac.AppliedAttempt.revoke
+
+        def revoke_then_raise(attempt):
+            original_revoke(attempt)
+            raise SyntheticBaseError("cleanup")
+
+        monkeypatch.setattr(ac.AppliedAttempt, "revoke", revoke_then_raise)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        async def run():
+            stage["task_id"] = id(asyncio.current_task())
+            return await h._post_admission_terminal(
+                stage, payload, values, state.adapter, "http://127.0.0.1/events", 0.5
+            )
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert len(retained_attempts) == 1
+        del producer, original_event
+        gc.collect()
+        assert producer_ref() is not None and original_ref() is not None
+        if outcome == "cancel":
+            task.cancel()
+            exception_type = asyncio.CancelledError
+        elif outcome in {"error", "base-error"}:
+            finish.set()
+            exception_type = type(expected)
+        else:
+            exception_type = asyncio.TimeoutError
+        with pytest.raises(exception_type) as caught:
+            await task
+        if outcome in {"error", "base-error"}:
+            assert caught.value is expected
+        assert task.done() and retained_attempts[0].referents == ()
+        assert retained_attempts[0].spent and state.offer.state == "closed"
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
+async def test_unapplied_ack_releases_borrowed_references_before_native_fallback(state, monkeypatch):
+    from hermes_feishu_card import hook_runtime as h
+
+    owned = {"producer": Box(), "event": Box()}
+    producer_ref, original_ref = weakref.ref(owned["producer"]), weakref.ref(owned["event"])
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()),
+        "payload": {"event": "message.completed", "chat_id": "chat",
+                    "data": {"profile_id": "default", "profile_source": "locals"}},
+        "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer", "obligation_id": "test"}
+    retained_attempts, recovery = [], []
+
+    async def unapplied(stage_arg, payload, local_vars, adapter, url, timeout):
+        attempt = ac.begin_applied_attempt(stage_arg, payload, local_vars, adapter)
+        assert attempt is not None
+        retained_attempts.append(attempt)
+        owned.clear()
+        return {"ok": True, "applied": False}, attempt
+
+    async def recover(*args, **kwargs):
+        assert retained_attempts[0].referents == () and retained_attempts[0].spent
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+        recovery.append("checked")
+        return True
+
+    monkeypatch.setattr(h, "_exact_completion_stage_for_current_task", lambda: stage)
+    monkeypatch.setattr(h, "_native_handoff_plan_fingerprint", lambda _: "f" * 64)
+    monkeypatch.setattr(h, "_native_handoff_runtime_wrappers_ready", lambda _: True)
+    monkeypatch.setattr(h, "_register_native_handoff_descriptor", lambda *args: False)
+    monkeypatch.setattr(h, "_recover_exact_terminal_native_handoff", recover)
+    monkeypatch.setattr(h, "_post_admission_terminal", unapplied)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        result = await h.prepare_exact_base_final_delivery(values)
+        assert result == (state.adapter, "answer", None, None)
+        assert len(retained_attempts) == 1
+        assert recovery == ["checked"]
+        assert retained_attempts[0].referents == () and retained_attempts[0].spent
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
+async def test_applied_ack_cleanup_keeps_acknowledged_owner(state, monkeypatch):
+    from hermes_feishu_card import hook_runtime as h
+
+    owned = {"producer": Box(), "event": Box()}
+    producer_ref, original_ref = weakref.ref(owned["producer"]), weakref.ref(owned["event"])
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()),
+        "payload": {"event": "message.completed", "data": {}}, "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    retained_attempts = []
+
+    async def applied(stage_arg, payload, local_vars, adapter, url, timeout):
+        attempt = ac.begin_applied_attempt(stage_arg, payload, local_vars, adapter)
+        assert attempt is not None
+        retained_attempts.append(attempt)
+        owned.clear()
+        return {"ok": True, "applied": True}, attempt
+
+    monkeypatch.setattr(h, "_exact_completion_stage_for_current_task", lambda: stage)
+    monkeypatch.setattr(h, "_native_handoff_plan_fingerprint", lambda _: "")
+    monkeypatch.setattr(h, "_post_admission_terminal", applied)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        result = await h.prepare_exact_base_final_delivery(values)
+        assert isinstance(result[0], h._ExactCardDeliveryAdapterProxy)
+        assert len(retained_attempts) == 1
+        assert retained_attempts[0].referents == () and retained_attempts[0].spent
+        assert state.offer.state == "acknowledged"
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
 async def test_terminal_queue_rechecks_current_after_bounded_send_lock(state, monkeypatch):
     from hermes_feishu_card import hook_runtime as h
 
