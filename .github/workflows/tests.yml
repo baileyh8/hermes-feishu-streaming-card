@@ -665,6 +665,7 @@ jobs:
           tests/unit/test_pm_dependency.py
           tests/unit/test_plugin_config_bytes.py
           tests/unit/test_install_plugin.py
+          tests/unit/test_issue470_windows_native.py
           tests/unit/test_decomposed_patcher.py
           "tests/integration/test_pm_generation.py::test_exact_wheel_survives_real_pm_generations[0225]"
           "tests/integration/test_official_plugin_config_bytes.py::test_pm_0225_official_startup_migration_matches_private_plan"
