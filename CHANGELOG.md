@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.0.10 — 2026-10-27
+
+- Verify internal asynchronous completion against the original admission record and retain source, owner, generation, epoch and profile boundaries (#469).
+- Treat an explicitly accepted terminal response as a single-use acknowledgement of that exact submission, preserving strict authority checks before submission and preventing a later generation change from duplicating the same native text.
+- Preserve unrelated Hermes config edits while inspecting and reversing HFC-owned configuration changes; conflicts and unverifiable records remain fail-closed (#470).
+- Add bounded rejection diagnostics for #451; the reporter's locally modified multi-profile deployment remains a separate field-validation boundary.
+- Exact candidate, platform, ordinary-wheel, API and public-install evidence is recorded separately in the [release notes](docs/release-notes-v5.0.10.en.md). Thanks to @leavrcn and @kludgezol for issue evidence and analysis; historical releases and credits remain intact.
+
 ## v5.0.9 — 2026-10-26
 
 - Separate verified native admission user identity from Feishu mention open IDs; retain native delivery before card acceptance when identity is unknown (#451).
