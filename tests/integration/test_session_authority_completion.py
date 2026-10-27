@@ -1482,8 +1482,21 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
 
     monkeypatch.setattr(h, "build_event", build)
     attempts = []
+    requests = []
+    native_contexts = []
+    original_native_send = harness.adapter._send_with_retry
+
+    async def native_send(**kwargs):
+        native_contexts.append(h._HFC_NATIVE_HANDOFF_CONTEXT.get())
+        return await original_native_send(**kwargs)
+
+    monkeypatch.setattr(harness.adapter, "_send_with_retry", native_send)
 
     async def post(url, payload, timeout):
+        requests.append((url, payload))
+        if url == "http://127.0.0.1:1/native-handoff/recover":
+            raise TimeoutError("lost synthetic recovery lookup")
+        assert url == "http://127.0.0.1:1/events"
         attempts.append(payload)
         if post_failure:
             runtime.handle_post_api_request(**observed)  # late duplicate
@@ -1498,6 +1511,26 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
         assert len(previews) == 1 and "rate" not in previews[0]["data"]
         assert takes == ["physical-session"]
         assert len(attempts) == 1
+        assert attempts[0]["event"] == "message.completed"
+        assert [url for url, _ in requests] == (
+            ["http://127.0.0.1:1/events", "http://127.0.0.1:1/native-handoff/recover"]
+            if post_failure else ["http://127.0.0.1:1/events"]
+        )
+        if post_failure:
+            handoff = attempts[0]["data"]["native_handoff"]
+            recovery_payload = requests[1][1]
+            assert recovery_payload == {
+                "protocol": "hfc-native-handoff-recovery-v2",
+                **{key: handoff[key] for key in (
+                    "obligation_key", "content_hash", "plan_fingerprint", "route", "target_hash"
+                )},
+            }
+            assert len(native_contexts) == 1
+            assert native_contexts[0]["provisional"] is True
+            assert native_contexts[0]["recovery_payload"] == recovery_payload
+            assert native_contexts[0]["descriptor"]["uuid_seed"] == handoff["provisional_uuid_seed"]
+        else:
+            assert native_contexts == []
         assert len(harness.posts) == (0 if post_failure else 1)
         if api_calls:
             assert attempts[0]["data"]["rate"] == {
