@@ -124,6 +124,7 @@ def state(monkeypatch):
         adapter=adapter,
         live=live,
         authority=authority,
+        event=event,
     )
 
 
@@ -210,6 +211,74 @@ async def test_claim_requires_live_task_execution_stamp_and_current_db_row(state
     state.live.event_stream.execution["execution_generation"] = 7
     state.live.task = None
     assert not ac._authority_current(state.offer, started=True)
+
+
+async def test_applied_attempt_is_single_use_and_cannot_authorize_a_new_send(state, monkeypatch):
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer,
+        "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()),
+        "payload": {"data": {}},
+        "base_context": {},
+        "event_url": "http://127.0.0.1/events",
+        "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    attempt = ac.begin_applied_attempt(stage, payload, values, state.adapter)
+    assert attempt is not None
+    # A request already accepted by the sidecar is still acknowledged if its
+    # pre-send offer expires while the bounded HTTP response is in flight.
+    monkeypatch.setattr(ac, "monotonic", lambda: state.offer.expires + 1)
+    assert attempt.consume({"ok": True, "applied": True})
+    assert not attempt.consume({"ok": True, "applied": True})
+    assert ac.begin_applied_attempt(stage, payload, values, state.adapter) is None
+
+
+async def test_terminal_queue_rechecks_current_after_bounded_send_lock(state, monkeypatch):
+    from hermes_feishu_card import hook_runtime as h
+
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "payload": {"data": {}}, "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    lock = asyncio.Lock()
+    await lock.acquire()
+    monkeypatch.setattr(h, "_send_lock", lambda *args: lock)
+    posted = []
+
+    async def post(*args):
+        posted.append(True)
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(h, "_post_json_response", post)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        async def queued():
+            stage["task_id"] = id(asyncio.current_task())
+            return await h._post_admission_terminal(
+                stage, payload, values, state.adapter, "http://127.0.0.1/events", 1
+            )
+
+        task = asyncio.create_task(queued())
+        await asyncio.sleep(0)
+        state.runner._is_session_run_current = lambda *args: False
+        lock.release()
+        assert await task == (None, None)
+        assert posted == []
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+        if lock.locked():
+            lock.release()
 
 
 def test_single_use_ttl_and_repr_do_not_retain_or_expose_terminal_payload(
@@ -330,9 +399,16 @@ def test_admission_identity_ready_requires_matching_original_user(
 ):
     values = {
         "source": Box(user_id=source_user),
-        "event": Box(source=Box(user_id=current_user)),
+        "event": Box(source=Box(user_id=current_user), message_id="input"),
     }
     assert ac.admission_identity_ready(values) is ready
+
+
+@pytest.mark.parametrize("message_id", [["a:b", "c"], ["a", "b:c"], ("a", "", "b"), [object()]])
+def test_unverified_structured_message_ids_are_rejected_before_card(message_id):
+    source = Box(user_id="sender")
+    values = {"source": source, "event": Box(source=source, message_id=message_id)}
+    assert not ac.admission_identity_ready(values)
 
 
 @pytest.mark.parametrize("disposition", ["card", "native"])

@@ -396,7 +396,13 @@ Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431
 
 ### Session Authority completion compatibility
 
-跨 Task completion 接纳 Hermes `5fc490e2b34123212d73ef316086f939567a725a`，以及 #451 核验的 `cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe`、`f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68`、`4d04303818b61bf3aa09278af48356315515965b` 和 `4e58c721c8cf9b51c46636ea84ea6a5cb540880a`。`session_ingress.py` / `session_authority.py` 必须匹配同一组完整源 SHA、实际 loaded code 与完整受检 Base 提取后 seam；不能混用不同来源的单文件摘要。新来源允许 Hermes 合法重建的 source，但仍核对完整路由与原 admission/owner/generation/epoch；旧来源保留对象身份要求。未知来源、loaded topology 或缺少 seam 保留原生回复，detect 单独报告 admission completion 子能力；不能从文件存在、版本字符串或整体 partial 推断支持。每次完成尝试至多调用一次对应 fallback 诊断（固定 `unsupported-source` / `unsupported-loaded-topology` / `missing-or-unverified-extraction-seam` / `unverified-admission-identity` 类别），不记录 IDs、HOME、payload 或正文，不新增 registry 或诊断 owner。`admission_completion.py` 借原 row/marker maps，测试路由为 runtime/delivery；`install/admission_extraction.py` 归 install。普通旧版同 Task Base 路径保持既有支持面。
+跨 Task completion 接纳 Hermes `5fc490e2b34123212d73ef316086f939567a725a`，以及 #451 核验的 `cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe`、`f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68`、`4d04303818b61bf3aa09278af48356315515965b` 和 `4e58c721c8cf9b51c46636ea84ea6a5cb540880a`。`session_ingress.py` / `session_authority.py` 必须匹配同一组完整源 SHA、实际 loaded code 与完整受检 Base 提取后 seam；不能混用不同来源的单文件摘要。新来源允许 Hermes 合法重建的 source，但仍核对完整路由与原 admission/owner/generation/epoch；旧来源保留对象身份要求。未知来源、loaded topology 或缺少 seam 保留原生回复，detect 单独报告 admission completion 子能力；不能从文件存在、版本字符串或整体 partial 推断支持。`admission_completion.py` 借原 row/marker maps，测试路由为 runtime/delivery；`install/admission_extraction.py` 归 install。普通旧版同 Task Base 路径保持既有支持面。
+
+固定 v0.22.5 的 automation producer 将身份编码为 JSON 字符串；internal event 不带 `_claimed_owner`。此路径仅在原生 execute-admission frame 的 event、ref、持久 row、automation principal/owner/request、route、执行 generation 和 runtime epoch 一致时借用原 claim；未知 list/tuple ID 在首次卡片准入前保留 native，不进行可能碰撞的拼接。source 的 dataclass 字段仍逐项校验，不能借旧消息锚点补当前身份。
+
+终局发送的排队与 HTTP 共用有界期限，取得发送锁后再次严格检查当前 owner 和 generation。sidecar 明确接管该请求后，用冻结的请求及单次回执只抑制对应的原生正文；回执不会授权新 owner 或后续事件，未确认及绑定变化继续走原生路径。`admission completion prepare rejected` 使用固定且限频的来源、route、claim、profile、generation 和 epoch 等类别，不记录 ID、HOME、payload 或正文；这些类别是排查线索，不单独证明现场根因。
+
+在 multiplex 模式中，直接 source/locals profile 或标准 `.hermes/profiles/<name>` 仍按现有规则识别；未知自定义 HOME 不能仅凭 `fallback_default` 证明 default bot，admission 在首次卡片准入前保留 native 并报告 `profile-default-unverified`。单独进程的 env profile 不覆盖 multiplex 路由。#451 报告者的现场含本地 profile 路由及限流改动，仍须在其实际部署中独立复测。
 
 当前 admission 首次决定卡片策略、且同一 identity 尚未 pin 时，hook 的既有 policy 入口对全部 `SUPPORTED_RUNTIME_EVENTS` 检查 readiness；notice 或 interaction 作为首事件也受此门禁，未知 admission 来源保留原生路径。admission 开始前已 pin 的普通上下文、官方 plugin 的独立 owner 不在本次追改范围；已接管路径继续遵守原投递 owner 与终局失败规则。此能力检测和固定源码测试不代表所有未知版本或 plugin 的零 card 证明，也不代表真实 Gateway/model 验收。
 

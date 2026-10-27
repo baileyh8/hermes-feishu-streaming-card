@@ -43,6 +43,14 @@ ATTEMPT_REASONS = frozenset({
     "consume-target-mismatch",
     "deliver-native-error",
 })
+PREPARE_REASONS = frozenset({
+    "source-unverified", "claim-frame-missing", "claim-owner-unverified",
+    "route-invalid", "source-mismatch", "payload-route-mismatch",
+    "run-generation-invalid", "profile-source-untrusted", "profile-default-unverified", "identity-mismatch",
+    "adapter-unverified", "authority-profile-mismatch", "durable-route-mismatch",
+    "authority-epoch-stale", "authority-generation-stale", "authority-owner-stale",
+    "authority-unverified", "prepare-exception",
+})
 
 _NORMAL_STAGE_REASONS = frozenset({
     "config-disabled",
@@ -53,6 +61,7 @@ _NORMAL_STAGE_REASONS = frozenset({
 _NORMAL_ATTEMPT_REASONS = frozenset({"ack-not-capable", "ack-not-exact-scope"})
 _last_stage: dict[str, float] = {}
 _last_attempt: dict[str, float] = {}
+_last_prepare: dict[str, float] = {}
 _lock = threading.Lock()
 
 
@@ -111,10 +120,27 @@ def attempt_failed(reason: str) -> None:
         return
 
 
+def prepare_failed(reason: str) -> None:
+    """Emit only fixed, rate-limited admission rejection categories."""
+    try:
+        if reason not in PREPARE_REASONS:
+            return
+        now = time.monotonic()
+        with _lock:
+            previous = _last_prepare.get(reason)
+            if previous is not None and now - previous < STAGE_INTERVAL_SECONDS:
+                return
+            _last_prepare[reason] = now
+        _emit(f"admission completion prepare rejected: {reason}")
+    except BaseException:
+        return
+
+
 def reset() -> None:
     try:
         with _lock:
             _last_stage.clear()
             _last_attempt.clear()
+            _last_prepare.clear()
     except BaseException:
         pass
