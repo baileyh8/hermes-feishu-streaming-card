@@ -6,9 +6,10 @@ A real Session Authority SQLite test is separate from this call-chain harness.
 import ast
 import asyncio
 import builtins
-from contextlib import nullcontext, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 import gzip
 import hashlib
 import json
@@ -43,6 +44,14 @@ def load_sources(fixture=FIXTURE):
         k: hashlib.sha256(v.encode()).hexdigest() for k, v in files.items()
     } == manifest["files"]
     return files
+
+
+@lru_cache(maxsize=4)
+def _rendered_source_template(source_items):
+    # Only the unmodified runtime harness uses this immutable, full-content cache.
+    # Renderer/patcher fault tests must call render directly or clear before and
+    # after injection to avoid masking faults or retaining injected outputs.
+    return tuple(render(dict(source_items)).items())
 
 
 def _issue471_pinned_root():
@@ -184,7 +193,8 @@ def harness(tmp_path, monkeypatch, request):
         dest.write_text(raw)
     from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
 
-    rendered = render({k: files[k].encode() for k in DECOMPOSED_SOURCE_TARGETS})
+    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
+    rendered = dict(_rendered_source_template(source_items))
     result = SimpleNamespace(
         posts=[],
         native=[],
@@ -640,6 +650,81 @@ def harness(tmp_path, monkeypatch, request):
     h.reset_runtime_state()
     for connection in result.connections:
         connection.close()
+
+
+def test_harness_rendered_templates_isolate_case_and_source_mutations(tmp_path):
+    from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
+
+    files = load_sources(ISSUE471_FIXTURE)
+    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
+    target = "gateway/platforms/base.py"
+
+    @contextmanager
+    def real_case(root):
+        root.mkdir()
+        with pytest.MonkeyPatch.context() as patch:
+            generator = harness.__wrapped__(root, patch, SimpleNamespace(param=ISSUE471_FIXTURE))
+            try:
+                yield next(generator)
+            finally:
+                next(generator, None)
+
+    with real_case(tmp_path / "first") as first:
+        expected = first.rendered.copy()
+        first_ingress = first.ingress
+        first_globals = first.ingress.admit_message.__globals__
+        first_path = Path(first.ingress.__file__)
+        original_ingress = first_path.read_text()
+        first_authority = first.Authority(Event())
+        with first_authority.db._read_ctx() as connection:
+            connection.execute("UPDATE runtime_epoch SET epoch = 99")
+        first.ingress.case_sentinel = True
+        first.adapter._active_sessions["case-sentinel"] = object()
+        first.posts.append({"case": "sentinel"})
+        first.rendered[target] = b"case-specific mutation"
+        first_path.write_text("# case-specific mutation")
+
+    with real_case(tmp_path / "second") as second:
+        second_authority = second.Authority(Event())
+        assert second.ingress is not first_ingress
+        assert second.ingress.admit_message.__globals__ is not first_globals
+        assert not hasattr(second.ingress, "case_sentinel")
+        assert second.adapter._active_sessions == {}
+        assert second.posts == []
+        assert second.rendered == expected and second.rendered is not first.rendered
+        assert Path(second.ingress.__file__) != first_path
+        assert Path(second.ingress.__file__).read_text() == original_ingress
+        assert second_authority.db is not first_authority.db
+        with second_authority.db._read_ctx() as connection:
+            assert connection.execute("SELECT epoch FROM runtime_epoch").fetchone() == (9,)
+
+    changed_items = tuple(
+        (name, raw + b"\n# source-content cache probe\n" if name == target else raw)
+        for name, raw in source_items
+    )
+    changed_rendered = dict(_rendered_source_template(changed_items))
+    assert changed_rendered[target] != expected[target]
+    assert b"# source-content cache probe" in changed_rendered[target]
+
+
+def test_render_template_fault_injection_is_not_cached(monkeypatch):
+    source_items = (("probe.py", b"probe"),)
+    calls = []
+
+    def fail(_sources):
+        calls.append(True)
+        raise ValueError("injected renderer failure")
+
+    _rendered_source_template.cache_clear()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sys.modules[__name__], "render", fail)
+            for _ in range(2):
+                with pytest.raises(ValueError, match="injected renderer failure"):
+                    _rendered_source_template(source_items)
+        assert calls == [True, True]
+    finally:
+        _rendered_source_template.cache_clear()
 
 
 @pytest.mark.parametrize("waiter", [True, False])
