@@ -418,10 +418,13 @@ def stage_file(
             os.close(descriptor)
 
 
-def replace_stage(binding: BoundTarget, staged: BoundStage, *, check_parent: bool) -> None:
+def replace_stage(binding: BoundTarget, staged: BoundStage, *, check_parent: bool,
+                  before_replace: Callable[[], None] | None = None) -> None:
     staged.assert_owned()
     if check_parent:
         binding.assert_parent()
+    if before_replace is not None:
+        before_replace()
     os.replace(staged.basename, binding.basename, src_dir_fd=staged.parent_fd, dst_dir_fd=binding.parent_fd)
     staged.consumed = True
     staged.release()
