@@ -1,6 +1,7 @@
 """Display carrier boundary tests; the DB/topology adapters here are explicit ports."""
 
 import asyncio
+import gc
 from types import ModuleType, SimpleNamespace
 import weakref
 
@@ -124,6 +125,7 @@ def state(monkeypatch):
         adapter=adapter,
         live=live,
         authority=authority,
+        event=event,
     )
 
 
@@ -210,6 +212,315 @@ async def test_claim_requires_live_task_execution_stamp_and_current_db_row(state
     state.live.event_stream.execution["execution_generation"] = 7
     state.live.task = None
     assert not ac._authority_current(state.offer, started=True)
+
+
+async def test_applied_attempt_is_single_use_and_cannot_authorize_a_new_send(state, monkeypatch):
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer,
+        "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()),
+        "payload": {"data": {}},
+        "base_context": {},
+        "event_url": "http://127.0.0.1/events",
+        "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    attempt = ac.begin_applied_attempt(stage, payload, values, state.adapter)
+    assert attempt is not None
+    # A request already accepted by the sidecar is still acknowledged if its
+    # pre-send offer expires while the bounded HTTP response is in flight.
+    monkeypatch.setattr(ac, "monotonic", lambda: state.offer.expires + 1)
+    assert attempt.consume({"ok": True, "applied": True})
+    assert not attempt.consume({"ok": True, "applied": True})
+    assert ac.begin_applied_attempt(stage, payload, values, state.adapter) is None
+
+
+async def test_applied_ack_survives_original_producer_and_event_collection(state, monkeypatch):
+    # The old producer and source event can finish before a different task
+    # receives the terminal POST's response. They are not the target event.
+    producer = asyncio.create_task(asyncio.sleep(0))
+    await producer
+    original_event = Box()
+    producer_ref, original_ref = weakref.ref(producer), weakref.ref(original_event)
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()), "payload": {"data": {}},
+        "base_context": {}, "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    attempt = ac.begin_applied_attempt(stage, payload, values, state.adapter)
+    assert attempt is not None
+    del producer, original_event
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert producer_ref() is not None
+    assert original_ref() is not None
+    assert attempt.consume({"ok": True, "applied": True})
+    assert not attempt.consume({"ok": True, "applied": True})
+    gc.collect()
+    assert producer_ref() is None
+    assert original_ref() is None
+
+
+@pytest.mark.parametrize("changed", ["producer", "source_event", "revoked"])
+async def test_applied_ack_rejects_replaced_or_revoked_identity(state, monkeypatch, changed):
+    producer, original_event, replacement = Box(), Box(), Box()
+    producer_ref, original_ref = weakref.ref(producer), weakref.ref(original_event)
+    state.offer.producer = producer_ref
+    state.offer.source_event = original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()), "payload": {"data": {}},
+        "base_context": {}, "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    attempt = ac.begin_applied_attempt(stage, payload, values, state.adapter)
+    assert attempt is not None
+    del producer, original_event
+    if changed == "revoked":
+        attempt.revoke()
+    else:
+        setattr(state.offer, changed, weakref.ref(replacement))
+    assert not attempt.consume({"ok": True, "applied": True})
+    gc.collect()
+    assert producer_ref() is None
+    assert original_ref() is None
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "cancel", "error", "base-error"])
+@pytest.mark.parametrize("cleanup_raises", [False, True])
+async def test_failed_terminal_post_releases_borrowed_references_even_if_task_is_retained(
+    state, monkeypatch, outcome, cleanup_raises
+):
+    from hermes_feishu_card import hook_runtime as h
+
+    class SyntheticBaseError(BaseException):
+        pass
+
+    producer, original_event = Box(), Box()
+    producer_ref, original_ref = weakref.ref(producer), weakref.ref(original_event)
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "payload": {"data": {}}, "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    started, finish = asyncio.Event(), asyncio.Event()
+    expected = SyntheticBaseError("base") if outcome == "base-error" else RuntimeError("error")
+    retained_attempts = []
+    begin = ac.begin_applied_attempt
+
+    def capture_attempt(*args):
+        attempt = begin(*args)
+        assert attempt is not None
+        retained_attempts.append(attempt)
+        return attempt
+
+    async def blocked_post(*args):
+        started.set()
+        await finish.wait()
+        if outcome in {"error", "base-error"}:
+            raise expected
+        raise AssertionError("unexpected completion")
+
+    monkeypatch.setattr(ac, "begin_applied_attempt", capture_attempt)
+    monkeypatch.setattr(h, "_post_json_response", blocked_post)
+    if cleanup_raises:
+        original_revoke = ac.AppliedAttempt.revoke
+
+        def revoke_then_raise(attempt):
+            original_revoke(attempt)
+            raise SyntheticBaseError("cleanup")
+
+        monkeypatch.setattr(ac.AppliedAttempt, "revoke", revoke_then_raise)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        async def run():
+            stage["task_id"] = id(asyncio.current_task())
+            return await h._post_admission_terminal(
+                stage, payload, values, state.adapter, "http://127.0.0.1/events", 0.5
+            )
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert len(retained_attempts) == 1
+        del producer, original_event
+        gc.collect()
+        assert producer_ref() is not None and original_ref() is not None
+        if outcome == "cancel":
+            task.cancel()
+            exception_type = asyncio.CancelledError
+        elif outcome in {"error", "base-error"}:
+            finish.set()
+            exception_type = type(expected)
+        else:
+            exception_type = asyncio.TimeoutError
+        with pytest.raises(exception_type) as caught:
+            await task
+        if outcome in {"error", "base-error"}:
+            assert caught.value is expected
+        assert task.done() and retained_attempts[0].referents == ()
+        assert retained_attempts[0].spent and state.offer.state == "closed"
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
+async def test_unapplied_ack_releases_borrowed_references_before_native_fallback(state, monkeypatch):
+    from hermes_feishu_card import hook_runtime as h
+
+    owned = {"producer": Box(), "event": Box()}
+    producer_ref, original_ref = weakref.ref(owned["producer"]), weakref.ref(owned["event"])
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()),
+        "payload": {"event": "message.completed", "chat_id": "chat",
+                    "data": {"profile_id": "default", "profile_source": "locals"}},
+        "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer", "obligation_id": "test"}
+    retained_attempts, recovery = [], []
+
+    async def unapplied(stage_arg, payload, local_vars, adapter, url, timeout):
+        attempt = ac.begin_applied_attempt(stage_arg, payload, local_vars, adapter)
+        assert attempt is not None
+        retained_attempts.append(attempt)
+        owned.clear()
+        return {"ok": True, "applied": False}, attempt
+
+    async def recover(*args, **kwargs):
+        assert retained_attempts[0].referents == () and retained_attempts[0].spent
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+        recovery.append("checked")
+        return True
+
+    monkeypatch.setattr(h, "_exact_completion_stage_for_current_task", lambda: stage)
+    monkeypatch.setattr(h, "_native_handoff_plan_fingerprint", lambda _: "f" * 64)
+    monkeypatch.setattr(h, "_native_handoff_runtime_wrappers_ready", lambda _: True)
+    monkeypatch.setattr(h, "_register_native_handoff_descriptor", lambda *args: False)
+    monkeypatch.setattr(h, "_recover_exact_terminal_native_handoff", recover)
+    monkeypatch.setattr(h, "_post_admission_terminal", unapplied)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        result = await h.prepare_exact_base_final_delivery(values)
+        assert result == (state.adapter, "answer", None, None)
+        assert len(retained_attempts) == 1
+        assert recovery == ["checked"]
+        assert retained_attempts[0].referents == () and retained_attempts[0].spent
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
+async def test_applied_ack_cleanup_keeps_acknowledged_owner(state, monkeypatch):
+    from hermes_feishu_card import hook_runtime as h
+
+    owned = {"producer": Box(), "event": Box()}
+    producer_ref, original_ref = weakref.ref(owned["producer"]), weakref.ref(owned["event"])
+    state.offer.producer, state.offer.source_event = producer_ref, original_ref
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "task_id": id(asyncio.current_task()),
+        "payload": {"event": "message.completed", "data": {}}, "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    retained_attempts = []
+
+    async def applied(stage_arg, payload, local_vars, adapter, url, timeout):
+        attempt = ac.begin_applied_attempt(stage_arg, payload, local_vars, adapter)
+        assert attempt is not None
+        retained_attempts.append(attempt)
+        owned.clear()
+        return {"ok": True, "applied": True}, attempt
+
+    monkeypatch.setattr(h, "_exact_completion_stage_for_current_task", lambda: stage)
+    monkeypatch.setattr(h, "_native_handoff_plan_fingerprint", lambda _: "")
+    monkeypatch.setattr(h, "_post_admission_terminal", applied)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        result = await h.prepare_exact_base_final_delivery(values)
+        assert isinstance(result[0], h._ExactCardDeliveryAdapterProxy)
+        assert len(retained_attempts) == 1
+        assert retained_attempts[0].referents == () and retained_attempts[0].spent
+        assert state.offer.state == "acknowledged"
+        gc.collect()
+        assert producer_ref() is None and original_ref() is None
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+
+
+async def test_terminal_queue_rechecks_current_after_bounded_send_lock(state, monkeypatch):
+    from hermes_feishu_card import hook_runtime as h
+
+    state.offer.target = weakref.ref(state.event)
+    state.offer.state = "consumed"
+    monkeypatch.setattr(ac, "_base_extractor", lambda _adapter: object())
+    stage = {
+        "_admission_claim": state.offer, "_admission_event": state.event,
+        "payload": {"data": {}}, "base_context": {},
+        "event_url": "http://127.0.0.1/events", "timeout_seconds": 1,
+    }
+    values = {"delivery_adapter": state.adapter, "content": "answer"}
+    payload = {"event": "message.completed", "data": {"answer": "answer"}}
+    lock = asyncio.Lock()
+    await lock.acquire()
+    monkeypatch.setattr(h, "_send_lock", lambda *args: lock)
+    posted = []
+
+    async def post(*args):
+        posted.append(True)
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(h, "_post_json_response", post)
+    token = h._HFC_EXACT_COMPLETION_STAGE.set(stage)
+    try:
+        async def queued():
+            stage["task_id"] = id(asyncio.current_task())
+            return await h._post_admission_terminal(
+                stage, payload, values, state.adapter, "http://127.0.0.1/events", 1
+            )
+
+        task = asyncio.create_task(queued())
+        await asyncio.sleep(0)
+        state.runner._is_session_run_current = lambda *args: False
+        lock.release()
+        assert await task == (None, None)
+        assert posted == []
+    finally:
+        h._HFC_EXACT_COMPLETION_STAGE.reset(token)
+        if lock.locked():
+            lock.release()
 
 
 def test_single_use_ttl_and_repr_do_not_retain_or_expose_terminal_payload(
@@ -330,9 +641,16 @@ def test_admission_identity_ready_requires_matching_original_user(
 ):
     values = {
         "source": Box(user_id=source_user),
-        "event": Box(source=Box(user_id=current_user)),
+        "event": Box(source=Box(user_id=current_user), message_id="input"),
     }
     assert ac.admission_identity_ready(values) is ready
+
+
+@pytest.mark.parametrize("message_id", [["a:b", "c"], ["a", "b:c"], ("a", "", "b"), [object()]])
+def test_unverified_structured_message_ids_are_rejected_before_card(message_id):
+    source = Box(user_id="sender")
+    values = {"source": source, "event": Box(source=source, message_id=message_id)}
+    assert not ac.admission_identity_ready(values)
 
 
 @pytest.mark.parametrize("disposition", ["card", "native"])

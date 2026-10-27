@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import importlib
 import json
+from dataclasses import replace
 from pathlib import Path
 import secrets
+import tempfile
 from typing import Any
 
-from . import decomposed_ownership, legacy_observer, plugin, pm_dependency
+from . import decomposed_ownership, legacy_observer, plugin, plugin_config_delta, pm_dependency
 from . import posix_transaction as io
 from .recovery import _root_lock
 
@@ -123,18 +125,26 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
         source = _source_fingerprint(root)
         _verify_runtime(binding)
         before = plugin._read_private_backup(old_preimage)
-        desired, enabled = plugin._expected_enabled_config(plugin._load_config_mapping(before))
-        if enabled:
-            desired, _ = plugin._expected_enabled_config(plugin._load_config_mapping(before), preserve_enabled_lists=True)
-        plan = plugin._plan_enabled_config_bytes(
-            binding, old_preimage, before, desired, enabled,
-            historical_post_sha256=old_owner.post_sha256,
-        )
-        if plugin._sha256(plan.postimage) != old_owner.post_sha256:
-            raise RebindRefused("legacy_rebind_original_postimage_unverified")
-        for candidate in (before, plan.postimage, current):
-            _plugins_span(candidate)
-        restored = before if current == plan.postimage else _rebased_preimage(before, plan.postimage, current)
+        receipt = record.get("config_delta")
+        plan = None
+        if receipt is None:
+            desired, enabled = plugin._expected_enabled_config(plugin._load_config_mapping(before))
+            if enabled:
+                desired, _ = plugin._expected_enabled_config(plugin._load_config_mapping(before), preserve_enabled_lists=True)
+            with tempfile.TemporaryDirectory(prefix="hfc-rebind-proof-") as scratch:
+                shadow = replace(old_preimage, state_dir=Path(scratch))
+                plan = plugin._plan_enabled_config_bytes(
+                    binding, shadow, before, desired, enabled,
+                    historical_post_sha256=old_owner.post_sha256,
+                )
+            if plugin._sha256(plan.postimage) != old_owner.post_sha256 or not plan.matches_expected(desired):
+                raise RebindRefused("legacy_rebind_original_postimage_unverified")
+            receipt = plugin_config_delta.make_receipt(before, plan.postimage)
+        if plugin_config_delta.classify(before, current, receipt) != "installed":
+            raise RebindRefused("legacy_rebind_restore_incomplete")
+        restored = (before if plugin._sha256(current) == old_owner.post_sha256
+                    else plugin_config_delta.restore_bytes(before, current, receipt))
+        new_receipt = plugin_config_delta.make_receipt(restored, current)
         # Both postimage and preimage are current-config based; no unrelated field
         # can later be removed by the ordinary exact restore path.
         key = "hfc-config-preimage-" + secrets.token_hex(16)
@@ -146,16 +156,18 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
         changes = [
             (state / (key + ".yaml"), restored.decode("utf-8")),
             (state / (key + ".json"), json.dumps({"protocol": "hfc-plugin-config-preimage-v1",
-                "phase": "installed", **owner.sanitized()}, sort_keys=True) + "\n"),
+                "phase": "installed", **owner.sanitized(), "config_delta": new_receipt}, sort_keys=True) + "\n"),
             (state / (key + ".previous-observer.json"), marker_raw.decode("utf-8")),
             (marker, json.dumps({**record, "python_identity": binding.python_identity,
-                "plugin_config": owner.sanitized()}, sort_keys=True) + "\n"),
+                "plugin_config": owner.sanitized(), "config_delta": new_receipt}, sort_keys=True) + "\n"),
         ]
         watched = [marker, binding.config_path, old_preimage.backup_path, old_preimage.journal_path]
         snapshots = {p: io.read_path_snapshot(p, RebindRefused, "legacy_rebind_evidence_changed") for p in watched}
         expected_hashes = {marker: plugin._sha256(marker_raw), binding.config_path: plugin._sha256(current),
             old_preimage.backup_path: old_owner.backup_sha256}
         expected_journal = {"protocol": "hfc-plugin-config-preimage-v1", "phase": "installed", **old_owner.sanitized()}
+        if "config_delta" in record:
+            expected_journal["config_delta"] = record["config_delta"]
         if any(snapshots[p][2] != digest for p, digest in expected_hashes.items()):
             raise RebindRefused("legacy_rebind_evidence_changed")
         if json.loads(legacy_observer._read(old_preimage.journal_path) or b"null") != expected_journal:
@@ -175,11 +187,12 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
             if fresh != binding or _source_fingerprint(root) != source:
                 raise RebindRefused("legacy_rebind_binding_changed")
             _verify_runtime(binding)
-            plan.verify_source()
+            if plan is not None:
+                plan.verify_source()
         validate()
         for p, snapshot in snapshots.items():
             io.assert_path_snapshot(p, snapshot, RebindRefused, "legacy_rebind_evidence_changed")
-        if record["python_identity"] == binding.python_identity and current == plan.postimage:
+        if record["python_identity"] == binding.python_identity and plugin._sha256(current) == old_owner.post_sha256:
             return {"status": "unchanged", "reason": "verified_binding_already_current"}
         if not apply:
             return {"status": "ready", "reason": "verified_pm_rebind_available"}
@@ -192,7 +205,8 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
             if plugin.resolve_runtime_binding(checkout_root=root, hermes_home=home, profile_id=None) != binding:
                 raise RebindRefused("legacy_rebind_binding_changed")
             _verify_runtime(binding)
-            plan.verify_source()
+            if plan is not None:
+                plan.verify_source()
             legacy_observer.inspect(root, home=home)
             for p, contents in changes:
                 if io.read_path_snapshot(p, RebindRefused, "legacy_rebind_published_evidence_changed")[2] != plugin._sha256(contents.encode("utf-8")):

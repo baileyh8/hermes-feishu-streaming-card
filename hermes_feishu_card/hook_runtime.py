@@ -2117,7 +2117,6 @@ async def stage_message_completed_from_hermes_locals_async(
             from .admission_completion import prepare
             offer = prepare(local_vars, stage, _finish_admission_delivery)
             if offer is None:
-                _hfc_warn("admission completion retains native: unverified-admission-identity")
                 return False
             stage["_admission_offer"] = offer
         _HFC_EXACT_COMPLETION_STAGE.set(stage)
@@ -2561,7 +2560,9 @@ async def _recover_exact_terminal_native_handoff(
 
 def admission_completion_mode(local_vars: dict[str, Any]) -> str:
     from .admission_completion import (
+        _prepare_failed,
         admission_identity_ready,
+        admission_readiness_reason,
         extractor_available,
         mode,
         unsupported_reason,
@@ -2571,7 +2572,10 @@ def admission_completion_mode(local_vars: dict[str, Any]) -> str:
         _hfc_warn("admission completion retains native: " + unsupported_reason())
     if value == "handoff":
         if not admission_identity_ready(local_vars):
-            _hfc_warn("admission completion retains native: unverified-admission-identity")
+            _prepare_failed(admission_readiness_reason(local_vars))
+            return "native"
+        if _admission_default_profile_unverified(local_vars):
+            _prepare_failed("profile-default-unverified")
             return "native"
         runner = local_vars.get("self")
         try:
@@ -2583,6 +2587,30 @@ def admission_completion_mode(local_vars: dict[str, Any]) -> str:
             _hfc_warn("admission completion retains native: missing-or-unverified-extraction-seam")
             return "native"
     return value
+
+
+def _admission_default_profile_unverified(local_vars: dict[str, Any]) -> bool:
+    """Do not guess that an arbitrary multiplex HOME is the default bot."""
+    runner = local_vars.get("self") or local_vars.get("runner")
+    registered = _GATEWAY_RUNNER_REF() if _GATEWAY_RUNNER_REF is not None else None
+    multiplex = any(
+        getattr(getattr(item, "config", None), "multiplex_profiles", False) is True
+        for item in (runner, registered)
+    )
+    if not multiplex:
+        return False
+    _profile, source = _profile_identity(
+        local_vars, local_vars.get("source"), local_vars.get("message")
+    )
+    if source != "fallback_default":
+        return False
+    try:
+        from hermes_constants import get_hermes_home
+        selected = Path(get_hermes_home()).expanduser().resolve()
+        standard_default = (Path.home() / ".hermes").resolve()
+        return selected != standard_default
+    except Exception:
+        return True
 
 
 def capture_admission_base_extraction(local_vars: dict[str, Any]) -> None:
@@ -2650,6 +2678,7 @@ async def prepare_exact_base_final_delivery(
     stage = _exact_completion_stage_for_current_task()
     if stage is None or adapter is None or not content:
         return fallback
+    attempt = None
     try:
         obligation_id = str(local_vars.get("obligation_id") or "").strip()
         plan_fingerprint = _native_handoff_plan_fingerprint(adapter)
@@ -2683,11 +2712,15 @@ async def prepare_exact_base_final_delivery(
         event_url = str(stage["event_url"])
         timeout = float(stage["timeout_seconds"])
         try:
-            result = await _post_json_ordered_response(
-                event_url,
-                payload,
-                timeout,
-            )
+            if "_admission_claim" in stage:
+                result, attempt = await _post_admission_terminal(
+                    stage, payload, local_vars, adapter, event_url, timeout
+                )
+                if attempt is None:
+                    diagnose_attempt(stage, "ack-stage-invalidated")
+                    return fallback
+            else:
+                result = await _post_json_ordered_response(event_url, payload, timeout)
         except Exception:
             diagnose_attempt(stage, "ack-transport-error")
             if ack_capable:
@@ -2697,13 +2730,23 @@ async def prepare_exact_base_final_delivery(
                     timeout=timeout,
                 )
             return fallback
-        if "_admission_claim" in stage:
+        applied = _event_was_applied(result, strict=True)
+        if attempt is not None and applied:
+            # The sidecar has accepted this exact terminal. Do not reinterpret
+            # the old send as a new owner's claim after this await; consume only
+            # the frozen, single-use acknowledgement of the submitted request.
+            if _HFC_EXACT_COMPLETION_STAGE.get() is not stage or not attempt.consume(result):
+                attempt.revoke()
+                diagnose_attempt(stage, "ack-stage-invalidated")
+                return fallback
+        elif "_admission_claim" in stage:
             from .admission_completion import valid_consumed
             if not valid_consumed(stage):
                 diagnose_attempt(stage, "ack-stage-invalidated")
                 return fallback
-        applied = _event_was_applied(result, strict=True)
         if not applied:
+            if attempt is not None:
+                attempt.revoke()
             diagnose_attempt(stage, "ack-not-applied")
         if ack_capable and not applied:
             registered = _register_native_handoff_descriptor(payload, result)
@@ -2728,7 +2771,52 @@ async def prepare_exact_base_final_delivery(
         _HFC_NATIVE_HANDOFF_CONTEXT.set(None)
         return fallback
     finally:
-        _HFC_EXACT_COMPLETION_STAGE.set(None)
+        if attempt is not None:
+            try:
+                attempt.revoke()
+            except BaseException:
+                pass
+        if _HFC_EXACT_COMPLETION_STAGE.get() is stage:
+            _HFC_EXACT_COMPLETION_STAGE.set(None)
+
+
+async def _post_admission_terminal(
+    stage: dict[str, Any], payload: dict[str, Any], values: dict[str, Any],
+    adapter: Any, url: str, timeout: float,
+) -> tuple[Any, Any]:
+    """Bound the queue and send; freeze the live claim only after the lock."""
+    from .admission_completion import begin_applied_attempt
+
+    deadline = time.monotonic() + timeout
+    lock = _send_lock(url, payload)
+    acquired = False
+    attempt = None
+    try:
+        if lock is not None:
+            await asyncio.wait_for(lock.acquire(), timeout=max(0.0, deadline - time.monotonic()))
+            acquired = True
+        if _HFC_EXACT_COMPLETION_STAGE.get() is not stage:
+            return None, None
+        attempt = begin_applied_attempt(stage, payload, values, adapter)
+        if attempt is None:
+            return None, None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise asyncio.TimeoutError
+        result = await asyncio.wait_for(
+            _post_json_response(url, payload, remaining), timeout=remaining
+        )
+        return result, attempt
+    except BaseException:
+        if attempt is not None:
+            try:
+                attempt.revoke()
+            except BaseException:
+                pass
+        raise
+    finally:
+        if acquired:
+            lock.release()
 
 
 async def finalize_exact_base_no_text(local_vars: dict[str, Any]) -> None:

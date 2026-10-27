@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -98,6 +98,12 @@ class PluginOwnership:
     post_sha256: str
     config_backup_id: str
     backup_sha256: str
+    # Runtime-only receipt; manifests and journals keep their historical keys.
+    post_identity: tuple[int, int, str] | None = field(default=None, compare=False)
+    post_parent_identity: tuple[int, int] | None = field(default=None, compare=False)
+    journal_identity: tuple[int, int, str] | None = field(default=None, compare=False)
+    backup_identity: tuple[int, int, str] | None = field(default=None, compare=False)
+    state_parent_identity: tuple[int, int] | None = field(default=None, compare=False)
 
     def sanitized(self) -> dict[str, object]:
         return {
@@ -300,6 +306,24 @@ def enable_plugin(
 ) -> PluginOwnership:
     if type(binding) is not HermesRuntimeBinding or type(preimage) is not PluginConfigPreimage:
         raise PluginConfigRefused("plugin config ownership input is invalid")
+    from . import posix_transaction as io
+    backup_identity = io.read_path_snapshot(preimage.backup_path, PluginConfigRefused, "plugin config backup changed")
+    journal_identity = io.read_path_snapshot(preimage.journal_path, PluginConfigRefused, "plugin config journal changed")
+    state_parent = io.read_directory_identity(preimage.state_dir, PluginConfigRefused, "plugin config state directory changed")
+    if backup_identity[2] != preimage.backup_sha256:
+        raise PluginConfigRefused("plugin config preimage changed")
+    if _read_private_backup(preimage) != _read_bound_config(binding):
+        raise PluginConfigRefused("Hermes config changed after preimage")
+    try:
+        prepared = json.loads(preimage.journal_path.read_bytes())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise PluginConfigRefused("plugin config journal is invalid") from exc
+    expected_prepared = {"protocol": "hfc-plugin-config-preimage-v1", "phase": "prepared",
+                         "config_backup_id": preimage.config_backup_id, "pre_sha256": preimage.pre_sha256,
+                         "backup_sha256": preimage.backup_sha256}
+    if prepared not in (expected_prepared, {**expected_prepared, "enabled_before": preimage.enabled_before}):
+        raise PluginConfigRefused("plugin config journal is invalid")
+    io.assert_path_snapshot(preimage.journal_path, journal_identity, PluginConfigRefused, "plugin config journal changed")
     before_bytes = _read_bound_config(binding)
     if _sha256(before_bytes) != preimage.pre_sha256:
         raise PluginConfigRefused("Hermes config changed after preimage")
@@ -332,7 +356,13 @@ def enable_plugin(
         _rollback_verified_enable(binding, before_bytes, plan.postimage)
         raise PluginConfigRefused("official plugin enable failed") from exc
     _verify_config_plan_source(plan)
-    after_bytes = _read_bound_config(binding)
+    after_identity, after_bytes, _mode = io.read_file_state(binding.config_path, parent_fd=None,
+        missing_allowed=False, refused=PluginConfigRefused, non_regular_refusal="Hermes config is unsafe",
+        changed_refusal="Hermes config changed since plugin enable", wrap_read_error=True)
+    if after_identity is None or after_bytes is None:
+        raise PluginConfigRefused("Hermes config changed since plugin enable")
+    parent_identity = io.read_directory_identity(binding.config_path.parent, PluginConfigRefused,
+                                                  "Hermes config directory changed")
     after_sha256 = _sha256(plan.postimage)
     if return_code != 0:
         _rollback_verified_enable(binding, before_bytes, plan.postimage)
@@ -347,13 +377,25 @@ def enable_plugin(
         post_sha256=after_sha256,
         config_backup_id=preimage.config_backup_id,
         backup_sha256=preimage.backup_sha256,
+        post_identity=after_identity,
+        post_parent_identity=parent_identity,
+        journal_identity=journal_identity,
+        backup_identity=backup_identity,
+        state_parent_identity=state_parent,
     )
     try:
-        _rewrite_private_journal(preimage, phase="plugin_enabled", ownership=ownership)
+        new_journal = _rewrite_private_journal(preimage, phase="plugin_enabled", ownership=ownership)
     except Exception:
-        _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256)
+        _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256,
+                              expected_identity=after_identity, expected_parent=parent_identity)
         raise
-    return ownership
+    io.assert_path_snapshot(binding.config_path, after_identity, PluginConfigRefused,
+                            "Hermes config changed since plugin enable")
+    if io.read_directory_identity(binding.config_path.parent, PluginConfigRefused,
+                                  "Hermes config directory changed") != parent_identity:
+        raise PluginConfigRefused("Hermes config directory changed")
+    from dataclasses import replace
+    return replace(ownership, journal_identity=new_journal)
 
 
 def _plan_enabled_config_bytes(
@@ -373,7 +415,7 @@ def _plan_enabled_config_bytes(
         ) from exc
 
 
-def _verify_config_plan_source(plan):
+def _verify_config_plan_source(plan: ConfigBytesPlan) -> None:
     from .plugin_config_bytes import ConfigBytesRefused
     try:
         plan.verify_source()
@@ -411,24 +453,42 @@ def restore_plugin_config(
         or ownership.backup_sha256 != preimage.backup_sha256
     ):
         raise PluginConfigRefused("plugin config ownership input is invalid")
+    # Legacy observer evidence binds the marker and journal as well as the
+    # config. Fixed-tag V3 does not use that marker and retains its own path.
+    marker = binding.checkout_root / ".hermes_feishu_card_observer.json"
+    try:
+        marker.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise PluginConfigRefused("legacy observer marker is unavailable") from exc
+    else:
+        from . import legacy_observer
+        legacy_observer.restore_owned_config(binding, preimage, ownership)
+        return
     current = _read_bound_config(binding)
     if _sha256(current) != ownership.post_sha256:
         raise PluginConfigRefused("Hermes config changed since plugin enable")
     backup = _read_private_backup(preimage)
-    _restore_exact_config(binding, backup, expected_sha256=ownership.post_sha256)
+    _restore_exact_config(binding, backup, expected_sha256=ownership.post_sha256,
+                          expected_identity=ownership.post_identity,
+                          expected_parent=ownership.post_parent_identity)
 
 
 def mark_plugin_config_installed(
     preimage: PluginConfigPreimage,
     ownership: PluginOwnership,
-) -> None:
+    *,
+    config_delta: Mapping[str, object] | None = None,
+) -> tuple[int, int, str]:
     if (
         type(preimage) is not PluginConfigPreimage
         or type(ownership) is not PluginOwnership
         or preimage.config_backup_id != ownership.config_backup_id
     ):
         raise PluginConfigRefused("plugin config ownership input is invalid")
-    _rewrite_private_journal(preimage, phase="installed", ownership=ownership)
+    return _rewrite_private_journal(preimage, phase="installed", ownership=ownership,
+                                    config_delta=config_delta)
 
 
 def mark_plugin_config_prepared(preimage: PluginConfigPreimage) -> None:
@@ -613,17 +673,77 @@ def _rewrite_private_journal(
     *,
     phase: str,
     ownership: PluginOwnership,
-) -> None:
+    config_delta: Mapping[str, object] | None = None,
+) -> tuple[int, int, str]:
     value = json.dumps(
         {
             "protocol": "hfc-plugin-config-preimage-v1",
             "phase": phase,
             **ownership.sanitized(),
+            **({"config_delta": config_delta} if config_delta is not None else {}),
         },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8") + b"\n"
-    _atomic_replace_bytes(preimage.journal_path, value, 0o600)
+    from . import posix_transaction as io
+    journal = preimage.journal_path
+    config = preimage.state_dir.parent.parent / "config.yaml"
+    if (ownership.journal_identity is None or ownership.backup_identity is None
+            or ownership.post_identity is None or ownership.post_parent_identity is None
+            or ownership.state_parent_identity is None):
+        raise PluginConfigRefused("plugin config evidence identity is unavailable")
+    snapshots = {journal: ownership.journal_identity, preimage.backup_path: ownership.backup_identity,
+                 config: ownership.post_identity}
+    directories = {preimage.state_dir: ownership.state_parent_identity, config.parent: ownership.post_parent_identity}
+    def validate() -> None:
+        for path, identity in snapshots.items():
+            io.assert_path_snapshot(path, identity, PluginConfigRefused, "plugin config evidence changed")
+        for directory, identity in directories.items():
+            if io.read_directory_identity(directory, PluginConfigRefused, "plugin config directory changed") != identity:
+                raise PluginConfigRefused("plugin config directory changed")
+    validate()
+    if not io._cli_dirfd_binding_supported():
+        if os.name != "nt":
+            raise PluginConfigRefused("secure plugin config journal publication unavailable")
+        from .legacy_observer import _portable_restore_config
+        old = journal.read_bytes()
+        if _sha256(old) != ownership.journal_identity[2]:
+            raise PluginConfigRefused("plugin config evidence changed")
+        _portable_restore_config((journal, preimage.backup_path, config), snapshots, directories, old, value)
+        return ownership.journal_identity[0], ownership.journal_identity[1], _sha256(value)
+    target = io.bind_target(journal, PluginConfigRefused, staging_refusal="plugin config directory changed",
+                            parent_refusal="plugin config directory changed", wrap_open_error=True)
+    staged = None
+    try:
+        if target.parent_identity != ownership.state_parent_identity:
+            raise PluginConfigRefused("plugin config directory changed")
+        staged = io.stage_file(journal, value, binding=target, mode=0o600, durable_text=False,
+            refused=PluginConfigRefused, staging_refusal="plugin config journal stage failed",
+            target_refusal="plugin config journal unsafe", stage_refusal="plugin config journal stage changed")
+        stage_identity, stage_value, stage_mode = io.read_file_state(staged.basename, parent_fd=staged.parent_fd,
+            missing_allowed=False, refused=PluginConfigRefused, non_regular_refusal="plugin config journal stage unsafe",
+            changed_refusal="plugin config journal stage changed", wrap_read_error=True)
+        if (stage_identity is None or stage_identity[:2] != staged.identity
+                or stage_value != value or stage_mode != 0o600):
+            raise PluginConfigRefused("plugin config journal stage changed")
+        def final_validate() -> None:
+            validate()
+            io.assert_path_parent(target, PluginConfigRefused, "plugin config directory changed")
+            final_stage, final_value, final_mode = io.read_file_state(staged.basename,
+                parent_fd=staged.parent_fd, missing_allowed=False, refused=PluginConfigRefused,
+                non_regular_refusal="plugin config journal stage unsafe",
+                changed_refusal="plugin config journal stage changed", wrap_read_error=True)
+            if final_stage != stage_identity or final_value != value or final_mode != 0o600:
+                raise PluginConfigRefused("plugin config journal stage changed")
+            io.assert_path_snapshot(journal, ownership.journal_identity, PluginConfigRefused,
+                                    "plugin config journal changed")
+        io.replace_stage(target, staged, check_parent=True, before_replace=final_validate)
+        staged = None
+        return stage_identity
+    finally:
+        if staged is not None:
+            staged.cleanup()
+        target.release()
 
 
 def _read_private_backup(preimage: PluginConfigPreimage) -> bytes:
@@ -644,15 +764,50 @@ def _restore_exact_config(
     value: bytes,
     *,
     expected_sha256: str,
+    expected_identity: tuple[int, int, str] | None = None,
+    expected_parent: tuple[int, int] | None = None,
 ) -> None:
-    current = _read_bound_config(binding)
-    if _sha256(current) != expected_sha256:
+    from . import file_transaction as portable, posix_transaction as io
+    path = binding.config_path
+    snapshot, current, mode = io.read_file_state(path, parent_fd=None, missing_allowed=False,
+        refused=PluginConfigRefused, non_regular_refusal="Hermes config is unsafe",
+        changed_refusal="Hermes config changed; refusing to overwrite", wrap_read_error=True)
+    parent = io.read_directory_identity(path.parent, PluginConfigRefused, "Hermes config directory changed")
+    if (snapshot is None or current is None or snapshot[2] != expected_sha256
+            or (expected_identity is not None and snapshot != expected_identity)
+            or (expected_parent is not None and parent != expected_parent)):
         raise PluginConfigRefused("Hermes config changed; refusing to overwrite")
+    if not io._cli_dirfd_binding_supported():
+        if os.name != "nt":
+            raise PluginConfigRefused("secure config restore is unavailable")
+        portable._atomic_write_text_portable(path, value.decode("utf-8"), mode=mode, expected_before=snapshot)
+        if io.read_directory_identity(path.parent, PluginConfigRefused, "Hermes config directory changed") != parent:
+            raise PluginConfigRefused("Hermes config directory changed")
+        return
+    target = io.bind_target(path, PluginConfigRefused, staging_refusal="Hermes config directory changed",
+                            parent_refusal="Hermes config directory changed", wrap_open_error=True)
+    staged = None
     try:
-        mode = stat.S_IMODE(binding.config_path.lstat().st_mode)
-    except OSError as exc:
-        raise PluginConfigRefused("Hermes config identity is unavailable") from exc
-    _atomic_replace_bytes(binding.config_path, value, mode)
+        if target.parent_identity != parent:
+            raise PluginConfigRefused("Hermes config directory changed")
+        staged = io.stage_file(path, value, binding=target, mode=mode, durable_text=False,
+            refused=PluginConfigRefused, staging_refusal="Hermes config stage failed",
+            target_refusal="Hermes config is unsafe", stage_refusal="Hermes config stage changed")
+        staged_snapshot, payload, staged_mode = io.read_file_state(staged.basename, parent_fd=staged.parent_fd,
+            missing_allowed=False, refused=PluginConfigRefused, non_regular_refusal="Hermes config stage unsafe",
+            changed_refusal="Hermes config stage changed", wrap_read_error=True)
+        if (staged_snapshot is None or staged_snapshot[:2] != staged.identity or payload != value
+                or staged_mode != mode):
+            raise PluginConfigRefused("Hermes config stage changed")
+        def final_validate() -> None:
+            io.assert_path_parent(target, PluginConfigRefused, "Hermes config directory changed")
+            io.assert_path_snapshot(path, snapshot, PluginConfigRefused, "Hermes config changed; refusing to overwrite")
+        io.replace_stage(target, staged, check_parent=True, before_replace=final_validate)
+        staged = None
+    finally:
+        if staged is not None:
+            staged.cleanup()
+        target.release()
 
 
 def _atomic_replace_bytes(path: Path, value: bytes, mode: int) -> None:

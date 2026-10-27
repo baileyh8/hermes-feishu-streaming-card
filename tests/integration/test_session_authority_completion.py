@@ -86,6 +86,7 @@ class Source:
     user_id: str = "ou_sender-a"
     profile_id: str = "default"
     chat_type: str = "p2p"
+    message_id: str = None
 
 
 @dataclass
@@ -145,7 +146,7 @@ def harness(tmp_path, monkeypatch, request):
         mutate_source=lambda source: None,
         before_response=noop,
         footer="",
-        real_post=h._post_json_ordered_response,
+        real_post=h._post_json_response,
         real_gate=h._policy_gate_async,
     )
     h.reset_runtime_state()
@@ -168,7 +169,7 @@ def harness(tmp_path, monkeypatch, request):
         result.posts.append(payload)
         return {"ok": True, "applied": True}
 
-    monkeypatch.setattr(h, "_post_json_ordered_response", post)
+    monkeypatch.setattr(h, "_post_json_response", post)
     monkeypatch.setattr(h, "_native_handoff_plan_fingerprint", lambda _: "f" * 64)
     monkeypatch.setattr(h, "_native_handoff_runtime_wrappers_ready", lambda _: True)
     globs = dict(
@@ -340,7 +341,7 @@ def harness(tmp_path, monkeypatch, request):
     monkeypatch.setattr(
         ac,
         "_authority_current",
-        lambda offer, started: (
+        lambda offer, started, require_current=True: (
             h._is_lower_hex("f" * 64, 64)
             and offer.runner() is runner
             and offer.adapter() is adapter
@@ -479,6 +480,8 @@ def harness(tmp_path, monkeypatch, request):
             self.row = {
                 "admission_id": "admission-" + event.message_id,
                 "generation": 7,
+                "target_session_id": self.ref.session_id,
+                "owner_epoch": self.epoch,
                 "payload": {
                     "native_text_v1": {
                         "source": {
@@ -494,6 +497,15 @@ def harness(tmp_path, monkeypatch, request):
                     "text": event.text,
                 },
             }
+            if event.internal:
+                # The pinned 0.22.5 automation path stores producer_identity's
+                # JSON string in both the admission row and native envelope.
+                self.row["principal_id"] = "automation:route-key"
+                self.row["request_id"] = event.message_id
+                self.row["payload"]["native_text_v1"]["automation"] = {
+                    "identity": event.message_id,
+                    "owner": self.ref.session_id,
+                }
             ingress.restore_native = lambda *a: replace(
                 self.event, source=replace(self.event.source)
             )
@@ -580,6 +592,98 @@ async def test_internal_source_user_id_completes_one_card_at_original_base_seam(
     assert harness.posts[0]["data"]["admission_user_id"] == "a1b2c3d4"
     assert "sender_open_id" not in harness.posts[0]["data"]
     assert harness.native == []
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_automation_admission_delivers_only_its_card(harness):
+    # producer_identity() serializes the upstream tuple as JSON before the
+    # native envelope is persisted; execute_admission does not stamp internal
+    # events with _claimed_owner.
+    event = Event(
+        source=Source(user_id="a1b2c3d4"),
+        message_id='["async_delegation","delegation-a",""]',
+        internal=True,
+    )
+    await deliver(harness, event=event)
+
+    assert harness.staged == [True]
+    assert len(harness.posts) == 1
+    assert harness.posts[0]["event"] == "message.completed"
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_automation_source_anchor_drift_cannot_reuse_old_reply(harness):
+    event = Event(
+        source=Source(user_id="a1b2c3d4", message_id="om_old"),
+        message_id='["async_delegation","delegation-a",""]',
+        internal=True,
+    )
+    harness.rebuild_source = True
+    harness.mutate_source = lambda source: setattr(source, "message_id", None)
+    await deliver(harness, event=event)
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "changed", ["principal", "target", "owner", "request", "identity", "route", "user", "thread"]
+)
+async def test_automation_claim_drift_cannot_suppress_native(harness, changed):
+    event = Event(
+        source=Source(user_id="a1b2c3d4"),
+        message_id='["async_delegation","delegation-a",""]',
+        internal=True,
+    )
+    authority = harness.Authority(event)
+    row = authority.row
+    envelope = row["payload"]["native_text_v1"]
+    if changed == "principal":
+        row["principal_id"] = "messaging:other"
+    elif changed == "target":
+        row["target_session_id"] = "other"
+    elif changed == "owner":
+        envelope["automation"]["owner"] = "other"
+    elif changed == "request":
+        row["request_id"] = "other"
+    elif changed == "identity":
+        envelope["automation"]["identity"] = "other"
+    elif changed == "route":
+        envelope["route"] = "other"
+    else:
+        envelope["source"]["user_id" if changed == "user" else "thread_id"] = "other"
+
+    await authority._drain(authority.ref)
+
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize("changed", ["row", "owner"])
+async def test_internal_claimed_owner_cannot_bypass_automation_proof(harness, changed):
+    event = Event(
+        source=Source(user_id="a1b2c3d4"),
+        message_id='["async_delegation","delegation-a",""]',
+        internal=True,
+    )
+    authority = harness.Authority(event)
+    if changed == "row":
+        authority.row["principal_id"] = "messaging:other"
+    restore = harness.ingress.restore_native
+
+    def restored(*args):
+        value = restore(*args)
+        value._claimed_owner = (
+            ("other", 7) if changed == "owner" else (authority.ref.session_id, 7)
+        )
+        return value
+
+    harness.ingress.restore_native = restored
+    await authority._drain(authority.ref)
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
 
 
 @pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
@@ -714,7 +818,7 @@ async def test_sidecar_post_failure_preserves_complete_native_and_ledger(
     async def failed(*a, **k):
         raise OSError("loopback transport failed")
 
-    monkeypatch.setattr(h, "_post_json_ordered_response", failed)
+    monkeypatch.setattr(h, "_post_json_response", failed)
     await deliver(harness, waiter=waiter)
     assert harness.native == ["complete answer"]
     assert harness.ledger[-1] == ("final", "ingress-a", True)
@@ -733,7 +837,7 @@ async def test_admission_ack_break_emits_one_fixed_category(harness, monkeypatch
             raise OSError("synthetic transport failure")
         return {"ok": True, "applied": False}
 
-    monkeypatch.setattr(h, "_post_json_ordered_response", post)
+    monkeypatch.setattr(h, "_post_json_response", post)
     await deliver(harness)
 
     assert harness.native == ["complete answer"]
@@ -760,7 +864,7 @@ async def test_ack_normal_downgrade_does_not_mask_transport_failure(
     async def failed(*args, **kwargs):
         raise OSError("synthetic transport failure")
 
-    monkeypatch.setattr(h, "_post_json_ordered_response", failed)
+    monkeypatch.setattr(h, "_post_json_response", failed)
     await deliver(harness)
 
     assert harness.native == ["complete answer"]
@@ -1110,7 +1214,7 @@ async def test_carrier_final_crosses_real_loopback_http_without_broadening_ack(
                 timeout_seconds=1,
             ),
         )
-        monkeypatch.setattr(h, "_post_json_ordered_response", harness.real_post)
+        monkeypatch.setattr(h, "_post_json_response", harness.real_post)
         await deliver(harness, waiter=waiter)
         assert len(seen) == 1
         assert seen[0]["data"]["answer"] == "complete answer"
@@ -1155,7 +1259,7 @@ async def test_real_sidecar_events_handler_terminalizes_existing_owner(
             "load_runtime_config",
             lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=1),
         )
-        monkeypatch.setattr(h, "_post_json_ordered_response", harness.real_post)
+        monkeypatch.setattr(h, "_post_json_response", harness.real_post)
         event = Event()
         started = h.build_event(
             "message.started",
@@ -1205,7 +1309,7 @@ async def test_real_sidecar_authenticated_admission_rejection_keeps_native(
             "load_runtime_config",
             lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=1),
         )
-        monkeypatch.setattr(h, "_post_json_ordered_response", harness.real_post)
+        monkeypatch.setattr(h, "_post_json_response", harness.real_post)
         await deliver(harness, waiter=waiter)
         assert not app[SESSIONS_KEY]
         assert harness.native == ["complete answer"]
@@ -1221,10 +1325,117 @@ async def test_owner_changes_during_terminal_http_ack_preserve_native(
         harness.adapter._app_id = "new-app"
         return {"ok": True, "applied": True}
 
-    monkeypatch.setattr(h, "_post_json_ordered_response", post)
+    monkeypatch.setattr(h, "_post_json_response", post)
     await deliver(harness)
     assert harness.native == ["complete answer"]
     assert harness.ledger[-1] == ("final", "ingress-a", True)
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_applied_terminal_ack_only_suppresses_its_original_native_send(
+    harness, monkeypatch
+):
+    from hermes_feishu_card import admission_completion as ac
+
+    current = {"value": True}
+    original = ac._authority_current
+
+    def authority(offer, *, started, require_current=True):
+        return original(offer, started=started, require_current=require_current) and (
+            current["value"] or not require_current
+        )
+
+    async def post(url, payload, timeout):
+        harness.posts.append(payload)
+        current["value"] = False
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(ac, "_authority_current", authority)
+    monkeypatch.setattr(h, "_post_json_response", post)
+    await deliver(harness)
+
+    assert len(harness.posts) == 1
+    assert harness.native == []
+    assert harness.ledger[-1] == ("final", "ingress-a", True)
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize("change", ["stage", "payload", "event", "generation", "adapter"])
+async def test_applied_ack_cannot_claim_replaced_request_or_identity(harness, monkeypatch, change):
+    calls = []
+
+    async def post(url, payload, timeout):
+        calls.append("entered")
+        stage = h._HFC_EXACT_COMPLETION_STAGE.get()
+        assert stage is not None
+        if change == "stage":
+            stage["payload"]["data"]["answer"] = "changed"
+        elif change == "payload":
+            payload["data"]["answer"] = "changed"
+        elif change == "event":
+            stage["_admission_event"].message_id = "other"
+        elif change == "generation":
+            stage["_admission_claim"].runtime_generation += 1
+        else:
+            harness.adapter._app_id = "other"
+        calls.append("applied")
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(h, "_post_json_response", post)
+    await deliver(harness)
+
+    assert calls == ["entered", "applied"]
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_http_child_context_replacement_does_not_change_parent_stage(harness, monkeypatch):
+    calls = []
+
+    async def post(url, payload, timeout):
+        calls.append("entered")
+
+        async def child():
+            calls.append("child-entered")
+            stage = h._HFC_EXACT_COMPLETION_STAGE.get()
+            assert stage is not None
+            h._HFC_EXACT_COMPLETION_STAGE.set(dict(stage))
+            harness.posts.append(payload)
+            calls.append("applied")
+            return {"ok": True, "applied": True}
+
+        return await asyncio.create_task(child())
+
+    monkeypatch.setattr(h, "_post_json_response", post)
+    await deliver(harness)
+
+    assert calls == ["entered", "child-entered", "applied"]
+    assert [post["event"] for post in harness.posts] == ["message.completed"]
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+async def test_parent_context_stage_replacement_cannot_consume_old_ack(harness, monkeypatch):
+    original = h._post_admission_terminal
+    calls = []
+
+    async def replace_parent_stage(*args):
+        calls.append("entered")
+        result, attempt = await original(*args)
+        stage = h._HFC_EXACT_COMPLETION_STAGE.get()
+        assert stage is args[0]
+        assert result == {"ok": True, "applied": True}
+        assert attempt is not None
+        h._HFC_EXACT_COMPLETION_STAGE.set(dict(stage))
+        calls.append("replaced")
+        return result, attempt
+
+    monkeypatch.setattr(h, "_post_admission_terminal", replace_parent_stage)
+    await deliver(harness)
+
+    assert calls == ["entered", "replaced"]
+    assert [post["event"] for post in harness.posts] == ["message.completed"]
+    assert harness.native == ["complete answer"]
 
 
 @pytest.mark.parametrize("waiter", [True, False])
@@ -1271,8 +1482,21 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
 
     monkeypatch.setattr(h, "build_event", build)
     attempts = []
+    requests = []
+    native_contexts = []
+    original_native_send = harness.adapter._send_with_retry
+
+    async def native_send(**kwargs):
+        native_contexts.append(h._HFC_NATIVE_HANDOFF_CONTEXT.get())
+        return await original_native_send(**kwargs)
+
+    monkeypatch.setattr(harness.adapter, "_send_with_retry", native_send)
 
     async def post(url, payload, timeout):
+        requests.append((url, payload))
+        if url == "http://127.0.0.1:1/native-handoff/recover":
+            raise TimeoutError("lost synthetic recovery lookup")
+        assert url == "http://127.0.0.1:1/events"
         attempts.append(payload)
         if post_failure:
             runtime.handle_post_api_request(**observed)  # late duplicate
@@ -1280,13 +1504,33 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
         harness.posts.append(payload)
         return {"ok": True, "applied": True}
 
-    monkeypatch.setattr(h, "_post_json_ordered_response", post)
+    monkeypatch.setattr(h, "_post_json_response", post)
     try:
         await deliver(harness, waiter=waiter)
         assert harness.staged == [True]
         assert len(previews) == 1 and "rate" not in previews[0]["data"]
         assert takes == ["physical-session"]
         assert len(attempts) == 1
+        assert attempts[0]["event"] == "message.completed"
+        assert [url for url, _ in requests] == (
+            ["http://127.0.0.1:1/events", "http://127.0.0.1:1/native-handoff/recover"]
+            if post_failure else ["http://127.0.0.1:1/events"]
+        )
+        if post_failure:
+            handoff = attempts[0]["data"]["native_handoff"]
+            recovery_payload = requests[1][1]
+            assert recovery_payload == {
+                "protocol": "hfc-native-handoff-recovery-v2",
+                **{key: handoff[key] for key in (
+                    "obligation_key", "content_hash", "plan_fingerprint", "route", "target_hash"
+                )},
+            }
+            assert len(native_contexts) == 1
+            assert native_contexts[0]["provisional"] is True
+            assert native_contexts[0]["recovery_payload"] == recovery_payload
+            assert native_contexts[0]["descriptor"]["uuid_seed"] == handoff["provisional_uuid_seed"]
+        else:
+            assert native_contexts == []
         assert len(harness.posts) == (0 if post_failure else 1)
         if api_calls:
             assert attempts[0]["data"]["rate"] == {

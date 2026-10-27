@@ -91,8 +91,7 @@ def test_unrelated_config_reproduction_and_preserved_restore(admission, monkeypa
     record = json.loads(before_marker)
     old_backup = binding.hermes_home / ".hermes_feishu_card/install" / (record["plugin_config"]["config_backup_id"] + ".yaml")
     binding.config_path.write_bytes(binding.config_path.read_bytes() + b"unrelated_model: keep-me\n")
-    with pytest.raises(ValueError, match="config changed"):
-        legacy_observer.inspect(binding.checkout_root)
+    assert legacy_observer.inspect(binding.checkout_root)
     from hermes_feishu_card.install import legacy_rebind
     monkeypatch.setattr(legacy_rebind, "_verify_runtime", lambda _: None)
     legacy_rebind.rebind(binding, apply=True)
@@ -382,7 +381,8 @@ def test_fixed_diagnostics_for_config_and_platform_boundaries(admission, monkeyp
     from hermes_feishu_card.install import legacy_rebind, recovery
     from hermes_feishu_card.install.detect import detect_hermes
     binding, _ = admission
-    binding.config_path.write_bytes(binding.config_path.read_bytes() + b"extra: keep\n")
+    binding.config_path.write_bytes(binding.config_path.read_bytes().replace(
+        b"allow_tool_override: false", b"allow_tool_override: true"))
     assert legacy_observer.observer_status(binding.checkout_root)["reason"] == "observer_config_changed"
     report = recovery.sanitize_recovery_plan(recovery.plan_recovery(detect_hermes(binding.checkout_root)))
     assert report["findings"][0]["code"] == "observer_config_changed"

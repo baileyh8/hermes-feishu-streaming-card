@@ -23,7 +23,11 @@ hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-
 
 重绑须验证受管源码、manifest、备份、observer 记录、配置 journal、同一 HOME、已归属 PM dependency member，以及当前 runtime 的普通 wheel 来源和包资源。新 CLI 可以核验已归属的旧版本 runtime：entry point 必须与已验证的 member/wheel 版本一致，探针后再次核对 owner。未知来源、证据损坏、不可检查文件和并发变化继续拒绝。仅支持已核验的 decomposed 安装和可用目录描述符安全事务的平台；Windows 的重绑当前明确拒绝，非 PM 或旧 single-file 安装的未知 venv 重建不在此接纳范围。
 
-仅当插件配置分支仍等于已证明的官方写入结果时，才接纳无关配置编辑；恢复保留其它当前配置字节。插件分支修改、重复 YAML key、别名或其它无法证明归属的结构需要人工处理。重绑使用新 preimage/journal，并保留迁移前证据；失败保持可审计状态。重绑不恢复旧审批、任务执行或运行中 Gateway。
+普通 provider、display、其它插件的启用项及条目编辑不需要重新绑定。观察记录只认领官方 enable 实际改动的 HFC enabled/disabled 成员和 `entries.hermes-feishu-card.allow_tool_override`，PM dependency 的 selection 仍归其原 owner。恢复以当前配置为基础撤销已证明的 HFC 改动，保留其它配置；完全无漂移时逐字恢复原 preimage。重复 key、alias、anchor、merge、tag、非字符串 key、重复选择项、受管值冲突或无法确定的字节编辑会拒绝，保留现场。
+
+旧 observer 记录遇到无关编辑时，检查会读取完整 preimage/journal，在 0700 临时目录中隔离重放受检官方 writer，并要求结果与历史 postimage 摘要完全一致；真实 HOME、config、marker 和 journal 不被写入，临时目录结束后清理。新记录同时绑定受管状态与官方 postimage 的插件分支字节摘要，不必每次重放。提交恢复前校验整份当前配置、文件和父目录身份以及 marker/journal/preimage；检查期间发现变化时拒绝覆盖。POSIX 的最终检查与文件替换之间仍存在通用 API 无法消除的短暂竞争窗口：恢复前停止 Gateway、自动更新器等配置写入器，也不要同时编辑配置。重绑仍用于明确的 runtime Python identity 变化；它保留迁移前证据，不恢复旧审批、任务执行或运行中 Gateway。
+
+5.0.10 新建或重绑的 observer 记录带有 `config_delta`，5.0.9 不识别这份扩展证据。需要降级时，先用 5.0.10 执行受控 restore 或 uninstall，核对当前配置中的其它用户改动已保留，再安装旧版本；不要只降级包后指望旧版读取新记录。
 
 重绑成功后，若需要更换 HFC 安装来源或升级 wheel，先执行受控 restore，再 fresh install；更换来源可能先创建另一个 PM generation，直接 install 会再次触发旧 observer 的身份保护。restore 保留已归属的 PM dependency。源码恢复与配置重绑是不同步骤，重绑成功不能代替 hooks 恢复或服务启动验收。
 

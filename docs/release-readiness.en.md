@@ -2,6 +2,12 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
+This branch targets `5.0.10`; this batch addresses #469/#470 and adds #451 diagnostics. Independent review/QA, exact full CI, ordinary-wheel provenance, controlled real Feishu API, public installation and release assets are separate release gates. Actual reporter deployments and real Gateway/model execution remain unverified; desktop/Android visual and click checks remain unverified, and iOS/new-user trials are outside scope. Final evidence is published with the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.10).
+
+## Historical records through v5.0.9
+
+The earlier records below are not evidence that the v5.0.10 gates passed.
+
 This branch targets `5.0.9`; this batch repairs #451/#459/#462/#463 and integrates #464/#465/#466 through #467. Independent QA/review, exact final CI, native Windows, ordinary wheel/public install and release assets are separate release gates, with each result bound to its actual commit and recorded in Release. Actual Gateway/model and desktop/Android visual/click acceptance are unverified; iOS/new-user trials are excluded. Final evidence will be linked from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.9).
 
 ## Historical records through v5.0.8

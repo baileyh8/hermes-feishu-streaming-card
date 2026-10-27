@@ -49,6 +49,7 @@
       "tests/unit/test_pm_wheel_store.py",
       "tests/unit/test_windows_native_io.py",
       "tests/unit/test_legacy_rebind.py",
+      "tests/unit/test_issue470_config_ownership.py",
       "tests/integration/test_legacy_observer_install.py",
       "tests/integration/test_pm_rebind.py",
       "tests/integration/test_official_enable_root.py",
@@ -666,6 +667,10 @@
       "runtime"
     ],
     "hermes_feishu_card/install/plugin_config_bytes.py": [
+      "plugin",
+      "install"
+    ],
+    "hermes_feishu_card/install/plugin_config_delta.py": [
       "plugin",
       "install"
     ],

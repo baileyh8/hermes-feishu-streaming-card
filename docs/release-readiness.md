@@ -2,6 +2,12 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
+本分支目标版本为 `5.0.10`；本轮处理 #469/#470，并补充 #451 诊断。独立 QA/review、精确完整 CI、普通 wheel 来源、受控真实 Feishu API、公开安装与发行资产分别作为发布门禁。报告者现场及真实 Gateway/model 未验证；桌面/Android 视觉与点击未验证，iOS/新用户试用不在范围。最终证据见 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.10)。
+
+## 截至 v5.0.9 的历史记录
+
+下列旧记录不代表 v5.0.10 发布门禁通过。
+
 本分支目标版本为 `5.0.9`；本轮修复 #451/#459/#462/#463，并经 #467 集成 #464/#465/#466。发布须分别核验独立 QA/review、精确最终 CI、原生 Windows、普通 wheel/公开安装及发行资产；各阶段结果绑定实际提交并登记在 Release。真实 Gateway/model、桌面/Android 视觉与点击未验证；iOS/新用户试用不在本轮范围。最终证据见 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.9)。
 
 ## 截至 v5.0.8 的历史记录

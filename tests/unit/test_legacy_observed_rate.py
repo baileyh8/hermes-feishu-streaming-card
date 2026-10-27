@@ -491,7 +491,15 @@ def test_shared_plugin_transaction_portable_rollback(installed, monkeypatch, con
     # Both installers use this same public config transaction boundary.
     if consumer == "v3":
         (binding.checkout_root / ".hermes_feishu_card_manifest").write_text('{"manifest_version":3}')
-    monkeypatch.delattr(plugin.os, "fchmod", raising=False)
+    # Restrict the missing-fchmod simulation to the plugin's own portable
+    # journal helper. Deleting it from the shared os module also breaks the
+    # host's POSIX dirfd backend, which still requires the real operation.
+    class OSWithoutFchmod:
+        def __getattr__(self, name):
+            if name == "fchmod":
+                raise AttributeError(name)
+            return getattr(os, name)
+    monkeypatch.setattr(plugin, "os", OSWithoutFchmod())
     if failure == "official":
         def fail(_):
             binding.config_path.write_bytes(b"plugins: {}\n")
@@ -513,6 +521,24 @@ def test_shared_plugin_transaction_portable_rollback(installed, monkeypatch, con
             result.rollback()
         else:
             plugin.restore_plugin_config(binding, preimage, result)
+            # V3 returns the journal to prepared after rollback. Exercise its
+            # actual path-chmod fallback without changing the host backend.
+            chmod_calls = []
+            original_chmod = Path.chmod
+            def record_chmod(path, mode, *args, **kwargs):
+                chmod_calls.append((path, mode))
+                return original_chmod(path, mode, *args, **kwargs)
+            with monkeypatch.context() as patch:
+                patch.setattr(Path, "chmod", record_chmod)
+                plugin.mark_plugin_config_prepared(preimage)
+            assert len(chmod_calls) == 1
+            assert chmod_calls[0][0].parent == preimage.state_dir
+            assert chmod_calls[0][1] == 0o600
+            assert json.loads(preimage.journal_path.read_bytes()) == {
+                "protocol": "hfc-plugin-config-preimage-v1",
+                "phase": "prepared",
+                **preimage.sanitized(),
+            }
     if failure == "official":
         # Unknown official postimage can contain concurrent user edits. Retain
         # those bytes and the original private preimage for diagnosis/retry.

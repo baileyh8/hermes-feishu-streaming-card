@@ -14,6 +14,7 @@ from functools import wraps
 from hashlib import sha256
 import importlib
 import inspect
+import json
 from pathlib import Path
 import stat
 import sys
@@ -528,20 +529,61 @@ def _admission_identity_matches(data: Any, route: tuple[str, ...]) -> bool:
     )
 
 
-def admission_identity_ready(values: dict[str, Any]) -> bool:
-    """Require the original and current source to name the same admission user."""
+def admission_readiness_reason(values: dict[str, Any]) -> str:
+    """Return only a fixed category before the first card is accepted."""
     source = values.get("source")
     event = values.get("event")
     current = getattr(event, "source", None)
     original_user = getattr(source, "user_id", None)
     current_user = getattr(current, "user_id", None)
-    return (
+    if not (
         type(original_user) is str
         and _text(original_user) is not None
         and type(current_user) is str
         and _text(current_user) is not None
         and current_user == original_user
-    )
+    ):
+        return "identity-mismatch"
+    # A structured or absent ID cannot form the verified durable route.
+    if _text(getattr(event, "message_id", None)) is None:
+        return "route-invalid"
+    return ""
+
+
+def admission_identity_ready(values: dict[str, Any]) -> bool:
+    """Require a representable route and matching original admission user."""
+    return not admission_readiness_reason(values)
+
+
+def _automation_owner(event: Any, ref: Any, row: Any, key: str | None) -> tuple[str, int] | None:
+    """Borrow a native automation claim only when its durable proof agrees."""
+    if getattr(event, "internal", None) is not True or not isinstance(row, dict) or key is None:
+        return None
+    try:
+        session_id = getattr(ref, "session_id", None)
+        generation = row["generation"]
+        envelope = row["payload"]["native_text_v1"]
+        automation = envelope["automation"]
+        message_id = getattr(event, "message_id", None)
+        if (
+            _text(session_id) is None
+            or type(generation) is not int
+            or generation <= 0
+            or not isinstance(automation, dict)
+            or _text(message_id) is None
+            or row["target_session_id"] != session_id
+            or row["principal_id"] != "automation:" + key
+            or row["request_id"] != message_id
+            or envelope["route"] != key
+            or envelope["event"]["message_id"] != message_id
+            or automation["identity"] != message_id
+            or automation["owner"] != session_id
+            or envelope["source"].get("message_id") is not None
+        ):
+            return None
+        return session_id, generation
+    except (KeyError, TypeError, AttributeError):
+        return None
 
 
 def _warn_attempt(offer: Completion, reason: str) -> None:
@@ -574,16 +616,58 @@ def diagnose_attempt(stage: Any, reason: str, *, consume: bool = True) -> None:
         pass
 
 
+def _prepare_failed(reason: str) -> Completion | None:
+    try:
+        completion_diagnostics.prepare_failed(reason)
+    except BaseException:
+        pass
+    return None
+
+
+def _prepare_authority_reason(offer: Completion) -> str:
+    """Classify a rejected live claim without exposing its values."""
+    try:
+        authority = offer.authority() if offer.authority is not None else None
+        live = offer.live() if offer.live is not None else None
+        if authority is None or live is None:
+            return "authority-owner-stale"
+        if (authority.epoch != offer.epoch or authority.instance_id != offer.instance_id
+                or offer.db is None or authority.db is not offer.db()
+                or not _runtime_epoch_current(authority.db, offer.epoch, offer.instance_id)):
+            return "authority-epoch-stale"
+        if (authority.retiring or getattr(live, "superseded", False)
+                or authority.sessions.get(offer.authority_owner[0]) is not live):
+            return "authority-owner-stale"
+        get_row = importlib.import_module("hermes_state_runtime").get_session_admission
+        row = get_row(authority.db, admission_id=offer.admission_id)
+        if isinstance(row, dict):
+            if row.get("owner_epoch") != offer.epoch:
+                return "authority-epoch-stale"
+            if row.get("generation") != offer.authority_owner[1]:
+                return "authority-generation-stale"
+        if (not _current(offer) or authority.executing.get(offer.authority_owner[0])
+                != offer.authority_owner[1]
+                or live.event_stream.execution != {
+                    "authority_epoch": offer.epoch,
+                    "execution_generation": offer.authority_owner[1],
+                    "admission_id": offer.admission_id,
+                }):
+            return "authority-generation-stale"
+    except Exception:
+        pass
+    return "authority-unverified"
+
+
 def prepare(
     values: dict[str, Any], stage: dict[str, Any], finish: Finish
 ) -> Completion | None:
     """Bind the existing claim and canonical payload; never infer an execution claim."""
     verified = _verified()
     if verified is None or mode(values) != "handoff":
-        return None
+        return _prepare_failed("source-unverified")
     claim = _claim_frame(verified[0])
     if claim is None:
-        return None
+        return _prepare_failed("claim-frame-missing")
     authority: Any = claim.get("authority")
     ref, row = claim.get("ref"), claim.get("row")
     event, runner, source = (
@@ -592,29 +676,50 @@ def prepare(
         values.get("source"),
     )
     if runner is None or authority is None:
-        return None
+        return _prepare_failed("claim-frame-missing")
     payload = stage.get("payload", {})
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+        return _prepare_failed("payload-route-mismatch")
     data = payload.get("data", {})
     profile = data.get("profile_id")
+    if str(data.get("profile_source", "")).startswith("sanitized_"):
+        return _prepare_failed("profile-source-untrusted")
     route = _route(event, profile)
-    owner = getattr(event, "_claimed_owner", None)
     generation = values.get("run_generation")
     key = _text(values.get("session_key"))
+    owner = getattr(event, "_claimed_owner", None)
+    internal = getattr(event, "internal", False)
+    if internal is True:
+        automation_owner = (
+            _automation_owner(event, ref, row, key)
+            if claim.get("event") is event else None
+        )
+        if owner is not None and owner != automation_owner:
+            return _prepare_failed("claim-owner-unverified")
+        owner = automation_owner
+    elif internal is not False:
+        return _prepare_failed("claim-owner-unverified")
     physical = _text(getattr(values.get("session_entry"), "session_id", None))
     response = values.get("response")
+    if route is None:
+        return _prepare_failed("route-invalid")
+    if not _same_source(source, getattr(event, "source", None)):
+        return _prepare_failed("source-mismatch")
     if (
-        route is None
-        or not _same_source(source, getattr(event, "source", None))
-        or _route_source(source, route[-1], profile) != route
+        _route_source(source, route[-1], profile) != route
         or payload.get("turn_id") != route[-1]
         or payload.get("chat_id") != route[1]
-        or type(owner) is not tuple
+        or (payload.get("thread_id") or "") != route[2]
+    ):
+        return _prepare_failed("payload-route-mismatch")
+    if type(generation) is not int or generation <= 0:
+        return _prepare_failed("run-generation-invalid")
+    if (
+        type(owner) is not tuple
         or len(owner) != 2
         or _text(owner[0]) is None
         or type(owner[1]) is not int
         or owner[1] <= 0
-        or type(generation) is not int
-        or generation <= 0
         or key is None
         or physical is None
         or not isinstance(response, str)
@@ -622,11 +727,10 @@ def prepare(
         or not isinstance(row, dict)
         or getattr(ref, "session_id", None) != owner[0]
         or row.get("generation") != owner[1]
-        or not _admission_identity_matches(data, route)
-        or (payload.get("thread_id") or "") != route[2]
-        or str(data.get("profile_source", "")).startswith("sanitized_")
     ):
-        return None
+        return _prepare_failed("claim-owner-unverified")
+    if not _admission_identity_matches(data, route):
+        return _prepare_failed("identity-mismatch")
     try:
         adapter = runner._adapter_for_source(source)
         if (
@@ -634,7 +738,7 @@ def prepare(
             or runner._adapter_for_source(getattr(event, "source", None)) is not adapter
             or _base_extractor(adapter) is None
         ):
-            return None
+            return _prepare_failed("adapter-unverified")
         offer = Completion(
             dict(stage),
             route,
@@ -671,7 +775,7 @@ def prepare(
                 home = Path(authority_value).resolve()
                 db_home = Path(authority.db.db_path).resolve().parent
                 if db_home != home:
-                    return None
+                    return _prepare_failed("authority-profile-mismatch")
                 authority_profile = (
                     home.name
                     if home.parent.name == "profiles" and not home.name.startswith(".")
@@ -683,20 +787,20 @@ def prepare(
                 )
                 if authority_source.startswith("sanitized_"):
                     authority_profile = None
-        if (
-            authority_profile != profile
-            or not _row_route_matches(row, offer)
-            or not _authority_current(offer, started=True)
-        ):
-            return None
+        if authority_profile != profile:
+            return _prepare_failed("authority-profile-mismatch")
+        if not _row_route_matches(row, offer):
+            return _prepare_failed("durable-route-mismatch")
+        if not _authority_current(offer, started=True):
+            return _prepare_failed(_prepare_authority_reason(offer))
         previous = getattr(event, _ATTR, None)
         if isinstance(previous, Completion):
             previous.abort()
         setattr(event, _ATTR, offer)
         _install(verified[0], finish)
         return offer
-    except (TypeError, AttributeError):
-        return None
+    except (TypeError, AttributeError, KeyError, ValueError, OSError):
+        return _prepare_failed("prepare-exception")
 
 
 def _abort(offer: Any) -> None:
@@ -929,6 +1033,123 @@ def valid_consumed(stage: dict[str, Any]) -> bool:
         and _base_extractor(offer.adapter()) is not None
         and _authority_current(offer, started=False)
     )
+
+
+def _attempt_fingerprint(stage: dict[str, Any], payload: dict[str, Any], values: dict[str, Any]) -> str:
+    """Freeze the exact request and Base inputs, without retaining them in logs."""
+    selected = {name: values.get(name) for name in (
+        "content", "reply_to", "metadata", "obligation_id",
+        "images", "local_files", "media_files",
+    )}
+    value = {
+        "stage_payload": stage.get("payload"),
+        "base_context": stage.get("base_context"),
+        "event_url": stage.get("event_url"),
+        "timeout": stage.get("timeout_seconds"),
+        "request": payload,
+        "base": selected,
+    }
+    return sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
+                             ensure_ascii=True, allow_nan=False).encode()).hexdigest()
+
+
+def _offer_referents(offer: Completion) -> tuple[Any, ...]:
+    return (
+        offer.runner(), offer.adapter(), offer.producer(), offer.source_event(), offer.target(),
+        offer.authority() if offer.authority is not None else None,
+        offer.live() if offer.live is not None else None,
+        offer.db() if offer.db is not None else None,
+    )
+
+
+def _offer_binding(offer: Completion, referents: tuple[Any, ...] | None = None) -> tuple[Any, ...]:
+    if referents is None:
+        referents = _offer_referents(offer)
+    return (
+        offer.route, offer.authority_owner, offer.runtime_generation, offer.session_key,
+        offer.physical_session, offer.native_response, offer.expires, offer.admission_id,
+        offer.epoch, offer.app_id, offer.instance_id, offer.authority_profile,
+        offer.profile_source, offer.turn_outcome,
+        *(id(value) for value in referents),
+    )
+
+
+@dataclass(repr=False)
+class AppliedAttempt:
+    """One prevalidated POST may acknowledge only its own native send."""
+
+    stage: dict[str, Any]
+    payload: dict[str, Any]
+    values: dict[str, Any]
+    offer: Completion
+    event: Any
+    adapter: Any
+    task: Any
+    binding: tuple[Any, ...]
+    fingerprint: str
+    referents: tuple[Any, ...]
+    spent: bool = False
+
+    def revoke(self) -> None:
+        self.spent = True
+        self.referents = ()
+        if self.offer.state == "consumed":
+            self.offer.abort()
+
+    def consume(self, response: Any) -> bool:
+        if self.spent:
+            return False
+        self.spent = True
+        try:
+            if (
+                not isinstance(response, dict)
+                or response.get("ok") is not True
+                or response.get("applied") is not True
+                or asyncio.current_task() is not self.task
+                or self.stage.get("_admission_claim") is not self.offer
+                or self.stage.get("_admission_event") is not self.event
+                or self.values.get("delivery_adapter") is not self.adapter
+                or self.offer.state != "consumed"
+                or self.offer.adapter() is not self.adapter
+                or getattr(self.adapter, "_app_id", None) != self.offer.app_id
+                or self.offer.target() is not self.event
+                or _route(self.event, self.offer.route[0]) != self.offer.route
+                or _offer_binding(self.offer) != self.binding
+                or _attempt_fingerprint(self.stage, self.payload, self.values) != self.fingerprint
+            ):
+                return False
+            self.offer.state = "acknowledged"
+            return True
+        except Exception:
+            return False
+        finally:
+            self.referents = ()
+
+
+def begin_applied_attempt(stage: dict[str, Any], payload: dict[str, Any],
+                          values: dict[str, Any], adapter: Any) -> AppliedAttempt | None:
+    """Validate the live claim before POST and bind its possible applied ACK."""
+    try:
+        offer = stage.get("_admission_claim")
+        event = stage.get("_admission_event")
+        task = asyncio.current_task()
+        if (
+            not isinstance(offer, Completion)
+            or task is None
+            or stage.get("task_id") != id(task)
+            or offer.adapter() is not adapter
+            or values.get("delivery_adapter") is not adapter
+            or not valid_consumed(stage)
+        ):
+            return None
+        # Preserve weakly borrowed objects only for this one bounded request.
+        # A legitimate producer may otherwise be collected while its ACK is in flight.
+        referents = _offer_referents(offer)
+        return AppliedAttempt(stage, payload, values, offer, event, adapter, task,
+                              _offer_binding(offer, referents),
+                              _attempt_fingerprint(stage, payload, values), referents)
+    except Exception:
+        return None
 
 
 def unsupported_reason() -> str:

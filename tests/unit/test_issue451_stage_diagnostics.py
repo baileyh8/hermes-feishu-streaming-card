@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -65,6 +66,40 @@ def test_attempt_categories_are_independently_rate_limited(monkeypatch):
         "admission completion attempt: ack-transport-error",
         "admission completion attempt: ack-not-applied",
     ]
+
+
+def test_prepare_categories_are_fixed_redacted_and_rate_limited(monkeypatch):
+    emitted = []
+    diag.reset()
+    monkeypatch.setattr(diag, "_emit", lambda message, **kwargs: emitted.append(message))
+    diag.prepare_failed("route-invalid")
+    diag.prepare_failed("route-invalid")
+    diag.prepare_failed("authority-epoch-stale")
+    diag.prepare_failed("PRIVATE-CANARY")
+    assert emitted == [
+        "admission completion prepare rejected: route-invalid",
+        "admission completion prepare rejected: authority-epoch-stale",
+    ]
+
+
+@pytest.mark.parametrize(
+    "home_suffix,profile_source,unverified",
+    [(".hermes", "fallback_default", False),
+     ("custom-home", "fallback_default", True),
+     ("custom-home", "locals", False),
+     (".hermes/profiles/work", "hermes_home", False)],
+)
+def test_multiplex_default_profile_requires_known_source(
+    tmp_path, monkeypatch, home_suffix, profile_source, unverified
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "hermes_constants", SimpleNamespace(
+        get_hermes_home=lambda: tmp_path / home_suffix,
+    ))
+    monkeypatch.setattr(h, "_GATEWAY_RUNNER_REF", None)
+    monkeypatch.setattr(h, "_profile_identity", lambda *args: ("default", profile_source))
+    values = {"self": SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True))}
+    assert h._admission_default_profile_unverified(values) is unverified
 
 
 def test_emit_uses_logger_once_and_only_falls_back_when_logger_fails(monkeypatch):
