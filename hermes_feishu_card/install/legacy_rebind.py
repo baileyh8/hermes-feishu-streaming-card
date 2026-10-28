@@ -106,7 +106,11 @@ def _verify_runtime(binding: plugin.HermesRuntimeBinding) -> None:
 def _source_fingerprint(root: Path) -> str:
     if not decomposed_ownership.is_managed(root):
         raise RebindRefused("legacy_rebind_decomposed_install_required")
-    snapshot, _, _, state = decomposed_ownership._inspect(root)
+    # Rebind changes only observer evidence. The manifest and backups already bind
+    # the installed source; a newer renderer must not make yesterday's exact hook
+    # look uninstalled. This still rejects clean/partial sources, changed backups,
+    # reapplied drift without Git proof and every other _inspect ownership gate.
+    snapshot, _, _, state = decomposed_ownership._inspect(root, render_hooks=False)
     if state != "installed":
         raise RebindRefused("legacy_rebind_source_not_installed")
     return str(decomposed_ownership._fingerprint(snapshot))

@@ -12,6 +12,8 @@ Feishu 的完成交接需区别已核验的当前轮消息锚点与原生执行�
 
 仅安装新 wheel 不保证运行中的 Gateway 已加载新 hook。旧安装必须通过正常安装/修复入口刷新受管补丁，并由原服务管理方重启 Gateway 和相关 sidecar。保留 manifest、marker、备份与 journal，不手改 Hermes 源码或删除保护记录。旧补丁升级、重复安装与逐字恢复需单独验收。
 
+若旧安装升级时 PM generation 已变化，`setup` 可能先以 `legacy observer runtime binding changed` 安全拒绝。这时用同一实际 checkout 和 HOME 执行官方 `integrity rebind-legacy --hermes-dir <checkout> --hermes-home <HOME>` 预览；核对后加 `--yes`，再重试原来的 `setup --repair`。该路径核验已安装源码与备份的归属，不把新版 renderer 的变化误判为旧源码未安装；它不接受源码漂移、部分恢复或未知备份。不要删 marker 绕过重绑。
+
 本补丁不扩大 v5.0.11 的精确 Hermes 9b904 安装前态支持范围；全新 PM、旧 receipt、未核验 SDK 和来源漂移仍按原合同拒绝。解压后进入 hermes-feishu-card-v5.0.12-<platform>/ 再执行安装器。
 
 ## 验收状态

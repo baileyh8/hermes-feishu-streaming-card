@@ -1,5 +1,6 @@
 """Explicit recovery preserves unrelated config and the original admission proof."""
 from dataclasses import replace
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -68,6 +69,40 @@ def admission(tmp_path, monkeypatch):
     return binding, original
 
 
+@pytest.fixture
+def source_evidence(tmp_path):
+    from hermes_feishu_card.install.detect import detect_hermes
+    from hermes_feishu_card.install import recovery
+
+    root = tmp_path / "source-evidence"
+    shutil.copytree(
+        Path(__file__).parents[1] / "fixtures/hermes_decomposed",
+        root,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    (root / "VERSION").write_text("0.22.2\n")
+    recovery.install_decomposed(detect_hermes(root))
+    return root
+
+
+def _simulate_previous_renderer(root: Path) -> bytes:
+    target = root / "gateway/run_turn.py"
+    previous = target.read_bytes().replace(
+        b'"message_id": _hfc_started_message_id',
+        b'"message_id": _hfc_started_message_id, "previous_renderer": True',
+        1,
+    )
+    assert previous != target.read_bytes()
+    target.write_bytes(previous)
+    manifest_path = root / ".hermes_feishu_card_manifest"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["targets"]["gateway/run_turn.py"]["patched_sha256"] = sha256(
+        previous
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+    return previous
+
+
 def test_runtime_change_reproduction_and_explicit_rebind(admission, monkeypatch):
     binding, original = admission
     changed = replace(binding, python_identity="sha256:" + "b" * 64)
@@ -83,6 +118,60 @@ def test_runtime_change_reproduction_and_explicit_rebind(admission, monkeypatch)
     assert legacy_observer.prepare(changed) is None
     legacy_observer.restore(binding.checkout_root)
     assert binding.config_path.read_bytes() == original
+
+
+def test_source_fingerprint_accepts_manifest_bound_source_from_previous_renderer(
+    source_evidence,
+):
+    from hermes_feishu_card.install import decomposed_ownership, legacy_rebind
+
+    previous = _simulate_previous_renderer(source_evidence)
+
+    assert decomposed_ownership._inspect(source_evidence)[3] == "owned_incomplete"
+    snapshot, _, _, _ = decomposed_ownership._inspect(
+        source_evidence, render_hooks=False
+    )
+    assert legacy_rebind._source_fingerprint(source_evidence) == (
+        decomposed_ownership._fingerprint(snapshot)
+    )
+    assert (source_evidence / "gateway/run_turn.py").read_bytes() == previous
+
+
+def test_rebind_uses_manifest_bound_source_when_renderer_changed(
+    admission, monkeypatch
+):
+    from hermes_feishu_card.install import legacy_rebind
+
+    binding, _ = admission
+    previous = _simulate_previous_renderer(binding.checkout_root)
+
+    changed = replace(binding, python_identity="sha256:" + "b" * 64)
+    monkeypatch.setattr(plugin, "resolve_runtime_binding", lambda **_: changed)
+    monkeypatch.setattr(legacy_rebind, "_verify_runtime", lambda _: None)
+
+    assert legacy_rebind.rebind(changed, apply=True)["status"] == "rebound"
+    assert legacy_observer.prepare(changed) is None
+    assert (binding.checkout_root / "gateway/run_turn.py").read_bytes() == previous
+
+
+@pytest.mark.parametrize("damage", ["partial_restore", "backup_changed", "manifest_missing"])
+def test_source_fingerprint_keeps_unknown_and_partial_evidence_closed(
+    source_evidence, damage
+):
+    from hermes_feishu_card.install import legacy_rebind
+
+    root = source_evidence
+    target = root / "gateway/run_turn.py"
+    backup = root / "gateway/run_turn.py.hermes_feishu_card.bak"
+    if damage == "partial_restore":
+        target.write_bytes(backup.read_bytes())
+    elif damage == "backup_changed":
+        backup.write_bytes(backup.read_bytes() + b"\n# user change\n")
+    else:
+        (root / ".hermes_feishu_card_manifest").unlink()
+
+    with pytest.raises((legacy_rebind.RebindRefused, ValueError)):
+        legacy_rebind._source_fingerprint(root)
 
 
 def test_unrelated_config_reproduction_and_preserved_restore(admission, monkeypatch):

@@ -12,6 +12,8 @@ Feishu terminal handoff distinguishes a verified current-turn anchor from native
 
 Installing a new wheel alone does not refresh the hook already loaded by Gateway. Existing installations must use the normal installer/repair entry to refresh the managed patch and restart Gateway and the applicable sidecar through their service owner. Keep manifests, markers, backups and journals. Do not edit Hermes source or delete protection records. Old-patch upgrade, repeated installation and byte-for-byte restore require separate verification.
 
+If PM generation changed during an upgrade, `setup` can first refuse safely with `legacy observer runtime binding changed`. Preview the official `integrity rebind-legacy --hermes-dir <checkout> --hermes-home <HOME>` using the same actual checkout and HOME, then explicitly apply with `--yes` and retry the original `setup --repair`. Rebinding verifies ownership of the installed source and backups without mistaking a newer renderer for an uninstalled source; source drift, partial restore and unknown backups remain rejected. Do not delete markers to bypass rebinding.
+
 This patch does not expand v5.0.11's restricted exact Hermes 9b904 installation starting states. Fresh PM, old receipts, unverified SDKs and source drift retain their existing refusal contracts. Enter hermes-feishu-card-v5.0.12-<platform>/ after extraction before running an installer.
 
 ## Validation boundaries
