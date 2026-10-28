@@ -185,6 +185,14 @@ def test_install_package_exports_retain_identity_and_discoverability():
         package.synthetic_unknown_export
 
 
+def test_recovery_keeps_shared_lock_and_refusal_identities():
+    from hermes_feishu_card.install import errors, recovery, transaction_lock
+
+    assert recovery._root_lock is transaction_lock._root_lock
+    assert recovery._PROCESS_LOCKS is transaction_lock._PROCESS_LOCKS
+    assert recovery.RecoveryRefused is errors.RecoveryRefused
+
+
 def test_family_runtime_import_graph_has_no_cycle_involving_new_owners():
     from hermes_feishu_card.install import source_layout
 

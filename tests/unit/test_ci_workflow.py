@@ -183,8 +183,11 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
             assert inputs["repository"] == "NousResearch/hermes-agent"
             upstream_checkouts[inputs.get("path")] = inputs.get("ref")
     assert upstream_checkouts == {
-        f".upstream/{baseline}": evidence["commit"]
-        for baseline, evidence in sources.items()
+        **{
+            f".upstream/{baseline}": evidence["commit"]
+            for baseline, evidence in sources.items()
+        },
+        ".upstream/issue471_9b904": "9b904dcc22c23fe8b82834339bbdd96495072e59",
     }
     steps = workflow["jobs"]["upstream-shards"]["steps"]
     source_step = next(step for step in steps if "test_upstream_hermes_compat.py" in step.get("run", ""))

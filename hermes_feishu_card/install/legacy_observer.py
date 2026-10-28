@@ -24,6 +24,7 @@ from .manifest import validate_install_manifest
 
 MARKER = ".hermes_feishu_card_observer.json"
 PROTOCOL = "hfc-legacy-observer-v1"
+ADOPTION_PROTOCOL = "hfc-legacy-observer-v2"
 RESTORE_PROTOCOL = "hfc-plugin-config-restore-v1"
 
 
@@ -109,10 +110,12 @@ def _read(path: Path) -> bytes | None:
 
 def _decode(raw: bytes) -> dict[str, Any]:
     value: dict[str, Any] = json.loads(raw)
-    if (type(value) is not dict or set(value) not in ({
-        "protocol", "home", "python_identity", "plugin_config"
-    }, {"protocol", "home", "python_identity", "plugin_config", "config_delta"})
-            or value["protocol"] != PROTOCOL or type(value["home"]) is not str
+    old_fields = {"protocol", "home", "python_identity", "plugin_config"}
+    new_fields = old_fields | {"config_delta", "adapter"}
+    if (type(value) is not dict or not (
+        (value.get("protocol") == PROTOCOL and set(value) in (old_fields, old_fields | {"config_delta"}))
+        or (value.get("protocol") == ADOPTION_PROTOCOL and set(value) == new_fields)
+    ) or type(value["home"]) is not str
             or not Path(value["home"]).is_absolute()):
         raise ValueError("legacy observer record is invalid")
     config = value["plugin_config"]
@@ -129,6 +132,12 @@ def _decode(raw: bytes) -> dict[str, Any]:
             or type(value["python_identity"]) is not str
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", value["python_identity"])):
         raise ValueError("legacy observer config ownership is invalid")
+    if value["protocol"] == ADOPTION_PROTOCOL:
+        from .legacy_9b904 import ADAPTER_ID
+        if (value["adapter"] != ADAPTER_ID or not config["enabled_before"] or config["added_by_hfc"]
+                or config["pre_sha256"] != config["post_sha256"]
+                or config["pre_sha256"] != config["backup_sha256"]):
+            raise ValueError("legacy observer adoption evidence is invalid")
     return value
 
 
@@ -232,8 +241,11 @@ def _discard_pending_ticket(binding: plugin.HermesRuntimeBinding, preimage: plug
         raise ValueError("secure config restore cleanup is unavailable")
 
 
-def _write_restore_ticket(path: Path, payload: bytes) -> io.FileIdentity:
+def _write_restore_ticket(path: Path, payload: bytes, *,
+                          expected_parent: io.DirectoryIdentity | None = None) -> io.FileIdentity:
     if not io._cli_dirfd_binding_supported():
+        if expected_parent is not None:
+            raise ValueError("secure config restore evidence is unavailable")
         plugin._write_private_new(path, payload)
         snapshot = io.read_path_snapshot(path, ValueError, "config restore evidence changed")
         if snapshot[2] != plugin._sha256(payload):
@@ -243,6 +255,8 @@ def _write_restore_ticket(path: Path, payload: bytes) -> io.FileIdentity:
                              parent_refusal="config restore directory changed", wrap_open_error=True)
     descriptor = -1
     try:
+        if expected_parent is not None and binding.parent_identity != expected_parent:
+            raise ValueError("config restore directory changed")
         io.assert_path_parent(binding, ValueError, "config restore directory changed")
         descriptor = os.open(binding.basename, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                              | getattr(os, "O_NOFOLLOW", 0) | portable.BINARY_FLAG,
@@ -316,6 +330,8 @@ def inspect(root: Path, *, home: Path | None = None, allow_config_drift: bool = 
     if receipt is not None:
         expected_journal["config_delta"] = receipt
         plugin_config_delta.verify_receipt(before, receipt)
+    if "adapter" in record:
+        expected_journal["adapter"] = record["adapter"]
     if journal != expected_journal:
         raise ValueError("legacy observer journal mismatch")
     config = plugin._require_regular_file(selected / "config.yaml", "Hermes config").read_bytes()
@@ -346,7 +362,15 @@ class Registration:
         restore(self.binding.checkout_root, home=self.binding.hermes_home)
 
 
-def prepare(binding: plugin.HermesRuntimeBinding) -> Registration | None:
+def prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> Registration | None:
+    if adoption is not None:
+        from .transaction_lock import _root_lock
+        with _root_lock(binding.checkout_root):
+            return _prepare(binding, adoption=adoption)
+    return _prepare(binding, adoption=None)
+
+
+def _prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> Registration | None:
     existing = inspect(binding.checkout_root, home=binding.hermes_home)
     if existing is not None:
         if existing[0]["python_identity"] != binding.python_identity:
@@ -366,7 +390,17 @@ def prepare(binding: plugin.HermesRuntimeBinding) -> Registration | None:
     raw = None
     marker_snapshot = None
     try:
-        ownership = plugin.enable_plugin(binding, preimage)
+        if adoption is None:
+            ownership = plugin.enable_plugin(binding, preimage)
+            adapter = None
+        else:
+            from . import legacy_9b904, pm_dependency
+            if type(adoption) is not pm_dependency.Registration:
+                raise ValueError("legacy adoption admission evidence is invalid")
+            if adoption.source_family != legacy_9b904.ADAPTER_ID:
+                raise ValueError("legacy adoption source contract is invalid")
+            ownership = plugin._adopt_existing_plugin_config(binding, preimage, adoption.verify_adoption)
+            adapter = legacy_9b904.ADAPTER_ID
         current_journal = ownership.journal_identity
         def validate_postimage() -> None:
             if (ownership is None or ownership.post_identity is None or ownership.post_parent_identity is None
@@ -392,11 +426,13 @@ def prepare(binding: plugin.HermesRuntimeBinding) -> Registration | None:
         validate_postimage()
         receipt = plugin_config_delta.make_receipt(plugin._read_private_backup(preimage), postimage)
         validate_postimage()
-        current_journal = plugin.mark_plugin_config_installed(preimage, ownership, config_delta=receipt)
+        current_journal = plugin.mark_plugin_config_installed(preimage, ownership, config_delta=receipt,
+                                                              adapter=adapter)
         validate_postimage()
-        raw = (json.dumps({"protocol": PROTOCOL, "home": str(binding.hermes_home),
+        raw = (json.dumps({"protocol": ADOPTION_PROTOCOL if adapter else PROTOCOL, "home": str(binding.hermes_home),
                            "python_identity": binding.python_identity,
-                           "plugin_config": ownership.sanitized(), "config_delta": receipt}, sort_keys=True) + "\n").encode()
+                           "plugin_config": ownership.sanitized(), "config_delta": receipt,
+                           **({"adapter": adapter} if adapter else {})}, sort_keys=True) + "\n").encode()
         validate_postimage()
         plugin._write_private_new(marker, raw)
         marker_snapshot = io.read_path_snapshot(marker, ValueError, "legacy observer record changed")
@@ -404,6 +440,10 @@ def prepare(binding: plugin.HermesRuntimeBinding) -> Registration | None:
             raise ValueError("legacy observer record changed")
         validate_postimage()
         return Registration(binding)
+    except plugin.PluginAdoptionUncertain:
+        # The journal may already contain the no-op adoption evidence. Do not
+        # replace its identity with the earlier prepared snapshot or hide cause.
+        raise
     except BaseException as original_error:
         if ownership is not None:
             # Never roll back a postimage that has been concurrently replaced,
@@ -637,11 +677,31 @@ def _portable_restore_config(paths: tuple[Path, ...], snapshots: dict[Path, io.F
             os.close(descriptor)
 
 
-def restore(root: Path, *, home: Path | None = None) -> None:
+def restore(root: Path, *, home: Path | None = None,
+            expected_marker: tuple[int, int, str] | None = None) -> None:
+    raw = _read(root / MARKER)
+    if raw is None:
+        if expected_marker is not None:
+            raise ValueError("legacy observer record changed before restore")
+        return
+    marker_snapshot = io.read_path_snapshot(root / MARKER, ValueError, "legacy observer record changed")
+    if marker_snapshot[2] != plugin._sha256(raw) or (expected_marker is not None and marker_snapshot != expected_marker):
+        raise ValueError("legacy observer record changed before restore")
+    if _decode(raw)["protocol"] == ADOPTION_PROTOCOL:
+        from .transaction_lock import _root_lock
+        with _root_lock(root):
+            return _restore(root, home=home, expected_marker=marker_snapshot)
+    return _restore(root, home=home, expected_marker=marker_snapshot)
+
+
+def _restore(root: Path, *, home: Path | None, expected_marker: tuple[int, int, str]) -> None:
     evidence = inspect(root, home=home)
     if evidence is None:
-        return
+        raise ValueError("legacy observer record changed before restore")
     record, raw, preimage, ownership, config = evidence
+    io.assert_path_snapshot(root / MARKER, expected_marker, ValueError, "legacy observer record changed before restore")
+    if expected_marker[2] != plugin._sha256(raw):
+        raise ValueError("legacy observer record changed before restore")
     binding = plugin.resolve_runtime_binding(
         checkout_root=root, hermes_home=record["home"], profile_id=None)
     if binding.python_identity != record["python_identity"]:
@@ -704,12 +764,20 @@ def observer_status(root: Path, *, home: Path | None = None) -> dict[str, str]:
         evidence = inspect(root, home=home)
         if evidence is None:
             return {"status": "disabled", "reason": "marker_changed"}
-        _, _, _, ownership, config = evidence
+        record, _, _, ownership, config = evidence
         if _config_state(evidence, root) != "installed":
             return {"status": "disabled", "reason": "restore_incomplete"}
         manifest = json.loads(_read(root / ".hermes_feishu_card_manifest") or b"null")
         if type(manifest) is not dict or validate_install_manifest(manifest) not in (1, 2, 4):
             return {"status": "disabled", "reason": "legacy_manifest_invalid"}
+        if record["protocol"] == ADOPTION_PROTOCOL:
+            from . import decomposed_ownership
+            try:
+                if (manifest.get("manifest_version") != 4
+                        or decomposed_ownership._inspect(root, render_hooks=False)[3] != "installed"):
+                    return {"status": "disabled", "reason": "legacy_source_incomplete"}
+            except (OSError, UnicodeError, ValueError):
+                return {"status": "disabled", "reason": "legacy_source_incomplete"}
         settings = plugin._load_config_mapping(config).get("plugins", {})
         if not isinstance(settings, dict):
             return {"status": "disabled", "reason": "plugin_config_invalid"}

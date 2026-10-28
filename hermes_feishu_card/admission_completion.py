@@ -48,6 +48,13 @@ SOURCE_COHORTS: tuple[dict[str, str], ...] = (
         "gateway.session_ingress": "e8b038cbaff9eaced033051b14cf6973395b16106c23c1af1034d281bae467b8",
         "gateway.session_authority": "f6eba4d4e17f35e9bcaaf664d1dece93bca8ceccddba3d6d2ad99aa7983bb15f",
     },
+    {
+        # Issue 471: 9b904dcc22 changes route/claim refusal and automation
+        # ownership upstream. Accept only this complete source pair; the
+        # original row, live owner, generation, epoch and ACK gates still apply.
+        "gateway.session_ingress": "06b27f2312014adbfb98dccda06c3e69ccdb9182d8103d29d858631722acdd2e",
+        "gateway.session_authority": "c8bd11dbdda29b04a8ebf54e6471be197602615c9549e9dd5cea7e01c6df4f59",
+    },
 )
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -384,7 +391,9 @@ def _runtime_epoch_current(db: Any, epoch: Any, instance_id: str) -> bool:
         return False
 
 
-def _authority_current(offer: Completion, *, started: bool) -> bool:
+def _authority_current(
+    offer: Completion, *, started: bool, producer_task: Any = None
+) -> bool:
     authority = offer.authority() if offer.authority is not None else None
     live = offer.live() if offer.live is not None else None
     verified = _verified()
@@ -435,9 +444,12 @@ def _authority_current(offer: Completion, *, started: bool) -> bool:
             return False
         if started:
             execution = live.event_stream.execution
+            active_task = producer_task if producer_task is not None else asyncio.current_task()
             return (
                 row.get("status") == "started"
-                and live.task is asyncio.current_task()
+                and active_task is not None
+                and live.task is active_task
+                and not active_task.done()
                 and authority.executing.get(offer.authority_owner[0])
                 == offer.authority_owner[1]
                 and execution
@@ -583,6 +595,123 @@ def _automation_owner(event: Any, ref: Any, row: Any, key: str | None) -> tuple[
             return None
         return session_id, generation
     except (KeyError, TypeError, AttributeError):
+        return None
+
+
+def _authority_profile_matches(authority: Any, profile: str) -> bool:
+    from .profile_sources import profile_from_hermes_home_path, legacy_profile_identity
+
+    try:
+        authority_profile = profile_from_hermes_home_path(str(authority.profile_id))
+        if authority_profile is None:
+            authority_value = str(authority.profile_id)
+            if Path(authority_value).is_absolute():
+                home = Path(authority_value).resolve()
+                if Path(authority.db.db_path).resolve().parent != home:
+                    return False
+                authority_profile = (
+                    home.name
+                    if home.parent.name == "profiles" and not home.name.startswith(".")
+                    else "default"
+                )
+            else:
+                authority_profile, authority_source = legacy_profile_identity(
+                    authority_value, "authority"
+                )
+                if authority_source.startswith("sanitized_"):
+                    return False
+        return authority_profile == profile
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+
+
+def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool] | None:
+    """Borrow the executing claim for one policy query, without a new registry.
+
+    The original frame is required in the producer Task. The returned check is
+    short-lived and can recheck the same borrowed owner after policy I/O in a
+    worker thread; it never grants a later completion or acknowledgement.
+    """
+    verified = _verified()
+    if verified is None:
+        return None
+    claim = _claim_frame(verified[0])
+    if claim is None:
+        return None
+    try:
+        authority, ref, row = claim["authority"], claim["ref"], claim["row"]
+        event, runner, source = values.get("event"), values.get("self"), values.get("source")
+        task = asyncio.current_task()
+        if (task is None or event is None or runner is None or source is None
+                or claim.get("event") is not event or authority.runner is not runner):
+            return None
+        route = _route(event, profile)
+        key = _text(values.get("session_key")) or _text(values.get("_quick_key"))
+        generation = values.get("run_generation")
+        if (route is None or key is None or type(generation) is not int
+                or generation <= 0 or not isinstance(row, dict)):
+            return None
+        if _route_source(source, route[-1], profile) != route:
+            return None
+        internal = getattr(event, "internal", False)
+        if internal is True:
+            owner = _automation_owner(event, ref, row, key)
+            claimed = getattr(event, "_claimed_owner", None)
+            if claimed is not None and claimed != owner:
+                return None
+        elif internal is False:
+            owner = getattr(event, "_claimed_owner", None)
+        else:
+            return None
+        if (type(owner) is not tuple or len(owner) != 2 or _text(owner[0]) is None
+                or type(owner[1]) is not int or owner[1] <= 0
+                or getattr(ref, "session_id", None) != owner[0]
+                or row.get("generation") != owner[1]
+                or not _authority_profile_matches(authority, profile)):
+            return None
+        adapter = runner._adapter_for_source(source)
+        if (adapter is None or _text(getattr(adapter, "_app_id", None)) is None
+                or runner._adapter_for_source(getattr(event, "source", None)) is not adapter):
+            return None
+        offer = Completion(
+            {}, route, weakref.ref(runner), weakref.ref(adapter), weakref.ref(task),
+            weakref.ref(event), owner, generation, key, "", "", monotonic() + TTL_SECONDS,
+            admission_id=row["admission_id"], authority=weakref.ref(authority),
+            epoch=authority.epoch, live=weakref.ref(authority.sessions[owner[0]]),
+            app_id=adapter._app_id, instance_id=authority.instance_id,
+            authority_profile=authority.profile_id, db=weakref.ref(authority.db),
+        )
+
+        def current() -> bool:
+            try:
+                if (monotonic() >= offer.expires or task.done()
+                        or _route(event, profile) != route
+                        or _route_source(source, route[-1], profile) != route
+                        or runner._adapter_for_source(source) is not adapter
+                        or runner._adapter_for_source(getattr(event, "source", None)) is not adapter
+                        or not _authority_profile_matches(authority, profile)
+                        or _base_extractor(adapter) is None
+                        or not _authority_current(offer, started=True, producer_task=task)):
+                    return False
+                current_row = importlib.import_module(
+                    "hermes_state_runtime"
+                ).get_session_admission(authority.db, admission_id=offer.admission_id)
+                if (not isinstance(current_row, dict)
+                        or current_row.get("admission_id") != offer.admission_id
+                        or current_row.get("target_session_id") != owner[0]
+                        or current_row.get("generation") != owner[1]
+                        or current_row.get("owner_epoch") != offer.epoch
+                        or current_row.get("status") != "started"
+                        or not _row_route_matches(current_row, offer)):
+                    return False
+                if internal is True:
+                    return _automation_owner(event, ref, current_row, key) == owner
+                return getattr(event, "_claimed_owner", None) == owner
+            except Exception:
+                return False
+
+        return current if current() else None
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
         return None
 
 
@@ -763,31 +892,7 @@ def prepare(
         offer.app_id = adapter._app_id
         offer.profile_source = data["profile_source"]
         offer.turn_outcome = data.get("turn_outcome")
-        from .profile_sources import (
-            profile_from_hermes_home_path,
-            legacy_profile_identity,
-        )
-
-        authority_profile = profile_from_hermes_home_path(str(authority.profile_id))
-        if authority_profile is None:
-            authority_value = str(authority.profile_id)
-            if Path(authority_value).is_absolute():
-                home = Path(authority_value).resolve()
-                db_home = Path(authority.db.db_path).resolve().parent
-                if db_home != home:
-                    return _prepare_failed("authority-profile-mismatch")
-                authority_profile = (
-                    home.name
-                    if home.parent.name == "profiles" and not home.name.startswith(".")
-                    else "default"
-                )
-            else:
-                authority_profile, authority_source = legacy_profile_identity(
-                    authority_value, "authority"
-                )
-                if authority_source.startswith("sanitized_"):
-                    authority_profile = None
-        if authority_profile != profile:
+        if not _authority_profile_matches(authority, profile):
             return _prepare_failed("authority-profile-mismatch")
         if not _row_route_matches(row, offer):
             return _prepare_failed("durable-route-mismatch")

@@ -165,6 +165,25 @@ def test_upstream_slice_offsets_cover_twelve_workers_once_and_keep_the_gate():
     assert 'test "$PRODUCER_RESULT" = success' in str(gate)
 
 
+def test_issue471_checkout_is_separate_and_required_in_pinned_upstream_matrix():
+    from tools.ci_run import FORWARD
+
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    steps = jobs["upstream-shards"]["steps"]
+    checkouts = {step.get("name"): step.get("with", {}) for step in steps}
+    assert checkouts["Checkout pinned Hermes latest_main"]["ref"].startswith("4e58c721")
+    pinned = checkouts["Checkout Hermes issue 471 reported revision"]
+    assert pinned["ref"] == "9b904dcc22c23fe8b82834339bbdd96495072e59"
+    assert pinned["path"] == ".upstream/issue471_9b904"
+    run = next(step for step in steps if "--profile upstream" in step.get("run", ""))
+    assert "test_issue471_snapshot_matches_pinned_checkout" in run["run"]
+    assert "test_issue471_writer_contract_rejects_before_child" in run["run"]
+    assert run["env"]["HFC_REQUIRE_ISSUE471_PIN"] == "1"
+    assert "HFC_REQUIRE_ISSUE471_PIN" in FORWARD
+    assert "issue471_9b904" in run["env"]["HFC_UPSTREAM_ISSUE471_9B904_ROOT"]
+    assert "latest_main" in run["env"]["HFC_CONFIG_WRITER_MAIN_4E58_ROOT"]
+
+
 def test_macos_slice_offsets_cover_ten_workers_once_and_keep_the_gate():
     jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
     producer = jobs["macos-shards"]

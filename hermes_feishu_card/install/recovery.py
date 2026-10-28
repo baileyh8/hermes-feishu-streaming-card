@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import ast
-from contextlib import contextmanager
 from dataclasses import dataclass
-import errno
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
 import re
-import threading
 import time
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from . import decomposed_ownership
+from .errors import RecoveryRefused as RecoveryRefused
+from .transaction_lock import (
+    _root_lock as _root_lock, _PROCESS_LOCKS as _PROCESS_LOCKS,
+    _PROCESS_LOCKS_GUARD as _PROCESS_LOCKS_GUARD,
+    _LOCK_NAME as _LOCK_NAME, _LOCK_TIMEOUT_SECONDS as _LOCK_TIMEOUT_SECONDS,
+    _acquire_os_lock as _acquire_os_lock, _release_os_lock as _release_os_lock,
+    _is_lock_contention as _is_lock_contention,
+)
 from .source_layout import (
     BACKUP_SUFFIX as BACKUP_SUFFIX, MANIFEST_NAME as MANIFEST_NAME,
     DECOMPOSED_MANIFEST_VERSION, DECOMPOSED_SOURCE_TARGETS,
@@ -63,10 +68,6 @@ _OWNED_GATEWAY_MARKER_LINE_RE = re.compile(
 )
 _STATUS_PREFIX = "!recovery:"
 _MANIFEST_ERROR = "_recovery_error"
-_LOCK_NAME = ".hermes_feishu_card_recovery.lock"
-_LOCK_TIMEOUT_SECONDS = 10.0
-_PROCESS_LOCKS: Dict[str, threading.Lock] = {}
-_PROCESS_LOCKS_GUARD = threading.Lock()
 _OwnedWriteSnapshot = Tuple[int, int, str]
 _DirectoryIdentity = Tuple[int, int]
 _SECURE_DIRFD_TRANSACTIONS_SUPPORTED = bound_io.DIRFD_BINDING_SUPPORTED
@@ -157,10 +158,6 @@ class RecoveryPlan:
     findings: Tuple[RecoveryFinding, ...]
 
 
-class RecoveryRefused(ValueError):
-    pass
-
-
 @dataclass(frozen=True)
 class RecoveryResult:
     status: str
@@ -181,35 +178,6 @@ class _RecoveryState:
     clear_install_state: bool = False
 
 
-@contextmanager
-def _root_lock(root: Path) -> Iterator[None]:
-    deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
-    root_key = str(root.resolve())
-    with _PROCESS_LOCKS_GUARD:
-        process_lock = _PROCESS_LOCKS.setdefault(root_key, threading.Lock())
-    remaining = max(0.0, deadline - time.monotonic())
-    if not process_lock.acquire(timeout=remaining):
-        raise RecoveryRefused("timed out waiting for recovery lock")
-
-    lock_handle = None
-    try:
-        lock_path = root / _LOCK_NAME
-        if lock_path.is_symlink():
-            raise RecoveryRefused("recovery lock path must not be a symbolic link")
-        flags = os.O_RDWR | os.O_CREAT | bound_io.BINARY_FLAG
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(str(lock_path), flags, 0o600)
-        lock_handle = os.fdopen(descriptor, "r+b")
-        _acquire_os_lock(lock_handle, deadline)
-        try:
-            yield
-        finally:
-            _release_os_lock(lock_handle)
-    finally:
-        if lock_handle is not None:
-            lock_handle.close()
-        process_lock.release()
 
 
 def execute_recovery(
@@ -700,6 +668,8 @@ def _commit_recovery_changes(
     changes: List[Tuple[Path, Optional[str]]],
     *,
     accept_hermes_upgrade: bool = False,
+    before_mutation: Optional[Callable[[], None]] = None,
+    verify_result: Optional[Callable[[], None]] = None,
 ) -> None:
     _require_secure_dirfd_transactions()
     ordered_changes = [change for change in changes if change[1] is not None]
@@ -758,6 +728,8 @@ def _commit_recovery_changes(
             raise RecoveryRefused("recovery evidence changed; rerun diagnosis")
 
         for target, contents in ordered_changes:
+            if before_mutation is not None:
+                before_mutation()
             _assert_controlled_ancestry_unchanged(
                 target, target_ancestries, directory_snapshots
             )
@@ -797,6 +769,8 @@ def _commit_recovery_changes(
             _assert_bound_target_unchanged(
                 binding, post_write_snapshots[target]
             )
+        if verify_result is not None:
+            verify_result()
     except Exception as exc:
         rollback_error = _rollback_recovery_changes(
             changed,
@@ -1027,49 +1001,6 @@ def _plan_from_evidence(
     )
 
 
-def _acquire_os_lock(handle, deadline: float) -> None:
-    while True:
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                handle.seek(0)
-                if not handle.read(1):
-                    handle.write(b"\0")
-                    handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
-        except OSError as exc:
-            if not _is_lock_contention(exc):
-                raise
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise RecoveryRefused("timed out waiting for recovery lock")
-            time.sleep(min(0.05, remaining))
-
-
-def _is_lock_contention(exc: OSError) -> bool:
-    contention_errors = {errno.EACCES, errno.EAGAIN}
-    if os.name == "nt":
-        contention_errors.add(errno.EDEADLK)
-    return exc.errno in contention_errors
-
-
-def _release_os_lock(handle) -> None:
-    if os.name == "nt":
-        import msvcrt
-
-        handle.seek(0)
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _fingerprint(parts: Dict[str, str]) -> str:
@@ -2811,15 +2742,31 @@ def install_decomposed(detection, *, no_repair=False, expected_fingerprint=None,
         return True
 
 
-def restore_decomposed(detection):
+def restore_decomposed(detection, *, refuse_adoption: bool = False,
+                       adoption_marker: Optional[Tuple[int, int, str]] = None,
+                       adoption_home: Optional[Path] = None):
     if not _secure_dirfd_transactions_supported() and not _portable_restore_supported():
         # Unsupported platforms refuse before taking a lock or reading/mutating
         # ownership state. Windows alone has the portable family transaction.
         _require_secure_dirfd_transactions()
+    if ((adoption_marker is None) != (adoption_home is None)
+            or (adoption_marker is not None and (refuse_adoption or not _secure_dirfd_transactions_supported()))):
+        raise ValueError("legacy adoption source restore requires secure ownership evidence")
     with _root_lock(detection.root):
+        guard = finish = None
+        if adoption_marker is not None:
+            from .legacy_9b904_transaction import prepare_source_restore
+            guard, finish = prepare_source_restore(detection.root, adoption_home, adoption_marker)
+        if refuse_adoption:
+            from . import legacy_observer
+            raw = legacy_observer._read(detection.root / legacy_observer.MARKER)
+            if raw is not None and legacy_observer._decode(raw)["protocol"] == legacy_observer.ADOPTION_PROTOCOL:
+                raise ValueError("legacy adoption restore or uninstall needs a coordinated PM transaction")
         snapshot, originals, _, state = decomposed_ownership._inspect(detection.root, render_hooks=False)
         if state == "clean":
-            return
+            if finish is not None:
+                finish()
+            return False
         if state in decomposed_ownership.EXPLICIT_UPGRADE_STATES:
             raise ValueError("decomposed source drift; refusing restore until upgrade is accepted")
         fresh = _plan_decomposed_recovery(detection)
@@ -2830,8 +2777,8 @@ def restore_decomposed(detection):
         if _secure_dirfd_transactions_supported():
             changes.extend((detection.root / (name + BACKUP_SUFFIX), None) for name in originals)
             changes.append((detection.root / MANIFEST_NAME, None))
-            _commit_recovery_changes(detection, fresh, changes)
-            return
+            _commit_recovery_changes(detection, fresh, changes, before_mutation=guard, verify_result=finish)
+            return True
         from .file_transaction import (
             _assert_restore_evidence_set_unchanged,
             _remove_targets_portably,

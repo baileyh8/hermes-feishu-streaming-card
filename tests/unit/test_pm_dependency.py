@@ -2,6 +2,7 @@
 from hashlib import sha256
 import json
 import os
+import py_compile
 import stat
 try:
     import tomllib
@@ -9,12 +10,15 @@ except ModuleNotFoundError:  # Python 3.9/3.10
     import tomli as tomllib
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 from types import SimpleNamespace
 import zipfile
 
 import pytest
 
 from hermes_feishu_card import cli
+from hermes_feishu_card.install import legacy_9b904_transaction as adoption_io
 from hermes_feishu_card.install import pm_dependency as pm
 
 
@@ -68,6 +72,403 @@ def register(env):
                      spec='/fixture/exact.whl', version=VERSION)
 
 
+def test_unknown_observer_writer_refuses_before_pm_probe_or_source_publication(pm_env, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer, plugin_config_bytes
+
+    monkeypatch.setattr(legacy_observer, 'available', lambda root: True)
+    monkeypatch.setattr(
+        plugin_config_bytes, 'verify_launch_sources',
+        lambda root: (_ for _ in ()).throw(plugin_config_bytes.ConfigBytesRefused('unknown')),
+    )
+    before = dict(pm_env.state)
+    with pytest.raises(ValueError, match='PM admission refused'):
+        register(pm_env)
+    assert pm_env.calls == []
+    assert pm_env.state == before
+    assert not (pm_env.home / 'plugins').exists()
+    assert not (pm_env.home / '.hermes_feishu_card').exists()
+
+
+def test_known_observer_writer_continues_existing_pm_admission(pm_env, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer, plugin_config_bytes
+
+    monkeypatch.setattr(legacy_observer, 'available', lambda root: True)
+    monkeypatch.setattr(plugin_config_bytes, 'verify_launch_sources', lambda root, **_: 'pm-0225')
+    receipt = register(pm_env)
+    assert receipt is not None
+    assert [request['operation'] for request in pm_env.calls] == ['probe', 'add']
+
+
+@pytest.mark.parametrize('failure', [PermissionError, OSError])
+def test_uninspectable_observer_source_refuses_without_disclosing_error(pm_env, monkeypatch, failure):
+    from hermes_feishu_card.install import legacy_observer
+
+    monkeypatch.setattr(
+        legacy_observer, 'available',
+        lambda root: (_ for _ in ()).throw(failure('private sentinel')),
+    )
+    with pytest.raises(ValueError) as error:
+        register(pm_env)
+    assert str(error.value) == 'official config writer is unknown; PM admission refused'
+    assert 'private sentinel' not in str(error.value)
+    assert pm_env.calls == []
+    assert not (pm_env.home / 'plugins').exists()
+
+
+def test_missing_observer_source_retains_non_observer_path(pm_env):
+    assert pm._verify_observer_writer_before_admission(pm_env.root) is None
+    assert register(pm_env) is not None
+
+
+def test_source_drift_after_probe_uses_original_family_and_refuses_before_add(pm_env, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer, plugin_config_bytes
+
+    root = pm_env.root
+    (root / 'hermes_cli').mkdir()
+    sources = {
+        'hermes_cli/main.py': b'original main\n',
+        'hermes_cli/__init__.py': b'original init\n',
+        'writer.py': b'original writer\n',
+    }
+    for name, content in sources.items():
+        (root / name).write_bytes(content)
+    digests = {name: sha256(content).hexdigest() for name, content in sources.items()}
+    monkeypatch.setattr(plugin_config_bytes, 'FAMILIES', {'test-family': {'writer.py': digests['writer.py']}})
+    monkeypatch.setattr(plugin_config_bytes, 'LAUNCH_SOURCES', {
+        'test-family': {name: digests[name] for name in ('hermes_cli/main.py', 'hermes_cli/__init__.py')},
+    })
+    availability = [True]
+    monkeypatch.setattr(legacy_observer, 'available', lambda root: availability[0])
+
+    def drift(root, python, selected_home, request):
+        result = pm_env.call(root, python, selected_home, request)
+        if request['operation'] == 'probe':
+            (root / 'hermes_cli/main.py').write_bytes(b'changed main\n')
+            availability[0] = False
+        return result
+
+    monkeypatch.setattr(pm, '_call', drift)
+    with pytest.raises(ValueError, match='PM admission refused'):
+        register(pm_env)
+    assert [request['operation'] for request in pm_env.calls] == ['probe']
+    assert not (pm_env.home / 'plugins').exists()
+
+
+def test_pm_child_checks_source_before_importing_upstream(tmp_path):
+    root = tmp_path / 'source'
+    root.mkdir()
+    sentinel = tmp_path / 'upstream-executed'
+    (root / 'hermes_constants.py').write_text(
+        f'from pathlib import Path\nPath({str(sentinel)!r}).write_text("executed")\n'
+    )
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', pm._CHILD, str(root)],
+        input=json.dumps({'operation': 'probe', 'source_digests': {'hermes_constants.py': '0' * 64}}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert not sentinel.exists()
+
+
+def _pm_child_source_fixture(tmp_path):
+    root = tmp_path / 'source'
+    home = tmp_path / 'home'
+    root.mkdir()
+    home.mkdir()
+    (root / 'pm').mkdir()
+    (root / 'hermes_cli').mkdir()
+    files = {
+        'hermes_constants.py': f'from pathlib import Path\ndef get_hermes_home(): return Path({str(home)!r})\n',
+        'pm/__init__.py': '',
+        'pm/plugins_state.py': 'def read_home_selection(home): return {}\n',
+        'pm/filesystem.py': 'def file_digest(path): return None\n',
+        'pm/environments.py': 'def committed_venv(root): return root / "venv"\n',
+        'hermes_cli/__init__.py': '',
+        'hermes_cli/plugins_admission.py': (
+            'def admit_plugin_set_change(enabled, disabled, *, active_plugins_dir, expected_config, plugin): pass\n'
+        ),
+    }
+    for name, content in files.items():
+        (root / name).write_bytes(content.encode('utf-8'))
+    return root, files
+
+
+def test_guarded_pm_current_is_a_read_only_source_bound_probe(tmp_path):
+    root, files = _pm_child_source_fixture(tmp_path)
+    files['pm/install.py'] = 'def venv_is_current(*, project_root): return True\n'
+    (root / 'pm/install.py').write_bytes(files['pm/install.py'].encode('utf-8'))
+    sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
+    result = subprocess.run(
+        [sys.executable, '-I', '-B', '-c', pm._CHILD, str(root)],
+        input=json.dumps({'operation': 'current', 'source_digests': sources}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)['current'] is True
+
+
+@pytest.mark.parametrize('target,bound', [('hermes_constants.py', True), ('pm/filesystem.py', False)])
+def test_pm_child_executes_source_not_poisoned_checkout_bytecode(tmp_path, target, bound):
+    root, files = _pm_child_source_fixture(tmp_path)
+    good = tmp_path / 'cache-good'
+    evil = tmp_path / 'cache-evil'
+    assert len(str(good)) == len(str(evil))
+    good_code = f'from pathlib import Path\nPath({str(good)!r}).write_text("source")\n' + files[target]
+    evil_code = good_code.replace(repr(str(good)), repr(str(evil)))
+    assert good_code != evil_code
+    assert len(good_code.encode('utf-8')) == len(evil_code.encode('utf-8'))
+    path = root / target
+    path.write_bytes(evil_code.encode('utf-8'))
+    previous = path.stat()
+    py_compile.compile(str(path), doraise=True)
+    path.write_bytes(good_code.encode('utf-8'))
+    os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+    assert path.stat().st_size == previous.st_size
+    files[target] = good_code
+    sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
+    if not bound:
+        del sources[target]  # Older cohorts do not have a complete PM import contract.
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', pm._CHILD, str(root)],
+        input=json.dumps({'operation': 'probe', 'source_digests': sources}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert good.read_text() == 'source'
+    assert not evil.exists()
+
+
+def test_pm_child_rejects_preloaded_pm_modules_before_upstream_import(tmp_path):
+    root, files = _pm_child_source_fixture(tmp_path)
+    sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
+    script = 'import types, sys; sys.modules["pm"] = types.ModuleType("pm")\n' + pm._CHILD
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', script, str(root)],
+        input=json.dumps({'operation': 'probe', 'source_digests': sources}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert 'module was loaded before source verification' in result.stderr
+
+
+@pytest.mark.parametrize('expected_newline,actual_newline', [(b'\n', b'\r\n'), (b'\r\n', b'\n')])
+def test_pm_child_rejects_line_ending_changes_before_source_exec(tmp_path, expected_newline, actual_newline):
+    root, files = _pm_child_source_fixture(tmp_path)
+    sentinel = tmp_path / 'line-ending-source-executed'
+    source = (f'from pathlib import Path\nPath({str(sentinel)!r}).write_text("executed")\n'
+              f'def get_hermes_home(): return Path({str(tmp_path / "home")!r})\n').encode('utf-8')
+    expected = source.replace(b'\n', expected_newline)
+    actual = source.replace(b'\n', actual_newline)
+    assert expected != actual
+    (root / 'hermes_constants.py').write_bytes(actual)
+    sources = {name: sha256(content.encode('utf-8')).hexdigest() for name, content in files.items()}
+    sources['hermes_constants.py'] = sha256(expected).hexdigest()
+    result = subprocess.run(
+        [sys.executable, '-I', '-B', '-c', pm._CHILD, str(root)],
+        input=json.dumps({'operation': 'probe', 'source_digests': sources}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert 'PM source evidence changed' in result.stderr
+    assert not sentinel.exists()
+
+
+def test_pm_child_refuses_source_drift_before_import_execution(tmp_path):
+    root, files = _pm_child_source_fixture(tmp_path)
+    sentinel = tmp_path / 'unverified-executed'
+    target = root / 'pm/plugins_state.py'
+    injected = f'from pathlib import Path\nPath({str(sentinel)!r}).write_text("executed")\n'
+    files['pm/__init__.py'] = (
+        f'from pathlib import Path\nPath({str(target)!r}).write_text({injected!r})\n'
+    )
+    (root / 'pm/__init__.py').write_bytes(files['pm/__init__.py'].encode('utf-8'))
+    sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', pm._CHILD, str(root)],
+        input=json.dumps({'operation': 'probe', 'source_digests': sources}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert 'PM source evidence changed' in result.stderr
+    assert not sentinel.exists()
+
+
+def test_pm_child_refuses_config_drift_between_selection_and_digest(tmp_path):
+    root, files = _pm_child_source_fixture(tmp_path)
+    config = tmp_path / 'home/config.yaml'
+    config.write_bytes(b'plugins: {enabled: [], disabled: []}\n')
+    sentinel = tmp_path / 'admission-executed'
+    files['pm/plugins_state.py'] = (
+        'def read_home_selection(home):\n'
+        '    (home / "config.yaml").write_bytes(b"plugins: {enabled: [changed], disabled: []}\\n")\n'
+        '    return {"plugins": {"enabled": [], "disabled": []}}\n'
+    )
+    files['hermes_cli/plugins_admission.py'] = (
+        'from pathlib import Path\n'
+        'def admit_plugin_set_change(enabled, disabled, *, active_plugins_dir, expected_config, plugin):\n'
+        f'    Path({str(sentinel)!r}).write_text("executed")\n'
+    )
+    for name in ('pm/plugins_state.py', 'hermes_cli/plugins_admission.py'):
+        (root / name).write_bytes(files[name].encode('utf-8'))
+    sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', pm._CHILD, str(root)],
+        input=json.dumps({
+            'operation': 'add', 'name': pm.NAME,
+            'expected': sha256(b'plugins: {enabled: [changed], disabled: []}\n').hexdigest(),
+            'source_digests': sources,
+        }),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert 'PM selection config changed' in result.stderr
+    assert not sentinel.exists()
+
+
+def test_pm_child_post_admission_source_drift_has_uncertain_outcome(tmp_path):
+    root, files = _pm_child_source_fixture(tmp_path)
+    admission = root / 'hermes_cli/plugins_admission.py'
+    committed = tmp_path / 'admission-committed'
+    files['hermes_cli/plugins_admission.py'] = (
+        'from pathlib import Path\n'
+        'def admit_plugin_set_change(enabled, disabled, *, active_plugins_dir, expected_config, plugin):\n'
+        f'    Path({str(committed)!r}).write_text("committed")\n'
+        f'    Path({str(admission)!r}).write_text("changed")\n'
+    )
+    admission.write_bytes(files['hermes_cli/plugins_admission.py'].encode('utf-8'))
+    sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain, match='outcome uncertain'):
+        pm._call(root, Path(sys.executable), tmp_path / 'home', {
+            'operation': 'add', 'name': pm.NAME, 'expected': 'missing', 'source_digests': sources,
+        })
+    assert committed.read_text() == 'committed'
+    assert admission.read_text() == 'changed'
+
+
+def test_guarded_pm_child_failure_is_uncertain_without_exposing_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(pm.subprocess, 'run', lambda *args, **kwargs: SimpleNamespace(
+        returncode=1, stdout='private sentinel', stderr='private sentinel'
+    ))
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain) as error:
+        pm._call(tmp_path, Path(sys.executable), tmp_path, {
+            'operation': 'add', 'source_digests': {'writer.py': '0' * 64},
+        })
+    assert 'outcome uncertain' in str(error.value)
+    assert 'private sentinel' not in str(error.value)
+
+
+def test_guarded_uncertain_admission_retains_published_member_and_backup(pm_env, monkeypatch):
+    from hermes_feishu_card.install import plugin_config_bytes
+
+    old_receipt = register(pm_env)
+    old_receipt.finish()
+    member = pm_env.home / 'plugins' / pm.NAME
+    old_owner = pm._owned(member)
+    monkeypatch.setattr(pm, '_verify_observer_writer_before_admission', lambda *args, **kwargs: 'pm-0225')
+    monkeypatch.setattr(plugin_config_bytes, 'FAMILIES', {'pm-0225': {'writer.py': '0' * 64}})
+    monkeypatch.setattr(plugin_config_bytes, 'LAUNCH_SOURCES', {'pm-0225': {}})
+    observed = []
+    def uncertain(root, python, home, request):
+        observed.append(request['operation'])
+        if request['operation'] == 'add':
+            raise pm.PMAdmissionOutcomeUncertain('PM admission outcome uncertain')
+        return pm_env.call(root, python, home, request)
+    monkeypatch.setattr(pm, '_call', uncertain)
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain):
+        pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                  spec='/fixture/different.whl', version=VERSION)
+    backups = list(member.parent.glob('.hfc-runtime-*.previous'))
+    assert observed == ['probe', 'add']
+    assert pm._owned(member) != old_owner
+    assert len(backups) == 1
+    assert pm._owned(backups[0]) == old_owner
+
+
+def _synthetic_adoption_environment(env, monkeypatch):
+    from hermes_feishu_card.install import legacy_9b904, pm_wheel_store, posix_transaction as io
+    if not io._cli_dirfd_binding_supported() or os.rmdir not in os.supports_dir_fd:
+        pytest.skip('secure directory-relative cleanup is unavailable')
+    receipt = register(env)
+    receipt.finish()
+    member = env.home / 'plugins' / pm.NAME
+    owner = pm._owned(member)
+    evidence = SimpleNamespace(
+        old_owner=owner,
+        old_member_identity=io.read_directory_identity(member, ValueError, 'changed'),
+        plugin_identity=io.read_directory_identity(member.parent, ValueError, 'changed'),
+        sdk_mode='absent',
+    )
+    payload = b'fixture SDK wheel'
+    monkeypatch.setattr(pm_wheel_store, '_SDK_WHEEL_SHA256', sha256(payload).hexdigest())
+    sdk = pm_wheel_store.publish_sdk(env.home, payload)
+    monkeypatch.setattr(legacy_9b904, 'prepare_sdk_wheel', lambda _home: sdk)
+    monkeypatch.setattr(legacy_9b904, 'capture_admission', lambda *_args: evidence)
+    monkeypatch.delenv('HERMES_MANAGED_DIR', raising=False)
+    monkeypatch.setattr(legacy_9b904, '_MANAGED_SCOPE', env.home / 'missing-managed-scope')
+    monkeypatch.setattr(pm, '_verify_observer_writer_before_admission',
+                        lambda *_args, **_kwargs: legacy_9b904.ADAPTER_ID)
+    monkeypatch.setattr(pm, '_ADOPTION_ENABLED', True)
+    env.state['generation'] = '/fixture/original-generation'
+    env.calls.clear()
+    return legacy_9b904, member, owner, evidence
+
+
+def test_managed_override_refuses_before_pm_probe(pm_env, monkeypatch):
+    _legacy, member, owner, _evidence = _synthetic_adoption_environment(pm_env, monkeypatch)
+    monkeypatch.setenv('HERMES_MANAGED_DIR', str(pm_env.home / 'untrusted-policy'))
+    with pytest.raises(ValueError, match='managed configuration is unsupported'):
+        pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                  spec='/fixture/different.whl', version=VERSION)
+    assert pm_env.calls == []
+    assert pm._owned(member) == owner
+
+
+def test_adoption_pre_pm_refusal_restores_exact_previous_member(pm_env, monkeypatch):
+    legacy, member, owner, evidence = _synthetic_adoption_environment(pm_env, monkeypatch)
+    def refuse_after_publish(_root, _home, _evidence, **kwargs):
+        backup = kwargs.get('backup')
+        if backup is not None and backup.name.endswith('.previous'):
+            raise legacy.LegacyAdoptionRefused('SDK changed before admission')
+    monkeypatch.setattr(legacy, 'verify_before', refuse_after_publish)
+    with pytest.raises(ValueError, match='previous dependency source restored'):
+        pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                  spec='/fixture/different.whl', version=VERSION)
+    assert pm._owned(member) == owner
+    assert (member.stat().st_dev, member.stat().st_ino) == evidence.old_member_identity
+    assert [call['operation'] for call in pm_env.calls] == ['probe', 'probe']
+    assert not list(member.parent.glob('.hfc-runtime-*'))
+
+
+def test_unpreservable_sdk_explains_pre_pm_refusal(pm_env, monkeypatch):
+    legacy, member, owner, _evidence = _synthetic_adoption_environment(pm_env, monkeypatch)
+    def cannot_preserve(*_args):
+        raise legacy.LegacySDKUnpreservable('unpreservable SDK')
+    monkeypatch.setattr(legacy, 'capture_admission', cannot_preserve)
+    with pytest.raises(ValueError, match='existing SDK was retained and PM admission was not started'):
+        pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                  spec='/fixture/different.whl', version=VERSION)
+    assert [call['operation'] for call in pm_env.calls] == ['probe']
+    assert pm._owned(member) == owner
+
+
+def test_adoption_staging_does_not_claim_a_rewritten_valid_owner(pm_env, monkeypatch):
+    legacy, member, owner, _evidence = _synthetic_adoption_environment(pm_env, monkeypatch)
+    monkeypatch.setattr(legacy, 'verify_before', lambda *_args, **_kwargs: None)
+    def alter_before_publish(_member, staging, _old, _parent_identity, _old_identity):
+        current = json.loads((staging / pm.OWNER).read_text())
+        current['spec_sha256'] = '1' * 64
+        (staging / pm.OWNER).write_text(json.dumps(current))
+        raise ValueError('staging changed')
+    monkeypatch.setattr(pm, '_publish_member', alter_before_publish)
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain, match='staging retained'):
+        pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                  spec='/fixture/different.whl', version=VERSION)
+    staging, = member.parent.glob('.hfc-runtime-*')
+    assert pm._owned(staging)['spec_sha256'] == '1' * 64
+    assert pm._owned(member) == owner
+    assert [call['operation'] for call in pm_env.calls] == ['probe']
+
+
 def test_registration_retains_other_selection_and_repeat_rollback(pm_env):
     env = pm_env
     receipt = register(env)
@@ -94,6 +495,298 @@ def test_registration_retains_other_selection_and_repeat_rollback(pm_env):
     pm.remove(env.root, Path('/fixture/python'), home=env.home)
     assert env.state['enabled'] == ['other']
     assert not member.exists()
+
+
+@pytest.mark.parametrize('race', ['member', 'parent'])
+def test_adoption_cleanup_refuses_replaced_member_or_parent(pm_env, monkeypatch, race):
+    from hermes_feishu_card.install import posix_transaction as io
+    if not io._cli_dirfd_binding_supported() or os.rmdir not in os.supports_dir_fd:
+        pytest.skip('secure directory-relative cleanup is unavailable')
+    register(pm_env)
+    replacement = pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                            spec='/fixture/second.whl', version=VERSION)
+    backup = replacement.backup
+    assert backup is not None
+    owner = pm._owned(backup)
+    identity = io.read_directory_identity(backup, ValueError, 'changed')
+    parent_identity = io.read_directory_identity(backup.parent, ValueError, 'changed')
+    unknown = pm_env.home / 'unknown'
+    unknown.mkdir()
+    (unknown / 'user-data').write_text('must remain')
+    if race == 'member':
+        remove = io._remove_verified_restore_evidence
+        def swap_then_remove(paths, identities, directories):
+            backup.rename(pm_env.home / 'saved-backup')
+            unknown.rename(backup)
+            return remove(paths, identities, directories)
+        monkeypatch.setattr(io, '_remove_verified_restore_evidence', swap_then_remove)
+        expected = backup / 'user-data'
+    else:
+        bind = io.bind_target
+        def swap_after_bind(*args, **kwargs):
+            binding = bind(*args, **kwargs)
+            backup.parent.rename(pm_env.home / 'saved-plugins')
+            unknown.rename(backup.parent)
+            return binding
+        monkeypatch.setattr(io, 'bind_target', swap_after_bind)
+        expected = backup.parent / 'user-data'
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain):
+        adoption_io.remove_member(pm_env.home, backup, identity, parent_identity, owner)
+    assert expected.read_text() == 'must remain'
+    assert (pm_env.home / ('saved-backup' if race == 'member' else 'saved-plugins')).is_dir()
+
+
+def test_adoption_cleanup_removes_only_verified_member(pm_env):
+    from hermes_feishu_card.install import posix_transaction as io
+    if not io._cli_dirfd_binding_supported() or os.rmdir not in os.supports_dir_fd:
+        pytest.skip('secure directory-relative cleanup is unavailable')
+    register(pm_env)
+    replacement = pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                            spec='/fixture/second.whl', version=VERSION)
+    backup = replacement.backup
+    assert backup is not None
+    identity = io.read_directory_identity(backup, ValueError, 'changed')
+    parent_identity = io.read_directory_identity(backup.parent, ValueError, 'changed')
+    owner = pm._owned(backup)
+    adoption_io.remove_member(pm_env.home, backup, identity, parent_identity, owner)
+    assert not backup.exists()
+    assert pm._owned(replacement.member) == replacement.owner
+
+
+def test_adoption_cleanup_refuses_file_changed_after_owner_check(pm_env, monkeypatch):
+    from hermes_feishu_card.install import posix_transaction as io
+    if not io._cli_dirfd_binding_supported() or os.rmdir not in os.supports_dir_fd:
+        pytest.skip('secure directory-relative cleanup is unavailable')
+    register(pm_env)
+    replacement = pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home,
+                            spec='/fixture/second.whl', version=VERSION)
+    backup = replacement.backup
+    assert backup is not None
+    owner = pm._owned(backup)
+    identity = io.read_directory_identity(backup, ValueError, 'changed')
+    parent_identity = io.read_directory_identity(backup.parent, ValueError, 'changed')
+    owned = pm._owned
+    def modify_after_check(path):
+        result = owned(path)
+        if path == backup:
+            (path / 'pyproject.toml').write_text('new user data')
+        return result
+    monkeypatch.setattr(pm, '_owned', modify_after_check)
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain):
+        adoption_io.remove_member(pm_env.home, backup, identity, parent_identity, owner)
+    assert (backup / 'pyproject.toml').read_text() == 'new user data'
+    assert (backup / pm.OWNER).exists()
+
+
+def test_adoption_move_reports_source_swap_without_deleting_user_data(pm_env, monkeypatch):
+    from hermes_feishu_card.install import posix_transaction as io
+    if not io._cli_dirfd_binding_supported():
+        pytest.skip('secure directory-relative moves are unavailable')
+    receipt = register(pm_env)
+    source = receipt.member
+    destination = source.with_name(source.name + '.failed')
+    parent_identity = io.read_directory_identity(source.parent, ValueError, 'changed')
+    unknown = pm_env.home / 'unknown'
+    unknown.mkdir()
+    (unknown / 'user-data').write_text('must remain')
+    rename = os.rename
+    def swap_before_rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+        rename(source, pm_env.home / 'saved-member')
+        rename(unknown, source)
+        return rename(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+    monkeypatch.setattr(adoption_io.os, 'rename', swap_before_rename)
+    with pytest.raises(pm.PMAdmissionOutcomeUncertain, match='outcome is uncertain'):
+        adoption_io.move_member(source, destination, receipt.identity, parent_identity, receipt.owner)
+    assert (destination / 'user-data').read_text() == 'must remain'
+    assert (pm_env.home / 'saved-member').is_dir()
+
+
+def test_schema3_owns_exact_sdk_wheel_without_changing_schema2(pm_env, monkeypatch):
+    from hermes_feishu_card.install import pm_wheel_store
+
+    receipt = register(pm_env)
+    receipt.finish()
+    member = pm_env.home / 'plugins' / pm.NAME
+    old = pm._owned(member)
+    assert old['schema'] == 2
+    payload = b'fixture SDK wheel'
+    monkeypatch.setattr(pm_wheel_store, '_SDK_WHEEL_SHA256', sha256(payload).hexdigest())
+    sdk = pm_wheel_store.publish_sdk(pm_env.home, payload)
+    project = pm._sdk_project_source(old['version'], old['external_wheel'], sdk)
+    (member / 'pyproject.toml').write_bytes(project.encode('utf-8'))
+    owner = {**old, 'schema': 3, 'sdk_wheel': sdk,
+             'files': {**old['files'], 'pyproject.toml': sha256(project.encode()).hexdigest()}}
+    (member / pm.OWNER).write_text(json.dumps(owner))
+    assert pm._owned(member) == owner
+    project_bytes = project.encode('utf-8')
+    assert b'\n' in project_bytes and b'\r\n' not in project_bytes
+    (member / 'pyproject.toml').write_bytes(project_bytes.replace(b'\n', b'\r\n'))
+    with pytest.raises(ValueError, match='ownership cannot be verified'):
+        pm._owned(member)
+    (member / 'pyproject.toml').write_bytes(project_bytes)
+    assert pm._owned(member) == owner
+    calls_before = len(pm_env.calls)
+    with pytest.raises(ValueError, match='PM removal is not yet supported'):
+        pm.remove(pm_env.root, Path('/fixture/python'), home=pm_env.home)
+    assert [call['operation'] for call in pm_env.calls[calls_before:]] == ['probe']
+    assert pm._owned(member) == owner
+    Path(sdk['path']).write_bytes(b'tampered')
+    with pytest.raises(ValueError, match='ownership cannot be verified'):
+        pm._owned(member)
+
+
+def test_same_schema3_receipt_is_revalidated_without_new_pm_admission(pm_env, monkeypatch):
+    from hermes_feishu_card.install import legacy_9b904, legacy_observer, plugin, pm_wheel_store
+
+    receipt = register(pm_env)
+    receipt.finish()
+    member = pm_env.home / 'plugins' / pm.NAME
+    old = pm._owned(member)
+    payload = b'fixture SDK wheel'
+    monkeypatch.setattr(pm_wheel_store, '_SDK_WHEEL_SHA256', sha256(payload).hexdigest())
+    sdk = pm_wheel_store.publish_sdk(pm_env.home, payload)
+    project = pm._sdk_project_source(old['version'], old['external_wheel'], sdk)
+    (member / 'pyproject.toml').write_bytes(project.encode('utf-8'))
+    owner = {**old, 'schema': 3, 'sdk_wheel': sdk,
+             'files': {**old['files'], 'pyproject.toml': sha256(project.encode()).hexdigest()}}
+    (member / pm.OWNER).write_text(json.dumps(owner))
+    evidence = object()
+    monkeypatch.setattr(legacy_9b904, 'capture_admission', lambda *_args: evidence)
+    monkeypatch.setattr(pm, '_verify_observer_writer_before_admission',
+                        lambda *_args, **_kwargs: legacy_9b904.ADAPTER_ID)
+    monkeypatch.setattr(pm, '_ADOPTION_ENABLED', True)
+    def complete(registration, proof):
+        assert proof is evidence
+        registration.adoption = proof
+        return registration
+    monkeypatch.setattr(pm, '_complete_adoption', complete)
+    pm_env.calls.clear()
+    repeat = pm.ensure(pm_env.root, Path('/fixture/python'), home=pm_env.home, spec=None, version=VERSION)
+    assert repeat.repeat is True
+    assert repeat.source_family == legacy_9b904.ADAPTER_ID
+    assert [call['operation'] for call in pm_env.calls] == ['probe']
+    monkeypatch.setattr(plugin, 'resolve_runtime_binding', lambda **_kwargs: object())
+    monkeypatch.setattr(pm.Registration, 'verify_adoption', lambda *_args: None)
+    monkeypatch.setattr(legacy_observer, 'inspect', lambda *_args, **_kwargs: ('verified',))
+    repeat.rollback()
+    assert [call['operation'] for call in pm_env.calls] == ['probe']
+    assert pm._owned(member) == owner
+
+
+@pytest.mark.parametrize('sdk_status,expected', [('ok', 0), ('failed', 1)])
+def test_schema3_install_never_runs_pip_sdk_fallback(tmp_path, monkeypatch, sdk_status, expected):
+    detection = SimpleNamespace(supported=True, root=tmp_path)
+    registration = SimpleNamespace(adoption=object(), python=Path('/fixture/python'))
+    monkeypatch.setattr(cli, 'detect_hermes', lambda _root: detection)
+    monkeypatch.setattr(cli, '_read_manifest', lambda _path: None)
+    monkeypatch.setattr(cli, '_ensure_hermes_runtime_package', lambda *_args, **_kwargs: registration)
+    monkeypatch.setattr(cli, '_hermes_requires_feishu_sdk_capability', lambda _root: True)
+    monkeypatch.setattr(cli, '_check_runtime_feishu_sdk', lambda _python: {'status': sdk_status})
+    monkeypatch.setattr(cli, '_ensure_hermes_feishu_sdk',
+                        lambda *_args, **_kwargs: pytest.fail('pip SDK fallback must not run'))
+    monkeypatch.setattr(cli, '_run_fixed_tag_v3_install', lambda *_args: 0)
+    registrations = []
+    assert cli._run_install_core(SimpleNamespace(hermes_dir=tmp_path), registrations) == expected
+    assert registrations == [registration]
+
+
+def test_schema3_uninstall_refuses_before_source_or_config_restore(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_9b904_uninstall, legacy_observer
+    monkeypatch.setattr(legacy_observer, '_read', lambda _path: b'v2 marker')
+    monkeypatch.setattr(legacy_observer, '_decode', lambda _raw: {'protocol': legacy_observer.ADOPTION_PROTOCOL})
+    monkeypatch.setattr(cli, '_run_fixed_tag_v3_restore',
+                        lambda *_args, **_kwargs: pytest.fail('source restore must not run'))
+    monkeypatch.setattr(cli, '_restore', lambda *_args, **_kwargs: pytest.fail('config restore must not run'))
+    def refuse(*_args, **_kwargs):
+        raise ValueError('unverified HOME')
+    monkeypatch.setattr(legacy_9b904_uninstall, 'uninstall', refuse)
+    assert cli._run_uninstall(SimpleNamespace(hermes_dir=tmp_path)) == 1
+
+
+def test_schema3_marker_appearing_after_precheck_refuses_uninstall(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer
+    monkeypatch.setattr(legacy_observer, '_read', lambda _path: None)
+    monkeypatch.setattr(legacy_observer, 'inspect', lambda *_args, **_kwargs: (
+        {'protocol': legacy_observer.ADOPTION_PROTOCOL}, b'marker', object(), object(), b'config'))
+    monkeypatch.setattr(cli, '_run_fixed_tag_v3_restore', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, '_restore_legacy_sources', lambda *_args: pytest.fail('source restore must not run'))
+    assert cli._run_uninstall(SimpleNamespace(hermes_dir=tmp_path)) == 1
+
+
+def test_restore_does_not_remove_marker_created_after_initial_absence(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer
+    monkeypatch.setattr(legacy_observer, 'inspect', lambda *_args, **_kwargs: None)
+    def restore_sources(root):
+        (root / legacy_observer.MARKER).write_bytes(b'new observer')
+    monkeypatch.setattr(cli, '_restore_legacy_sources', restore_sources)
+    monkeypatch.setattr(legacy_observer, 'restore', lambda *_args, **_kwargs: pytest.fail('new marker removed'))
+    cli._restore(tmp_path)
+    assert (tmp_path / legacy_observer.MARKER).read_bytes() == b'new observer'
+
+
+def test_uninstall_source_recovery_rechecks_v2_under_root_lock(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer, recovery
+    if not recovery._secure_dirfd_transactions_supported():
+        pytest.skip('secure recovery is unavailable')
+    (tmp_path / legacy_observer.MARKER).write_bytes(b'late v2')
+    monkeypatch.setattr(legacy_observer, '_decode', lambda _raw: {'protocol': legacy_observer.ADOPTION_PROTOCOL})
+    monkeypatch.setattr(recovery.decomposed_ownership, '_inspect',
+                        lambda *_args, **_kwargs: pytest.fail('source must not be inspected or changed'))
+    with pytest.raises(ValueError, match='coordinated PM transaction'):
+        recovery.restore_decomposed(SimpleNamespace(root=tmp_path), refuse_adoption=True)
+
+
+def test_adoption_marker_publication_waits_for_existing_root_lock(tmp_path, monkeypatch):
+    import threading
+    from hermes_feishu_card.install import legacy_observer, recovery
+    attempted, entered = threading.Event(), threading.Event()
+    monkeypatch.setattr(legacy_observer, '_prepare', lambda *_args, **_kwargs: entered.set())
+    def publish():
+        attempted.set()
+        legacy_observer.prepare(SimpleNamespace(checkout_root=tmp_path), adoption=object())
+    with recovery._root_lock(tmp_path):
+        thread = threading.Thread(target=publish)
+        thread.start()
+        assert attempted.wait(2)
+        assert not entered.wait(0.1)
+    thread.join(2)
+    assert not thread.is_alive()
+    assert entered.is_set()
+
+
+@pytest.mark.parametrize('operation', ['admission', 'uninstall'])
+def test_pm_operations_share_the_recovery_root_lock(tmp_path, monkeypatch, operation):
+    import threading
+    from hermes_feishu_card.install import legacy_9b904_uninstall, legacy_observer, recovery
+
+    attempted, entered = threading.Event(), threading.Event()
+    outcome = []
+    def ensure(*_args, **_kwargs):
+        entered.set()
+        return None
+    def read(*_args):
+        entered.set()
+        return None
+    monkeypatch.setattr(pm, '_ensure', ensure)
+    monkeypatch.setattr(legacy_observer, '_read', read)
+    def invoke():
+        attempted.set()
+        try:
+            if operation == 'admission':
+                pm.ensure(tmp_path, Path(sys.executable), home=tmp_path, spec=None, version=VERSION)
+            else:
+                legacy_9b904_uninstall.uninstall(tmp_path, home=tmp_path)
+        except ValueError as exc:
+            outcome.append(str(exc))
+    with recovery._root_lock(tmp_path):
+        thread = threading.Thread(target=invoke)
+        thread.start()
+        assert attempted.wait(2)
+        assert not entered.wait(0.1)
+    thread.join(2)
+    assert not thread.is_alive()
+    assert entered.is_set()
+    assert outcome == ([] if operation == 'admission' else ['legacy uninstall receipt is missing'])
 
 
 def test_first_registration_rollback_removes_only_new_owned_member(pm_env):
@@ -559,6 +1252,31 @@ def test_uv_missing_archive_hash_requires_exact_owned_external_source(tmp_path, 
                             capture_output=True, text=True, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['ok'] is (source_kind == 'missing_hash')
+
+
+def test_wheel_provenance_probe_does_not_import_package_before_verification(tmp_path):
+    from hermes_feishu_card.install import pm_wheel_store
+    home = tmp_path / 'home'
+    home.mkdir()
+    reference = pm_wheel_store.publish(home, f'hermes_feishu_streaming_card-{VERSION}-py3-none-any.whl', b'wheel')
+    installed = tmp_path / 'installed'
+    package = installed / 'hermes_feishu_card'
+    package.mkdir(parents=True)
+    sentinel = tmp_path / 'package-executed'
+    init = f'open({str(sentinel)!r}, "w").write("executed")\n'.encode()
+    (package / '__init__.py').write_bytes(init)
+    dist = installed / f'hermes_feishu_streaming_card-{VERSION}.dist-info'
+    dist.mkdir()
+    (dist / 'METADATA').write_text(f'Name: hermes-feishu-streaming-card\nVersion: {VERSION}\n')
+    (dist / 'direct_url.json').write_text(json.dumps({'url': Path(reference['path']).as_uri(), 'archive_info': {}}))
+    request = {'external_wheel': reference, 'wheel_sha256': reference['sha256'], 'wheel_version': VERSION,
+               'files': {'hermes_feishu_card/__init__.py': sha256(init).hexdigest()}}
+    child = 'import sys;sys.path.insert(0,' + repr(str(installed)) + ');\n' + pm._VERIFY_CHILD
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', child], input=json.dumps(request),
+                            capture_output=True, text=True, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['ok'] is True
+    assert not sentinel.exists()
 
 
 SCHEMA1_VERSION = '5.0.7'

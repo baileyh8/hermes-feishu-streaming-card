@@ -242,7 +242,9 @@ def test_pid_record_read_refuses_foreign_owned_file(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     record_path.chmod(0o600)
-    real_fstat = process.os.fstat
+    real_os = process.os
+    real_fstat = real_os.fstat
+    monkeypatch.setattr(process, "os", SimpleNamespace(**vars(real_os)))
     real_uid = record_path.stat().st_uid
     monkeypatch.setattr(process, "pid_path", lambda: record_path)
     monkeypatch.setattr(process.os, "getuid", lambda: real_uid)
@@ -257,6 +259,7 @@ def test_pid_record_read_refuses_foreign_owned_file(monkeypatch, tmp_path):
     monkeypatch.setattr(process.os, "fstat", foreign_fstat)
 
     assert process.read_pid_record() is None
+    assert real_os.fstat is real_fstat
 
 
 def test_pid_record_read_closes_descriptor_when_metadata_probe_fails(
@@ -268,7 +271,11 @@ def test_pid_record_read_closes_descriptor_when_metadata_probe_fails(
         encoding="utf-8",
     )
     record_path.chmod(0o600)
-    real_close = process.os.close
+    real_os = process.os
+    real_close = real_os.close
+    real_fstat = real_os.fstat
+    # Fault injection belongs to this module, not pytest or other threads.
+    monkeypatch.setattr(process, "os", SimpleNamespace(**vars(real_os)))
     closed: list[int] = []
     monkeypatch.setattr(process, "pid_path", lambda: record_path)
     monkeypatch.setattr(
@@ -285,6 +292,8 @@ def test_pid_record_read_closes_descriptor_when_metadata_probe_fails(
 
     assert process.read_pid_record() is None
     assert len(closed) == 1
+    assert real_os.fstat is real_fstat
+    assert real_os.close is real_close
 
 
 def test_systemd_system_unit_is_stable_and_state_scoped(monkeypatch, tmp_path):

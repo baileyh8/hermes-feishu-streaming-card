@@ -3,3 +3,7 @@
 
 class IntegrityRepairRefused(ValueError):
     pass
+
+
+class RecoveryRefused(ValueError):
+    pass

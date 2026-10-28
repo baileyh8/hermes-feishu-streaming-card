@@ -6,15 +6,20 @@ A real Session Authority SQLite test is separate from this call-chain harness.
 import ast
 import asyncio
 import builtins
-from contextlib import nullcontext, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 import gzip
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
+import sqlite3
+import subprocess
 import sys
+import threading
 from types import CodeType, FunctionType, ModuleType, SimpleNamespace
 
 import pytest
@@ -27,6 +32,7 @@ from hermes_feishu_card.install.decomposed_ownership import render
 FIXTURE = Path(__file__).parents[1] / "fixtures/session_authority_5fc490e.json"
 NEW_FIXTURE = FIXTURE.with_name("session_authority_0224.json")
 V0225_FIXTURE = FIXTURE.with_name("session_authority_0225.json")
+ISSUE471_FIXTURE = FIXTURE.with_name("session_authority_9b904.json")
 
 
 def load_sources(fixture=FIXTURE):
@@ -38,6 +44,64 @@ def load_sources(fixture=FIXTURE):
         k: hashlib.sha256(v.encode()).hexdigest() for k, v in files.items()
     } == manifest["files"]
     return files
+
+
+@lru_cache(maxsize=4)
+def _rendered_source_template(source_items):
+    # Only the unmodified runtime harness uses this immutable, full-content cache.
+    # Renderer/patcher fault tests must call render directly or clear before and
+    # after injection to avoid masking faults or retaining injected outputs.
+    return tuple(render(dict(source_items)).items())
+
+
+def _issue471_pinned_root():
+    root = os.environ.get("HFC_UPSTREAM_ISSUE471_9B904_ROOT")
+    if not root:
+        if os.environ.get("HFC_REQUIRE_ISSUE471_PIN") == "1":
+            pytest.fail("required issue 471 pinned checkout is missing")
+        pytest.skip("exact issue 471 checkout not supplied")
+    return Path(root)
+
+
+def test_issue471_snapshot_matches_pinned_checkout():
+    root = _issue471_pinned_root()
+    expected = json.loads(ISSUE471_FIXTURE.read_text())
+    head = subprocess.check_output(
+        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert head == expected["commit"] == "9b904dcc22c23fe8b82834339bbdd96495072e59"
+    for name, raw in load_sources(ISSUE471_FIXTURE).items():
+        assert (root / name).read_bytes() == raw.encode("utf-8"), name
+
+
+def test_issue471_required_checkout_cannot_silently_skip(monkeypatch):
+    monkeypatch.delenv("HFC_UPSTREAM_ISSUE471_9B904_ROOT", raising=False)
+    monkeypatch.setenv("HFC_REQUIRE_ISSUE471_PIN", "1")
+    with pytest.raises(pytest.fail.Exception, match="required issue 471 pinned checkout is missing"):
+        test_issue471_snapshot_matches_pinned_checkout()
+
+
+def test_issue471_writer_contract_rejects_before_child(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import plugin_config_bytes
+
+    root = _issue471_pinned_root()
+    home, state = tmp_path / "home", tmp_path / "state"
+    home.mkdir()
+    state.mkdir()
+    original = b"# original bytes\r\nplugins: {}\r\n"
+    (home / "config.yaml").write_bytes(original)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unknown writer must not start a child")
+
+    monkeypatch.setattr(plugin_config_bytes.subprocess, "run", forbidden)
+    with pytest.raises(plugin_config_bytes.ConfigBytesRefused, match="contract is unknown"):
+        plugin_config_bytes.plan_enabled_bytes(
+            root=root, python=Path(sys.executable), home=home, state_dir=state,
+            before=original, desired={}, enabled_before=False,
+        )
+    assert (home / "config.yaml").read_bytes() == original
+    assert not list(state.iterdir())
 
 
 def functions(raw, names, namespace, filename):
@@ -109,7 +173,10 @@ async def noop(*args, **kwargs):
     pass
 
 
-@pytest.fixture(params=[FIXTURE, NEW_FIXTURE, V0225_FIXTURE], ids=["5fc", "0224", "0225"])
+@pytest.fixture(
+    params=[FIXTURE, NEW_FIXTURE, V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["5fc", "0224", "0225", "9b904"],
+)
 def harness(tmp_path, monkeypatch, request):
     from hermes_feishu_card import admission_completion as ac
 
@@ -118,14 +185,16 @@ def harness(tmp_path, monkeypatch, request):
     monkeypatch.setenv("HOME", str(private_home))
     monkeypatch.setenv("HERMES_HOME", str(private_home / ".hermes"))
     monkeypatch.setenv("HERMES_FEISHU_CARD_STATE_DIR", str(tmp_path / "sidecar-state"))
-    files = load_sources(request.param)
+    fixture_path = request.param[0] if isinstance(request.param, tuple) else request.param
+    files = load_sources(fixture_path)
     for path, raw in files.items():
         dest = tmp_path / path
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(raw)
     from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
 
-    rendered = render({k: files[k].encode() for k in DECOMPOSED_SOURCE_TARGETS})
+    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
+    rendered = dict(_rendered_source_template(source_items))
     result = SimpleNamespace(
         posts=[],
         native=[],
@@ -148,6 +217,7 @@ def harness(tmp_path, monkeypatch, request):
         footer="",
         real_post=h._post_json_response,
         real_gate=h._policy_gate_async,
+        rendered=rendered,
     )
     h.reset_runtime_state()
     monkeypatch.setattr(
@@ -338,17 +408,19 @@ def harness(tmp_path, monkeypatch, request):
 
     runner = Runner()
     adapter.gateway_runner = runner
-    monkeypatch.setattr(
-        ac,
-        "_authority_current",
-        lambda offer, started, require_current=True: (
-            h._is_lower_hex("f" * 64, 64)
-            and offer.runner() is runner
-            and offer.adapter() is adapter
-            and adapter._app_id == offer.app_id
-            and ac.monotonic() < offer.expires
-        ),
-    )
+    real_owner_gate = fixture_path == ISSUE471_FIXTURE or isinstance(request.param, tuple)
+    if not real_owner_gate:
+        monkeypatch.setattr(
+            ac,
+            "_authority_current",
+            lambda offer, started, require_current=True: (
+                h._is_lower_hex("f" * 64, 64)
+                and offer.runner() is runner
+                and offer.adapter() is adapter
+                and adapter._app_id == offer.app_id
+                and ac.monotonic() < offer.expires
+            ),
+        )
     ingress = ModuleType("gateway.session_ingress")
     ingress.__file__ = str(tmp_path / "gateway/session_ingress.py")
     ingress.__dict__.update(
@@ -396,7 +468,10 @@ def harness(tmp_path, monkeypatch, request):
     for name, values in {
         "hermes_state_runtime": dict(
             RuntimeStoreError=RuntimeErrorPort,
-            get_session_admission=lambda *a, **k: {"status": "started"},
+            get_session_admission=lambda db, **k: (
+                db.row if real_owner_gate and db.row["admission_id"] == k["admission_id"]
+                else {"status": "started"} if not real_owner_gate else None
+            ),
         ),
         "gateway.session_completion_notes": dict(note_if_unviewed=noop),
         "gateway.session_policy": dict(policy_for_source=lambda *a: None),
@@ -462,7 +537,7 @@ def harness(tmp_path, monkeypatch, request):
         def __init__(self, event):
             self.runner = runner
             self.profile_id = "default"
-            self.epoch = "epoch"
+            self.epoch = 9 if real_owner_gate else "epoch"
             self.db = type("DBPort", (), {})()
             self.instance_id = "port-instance"
             self.retiring = False
@@ -471,6 +546,7 @@ def harness(tmp_path, monkeypatch, request):
             self.sessions[self.ref.session_id].source = event.source
             self.sessions[self.ref.session_id].route = "route-key"
             self.sessions[self.ref.session_id].task = None
+            self.sessions[self.ref.session_id].event_stream = SimpleNamespace(execution={})
             self.waiters = {}
             self.native_waiters = set()
             self.pending_results = {}
@@ -482,6 +558,7 @@ def harness(tmp_path, monkeypatch, request):
                 "generation": 7,
                 "target_session_id": self.ref.session_id,
                 "owner_epoch": self.epoch,
+                "status": "queued",
                 "payload": {
                     "native_text_v1": {
                         "source": {
@@ -497,6 +574,15 @@ def harness(tmp_path, monkeypatch, request):
                     "text": event.text,
                 },
             }
+            if real_owner_gate:
+                connection = sqlite3.connect(":memory:", check_same_thread=False)
+                connection.execute(
+                    "CREATE TABLE runtime_epoch(singleton INTEGER, epoch INTEGER, instance_id TEXT)"
+                )
+                connection.execute("INSERT INTO runtime_epoch VALUES(1, 9, 'port-instance')")
+                self.db._read_ctx = lambda: nullcontext(connection)
+                self.db.row = self.row
+                result.connections.append(connection)
             if event.internal:
                 # The pinned 0.22.5 automation path stores producer_identity's
                 # JSON string in both the admission row and native envelope.
@@ -511,12 +597,26 @@ def harness(tmp_path, monkeypatch, request):
             )
 
         async def admit_native(self, event):
-            self._schedule(self.ref)
+            if real_owner_gate:
+                self.sessions[self.ref.session_id].task = asyncio.create_task(
+                    self._port_drain(self.ref)
+                )
+            else:
+                self._schedule(self.ref)
             return SimpleNamespace(
                 status="queued", admission_id=self.row["admission_id"], ref=self.ref
             )
 
-        async def _drain(self, ref):
+        async def _port_drain(self, ref):
+            live = self.sessions[ref.session_id]
+            if real_owner_gate:
+                live.task = asyncio.current_task()
+                live.event_stream.execution = {
+                    "authority_epoch": self.epoch,
+                    "execution_generation": 7,
+                    "admission_id": self.row["admission_id"],
+                }
+                self.row["status"] = "started"
             self.executing[ref.session_id] = 7
             try:
                 reply = await ingress.execute_admission(self, ref, self.row)
@@ -527,9 +627,20 @@ def harness(tmp_path, monkeypatch, request):
                 raise
             finally:
                 self.executing.pop(ref.session_id, None)
+            if real_owner_gate:
+                self.row.update(status="terminal", outcome="completed")
             result.before_deliver()
             await ingress.deliver_settled(self, self.row["admission_id"])
             await self._resolve_settled_waiter(self.row["admission_id"], reply)
+
+        _drain = _port_drain
+
+    result.connections = []
+    if real_owner_gate:
+        # The call-chain driver is a test port, but HFC's owner gate sees the
+        # exact loaded native methods and reads its row and epoch independently.
+        for name in ("_drain", "_execute_claimed", "_stamp_claim"):
+            setattr(Authority, name, getattr(auth_module.SessionAuthority, name))
 
     result.adapter = adapter
     result.runner = runner
@@ -537,6 +648,83 @@ def harness(tmp_path, monkeypatch, request):
     result.Authority = Authority
     yield result
     h.reset_runtime_state()
+    for connection in result.connections:
+        connection.close()
+
+
+def test_harness_rendered_templates_isolate_case_and_source_mutations(tmp_path):
+    from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
+
+    files = load_sources(ISSUE471_FIXTURE)
+    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
+    target = "gateway/platforms/base.py"
+
+    @contextmanager
+    def real_case(root):
+        root.mkdir()
+        with pytest.MonkeyPatch.context() as patch:
+            generator = harness.__wrapped__(root, patch, SimpleNamespace(param=ISSUE471_FIXTURE))
+            try:
+                yield next(generator)
+            finally:
+                next(generator, None)
+
+    with real_case(tmp_path / "first") as first:
+        expected = first.rendered.copy()
+        first_ingress = first.ingress
+        first_globals = first.ingress.admit_message.__globals__
+        first_path = Path(first.ingress.__file__)
+        original_ingress = first_path.read_text()
+        first_authority = first.Authority(Event())
+        with first_authority.db._read_ctx() as connection:
+            connection.execute("UPDATE runtime_epoch SET epoch = 99")
+        first.ingress.case_sentinel = True
+        first.adapter._active_sessions["case-sentinel"] = object()
+        first.posts.append({"case": "sentinel"})
+        first.rendered[target] = b"case-specific mutation"
+        first_path.write_text("# case-specific mutation")
+
+    with real_case(tmp_path / "second") as second:
+        second_authority = second.Authority(Event())
+        assert second.ingress is not first_ingress
+        assert second.ingress.admit_message.__globals__ is not first_globals
+        assert not hasattr(second.ingress, "case_sentinel")
+        assert second.adapter._active_sessions == {}
+        assert second.posts == []
+        assert second.rendered == expected and second.rendered is not first.rendered
+        assert Path(second.ingress.__file__) != first_path
+        assert Path(second.ingress.__file__).read_text() == original_ingress
+        assert second_authority.db is not first_authority.db
+        with second_authority.db._read_ctx() as connection:
+            assert connection.execute("SELECT epoch FROM runtime_epoch").fetchone() == (9,)
+
+    changed_items = tuple(
+        (name, raw + b"\n# source-content cache probe\n" if name == target else raw)
+        for name, raw in source_items
+    )
+    changed_rendered = dict(_rendered_source_template(changed_items))
+    assert changed_rendered[target] != expected[target]
+    assert b"# source-content cache probe" in changed_rendered[target]
+
+
+def test_render_template_fault_injection_is_not_cached(monkeypatch):
+    source_items = (("probe.py", b"probe"),)
+    calls = []
+
+    def fail(_sources):
+        calls.append(True)
+        raise ValueError("injected renderer failure")
+
+    _rendered_source_template.cache_clear()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sys.modules[__name__], "render", fail)
+            for _ in range(2):
+                with pytest.raises(ValueError, match="injected renderer failure"):
+                    _rendered_source_template(source_items)
+        assert calls == [True, True]
+    finally:
+        _rendered_source_template.cache_clear()
 
 
 @pytest.mark.parametrize("waiter", [True, False])
@@ -554,7 +742,7 @@ async def test_native_admission_waiter_and_drain_owned_finish_exact_card(
         )
         await authority.sessions["authority-session"].task
     else:
-        await authority._drain(authority.ref)
+        await authority._port_drain(authority.ref)
     assert harness.staged == [True]
     assert len(harness.posts) == 1
     assert harness.posts[0]["event"] == "message.completed"
@@ -578,11 +766,328 @@ async def deliver(harness, *, waiter=False, event=None):
         )
         await authority.sessions["authority-session"].task
     else:
-        await authority._drain(authority.ref)
+        await authority._port_drain(authority.ref)
     return event, authority
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [(V0225_FIXTURE, True), (ISSUE471_FIXTURE, True)],
+    ids=["0225-real-owner", "9b904-real-owner"], indirect=True,
+)
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize("change", [
+    "none", "first-sender", "profile", "chat", "thread", "superseded", "row-user", "row-generation",
+])
+async def test_first_card_checks_native_owner_before_policy(
+    harness, monkeypatch, kind, change
+):
+    event = Event(
+        source=Source(user_id="current-sender"),
+        message_id='["async_delegation","delegation-a",""]',
+        internal=True,
+    )
+    authority = harness.Authority(event)
+    live = authority.sessions[authority.ref.session_id]
+    live.source = replace(event.source)
+    if change == "first-sender":
+        live.source.user_id = "first-group-sender"
+    elif change in {"profile", "chat", "thread"}:
+        setattr(live.source, {"profile": "profile_id", "chat": "chat_id",
+                              "thread": "thread_id"}[change], "different")
+    elif change == "superseded":
+        live.superseded = True
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: {
+        "ok": True, "disposition": "card", "ttl_ms": 0,
+    })
+    decisions = []
+
+    async def started(runner, current_event, source):
+        if change == "row-user":
+            authority.row["payload"]["native_text_v1"]["source"]["user_id"] = "different"
+        elif change == "row-generation":
+            authority.row["generation"] += 1
+        values = {"self": runner, "event": current_event, "source": source,
+                  "_quick_key": "route-key", "run_generation": 101}
+        config = h.load_runtime_config()
+        decision = (h._policy_gate_sync(config, values, "message.started")
+                    if kind == "sync" else
+                    await harness.real_gate(config, values, "message.started"))
+        decisions.append(decision.card)
+        if decision.card:
+            assert await h.emit_from_hermes_locals_async(values, "message.started")
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    accepted = change in {"none", "first-sender"}
+    assert decisions == [accepted]
+    assert [post["event"] for post in harness.posts] == (
+        ["message.started", "message.completed"] if accepted else []
+    )
+    assert harness.native == ([] if accepted else ["complete answer"])
+
+
+@pytest.mark.parametrize("harness", [ISSUE471_FIXTURE], ids=["9b904"], indirect=True)
+@pytest.mark.parametrize("change", ["route", "profile", "epoch", "row-user", "superseded", "seam"])
+@pytest.mark.parametrize("kind", ["sync", "async"])
+async def test_first_card_rechecks_owner_after_policy_fetch(harness, monkeypatch, change, kind):
+    event = Event()
+    authority = harness.Authority(event)
+    live = authority.sessions[authority.ref.session_id]
+    extractor = harness.adapter._extract_response_content
+    entered = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+
+    def fetch(*args):
+        entered.set()
+        assert release.wait(3)
+        return {"ok": True, "disposition": "card", "ttl_ms": 0}
+
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", fetch)
+    decisions = []
+    changed_evidence = []
+
+    async def started(runner, current_event, source):
+        def change_owner():
+            if not entered.wait(3):
+                return
+            if change == "route":
+                live.route = "other-route"
+            elif change == "profile":
+                live.source.profile_id = "other"
+            elif change == "epoch":
+                authority.epoch += 1
+            elif change == "row-user":
+                authority.row["payload"]["native_text_v1"]["source"]["user_id"] = "other"
+            elif change == "seam":
+                harness.adapter._extract_response_content = None
+            else:
+                live.superseded = True
+            changed_evidence.append({
+                "route": live.route == "other-route",
+                "profile": live.source.profile_id == "other",
+                "epoch": authority.epoch == 10,
+                "row-user": authority.row["payload"]["native_text_v1"]["source"]["user_id"] == "other",
+                "superseded": getattr(live, "superseded", False) is True,
+                "seam": harness.adapter._extract_response_content is None,
+            })
+            release.set()
+
+        owner_change_thread = threading.Thread(target=change_owner, daemon=True)
+        owner_change_thread.start()
+        values = {"self": runner, "event": current_event, "source": source,
+                  "_quick_key": "route-key", "run_generation": 101}
+        config = h.load_runtime_config()
+        try:
+            decision = (h._policy_gate_sync(config, values, "message.started")
+                        if kind == "sync" else
+                        await harness.real_gate(config, values, "message.started"))
+            decisions.append(decision.card)
+        finally:
+            release.set()
+            owner_change_thread.join(3)
+            harness.adapter._extract_response_content = extractor
+        assert not owner_change_thread.is_alive()
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    assert decisions == [False]
+    assert len(changed_evidence) == 1
+    assert changed_evidence[0][change] is True
+    assert sum(changed_evidence[0].values()) == 1
+    assert harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [ISSUE471_FIXTURE], ids=["9b904"], indirect=True)
+@pytest.mark.parametrize("context", ["child-task", "worker-thread"])
+@pytest.mark.parametrize("first_event", ["message.started", "system.notice", "interaction.requested"])
+async def test_unpinned_admission_without_original_frame_keeps_native(
+    harness, monkeypatch, context, first_event
+):
+    event = Event()
+    authority = harness.Authority(event)
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    queries = []
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: queries.append(a))
+    decisions = []
+
+    async def started(runner, current_event, source):
+        values = {"self": runner, "event": current_event, "source": source,
+                  "_quick_key": "route-key", "run_generation": 101}
+        config = h.load_runtime_config()
+        if context == "child-task":
+            result = await asyncio.create_task(harness.real_gate(config, values, first_event))
+        else:
+            result = await asyncio.to_thread(h._policy_gate_sync, config, values, first_event)
+        decisions.append(result.card)
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    assert decisions == [False]
+    assert queries == [] and harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [ISSUE471_FIXTURE], ids=["9b904"], indirect=True)
+async def test_first_card_rejects_a_changed_durable_row_between_reads(harness, monkeypatch):
+    from copy import deepcopy
+
+    event = Event(
+        source=Source(user_id="current-sender"),
+        message_id='["async_delegation","delegation-a",""]', internal=True,
+    )
+    authority = harness.Authority(event)
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    calls = []
+    decisions = []
+    queries = []
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: queries.append(a))
+
+    async def started(runner, current_event, source):
+        state = sys.modules["hermes_state_runtime"]
+
+        def read_row(db, **kwargs):
+            calls.append(kwargs["admission_id"])
+            row = deepcopy(authority.row)
+            if len(calls) >= 2:
+                row["payload"]["native_text_v1"]["source"]["user_id"] = "different"
+            return row
+
+        monkeypatch.setattr(state, "get_session_admission", read_row)
+        values = {"self": runner, "event": current_event, "source": source,
+                  "_quick_key": "route-key", "run_generation": 101}
+        decisions.append((await harness.real_gate(
+            h.load_runtime_config(), values, "message.started"
+        )).card)
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    assert len(calls) >= 2 and decisions == [False]
+    assert queries == [] and harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize(
+    "harness", [(FIXTURE, True), (NEW_FIXTURE, True)],
+    ids=["5fc-real-owner", "0224-real-owner"], indirect=True,
+)
+@pytest.mark.parametrize("kind", ["sync", "async"])
+async def test_prior_cohorts_accept_valid_first_card_with_original_owner(
+    harness, monkeypatch, kind
+):
+    event = Event()
+    authority = harness.Authority(event)
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: {
+        "ok": True, "disposition": "card", "ttl_ms": 0,
+    })
+    decisions = []
+
+    async def started(runner, current_event, source):
+        values = {"self": runner, "event": current_event, "source": source,
+                  "_quick_key": "route-key", "run_generation": 101}
+        config = h.load_runtime_config()
+        decision = (h._policy_gate_sync(config, values, "message.started")
+                    if kind == "sync" else
+                    await harness.real_gate(config, values, "message.started"))
+        decisions.append(decision.card)
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    assert decisions == [True]
+    assert [post["event"] for post in harness.posts] == ["message.completed"]
+    assert harness.native == []
+
+
+@pytest.mark.parametrize("harness", [ISSUE471_FIXTURE], ids=["9b904"], indirect=True)
+@pytest.mark.parametrize("first_event", ["system.notice", "interaction.requested"])
+@pytest.mark.parametrize("kind", ["sync", "async"])
+async def test_invalid_owner_cannot_pin_notice_or_interaction_first(
+    harness, monkeypatch, first_event, kind
+):
+    event = Event()
+    authority = harness.Authority(event)
+    authority.sessions[authority.ref.session_id].source = replace(
+        event.source, profile_id="different"
+    )
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    queries = []
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: queries.append(a))
+    decisions = []
+
+    async def started(runner, current_event, source):
+        values = {"self": runner, "event": current_event, "source": source,
+                  "_quick_key": "route-key", "run_generation": 101}
+        config = h.load_runtime_config()
+        decision = (h._policy_gate_sync(config, values, first_event) if kind == "sync"
+                    else await harness.real_gate(config, values, first_event))
+        decisions.append(decision.card)
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    assert decisions == [False]
+    assert queries == [] and harness.posts == []
+    assert harness.native == ["complete answer"]
+
+
+@pytest.mark.parametrize("harness", [ISSUE471_FIXTURE], ids=["9b904"], indirect=True)
+@pytest.mark.parametrize("internal", [False, True])
+async def test_rendered_start_hook_accepts_its_source_copy_before_completion(
+    harness, monkeypatch, internal
+):
+    event = Event(
+        source=Source(user_id="current-sender"),
+        message_id='["async_delegation","delegation-a",""]' if internal else "ingress-a",
+        internal=internal,
+    )
+    authority = harness.Authority(event)
+    source_tree = ast.parse(harness.rendered["gateway/run_turn.py"])
+    method = next(node for node in ast.walk(source_tree)
+                  if isinstance(node, ast.AsyncFunctionDef)
+                  and node.name == "_handle_message_with_agent")
+    hook = next(node for node in method.body if isinstance(node, ast.Try))
+    hook_function = ast.FunctionDef(
+        name="run_start", args=method.args, body=[hook], decorator_list=[], returns=None,
+        type_comment=None,
+    )
+    namespace = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[hook_function], type_ignores=[])),
+                 "rendered-9b904-start", "exec"), namespace)
+    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    monkeypatch.setattr(h, "_hfc_eager_ensure_command_card_hooks", lambda *a: None)
+    monkeypatch.setattr(h, "handle_hfc_command_from_hermes_locals", lambda *a: False)
+    monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: {
+        "ok": True, "disposition": "card", "ttl_ms": 0,
+    })
+    first_sent = asyncio.Event()
+
+    async def post(url, payload, timeout):
+        harness.posts.append(payload)
+        if payload["event"] == "message.started":
+            first_sent.set()
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(h, "_post_json_response", post)
+    monkeypatch.setattr(h, "_post_json", post)
+
+    async def started(runner, current_event, source):
+        assert source.message_id is None
+        namespace["run_start"](runner, current_event, source, "route-key", 101)
+        await asyncio.wait_for(first_sent.wait(), 3)
+        assert source.message_id is None  # the rendered hook modified its copy only
+
+    harness.before_response = started
+    await authority._port_drain(authority.ref)
+    assert [post["event"] for post in harness.posts] == ["message.started", "message.completed"]
+    assert harness.native == []
+
+
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_internal_source_user_id_completes_one_card_at_original_base_seam(harness):
     event = Event(source=Source(user_id="a1b2c3d4"))
     await deliver(harness, event=event)
@@ -594,7 +1099,10 @@ async def test_internal_source_user_id_completes_one_card_at_original_base_seam(
     assert harness.native == []
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_automation_admission_delivers_only_its_card(harness):
     # producer_identity() serializes the upstream tuple as JSON before the
     # native envelope is persisted; execute_admission does not stamp internal
@@ -612,7 +1120,10 @@ async def test_automation_admission_delivers_only_its_card(harness):
     assert harness.native == []
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_automation_source_anchor_drift_cannot_reuse_old_reply(harness):
     event = Event(
         source=Source(user_id="a1b2c3d4", message_id="om_old"),
@@ -626,7 +1137,10 @@ async def test_automation_source_anchor_drift_cannot_reuse_old_reply(harness):
     assert harness.native == ["complete answer"]
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 @pytest.mark.parametrize(
     "changed", ["principal", "target", "owner", "request", "identity", "route", "user", "thread"]
 )
@@ -654,13 +1168,16 @@ async def test_automation_claim_drift_cannot_suppress_native(harness, changed):
     else:
         envelope["source"]["user_id" if changed == "user" else "thread_id"] = "other"
 
-    await authority._drain(authority.ref)
+    await authority._port_drain(authority.ref)
 
     assert harness.posts == []
     assert harness.native == ["complete answer"]
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 @pytest.mark.parametrize("changed", ["row", "owner"])
 async def test_internal_claimed_owner_cannot_bypass_automation_proof(harness, changed):
     event = Event(
@@ -681,12 +1198,15 @@ async def test_internal_claimed_owner_cannot_bypass_automation_proof(harness, ch
         return value
 
     harness.ingress.restore_native = restored
-    await authority._drain(authority.ref)
+    await authority._port_drain(authority.ref)
     assert harness.posts == []
     assert harness.native == ["complete answer"]
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 @pytest.mark.parametrize("field", ["user_id", "profile_id", "thread_id"])
 async def test_internal_admission_identity_drift_keeps_native(harness, field):
     event = Event(source=Source(user_id="a1b2c3d4"))
@@ -699,7 +1219,10 @@ async def test_internal_admission_identity_drift_keeps_native(harness, field):
     assert harness.native == ["complete answer"]
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 @pytest.mark.parametrize("first_event", ["message.started", "system.notice"])
 async def test_empty_source_user_id_keeps_native_before_card_policy(
     harness, monkeypatch, first_event
@@ -953,7 +1476,10 @@ async def test_duplicate_and_late_original_delivery_do_not_replay_card(harness):
     assert h._exact_completion_stage_for_current_task() is None
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_internal_identity_duplicate_and_late_completion_do_not_replay(harness):
     event = Event(source=Source(user_id="a1b2c3d4"))
     _, authority = await deliver(harness, event=event)
@@ -1070,7 +1596,8 @@ def test_same_file_loaded_topology_drift_is_rejected(harness, module, function):
 
 
 @pytest.mark.parametrize(
-    "fixture", [FIXTURE, NEW_FIXTURE, V0225_FIXTURE], ids=["5fc", "0224", "0225"]
+    "fixture", [FIXTURE, NEW_FIXTURE, V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["5fc", "0224", "0225", "9b904"]
 )
 def test_full_official_family_idempotence_and_original_bytes_restore(fixture):
     from hermes_feishu_card.install import patcher
@@ -1089,6 +1616,14 @@ def test_full_official_family_idempotence_and_original_bytes_restore(fixture):
         "capture_admission_base_extraction(locals())"
         not in patcher.apply_base_patch(drift)
     )
+    if fixture == ISSUE471_FIXTURE:
+        from hermes_feishu_card.install.decomposed_ownership import _remove_target
+        from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
+
+        originals = {name: files[name].encode() for name in DECOMPOSED_SOURCE_TARGETS}
+        patched_sources = render(originals)
+        assert render(originals) == patched_sources
+        assert {name: _remove_target(name, raw) for name, raw in patched_sources.items()} == originals
 
 
 async def test_real_busy_observer_copies_carrier_with_original_marker_move(harness):
@@ -1123,7 +1658,7 @@ async def test_real_late_waiter_registration_moves_held_carrier_to_adopter(harne
         )
 
     harness.before_deliver = register
-    await authority._drain(authority.ref)
+    await authority._port_drain(authority.ref)
     assert harness.posts == []
     assert authority.pending_deliveries == {}
     await harness.ingress.deliver_response(
@@ -1331,7 +1866,10 @@ async def test_owner_changes_during_terminal_http_ack_preserve_native(
     assert harness.ledger[-1] == ("final", "ingress-a", True)
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_applied_terminal_ack_only_suppresses_its_original_native_send(
     harness, monkeypatch
 ):
@@ -1341,7 +1879,7 @@ async def test_applied_terminal_ack_only_suppresses_its_original_native_send(
     original = ac._authority_current
 
     def authority(offer, *, started, require_current=True):
-        return original(offer, started=started, require_current=require_current) and (
+        return original(offer, started=started) and (
             current["value"] or not require_current
         )
 
@@ -1359,7 +1897,10 @@ async def test_applied_terminal_ack_only_suppresses_its_original_native_send(
     assert harness.ledger[-1] == ("final", "ingress-a", True)
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 @pytest.mark.parametrize("change", ["stage", "payload", "event", "generation", "adapter"])
 async def test_applied_ack_cannot_claim_replaced_request_or_identity(harness, monkeypatch, change):
     calls = []
@@ -1388,7 +1929,10 @@ async def test_applied_ack_cannot_claim_replaced_request_or_identity(harness, mo
     assert harness.native == ["complete answer"]
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_http_child_context_replacement_does_not_change_parent_stage(harness, monkeypatch):
     calls = []
 
@@ -1414,7 +1958,10 @@ async def test_http_child_context_replacement_does_not_change_parent_stage(harne
     assert harness.native == []
 
 
-@pytest.mark.parametrize("harness", [V0225_FIXTURE], indirect=True)
+@pytest.mark.parametrize(
+    "harness", [V0225_FIXTURE, ISSUE471_FIXTURE],
+    ids=["0225", "9b904"], indirect=True,
+)
 async def test_parent_context_stage_replacement_cannot_consume_old_ack(harness, monkeypatch):
     original = h._post_admission_terminal
     calls = []

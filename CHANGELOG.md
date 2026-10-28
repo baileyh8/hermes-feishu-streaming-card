@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.11 — 2026-10-28
+
+- Verify the original admitted owner before the first card decision and again after policy lookup, preventing a stale automation profile/route from starting a card that cannot accept its terminal handoff (#471). Keep native fallback and terminal identity checks intact.
+- Add an exact admission-completion source cohort for Hermes `9b904dcc22c23fe8b82834339bbdd96495072e59` (#471), retaining full source, claim, route, epoch/generation and single-use acknowledgement checks. The installer adapter has a separately verified, restricted existing-PM migration path; fresh installs, old v1 receipts and unpreservable manual SDKs remain rejected. Arbitrary main revisions are not supported.
+- Thanks to @lv86snorlax for the #471 report and source analysis, credited separately from code authorship. See [Chinese release notes](docs/release-notes-v5.0.11.md) and [English release notes](docs/release-notes-v5.0.11.en.md) for evidence and remaining gates.
+
 ## v5.0.10 — 2026-10-27
 
 - Verify internal asynchronous completion against the original admission record and retain source, owner, generation, epoch and profile boundaries (#469).

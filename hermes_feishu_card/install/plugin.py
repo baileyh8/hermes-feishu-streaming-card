@@ -43,6 +43,10 @@ class PluginConfigRefused(ValueError):
     pass
 
 
+class PluginAdoptionUncertain(PluginConfigRefused):
+    """The zero-delta adoption journal may have been published; keep evidence."""
+
+
 @dataclass(frozen=True, repr=False)
 class HermesRuntimeBinding:
     checkout_root: Path
@@ -415,6 +419,62 @@ def _plan_enabled_config_bytes(
         ) from exc
 
 
+def _adopt_existing_plugin_config(
+    binding: HermesRuntimeBinding, preimage: PluginConfigPreimage, validate_admission: Any,
+) -> PluginOwnership:
+    """Record a zero-delta adoption after a verified PM admission.
+
+    The admission validator must recheck the source, selected generation,
+    runtime and exact config; no official enable command runs on this path.
+    """
+    from . import legacy_9b904, posix_transaction as io
+
+    if (type(binding) is not HermesRuntimeBinding or type(preimage) is not PluginConfigPreimage
+            or not callable(validate_admission)):
+        raise PluginConfigRefused("legacy adoption evidence is invalid")
+    validate_admission(binding)
+    config_identity, before, _mode = io.read_file_state(
+        binding.config_path, parent_fd=None, missing_allowed=False, refused=PluginConfigRefused,
+        non_regular_refusal="legacy adoption config is unsafe",
+        changed_refusal="legacy adoption config changed", wrap_read_error=True,
+    )
+    if config_identity is None or before is None:
+        raise PluginConfigRefused("legacy adoption config is unavailable")
+    legacy_9b904.inspect_existing_config(before)
+    if (not preimage.enabled_before or _sha256(before) != preimage.pre_sha256
+            or _read_private_backup(preimage) != before):
+        raise PluginConfigRefused("legacy adoption preimage changed")
+    backup = io.read_path_snapshot(preimage.backup_path, PluginConfigRefused, "legacy adoption backup changed")
+    journal = io.read_path_snapshot(preimage.journal_path, PluginConfigRefused, "legacy adoption journal changed")
+    state_parent = io.read_directory_identity(preimage.state_dir, PluginConfigRefused, "legacy adoption state changed")
+    config_parent = io.read_directory_identity(binding.config_path.parent, PluginConfigRefused, "legacy adoption home changed")
+    try:
+        prepared = json.loads(preimage.journal_path.read_bytes())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise PluginConfigRefused("legacy adoption journal is invalid") from exc
+    expected = {"protocol": "hfc-plugin-config-preimage-v1", "phase": "prepared",
+                "config_backup_id": preimage.config_backup_id, "pre_sha256": preimage.pre_sha256,
+                "backup_sha256": preimage.backup_sha256}
+    if prepared not in (expected, {**expected, "enabled_before": True}) or backup[2] != preimage.backup_sha256:
+        raise PluginConfigRefused("legacy adoption evidence changed")
+    ownership = PluginOwnership(
+        enabled_before=True, added_by_hfc=False, pre_sha256=preimage.pre_sha256,
+        post_sha256=preimage.pre_sha256, config_backup_id=preimage.config_backup_id,
+        backup_sha256=preimage.backup_sha256, post_identity=config_identity,
+        post_parent_identity=config_parent, journal_identity=journal,
+        backup_identity=backup, state_parent_identity=state_parent,
+    )
+    validate_admission(binding)
+    try:
+        journal = _rewrite_private_journal(preimage, phase="plugin_enabled", ownership=ownership)
+        io.assert_path_snapshot(binding.config_path, config_identity, PluginConfigRefused, "legacy adoption config changed")
+        validate_admission(binding)
+    except Exception as exc:
+        raise PluginAdoptionUncertain("legacy adoption evidence retained for review") from exc
+    from dataclasses import replace
+    return replace(ownership, journal_identity=journal)
+
+
 def _verify_config_plan_source(plan: ConfigBytesPlan) -> None:
     from .plugin_config_bytes import ConfigBytesRefused
     try:
@@ -480,6 +540,7 @@ def mark_plugin_config_installed(
     ownership: PluginOwnership,
     *,
     config_delta: Mapping[str, object] | None = None,
+    adapter: str | None = None,
 ) -> tuple[int, int, str]:
     if (
         type(preimage) is not PluginConfigPreimage
@@ -487,8 +548,12 @@ def mark_plugin_config_installed(
         or preimage.config_backup_id != ownership.config_backup_id
     ):
         raise PluginConfigRefused("plugin config ownership input is invalid")
+    if adapter is not None:
+        from .legacy_9b904 import ADAPTER_ID
+        if adapter != ADAPTER_ID or config_delta is None:
+            raise PluginConfigRefused("plugin config adapter is invalid")
     return _rewrite_private_journal(preimage, phase="installed", ownership=ownership,
-                                    config_delta=config_delta)
+                                    config_delta=config_delta, adapter=adapter)
 
 
 def mark_plugin_config_prepared(preimage: PluginConfigPreimage) -> None:
@@ -674,6 +739,7 @@ def _rewrite_private_journal(
     phase: str,
     ownership: PluginOwnership,
     config_delta: Mapping[str, object] | None = None,
+    adapter: str | None = None,
 ) -> tuple[int, int, str]:
     value = json.dumps(
         {
@@ -681,6 +747,7 @@ def _rewrite_private_journal(
             "phase": phase,
             **ownership.sanitized(),
             **({"config_delta": config_delta} if config_delta is not None else {}),
+            **({"adapter": adapter} if adapter is not None else {}),
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -919,7 +986,7 @@ def _probe_runtime_identity(launcher: Path) -> dict[str, object]:
     )
     try:
         completed = subprocess.run(
-            [str(launcher), "-I", "-c", code],
+            [str(launcher), "-I", "-B", "-c", code],
             cwd=str(launcher.parents[2]),
             check=False,
             stdout=subprocess.PIPE,
@@ -970,6 +1037,7 @@ def _run_entrypoint_probe(binding: HermesRuntimeBinding) -> dict[str, object]:
 import importlib.metadata
 import importlib.util
 import json
+from pathlib import Path
 
 candidates = []
 for entry in importlib.metadata.entry_points().select(group="hermes_agent.plugins"):
@@ -982,15 +1050,16 @@ for entry in importlib.metadata.entry_points().select(group="hermes_agent.plugin
         "distribution": distribution.metadata.get("Name", "") if distribution else "",
         "version": distribution.version if distribution else "",
     })
-spec = importlib.util.find_spec("hermes_feishu_card.hermes_plugin")
+parent = importlib.util.find_spec("hermes_feishu_card")
+module = Path(parent.origin).parent / "hermes_plugin.py" if parent is not None and parent.origin else None
 print(json.dumps({
     "candidates": candidates,
-    "module_origin": spec.origin if spec is not None else "",
+    "module_origin": str(module) if module is not None and module.is_file() else "",
 }, sort_keys=True, separators=(",", ":")))
 '''
     try:
         completed = subprocess.run(
-            [str(binding.runtime_python), "-I", "-c", code],
+            [str(binding.runtime_python), "-I", "-B", "-c", code],
             cwd=str(binding.checkout_root),
             check=False,
             stdout=subprocess.PIPE,

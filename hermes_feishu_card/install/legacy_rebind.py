@@ -15,7 +15,7 @@ from typing import Any
 
 from . import decomposed_ownership, legacy_observer, plugin, plugin_config_delta, pm_dependency
 from . import posix_transaction as io
-from .recovery import _root_lock
+from .transaction_lock import _root_lock
 
 yaml = importlib.import_module("yaml")
 
@@ -156,7 +156,8 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
         changes = [
             (state / (key + ".yaml"), restored.decode("utf-8")),
             (state / (key + ".json"), json.dumps({"protocol": "hfc-plugin-config-preimage-v1",
-                "phase": "installed", **owner.sanitized(), "config_delta": new_receipt}, sort_keys=True) + "\n"),
+                "phase": "installed", **owner.sanitized(), "config_delta": new_receipt,
+                **({"adapter": record["adapter"]} if "adapter" in record else {})}, sort_keys=True) + "\n"),
             (state / (key + ".previous-observer.json"), marker_raw.decode("utf-8")),
             (marker, json.dumps({**record, "python_identity": binding.python_identity,
                 "plugin_config": owner.sanitized(), "config_delta": new_receipt}, sort_keys=True) + "\n"),
@@ -168,6 +169,8 @@ def rebind(binding: plugin.HermesRuntimeBinding, *, apply: bool = False) -> dict
         expected_journal = {"protocol": "hfc-plugin-config-preimage-v1", "phase": "installed", **old_owner.sanitized()}
         if "config_delta" in record:
             expected_journal["config_delta"] = record["config_delta"]
+        if "adapter" in record:
+            expected_journal["adapter"] = record["adapter"]
         if any(snapshots[p][2] != digest for p, digest in expected_hashes.items()):
             raise RebindRefused("legacy_rebind_evidence_changed")
         if json.loads(legacy_observer._read(old_preimage.journal_path) or b"null") != expected_journal:

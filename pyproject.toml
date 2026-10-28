@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.10"
+version = "5.0.11"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -79,6 +79,12 @@ include = [
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
   "hermes_feishu_card/install/legacy_observer.py",
+  "hermes_feishu_card/install/legacy_9b904.py",
+  "hermes_feishu_card/install/legacy_9b904_contract.py",
+  "hermes_feishu_card/install/legacy_9b904_transaction.py",
+  "hermes_feishu_card/install/legacy_9b904_uninstall.py",
+  "hermes_feishu_card/install/legacy_home_revocation.py",
+  "hermes_feishu_card/install/transaction_lock.py",
   "hermes_feishu_card/install/legacy_rebind.py",
   "hermes_feishu_card/install/plugin_config_bytes.py",
   "hermes_feishu_card/install/plugin_config_delta.py",
@@ -134,6 +140,12 @@ files = [
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
   "hermes_feishu_card/install/legacy_observer.py",
+  "hermes_feishu_card/install/legacy_9b904.py",
+  "hermes_feishu_card/install/legacy_9b904_contract.py",
+  "hermes_feishu_card/install/legacy_9b904_transaction.py",
+  "hermes_feishu_card/install/legacy_9b904_uninstall.py",
+  "hermes_feishu_card/install/legacy_home_revocation.py",
+  "hermes_feishu_card/install/transaction_lock.py",
   "hermes_feishu_card/install/legacy_rebind.py",
   "hermes_feishu_card/install/plugin_config_bytes.py",
   "hermes_feishu_card/install/plugin_config_delta.py",

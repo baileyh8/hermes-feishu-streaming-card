@@ -24,6 +24,8 @@ _WHEEL_NAME = re.compile(
     r'hermes_feishu_streaming_card-[A-Za-z0-9_.!+]+(?:-[0-9][A-Za-z0-9_]*)?'
     r'-[A-Za-z0-9_.]+-[A-Za-z0-9_.]+-[A-Za-z0-9_.]+[.]whl'
 )
+_SDK_WHEEL_NAME = 'lark_oapi-1.7.5-py3-none-any.whl'
+_SDK_WHEEL_SHA256 = 'ff70fd5cdf436e26d80bf903fdd7a80cbdbd71981b87ce4c2aa49bb95fc96020'
 
 
 def is_reparse(metadata: os.stat_result) -> bool:
@@ -126,7 +128,7 @@ def _read(path: Path, parent_fd: int | None, *, legacy: bool = False) -> bytes:
             binding.close()
 
 
-def validate(home: Path, reference: Any) -> Path:
+def _validate(home: Path, reference: Any, *, sdk: bool) -> Path:
     if (not isinstance(reference, dict) or set(reference) != {'path', 'sha256'}
             or not isinstance(reference['path'], str) or not isinstance(reference['sha256'], str)):
         raise ValueError(_REFUSAL)
@@ -134,12 +136,22 @@ def validate(home: Path, reference: Any) -> Path:
     path = Path(reference['path'])
     if (len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest)
             or path.parent != home / '.hermes_feishu_card' / 'wheel-store' / digest
-            or _WHEEL_NAME.fullmatch(path.name) is None):
+            or (sdk and (path.name != _SDK_WHEEL_NAME or digest != _SDK_WHEEL_SHA256))
+            or (not sdk and _WHEEL_NAME.fullmatch(path.name) is None)):
         raise ValueError(_REFUSAL)
     with _directory(path.parent, home, create=False) as parent_fd:
         if sha256(_read(path, parent_fd)).hexdigest() != digest:
             raise ValueError(_REFUSAL)
     return path
+
+
+def validate(home: Path, reference: Any) -> Path:
+    return _validate(home, reference, sdk=False)
+
+
+def validate_sdk(home: Path, reference: Any) -> Path:
+    """Only the exact 9b904 upstream-locked SDK wheel is accepted."""
+    return _validate(home, reference, sdk=True)
 
 
 def _legacy_path(home: Path, filename: str, digest: str) -> Path:
@@ -269,9 +281,11 @@ def restore_legacy_parent(home: Path, snapshot: tuple[int, int, int]) -> None:
             raise ValueError(_LEGACY_REFUSAL)
 
 
-def publish(home: Path, filename: str, payload: bytes, *,
-            expected_parent_identity: tuple[int, int] | None = None) -> dict[str, str]:
-    if Path(filename).name != filename or _WHEEL_NAME.fullmatch(filename) is None:
+def _publish(home: Path, filename: str, payload: bytes, *, sdk: bool,
+             expected_parent_identity: tuple[int, int] | None = None) -> dict[str, str]:
+    if (Path(filename).name != filename
+            or (sdk and (filename != _SDK_WHEEL_NAME or sha256(payload).hexdigest() != _SDK_WHEEL_SHA256))
+            or (not sdk and _WHEEL_NAME.fullmatch(filename) is None)):
         raise ValueError(_REFUSAL)
     digest = sha256(payload).hexdigest()
     path = home / '.hermes_feishu_card' / 'wheel-store' / digest / filename
@@ -349,7 +363,16 @@ def publish(home: Path, filename: str, payload: bytes, *,
                     staged.cleanup()
                 if binding:
                     binding.close()
-        validate(home, reference)
+        _validate(home, reference, sdk=sdk)
         if parent_fd is not None:
             os.fsync(parent_fd)
     return reference
+
+
+def publish(home: Path, filename: str, payload: bytes, *,
+            expected_parent_identity: tuple[int, int] | None = None) -> dict[str, str]:
+    return _publish(home, filename, payload, sdk=False, expected_parent_identity=expected_parent_identity)
+
+
+def publish_sdk(home: Path, payload: bytes) -> dict[str, str]:
+    return _publish(home, _SDK_WHEEL_NAME, payload, sdk=True)
