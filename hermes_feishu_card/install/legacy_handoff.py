@@ -230,12 +230,37 @@ def prepare(
         or legacy_observer._config_state(evidence, detection.root) != "installed"
     ):
         raise HandoffRefused("legacy_handoff_restore_incomplete")
-    source = legacy_rebind._source_fingerprint(detection.root)
-    legacy_rebind._verify_runtime(binding)
     member = binding.hermes_home / "plugins" / pm_dependency.NAME
-    owner = pm_dependency._owned(member)
+    try:
+        member.lstat()
+    except FileNotFoundError:
+        try:
+            config = plugin._load_config_mapping(evidence[4])
+        except ValueError as exc:
+            raise HandoffRefused("legacy_handoff_config_invalid") from exc
+        plugins = config.get("plugins")
+        if plugins is not None and not isinstance(plugins, dict):
+            raise HandoffRefused("legacy_handoff_config_invalid") from None
+        enabled = plugins.get("enabled") if isinstance(plugins, dict) else None
+        if enabled is not None and not isinstance(enabled, list):
+            raise HandoffRefused("legacy_handoff_config_invalid") from None
+        if isinstance(enabled, list) and pm_dependency.NAME in enabled:
+            raise HandoffRefused("legacy_handoff_member_owner_missing") from None
+        # A legacy observer can exist without a PM dependency member. Only
+        # skip the handoff when official config does not select that member.
+        return None
+    except OSError as exc:
+        raise HandoffRefused("legacy_handoff_member_uninspectable") from exc
+    try:
+        owner = pm_dependency._owned(member)
+    except ValueError as exc:
+        raise HandoffRefused("legacy_handoff_member_owner_invalid") from exc
+    if owner is None:
+        raise HandoffRefused("legacy_handoff_member_owner_missing")
     if not isinstance(owner, dict) or not owner:
         raise HandoffRefused("legacy_handoff_member_owner_missing")
+    source = legacy_rebind._source_fingerprint(detection.root)
+    legacy_rebind._verify_runtime(binding)
     marker_snapshot = io.read_path_snapshot(
         marker, HandoffRefused, "legacy_handoff_marker_changed"
     )

@@ -766,3 +766,83 @@ def test_prepare_refuses_restored_or_partial_config_before_pm(tmp_path, monkeypa
             hermes_home=precondition.binding.hermes_home,
             profile_id=None,
         )
+
+
+def _prepare_surface(tmp_path, monkeypatch):
+    original_owned = pm_dependency._owned
+    precondition, _new_binding, _registration, _marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    detection = SimpleNamespace(root=precondition.binding.checkout_root, decomposed=True)
+    monkeypatch.setattr(legacy_observer, "available", lambda _: True)
+    monkeypatch.setattr(legacy_observer, "_read", lambda _: precondition.marker_raw)
+    monkeypatch.setattr(
+        legacy_handoff.plugin,
+        "resolve_runtime_binding",
+        lambda **_: precondition.binding,
+    )
+    monkeypatch.setattr(
+        legacy_observer,
+        "inspect",
+        lambda *args, **kwargs: (
+            json.loads(precondition.marker_raw),
+            precondition.marker_raw,
+            None,
+            None,
+            precondition.config.read_bytes(),
+        ),
+    )
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    monkeypatch.setattr(
+        legacy_rebind,
+        "_source_fingerprint",
+        lambda _: pytest.fail("PM source check should not run"),
+    )
+    monkeypatch.setattr(
+        legacy_rebind,
+        "_verify_runtime",
+        lambda _: pytest.fail("PM runtime check should not run"),
+    )
+    return precondition, detection, original_owned
+
+
+def test_prepare_skips_pm_handoff_when_no_pm_member_exists(tmp_path, monkeypatch):
+    precondition, detection, original_owned = _prepare_surface(tmp_path, monkeypatch)
+    shutil.rmtree(precondition.member)
+    monkeypatch.setattr(pm_dependency, "_owned", original_owned)
+    assert (
+        legacy_handoff.prepare(
+            detection,
+            hermes_home=precondition.binding.hermes_home,
+            profile_id=None,
+        )
+        is None
+    )
+
+
+def test_prepare_still_refuses_an_existing_unowned_pm_member(tmp_path, monkeypatch):
+    precondition, detection, original_owned = _prepare_surface(tmp_path, monkeypatch)
+    monkeypatch.setattr(pm_dependency, "_owned", original_owned)
+    with pytest.raises(legacy_handoff.HandoffRefused, match="member_owner_invalid"):
+        legacy_handoff.prepare(
+            detection,
+            hermes_home=precondition.binding.hermes_home,
+            profile_id=None,
+        )
+
+
+def test_prepare_refuses_a_missing_member_selected_by_official_config(
+    tmp_path, monkeypatch
+):
+    precondition, detection, original_owned = _prepare_surface(tmp_path, monkeypatch)
+    shutil.rmtree(precondition.member)
+    precondition.config.write_bytes(
+        b"plugins:\n  enabled: [hfc-runtime-dependency]\n"
+    )
+    monkeypatch.setattr(pm_dependency, "_owned", original_owned)
+    with pytest.raises(legacy_handoff.HandoffRefused, match="member_owner_missing"):
+        legacy_handoff.prepare(
+            detection,
+            hermes_home=precondition.binding.hermes_home,
+            profile_id=None,
+        )
