@@ -546,8 +546,16 @@ def test_reconcile_refuses_a_recreated_old_member(tmp_path, monkeypatch):
         tmp_path, monkeypatch
     )
     _restore_old_member(registration, precondition, monkeypatch)
+    replacement = tmp_path / "replacement-member"
+    replacement.mkdir()
     shutil.rmtree(precondition.member)
-    precondition.member.mkdir()
+    replacement.rename(precondition.member)
+    assert (
+        posix_transaction.read_directory_identity(
+            precondition.member, ValueError, "member changed"
+        )
+        != precondition.member_identity
+    )
     before = marker.read_bytes()
     with pytest.raises(legacy_handoff.HandoffRefused, match="member_changed"):
         legacy_handoff.reconcile_after_rollback(
