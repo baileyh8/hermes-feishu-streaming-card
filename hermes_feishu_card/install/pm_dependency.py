@@ -530,7 +530,7 @@ class Registration:
             raise ValueError("PM dependency changed after this registration; refusing rollback/cleanup")
 
     def finish(self) -> None:
-        from .recovery import _root_lock
+        from .transaction_lock import _root_lock
         with _root_lock(self.root):
             self._finish()
 
@@ -562,7 +562,7 @@ class Registration:
             self.backup = None
 
     def rollback(self) -> None:
-        from .recovery import _root_lock
+        from .transaction_lock import _root_lock
         with _root_lock(self.root):
             self._rollback()
 
@@ -715,7 +715,7 @@ def _publish_member(member: Path, staging: Path, old: dict[str, Any] | None,
 def ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
            version: str) -> Registration | None:
     """Register even when the package already imports in the current generation."""
-    from .recovery import _root_lock
+    from .transaction_lock import _root_lock
     with _root_lock(root):
         return _ensure(root, python, home=home, spec=spec, version=version)
 
@@ -992,7 +992,7 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
 
 
 def remove(root: Path, python: Path, *, home: Path | None) -> None:
-    from .recovery import _root_lock
+    from .transaction_lock import _root_lock
     with _root_lock(root):
         _remove(root, python, home=home)
 

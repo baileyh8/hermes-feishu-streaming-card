@@ -364,7 +364,7 @@ class Registration:
 
 def prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> Registration | None:
     if adoption is not None:
-        from .recovery import _root_lock
+        from .transaction_lock import _root_lock
         with _root_lock(binding.checkout_root):
             return _prepare(binding, adoption=adoption)
     return _prepare(binding, adoption=None)
@@ -688,7 +688,7 @@ def restore(root: Path, *, home: Path | None = None,
     if marker_snapshot[2] != plugin._sha256(raw) or (expected_marker is not None and marker_snapshot != expected_marker):
         raise ValueError("legacy observer record changed before restore")
     if _decode(raw)["protocol"] == ADOPTION_PROTOCOL:
-        from .recovery import _root_lock
+        from .transaction_lock import _root_lock
         with _root_lock(root):
             return _restore(root, home=home, expected_marker=marker_snapshot)
     return _restore(root, home=home, expected_marker=marker_snapshot)

@@ -15,7 +15,7 @@ from typing import Any
 
 from . import decomposed_ownership, legacy_observer, plugin, plugin_config_delta, pm_dependency
 from . import posix_transaction as io
-from .recovery import _root_lock
+from .transaction_lock import _root_lock
 
 yaml = importlib.import_module("yaml")
 

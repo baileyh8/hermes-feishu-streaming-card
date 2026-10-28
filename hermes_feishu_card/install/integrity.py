@@ -26,11 +26,11 @@ from .posix_transaction import (
     BoundStage as _StagedText,
     BoundTarget as _TargetBinding,
 )
+from .transaction_lock import _root_lock
 from .recovery import (
     BACKUP_SUFFIX,
     MANIFEST_NAME,
     RecoveryPlan,
-    _root_lock,
     plan_recovery,
 )
 

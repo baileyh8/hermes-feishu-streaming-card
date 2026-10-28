@@ -27,6 +27,7 @@
 | Base delivery 源码家族验证 | `install/base_contracts`、`install/ast_contracts` | patcher 传入原 renderer 生成的 owned blocks，再按原事务应用 |
 | portable 安装文件事务与 evidence | `install/file_transaction` | CLI 与 decomposed installer 共用；自动恢复仍要求原有更强目录绑定 |
 | POSIX 目录句柄、文件/stage 身份、bound replace/unlink、回滚内容验证及 cleanup | `install/posix_transaction` | CLI、Recovery、Integrity 共用物理 I/O；各入口保留原计划、锁、fingerprint/Git、ancestry 策略和事务顺序；底层不导入 planner/CLI |
+| 安装与恢复共用的 checkout 锁 | `install/transaction_lock` | recovery 兼容导出原锁对象；安装、observer、rebind 和卸载直接使用同一 owner，锁故障注入也指向该模块 |
 | 会话、锁及 controller 清理 | `lifecycle.CleanupState` | server 注入清理所需实时 registry 引用；lifecycle 不导入 server、不持有 Application，原身份复核、顺序与上限保持 |
 | 续答消息链接验证与可选按钮预算 | `message_navigation` | 只消费本次确认的 IM 回执链接或精确位置；不查历史、不猜位置、不执行任务；server 在送达与 owner 转移后使用 |
 | 当前卡片替换资格、输入冻结与回执方言选择 | `owner_display_policy` | 原 owner/generation 先核验；failed 回执先渲染再选来源；模式按原分支惰性查询；实际 PATCH 和提交留 server |
@@ -100,7 +101,7 @@ Recovery 的 fingerprint 复算、写入优先于删除、final sweep 与逆序�
 
 `recovery` 是两个来源家族的计划与事务执行所有者。原 decomposed 的完整 plan/install/restore 实现迁入该模块；锁内 detection、两次 fingerprint、全部 staging 后复核、提交顺序和回滚位置保持。显式 portable 安装与强目录绑定的自动恢复/卸载继续使用不同准入条件。
 
-`decomposed` 仅直接重导出既有名称，供已有安装测试与导入消费者兼容；产品内部直接调用 ownership 或 recovery。后续确认支持周期内无旧导入消费者后才能清退，不能恢复一份 wrapper 算法。故障注入应指向 `decomposed_ownership.render` 与 `git_evidence._run_git`，物理 I/O 与 Recovery 的原 fault seams 不迁移。源码、普通 wheel、实际安装恢复和平台验证分别登记，不由结构说明推定通过。
+`decomposed` 仅直接重导出既有名称，供已有安装测试与导入消费者兼容；产品内部直接调用 ownership 或 recovery。后续确认支持周期内无旧导入消费者后才能清退，不能恢复一份 wrapper 算法。故障注入应指向 `decomposed_ownership.render`、`git_evidence._run_git` 与锁 owner `transaction_lock`；其他物理 I/O 的原 fault seams 保持不变。源码、普通 wheel、实际安装恢复和平台验证分别登记，不由结构说明推定通过。
 
 安装包入口保留原 `__all__`，通过按需解析返回原实现对象；导入只读叶模块不再预先加载 detect/recovery。包级名称、对象身份和 `dir` 可发现性保持，未知名称仍抛 AttributeError。
 

@@ -754,6 +754,41 @@ def test_adoption_marker_publication_waits_for_existing_root_lock(tmp_path, monk
     assert entered.is_set()
 
 
+@pytest.mark.parametrize('operation', ['admission', 'uninstall'])
+def test_pm_operations_share_the_recovery_root_lock(tmp_path, monkeypatch, operation):
+    import threading
+    from hermes_feishu_card.install import legacy_9b904_uninstall, legacy_observer, recovery
+
+    attempted, entered = threading.Event(), threading.Event()
+    outcome = []
+    def ensure(*_args, **_kwargs):
+        entered.set()
+        return None
+    def read(*_args):
+        entered.set()
+        return None
+    monkeypatch.setattr(pm, '_ensure', ensure)
+    monkeypatch.setattr(legacy_observer, '_read', read)
+    def invoke():
+        attempted.set()
+        try:
+            if operation == 'admission':
+                pm.ensure(tmp_path, Path(sys.executable), home=tmp_path, spec=None, version=VERSION)
+            else:
+                legacy_9b904_uninstall.uninstall(tmp_path, home=tmp_path)
+        except ValueError as exc:
+            outcome.append(str(exc))
+    with recovery._root_lock(tmp_path):
+        thread = threading.Thread(target=invoke)
+        thread.start()
+        assert attempted.wait(2)
+        assert not entered.wait(0.1)
+    thread.join(2)
+    assert not thread.is_alive()
+    assert entered.is_set()
+    assert outcome == ([] if operation == 'admission' else ['legacy uninstall receipt is missing'])
+
+
 def test_first_registration_rollback_removes_only_new_owned_member(pm_env):
     receipt = register(pm_env)
     receipt.rollback()

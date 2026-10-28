@@ -18,7 +18,7 @@ from hermes_feishu_card.install import posix_transaction as bound_io
 
 from hermes_feishu_card import cli
 from hermes_feishu_card.install.detect import detect_hermes
-from hermes_feishu_card.install import patcher, recovery
+from hermes_feishu_card.install import patcher, recovery, transaction_lock
 from hermes_feishu_card.install.patcher import (
     CRON_PATCH_END,
     remove_base_patch,
@@ -598,11 +598,11 @@ with _root_lock(root):
         time.sleep(0.01)
 """
     contender_script = """
-from hermes_feishu_card.install import recovery
+from hermes_feishu_card.install import recovery, transaction_lock
 from pathlib import Path
 import sys
 import time
-recovery._LOCK_TIMEOUT_SECONDS = float(sys.argv[2])
+transaction_lock._LOCK_TIMEOUT_SECONDS = float(sys.argv[2])
 started = time.monotonic()
 try:
     with recovery._root_lock(Path(sys.argv[1])):
@@ -662,9 +662,9 @@ def test_root_lock_uses_one_deadline_for_local_and_os_waits(tmp_path, monkeypatc
 
     process_lock = DelayedProcessLock()
     root_key = str(root.resolve())
-    monkeypatch.setitem(recovery._PROCESS_LOCKS, root_key, process_lock)
-    monkeypatch.setattr(recovery, "_LOCK_TIMEOUT_SECONDS", 1.0)
-    monkeypatch.setattr(recovery.time, "monotonic", lambda: clock[0])
+    monkeypatch.setitem(transaction_lock._PROCESS_LOCKS, root_key, process_lock)
+    monkeypatch.setattr(transaction_lock, "_LOCK_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(transaction_lock.time, "monotonic", lambda: clock[0])
     os_deadlines = []
 
     def exhaust_os_budget(_handle, deadline):
@@ -672,7 +672,7 @@ def test_root_lock_uses_one_deadline_for_local_and_os_waits(tmp_path, monkeypatc
         clock[0] = deadline
         raise RecoveryRefused("timed out waiting for recovery lock")
 
-    monkeypatch.setattr(recovery, "_acquire_os_lock", exhaust_os_budget)
+    monkeypatch.setattr(transaction_lock, "_acquire_os_lock", exhaust_os_budget)
 
     with pytest.raises(RecoveryRefused, match="timed out waiting"):
         with recovery._root_lock(root):
@@ -696,7 +696,7 @@ def test_root_lock_propagates_permanent_posix_lock_error(tmp_path, monkeypatch):
         calls.append(operation)
         raise OSError(errno.EBADF, "bad lock descriptor")
 
-    monkeypatch.setattr(recovery, "_LOCK_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(transaction_lock, "_LOCK_TIMEOUT_SECONDS", 0.0)
     monkeypatch.setattr(fcntl, "flock", fail_permanently)
 
     with pytest.raises(OSError) as exc_info:
@@ -719,13 +719,13 @@ def test_acquire_os_lock_retries_windows_contention(monkeypatch, tmp_path):
     fake_msvcrt = SimpleNamespace(LK_NBLCK=7, locking=locking)
     monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
     # Keep pathlib and pytest on the real host while this module takes its Windows branch.
-    windows_os = SimpleNamespace(**{**vars(recovery.os), "name": "nt"})
-    monkeypatch.setattr(recovery, "os", windows_os)
-    monkeypatch.setattr(recovery.time, "sleep", sleeps.append)
+    windows_os = SimpleNamespace(**{**vars(transaction_lock.os), "name": "nt"})
+    monkeypatch.setattr(transaction_lock, "os", windows_os)
+    monkeypatch.setattr(transaction_lock.time, "sleep", sleeps.append)
     lock_path = tmp_path / "lock"
 
     with lock_path.open("w+b") as handle:
-        recovery._acquire_os_lock(handle, time.monotonic() + 1.0)
+        transaction_lock._acquire_os_lock(handle, time.monotonic() + 1.0)
 
     assert calls == [(7, 1), (7, 1)]
     assert sleeps == [0.05]

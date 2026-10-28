@@ -274,10 +274,11 @@ def _complete_ticket(root: Path, home: Path, ticket: dict[str, Any],
 
 def uninstall(root: Path, *, home: Path | None = None) -> None:
     """Disable this HOME; retain the shared sources, dependency and v2 receipt."""
-    from . import legacy_observer, pm_dependency, posix_transaction as io, recovery
+    from . import legacy_observer, pm_dependency, posix_transaction as io
+    from .transaction_lock import _root_lock
 
     root = root.expanduser().absolute()
-    with recovery._root_lock(root):
+    with _root_lock(root):
         raw = legacy_observer._read(root / legacy_observer.MARKER)
         if raw is None:
             raise ValueError("legacy uninstall receipt is missing")

@@ -371,6 +371,9 @@
     "hermes_feishu_card/install/recovery.py": [
       "install"
     ],
+    "hermes_feishu_card/install/transaction_lock.py": [
+      "install_transactions"
+    ],
     "hermes_feishu_card/install/runtime_python.py": [
       "install"
     ],

@@ -24,7 +24,7 @@
 
 [PR #473](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/473) 的修复候选包含固定源码、真实 SQLite 与受控模型和传输端口的复现；普通 wheel 子进程覆盖固定 `9b904dcc22` 的 18 个场景及 v0.22.5 的 5 个场景。这些检查不能代替真实服务验收。PR head `66a29a702414669eecb2283d31e9b8e6884a46a1` 的[完整 CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/40490693602) 通过 57 个 job，CodeQL 通过；这些结果绑定该提交，不能自动算作包含发行材料的新提交通过。
 
-生产开关开启的普通 wheel `202a0c0bb7845d6d30a10b2233043df2c5e3c4a872812ebdefb9de9253c0aada` 在私有真实 PM 中完成受限 5.0.10→5.0.11 迁移。卸载覆盖 PM 前后故障、未知 ticket、成功重试及新进程双 HOME loopback 投递：目标 HOME 停止请求，另一 HOME 保持投递。实际选中 generation 没有重建，不能把结果描述为另一个 C generation。较早普通 wheel 已完成同版本同声明的源码恢复→重新安装循环；该证据与最终 wheel 的新增卸载证据分开记录。
+生产开关开启的普通 wheel `202a0c0bb7845d6d30a10b2233043df2c5e3c4a872812ebdefb9de9253c0aada` 在私有真实 PM 中完成受限 5.0.10→5.0.11 迁移。卸载覆盖 PM 前后故障、未知 ticket、成功重试及新进程双 HOME loopback 投递：目标 HOME 停止请求，另一 HOME 保持投递。实际选中 generation 没有重建，不能把结果描述为另一个 C generation。较早普通 wheel 已完成同版本同声明的源码恢复→重新安装循环；该证据与新增卸载证据分开记录。后续完整 CI 发现安装器导入环，最终代码把原有共享锁提取为单一底层 owner，保留锁状态、异常身份与原语义，并通过导入图、互斥、恢复和 rebind 检查；最终普通包来源与子进程导入另行验证，不把早期 wheel 的完整 PM 周期写成最终包重跑。
 
 发布须完成包含版本和发行材料的精确提交完整 CI、公开安装、tag 和发行资产验收，最终证据记录于 GitHub Release。报告者现场、真实 Gateway/model 对话，以及 Feishu 客户端视觉与交互未复测；不能据此宣称 #471 的现场现象已解决。
 
