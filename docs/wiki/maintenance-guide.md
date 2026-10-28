@@ -124,6 +124,10 @@ Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py
 
 ### `hermes_feishu_card/install/recovery.py` and operations execution
 
+`install/legacy_handoff.py` 负责本次受管 PM 升级中的 observer runtime identity 交接。PM 写入前验证旧 marker、配置、源码及 member 归属；交接仅接受本次真实 registration 产生的新运行时，checkout/HOME/config 作用域必须不变。写入前后使用已有 root lock 与 dirfd 绑定校验，marker 只替换 python identity，配置和源码不在这里修改；失败按注册栈恢复原 marker 字节，不调用 observer 卸载来冒充回滚。既有外部运行时漂移仍要求显式 `integrity rebind-legacy`。decomposed setup 的源码修复延后到 observer admission 完成后，避免前置 repair 留下部分升级。
+
+`legacy_rebind` 核验旧源码归属时使用 `decomposed_ownership._inspect(render_hooks=False)`，不因新版 renderer 与旧已安装字节不同而拒绝；manifest、备份摘要、源码漂移与部分恢复门禁仍保留。普通源码修复仍使用实际 renderer，两个判定职责不可混用。
+
 职责：
 
 - `plan_recovery(...)` 只根据当前 Hermes detection、manifest、backup 和 marker 证据生成可脱敏展示的 recovery plan。

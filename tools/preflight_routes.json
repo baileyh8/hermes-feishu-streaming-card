@@ -52,6 +52,8 @@
       "tests/unit/test_pm_wheel_store.py",
       "tests/unit/test_windows_native_io.py",
       "tests/unit/test_legacy_rebind.py",
+      "tests/unit/test_legacy_handoff.py",
+      "tests/unit/test_cli_setup_order.py",
       "tests/unit/test_issue470_config_ownership.py",
       "tests/integration/test_legacy_observer_install.py",
       "tests/integration/test_pm_rebind.py",
@@ -277,7 +279,8 @@
       "client"
     ],
     "hermes_feishu_card/cli.py": [
-      "cli"
+      "cli",
+      "install"
     ],
     "hermes_feishu_card/config_rules.py": [
       "config",
@@ -743,6 +746,10 @@
     ],
     "hermes_feishu_card/install/legacy_rebind.py": [
       "install"
+    ],
+    "hermes_feishu_card/install/legacy_handoff.py": [
+      "install",
+      "install_transactions"
     ]
   }
 }

@@ -537,7 +537,7 @@ def _run_setup(args: argparse.Namespace) -> int:
     print(_format_hermes_detection(detection))
     _print_hermes_streaming_guidance(Path(args.hermes_dir), **({"hermes_home": setup_home} if setup_home is not None else {}))
 
-    if args.repair and not args.no_repair:
+    if args.repair and not args.no_repair and not getattr(detection, "decomposed", False):
         repair_code = _run_repair(
             argparse.Namespace(
                 hermes_dir=args.hermes_dir,
@@ -2063,6 +2063,10 @@ def _ensure_hermes_runtime_package(detection: HermesDetection, *, hermes_home: P
                 probe = pm_dependency._call(detection.root, selected, hermes_home, {"operation": "probe"})
             if not pm_dependency.verify_installed(Path(probe['home']) / 'plugins' / pm_dependency.NAME, selected):
                 raise ValueError("PM installed package does not match the cached exact HFC wheel")
+            if registration is not None:
+                # Subsequent observer handoff and rollback belong to the
+                # generation selected after PM admission.
+                registration.python = selected
         except (OSError, ValueError):
             if registration is not None:
                 registration.rollback()
@@ -3875,10 +3879,19 @@ def _run_install(args: argparse.Namespace) -> int:
     registrations = []
     try:
         result = _run_install_core(args, registrations)
-    except BaseException:
+    except BaseException as original_error:
+        rollback_failed = False
         for registration in reversed(registrations):
-            registration.rollback()
-        raise
+            try:
+                registration.rollback()
+            except BaseException:
+                rollback_failed = True
+        if rollback_failed:
+            print(
+                "error: install rollback did not complete; evidence retained",
+                file=sys.stderr,
+            )
+        raise original_error
     try:
         for registration in (registrations if result == 0 else reversed(registrations)):
             if result == 0:
@@ -3899,6 +3912,18 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
 
     try:
         _read_manifest(_manifest_path(detection.root))
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    profile_id = getattr(args, "profile_id", None)
+    try:
+        from .install import legacy_handoff
+        observer_precondition = legacy_handoff.prepare(
+            detection,
+            hermes_home=getattr(args, "hermes_home", None),
+            profile_id=profile_id,
+        )
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -3935,11 +3960,23 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
             binding = resolve_runtime_binding(
                 checkout_root=detection.root,
                 hermes_home=getattr(args, "hermes_home", None),
-                profile_id=getattr(args, "profile_id", None),
+                profile_id=profile_id,
             )
             adoption = registration if registration is not None and getattr(registration, 'adoption', None) is not None else None
-            observer_registration = (legacy_observer.prepare(binding, adoption=adoption)
-                                     if adoption is not None else legacy_observer.prepare(binding))
+            if (observer_precondition is not None
+                    and binding.python_identity != observer_precondition.binding.python_identity
+                    and registration is not None
+                    and adoption is None):
+                handoff = legacy_handoff.apply(
+                    observer_precondition,
+                    binding,
+                    registration,
+                )
+                registrations.append(handoff)
+                observer_registration = None
+            else:
+                observer_registration = (legacy_observer.prepare(binding, adoption=adoption)
+                                         if adoption is not None else legacy_observer.prepare(binding))
             if observer_registration is not None:
                 registrations.append(observer_registration)
     except (OSError, UnicodeError, ValueError) as exc:
