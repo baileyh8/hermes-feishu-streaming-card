@@ -2,6 +2,12 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
+## V5.0.11
+
+- #471：为固定 Hermes `9b904dcc22` 校验 admission 源码及首次展示策略归属；未知归属保留原生交付。
+- 安装迁移限定已启用 HFC、strict-false flag、schema2 无 marker、已有官方 PM 与可重建 SDK 的前态；恢复循环已验，HOME 级卸载已完成私有真实 PM 与双 HOME loopback 检查。全新安装和旧 v1 receipt 等仍前拒；报告者现场与真实 Gateway/model、Feishu 客户端未复测。
+- 版本材料提交后的精确完整 CI、普通包、公开安装和发行资产仍须分别验证，见[发行说明](docs/release-notes-v5.0.11.md)。
+
 ## V5.0.10
 
 - #469：按固定上游原生 admission 验证内部异步通知，保留提交前的身份和当前 owner 检查；终局明确接纳后只确认本次提交。

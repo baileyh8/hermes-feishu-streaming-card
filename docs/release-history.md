@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.1](release-notes-v5.0.1.md) | Hermes 0.22.x completion/审批兼容与 PM 持久依赖登记 |
 | [v5.0.0](release-notes-v5.0.0.md) | 任务分区、交互续答、本轮统计与安装恢复边界 |
 | [v4.7.7](release-notes-v4.7.7.md) | 可选原生表格；保留长单元格和无法拆分的 Markdown 表格 |
 | [v4.7.6](release-notes-v4.7.6.md) | 分离 HOME 绑定、多实例身份校验与诊断修复 |

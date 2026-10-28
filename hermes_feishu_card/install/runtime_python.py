@@ -34,7 +34,7 @@ def pm_managed_runtime_python(
         env = dict(os.environ, HERMES_HOME=str(hermes_home))
     try:
         result = subprocess.run(
-            [sys.executable, "-I", "-c", _PM_RUNTIME_PROBE, str(root)],
+            [sys.executable, "-I", "-B", "-c", _PM_RUNTIME_PROBE, str(root)],
             capture_output=True, text=True, check=False,
             timeout=_PM_RUNTIME_PROBE_TIMEOUT_SECONDS, env=env,
         )

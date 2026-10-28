@@ -2,6 +2,10 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
+This branch targets `5.0.11`; #471 includes pinned Hermes `9b904dcc22` admission ownership and a restricted installation migration. Candidate acceptance covers HFC already enabled, a strict-false flag, a schema2 member without a marker, and an existing official PM generation. Fresh installs, old v1 receipts and manually installed SDKs remain unsupported and are rejected before admission. An ordinary wheel has passed the restore/reinstall cycle; HOME-scoped uninstall has passed private real-PM failure/retry and two-HOME loopback checks; exact final CI, public installation and assets require separate acceptance. Earlier full CI for `66a29a7` does not cover the new installer changes. The reporter deployment, real Gateway/model and Feishu clients have not been retested. See the [release notes](release-notes-v5.0.11.en.md).
+
+## v5.0.10 historical record
+
 This branch targets `5.0.10`; this batch addresses #469/#470 and adds #451 diagnostics. Independent review/QA, exact full CI, ordinary-wheel provenance, controlled real Feishu API, public installation and release assets are separate release gates. Actual reporter deployments and real Gateway/model execution remain unverified; desktop/Android visual and click checks remain unverified, and iOS/new-user trials are outside scope. Final evidence is published with the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.10).
 
 ## Historical records through v5.0.9

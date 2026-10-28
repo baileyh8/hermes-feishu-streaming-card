@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import threading
 import time
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 from uuid import uuid4
 
 from . import decomposed_ownership
@@ -700,6 +700,8 @@ def _commit_recovery_changes(
     changes: List[Tuple[Path, Optional[str]]],
     *,
     accept_hermes_upgrade: bool = False,
+    before_mutation: Optional[Callable[[], None]] = None,
+    verify_result: Optional[Callable[[], None]] = None,
 ) -> None:
     _require_secure_dirfd_transactions()
     ordered_changes = [change for change in changes if change[1] is not None]
@@ -758,6 +760,8 @@ def _commit_recovery_changes(
             raise RecoveryRefused("recovery evidence changed; rerun diagnosis")
 
         for target, contents in ordered_changes:
+            if before_mutation is not None:
+                before_mutation()
             _assert_controlled_ancestry_unchanged(
                 target, target_ancestries, directory_snapshots
             )
@@ -797,6 +801,8 @@ def _commit_recovery_changes(
             _assert_bound_target_unchanged(
                 binding, post_write_snapshots[target]
             )
+        if verify_result is not None:
+            verify_result()
     except Exception as exc:
         rollback_error = _rollback_recovery_changes(
             changed,
@@ -2811,15 +2817,31 @@ def install_decomposed(detection, *, no_repair=False, expected_fingerprint=None,
         return True
 
 
-def restore_decomposed(detection):
+def restore_decomposed(detection, *, refuse_adoption: bool = False,
+                       adoption_marker: Optional[Tuple[int, int, str]] = None,
+                       adoption_home: Optional[Path] = None):
     if not _secure_dirfd_transactions_supported() and not _portable_restore_supported():
         # Unsupported platforms refuse before taking a lock or reading/mutating
         # ownership state. Windows alone has the portable family transaction.
         _require_secure_dirfd_transactions()
+    if ((adoption_marker is None) != (adoption_home is None)
+            or (adoption_marker is not None and (refuse_adoption or not _secure_dirfd_transactions_supported()))):
+        raise ValueError("legacy adoption source restore requires secure ownership evidence")
     with _root_lock(detection.root):
+        guard = finish = None
+        if adoption_marker is not None:
+            from .legacy_9b904_transaction import prepare_source_restore
+            guard, finish = prepare_source_restore(detection.root, adoption_home, adoption_marker)
+        if refuse_adoption:
+            from . import legacy_observer
+            raw = legacy_observer._read(detection.root / legacy_observer.MARKER)
+            if raw is not None and legacy_observer._decode(raw)["protocol"] == legacy_observer.ADOPTION_PROTOCOL:
+                raise ValueError("legacy adoption restore or uninstall needs a coordinated PM transaction")
         snapshot, originals, _, state = decomposed_ownership._inspect(detection.root, render_hooks=False)
         if state == "clean":
-            return
+            if finish is not None:
+                finish()
+            return False
         if state in decomposed_ownership.EXPLICIT_UPGRADE_STATES:
             raise ValueError("decomposed source drift; refusing restore until upgrade is accepted")
         fresh = _plan_decomposed_recovery(detection)
@@ -2830,8 +2852,8 @@ def restore_decomposed(detection):
         if _secure_dirfd_transactions_supported():
             changes.extend((detection.root / (name + BACKUP_SUFFIX), None) for name in originals)
             changes.append((detection.root / MANIFEST_NAME, None))
-            _commit_recovery_changes(detection, fresh, changes)
-            return
+            _commit_recovery_changes(detection, fresh, changes, before_mutation=guard, verify_result=finish)
+            return True
         from .file_transaction import (
             _assert_restore_evidence_set_unchanged,
             _remove_targets_portably,

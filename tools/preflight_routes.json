@@ -41,6 +41,9 @@
       "tests/integration/test_cli_install.py",
       "tests/unit/test_installer_family_boundaries.py",
       "tests/unit/test_pm_dependency.py",
+      "tests/unit/test_legacy_9b904.py",
+      "tests/unit/test_legacy_9b904_uninstall.py",
+      "tests/unit/test_legacy_home_revocation.py",
       "tests/unit/test_decomposed_patcher.py",
       "tests/unit/test_extracted_clarify_patcher.py",
       "tests/unit/test_legacy_observed_rate.py",
@@ -663,6 +666,22 @@
       "render"
     ],
     "hermes_feishu_card/install/legacy_observer.py": [
+      "install",
+      "runtime"
+    ],
+    "hermes_feishu_card/install/legacy_9b904.py": [
+      "install"
+    ],
+    "hermes_feishu_card/install/legacy_9b904_contract.py": [
+      "install"
+    ],
+    "hermes_feishu_card/install/legacy_9b904_transaction.py": [
+      "install"
+    ],
+    "hermes_feishu_card/install/legacy_9b904_uninstall.py": [
+      "install"
+    ],
+    "hermes_feishu_card/install/legacy_home_revocation.py": [
       "install",
       "runtime"
     ],

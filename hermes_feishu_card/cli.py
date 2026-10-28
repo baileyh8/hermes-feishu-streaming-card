@@ -2056,7 +2056,11 @@ def _ensure_hermes_runtime_package(detection: HermesDetection, *, hermes_home: P
             if (report["status"] != "ok" or report.get("version") != PACKAGE_VERSION
                     or not _runtime_report_uses_installed_package(report, selected)):
                 raise ValueError("PM selected runtime did not import the expected ordinary HFC wheel")
-            probe = pm_dependency._call(detection.root, selected, hermes_home, {"operation": "probe"})
+            if registration is not None and getattr(registration, 'source_family', None) is not None:
+                probe = pm_dependency._verified_call(detection.root, selected, hermes_home,
+                    {"operation": "probe"}, registration.source_family)
+            else:
+                probe = pm_dependency._call(detection.root, selected, hermes_home, {"operation": "probe"})
             if not pm_dependency.verify_installed(Path(probe['home']) / 'plugins' / pm_dependency.NAME, selected):
                 raise ValueError("PM installed package does not match the cached exact HFC wheel")
         except (OSError, ValueError):
@@ -3908,7 +3912,14 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
         registration = _ensure_hermes_runtime_package(detection, **home_options)
         if registration is not None:
             registrations.append(registration)
-        _ensure_hermes_feishu_sdk(detection, **home_options)
+        if registration is not None and getattr(registration, 'adoption', None) is not None:
+            # Schema 3 owns the upstream-locked SDK in the PM generation. Never
+            # run the older pip fallback, which would replace it with 1.6.8.
+            if (_hermes_requires_feishu_sdk_capability(detection.root)
+                    and _check_runtime_feishu_sdk(registration.python)["status"] != "ok"):
+                raise ValueError("PM selected Feishu SDK is not verified")
+        else:
+            _ensure_hermes_feishu_sdk(detection, **home_options)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -3926,7 +3937,9 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
                 hermes_home=getattr(args, "hermes_home", None),
                 profile_id=getattr(args, "profile_id", None),
             )
-            observer_registration = legacy_observer.prepare(binding)
+            adoption = registration if registration is not None and getattr(registration, 'adoption', None) is not None else None
+            observer_registration = (legacy_observer.prepare(binding, adoption=adoption)
+                                     if adoption is not None else legacy_observer.prepare(binding))
             if observer_registration is not None:
                 registrations.append(observer_registration)
     except (OSError, UnicodeError, ValueError) as exc:
@@ -4379,23 +4392,45 @@ def _run_restore(args: argparse.Namespace) -> int:
     if fixed_tag_result is not None:
         return fixed_tag_result
     try:
-        _restore(Path(args.hermes_dir), **(
+        result = _restore(Path(args.hermes_dir), retain_adoption=True, **(
             {"hermes_home": Path(args.hermes_home)} if getattr(args, "hermes_home", None) else {}
         ))
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    print("restore ok")
+    if result in {"adoption-restored", "adoption-clean"}:
+        print("shared checkout source restored; PM dependency, SDK, config and observer receipt retained")
+        print("gateway.restart_required: restart Hermes Gateway through its service owner")
+    else:
+        print("restore ok")
     return 0
 
 
 def _run_uninstall(args: argparse.Namespace) -> int:
+    root = Path(args.hermes_dir).expanduser()
+    try:
+        from .install import legacy_observer
+        raw = legacy_observer._read(root / legacy_observer.MARKER)
+        if raw is not None and legacy_observer._decode(raw)["protocol"] == legacy_observer.ADOPTION_PROTOCOL:
+            from .install import legacy_9b904_uninstall
+            if getattr(args, "profile_id", None):
+                raise ValueError("legacy uninstall requires the bound HOME; pass --hermes-home")
+            home = getattr(args, "hermes_home", None)
+            legacy_9b904_uninstall.uninstall(root, home=Path(home) if home else None)
+            print("uninstall ok: this Hermes HOME is disabled; shared source, dependency and receipt retained")
+            print("gateway.restart_required: restart Hermes Gateway through its service owner")
+            return 0
+        _refuse_orphaned_uninstall(root, getattr(args, "hermes_home", None))
+        _refuse_adoption_removal(root)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     fixed_tag_result = _run_fixed_tag_v3_restore(args, command="uninstall")
     if fixed_tag_result is not None:
         return fixed_tag_result
     try:
-        _restore(Path(args.hermes_dir), **(
+        _restore(Path(args.hermes_dir), refuse_adoption=True, **(
             {"hermes_home": Path(args.hermes_home)} if getattr(args, "hermes_home", None) else {}
         ))
     except (OSError, UnicodeError, ValueError) as exc:
@@ -4403,7 +4438,6 @@ def _run_uninstall(args: argparse.Namespace) -> int:
         return 1
 
     from .install import pm_dependency
-    root = Path(args.hermes_dir).expanduser()
     try:
         if pm_dependency.available(root):
             home = getattr(args, "hermes_home", None)
@@ -4418,6 +4452,30 @@ def _run_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
+def _refuse_orphaned_uninstall(root: Path, explicit_home: str | Path | None) -> None:
+    """Do not restore shared source while an owned HOME ticket lacks its marker."""
+    from .install import legacy_home_revocation
+    candidates = [Path(explicit_home).expanduser().absolute()] if explicit_home else []
+    if explicit_home is None:
+        if os.environ.get("HERMES_HOME"):
+            candidates.append(Path(os.environ["HERMES_HOME"]).expanduser().absolute())
+        candidates.append(root.absolute().parent)
+    for home in candidates:
+        path = legacy_home_revocation.ticket_path(root, home)
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise ValueError("legacy uninstall evidence exists without its observer receipt; manual review required")
+
+
+def _refuse_adoption_removal(root: Path) -> None:
+    from .install import legacy_observer
+    raw = legacy_observer._read(root / legacy_observer.MARKER)
+    if raw is not None and legacy_observer._decode(raw)["protocol"] == legacy_observer.ADOPTION_PROTOCOL:
+        raise ValueError("legacy adoption restore or uninstall needs a coordinated PM transaction")
+
+
 def _run_fixed_tag_v3_restore(
     args: argparse.Namespace,
     *,
@@ -4427,13 +4485,14 @@ def _run_fixed_tag_v3_restore(
     if not _is_v3_manifest_candidate(root / MANIFEST_NAME):
         return None
     try:
+        _refuse_adoption_removal(root)
         binding = resolve_runtime_binding(
             checkout_root=root,
             hermes_home=getattr(args, "hermes_home", None),
             profile_id=getattr(args, "profile_id", None),
         )
         result = restore_fixed_tag_hybrid_install(binding=binding)
-    except (OSError, UnicodeError, RuntimeBindingRefused, FixedTagInstallRefused) as exc:
+    except (OSError, UnicodeError, ValueError, RuntimeBindingRefused, FixedTagInstallRefused) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"{command} ok")
@@ -4529,31 +4588,54 @@ def _repair_action_message(action: str) -> str:
     return messages[action]
 
 
-def _restore(hermes_root: Path, *, hermes_home: Path | None = None) -> None:
-    from .install import legacy_observer
+def _restore(hermes_root: Path, *, hermes_home: Path | None = None, refuse_adoption: bool = False,
+             retain_adoption: bool = False) -> str | None:
+    from .install import legacy_observer, posix_transaction as io
     # Validate config ownership before touching source. Restore the config first:
     # if the source transaction then fails, its still-owned marker is retained
     # and a retry can finish safely without enabling a second event producer.
     evidence = legacy_observer.inspect(hermes_root, home=hermes_home)
+    marker_snapshot = None
     if evidence is not None:
-        record, _, preimage, ownership, config = evidence
+        record, raw, preimage, ownership, config = evidence
+        if record["protocol"] == legacy_observer.ADOPTION_PROTOCOL and (refuse_adoption or not retain_adoption):
+            raise ValueError("legacy adoption restore or uninstall needs a coordinated PM transaction")
+        marker_snapshot = io.read_path_snapshot(hermes_root / legacy_observer.MARKER, ValueError,
+                                                "legacy observer record changed before restore")
+        if marker_snapshot[2] != hashlib.sha256(raw).hexdigest():
+            raise ValueError("legacy observer record changed before restore")
         binding = resolve_runtime_binding(
             checkout_root=hermes_root, hermes_home=record["home"], profile_id=None)
         if binding.python_identity != record["python_identity"]:
             raise ValueError("legacy observer runtime binding changed")
+        if retain_adoption and record["protocol"] == legacy_observer.ADOPTION_PROTOCOL:
+            from .install import recovery as recovery_owner
+            detection = detect_hermes(hermes_root)
+            if not detection.decomposed:
+                raise ValueError("legacy adoption source layout is unsupported")
+            changed = recovery_owner.restore_decomposed(
+                detection, adoption_marker=marker_snapshot, adoption_home=binding.hermes_home)
+            return "adoption-restored" if changed else "adoption-clean"
         from .install import plugin
         if plugin._sha256(config) != ownership.pre_sha256:
             plugin.restore_plugin_config(binding, preimage, ownership)
-    _restore_legacy_sources(hermes_root)
-    legacy_observer.restore(hermes_root)
+    if refuse_adoption or retain_adoption:
+        _restore_legacy_sources(hermes_root, refuse_adoption=True)
+    else:
+        _restore_legacy_sources(hermes_root)
+    if marker_snapshot is not None:
+        legacy_observer.restore(hermes_root, home=hermes_home, expected_marker=marker_snapshot)
 
 
-def _restore_legacy_sources(hermes_root: Path) -> None:
+def _restore_legacy_sources(hermes_root: Path, *, refuse_adoption: bool = False) -> None:
     from .install import decomposed_ownership
     from .install import recovery as recovery_owner
     detection = detect_hermes(hermes_root)
     if detection.decomposed or decomposed_ownership.is_managed(hermes_root):
-        recovery_owner.restore_decomposed(detection)
+        if refuse_adoption:
+            recovery_owner.restore_decomposed(detection, refuse_adoption=True)
+        else:
+            recovery_owner.restore_decomposed(detection)
         return
     run_py = hermes_root / "gateway" / "run.py"
     cron_py = hermes_root / "cron" / "scheduler.py"

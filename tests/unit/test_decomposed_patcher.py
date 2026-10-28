@@ -72,6 +72,176 @@ def test_decomposed_cli_install_doctor_repeat_remove_roundtrip(hermes, monkeypat
     assert recovery.plan_recovery(detect_hermes(hermes)).state == "clean"
 
 
+def _make_adoption_receipt(root, home, monkeypatch):
+    from hermes_feishu_card.install import legacy_9b904, legacy_observer, plugin, pm_dependency
+
+    home.mkdir()
+    config = home / "config.yaml"
+    config.write_bytes(b"_config_version: 52\nplugins:\n  enabled: [hermes-feishu-card, hfc-runtime-dependency]\n"
+                       b"  disabled: []\n  entries:\n    hermes-feishu-card:\n      allow_tool_override: false\n")
+    binding = plugin.HermesRuntimeBinding(root, Path(sys.executable), Path(sys.executable),
+                                         "sha256:" + "a" * 64, home, config, root, root)
+    monkeypatch.setattr(plugin, "probe_plugin_entrypoint", lambda *_args, **_kwargs: SimpleNamespace(status="verified"))
+    monkeypatch.setattr(plugin, "resolve_runtime_binding", lambda **_kwargs: binding)
+    monkeypatch.setattr(cli, "resolve_runtime_binding", lambda **_kwargs: binding)
+    monkeypatch.setattr(pm_dependency.Registration, "__post_init__", lambda self: None)
+    monkeypatch.setattr(pm_dependency.Registration, "verify_adoption", lambda *_args: None)
+    admission = pm_dependency.Registration(root, Path(sys.executable), home, home / "member", None, False,
+                                           source_family=legacy_9b904.ADAPTER_ID)
+    legacy_observer.prepare(binding, adoption=admission)
+    return binding, admission
+
+
+@_SECURE_DIRFD_ONLY
+def test_adoption_source_restore_keeps_receipt_and_allows_reinstall(hermes, tmp_path, monkeypatch, capsys):
+    from hermes_feishu_card.install import legacy_9b904_transaction, legacy_observer, posix_transaction
+
+    before = sources(hermes)
+    recovery.install_decomposed(detect_hermes(hermes))
+    installed = sources(hermes)
+    binding, admission = _make_adoption_receipt(hermes, tmp_path / "home", monkeypatch)
+    evidence = legacy_observer.inspect(hermes, home=binding.hermes_home)
+    assert evidence is not None
+    paths = [binding.config_path, hermes / legacy_observer.MARKER,
+             evidence[2].backup_path, evidence[2].journal_path]
+    owned = {path: path.read_bytes() for path in paths}
+    assert legacy_observer.observer_status(hermes, home=binding.hermes_home)["status"] == "active"
+
+    def capture(root, home, marker):
+        assert root == hermes and home == binding.hermes_home
+        assert recovery._PROCESS_LOCKS[str(root.resolve())].locked()
+        def verify():
+            posix_transaction.assert_path_snapshot(root / legacy_observer.MARKER, marker, ValueError, "marker changed")
+            assert {path: path.read_bytes() for path in paths} == owned
+        return verify, verify
+    monkeypatch.setattr(legacy_9b904_transaction, "prepare_source_restore", capture)
+
+    args = SimpleNamespace(hermes_dir=hermes, hermes_home=binding.hermes_home)
+    assert cli._run_restore(args) == 0
+    output = capsys.readouterr().out
+    assert "shared checkout source restored" in output and "receipt retained" in output
+    assert "gateway.restart_required" in output
+    assert sources(hermes) == before
+    assert not (hermes / decomposed.MANIFEST_NAME).exists()
+    assert {path: path.read_bytes() for path in paths} == owned
+    assert legacy_observer.observer_status(hermes, home=binding.hermes_home)["status"] == "disabled"
+    assert cli._run_restore(args) == 0
+    assert "gateway.restart_required: restart Hermes Gateway through its service owner" in capsys.readouterr().out
+    assert legacy_observer.prepare(binding, adoption=admission) is None
+    assert recovery.install_decomposed(detect_hermes(hermes))
+    assert sources(hermes) == installed
+    assert {path: path.read_bytes() for path in paths} == owned
+
+
+@_SECURE_DIRFD_ONLY
+@pytest.mark.parametrize("damage", ["partly-restored-source", "missing-backup"])
+def test_adoption_observer_disables_for_interrupted_source_restore(hermes, tmp_path, monkeypatch, damage):
+    from hermes_feishu_card.install import legacy_observer
+
+    before = sources(hermes)
+    recovery.install_decomposed(detect_hermes(hermes))
+    installed = sources(hermes)
+    binding, _admission = _make_adoption_receipt(hermes, tmp_path / "home", monkeypatch)
+    assert legacy_observer.observer_status(hermes, home=binding.hermes_home)["status"] == "active"
+    target = next(name for name in before if before[name] != installed[name])
+    if damage == "partly-restored-source":
+        (hermes / target).write_bytes(before[target])
+    else:
+        (hermes / (target + decomposed.BACKUP_SUFFIX)).unlink()
+    assert (hermes / decomposed.MANIFEST_NAME).exists()
+    assert legacy_observer.observer_status(hermes, home=binding.hermes_home) == {
+        "status": "disabled", "reason": "legacy_source_incomplete",
+    }
+
+
+@_SECURE_DIRFD_ONLY
+def test_source_restore_refuses_adoption_marker_appearing_after_initial_check(hermes, tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer
+
+    recovery.install_decomposed(detect_hermes(hermes))
+    installed = sources(hermes)
+    binding, _admission = _make_adoption_receipt(hermes, tmp_path / "home", monkeypatch)
+    marker = hermes / legacy_observer.MARKER
+    marker_before = marker.read_bytes()
+    real_inspect = legacy_observer.inspect
+    calls = []
+    def delayed_inspect(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            return None
+        return real_inspect(*args, **kwargs)
+    monkeypatch.setattr(legacy_observer, "inspect", delayed_inspect)
+
+    assert cli._run_restore(SimpleNamespace(hermes_dir=hermes, hermes_home=binding.hermes_home)) == 1
+    assert sources(hermes) == installed
+    assert marker.read_bytes() == marker_before
+    assert (hermes / decomposed.MANIFEST_NAME).is_file()
+
+
+@_SECURE_DIRFD_ONLY
+def test_direct_legacy_restore_cannot_discard_adoption_receipt(hermes, tmp_path, monkeypatch):
+    from hermes_feishu_card.install import legacy_observer
+
+    recovery.install_decomposed(detect_hermes(hermes))
+    installed = sources(hermes)
+    binding, _admission = _make_adoption_receipt(hermes, tmp_path / "home", monkeypatch)
+    marker = hermes / legacy_observer.MARKER
+    marker_before = marker.read_bytes()
+    with pytest.raises(ValueError, match="coordinated PM transaction"):
+        cli._restore(hermes, hermes_home=binding.hermes_home)
+    assert sources(hermes) == installed
+    assert marker.read_bytes() == marker_before
+
+
+def test_adoption_source_restore_refuses_portable_fallback_before_lock(tmp_path, monkeypatch):
+    monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)
+    monkeypatch.setattr(recovery, "_portable_restore_supported", lambda: True)
+    monkeypatch.setattr(recovery, "_root_lock", lambda _root: pytest.fail("must refuse before locking"))
+    with pytest.raises(ValueError, match="secure ownership evidence"):
+        recovery.restore_decomposed(SimpleNamespace(root=tmp_path), adoption_marker=(1, 2, "a" * 64),
+                                    adoption_home=tmp_path / "home")
+
+
+@_SECURE_DIRFD_ONLY
+@pytest.mark.parametrize("failure_stage", ["marker-drift", "final-runtime"])
+def test_adoption_source_restore_guard_failure_rolls_back_without_touching_receipt(
+    hermes, tmp_path, monkeypatch, failure_stage,
+):
+    from hermes_feishu_card.install import legacy_9b904_transaction, legacy_observer, posix_transaction
+
+    recovery.install_decomposed(detect_hermes(hermes))
+    installed = sources(hermes)
+    backups = {path: path.read_bytes() for path in hermes.rglob("*.hermes_feishu_card.bak")}
+    manifest = (hermes / decomposed.MANIFEST_NAME).read_bytes()
+    binding, _admission = _make_adoption_receipt(hermes, tmp_path / "home", monkeypatch)
+    marker = hermes / legacy_observer.MARKER
+    original_marker = marker.read_bytes()
+    snapshot = posix_transaction.read_path_snapshot(marker, ValueError, "marker changed")
+    calls = []
+    def capture(_root, _home, expected):
+        assert expected == snapshot
+        def guard():
+            calls.append(True)
+            if failure_stage == "marker-drift" and len(calls) == 2:
+                marker.write_bytes(b"concurrent change")
+            posix_transaction.assert_path_snapshot(marker, expected, ValueError, "marker changed")
+        def finish():
+            guard()
+            if failure_stage == "final-runtime":
+                raise ValueError("runtime changed")
+        return guard, finish
+    monkeypatch.setattr(legacy_9b904_transaction, "prepare_source_restore", capture)
+
+    with pytest.raises(ValueError, match="marker changed|runtime changed"):
+        recovery.restore_decomposed(detect_hermes(hermes), adoption_marker=snapshot,
+                                    adoption_home=binding.hermes_home)
+    assert len(calls) >= 2
+    assert sources(hermes) == installed
+    assert {path: path.read_bytes() for path in backups} == backups
+    assert (hermes / decomposed.MANIFEST_NAME).read_bytes() == manifest
+    assert marker.read_bytes() == (b"concurrent change" if failure_stage == "marker-drift" else original_marker)
+
+
 def test_portable_restore_uses_bound_writer_and_exact_evidence(hermes, monkeypatch):
     from hermes_feishu_card.install import file_transaction
 

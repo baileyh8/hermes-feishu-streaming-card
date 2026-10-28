@@ -578,21 +578,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v5.0.10`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.10.en.md) for validation boundaries.
+Examples pin `v5.0.11`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.11.en.md) for validation boundaries.
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v5.0.10`.
+The Compose example defaults `HFC_VERSION` to `v5.0.11`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.10
+export HFC_VERSION=v5.0.11
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

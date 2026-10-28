@@ -39,6 +39,13 @@ def test_explicitly_unselected_pm_keeps_original_launch_contract(tmp_path):
     assert cli._detect_hermes_runtime_python(tmp_path) == legacy
 
 
+def test_pm_runtime_probe_does_not_create_checkout_bytecode(tmp_path):
+    runtime = _legacy(tmp_path)
+    _pm(tmp_path, "def committed_venv(root): return root / 'venv'\n")
+    assert runtime_python.pm_managed_runtime_python(tmp_path) == runtime
+    assert not (tmp_path / 'pm' / '__pycache__').exists()
+
+
 @pytest.mark.parametrize("body", [
     "def committed_venv(root): raise RuntimeError('private diagnostic')\n",
     "def committed_venv(root): return 'relative/venv'\n",

@@ -5,7 +5,7 @@ import base64
 from collections import OrderedDict
 import copy
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from ipaddress import ip_address
 import importlib
@@ -270,6 +270,7 @@ class _PolicyIdentity:
     scope_key: tuple[str, str, str, str]
     turn_key: tuple[str, str, str, str]
     is_new_turn: bool
+    home_binding: tuple[Path, Path] | None
 
 
 @dataclass(frozen=True)
@@ -282,6 +283,13 @@ class _PolicyGateResult:
 class _PolicyCacheEntry:
     disposition: str
     expires_at: float
+    home_binding: tuple[Path, Path] | None = None
+
+
+@dataclass(frozen=True)
+class _PinnedPolicyDecision:
+    disposition: str
+    home_binding: tuple[Path, Path] | None
 
 
 _SEQUENCES: dict[str, int] = {}
@@ -298,7 +306,7 @@ _PENDING_DELTAS_LOCK = threading.Lock()
 _POLICY_LOCK = threading.RLock()
 _POLICY_CACHE: OrderedDict[tuple[str, str, str], _PolicyCacheEntry] = OrderedDict()
 _TURN_POLICY_DECISIONS: OrderedDict[
-    tuple[str, str, str, str], str
+    tuple[str, str, str, str], _PinnedPolicyDecision
 ] = OrderedDict()
 _ACTIVE_POLICY_TURNS: dict[
     tuple[str, str, str, str], tuple[str, str, str, str]
@@ -1099,6 +1107,9 @@ async def maintenance_admission_from_hermes_locals(
 def load_runtime_config() -> RuntimeConfig:
     enabled_value = os.environ.get("HERMES_FEISHU_CARD_ENABLED", "1").strip().lower()
     enabled = enabled_value not in {"0", "false", "no", "off"}
+    if enabled:
+        from .install.legacy_home_revocation import hook_disabled
+        enabled = not hook_disabled()
     event_url = os.environ.get("HERMES_FEISHU_CARD_EVENT_URL", DEFAULT_EVENT_URL).strip()
     if not event_url:
         event_url = DEFAULT_EVENT_URL
@@ -1129,6 +1140,25 @@ def load_runtime_config() -> RuntimeConfig:
         delta_coalesce_chars=delta_coalesce_chars,
         delta_coalesce_max_pending=delta_coalesce_max_pending,
     )
+
+
+def _config_for_terminal(
+    config: RuntimeConfig, local_vars: dict[str, Any], event_name: str,
+) -> RuntimeConfig:
+    """Let an already-owned turn finish when HOME revocation appeared mid-turn."""
+    if config.enabled or event_name not in {"message.completed", "message.failed"}:
+        return config
+    enabled_value = os.environ.get("HERMES_FEISHU_CARD_ENABLED", "1").strip().lower()
+    if enabled_value in {"0", "false", "no", "off"}:
+        return config
+    from .install.legacy_home_revocation import hook_disabled
+    if not hook_disabled():
+        return config
+    identity = _policy_identity(config, local_vars, event_name)
+    if (identity is not None and not identity.is_new_turn and identity.home_binding is not None
+            and _pinned_policy_disposition(identity, require_home=True) == "card"):
+        return replace(config, enabled=True)
+    return config
 
 
 def _timeout_from_env(value: str | None) -> float:
@@ -1358,6 +1388,7 @@ def _policy_identity(
         and (not terminal_known or stream_reopens_turn)
         and (bool(message_id) or active_turn is None)
     )
+    from .install.legacy_home_revocation import _authoritative_binding
     return _PolicyIdentity(
         endpoint=endpoint,
         profile_id=profile_id,
@@ -1368,6 +1399,7 @@ def _policy_identity(
         scope_key=scope_key,
         turn_key=turn_key,
         is_new_turn=is_new_turn,
+        home_binding=_authoritative_binding(),
     )
 
 
@@ -1385,7 +1417,7 @@ def _policy_payload(identity: _PolicyIdentity) -> dict[str, str]:
     return payload
 
 
-def _pinned_policy_disposition(identity: _PolicyIdentity) -> str | None:
+def _pinned_policy_disposition(identity: _PolicyIdentity, *, require_home: bool = False) -> str | None:
     now = time.monotonic()
     with _POLICY_LOCK:
         _prune_policy_state_locked(now)
@@ -1395,24 +1427,28 @@ def _pinned_policy_disposition(identity: _PolicyIdentity) -> str | None:
             else _TERMINAL_POLICY_DECISIONS.get(identity.turn_key)
         )
         if terminal is not None:
+            if require_home and terminal.home_binding != identity.home_binding:
+                return None
             _TERMINAL_POLICY_DECISIONS.move_to_end(identity.turn_key)
             return terminal.disposition
-        disposition = _TURN_POLICY_DECISIONS.get(identity.turn_key)
+        decision = _TURN_POLICY_DECISIONS.get(identity.turn_key)
         if (
-            disposition is None
+            decision is None
             and not identity.message_id
             and not identity.is_new_turn
         ):
             active_turn = _ACTIVE_POLICY_TURNS.get(identity.scope_key)
             if active_turn is not None:
-                disposition = _TURN_POLICY_DECISIONS.get(active_turn)
-        if disposition is not None:
+                decision = _TURN_POLICY_DECISIONS.get(active_turn)
+        if decision is not None:
+            if require_home and decision.home_binding != identity.home_binding:
+                return None
             _TURN_POLICY_DECISIONS.move_to_end(
                 identity.turn_key
                 if identity.turn_key in _TURN_POLICY_DECISIONS
                 else _ACTIVE_POLICY_TURNS[identity.scope_key]
             )
-        return disposition
+        return decision.disposition if decision is not None else None
 
 
 def _cached_policy_disposition(identity: _PolicyIdentity) -> str | None:
@@ -1448,7 +1484,7 @@ def _pin_policy_disposition(identity: _PolicyIdentity, disposition: str) -> None
     with _POLICY_LOCK:
         if identity.is_new_turn:
             _TERMINAL_POLICY_DECISIONS.pop(identity.turn_key, None)
-        _TURN_POLICY_DECISIONS[identity.turn_key] = disposition
+        _TURN_POLICY_DECISIONS[identity.turn_key] = _PinnedPolicyDecision(disposition, identity.home_binding)
         _TURN_POLICY_DECISIONS.move_to_end(identity.turn_key)
         _ACTIVE_POLICY_TURNS[identity.scope_key] = identity.turn_key
         _bound_ordered_dict(_TURN_POLICY_DECISIONS)
@@ -1458,12 +1494,16 @@ def _pin_policy_disposition(identity: _PolicyIdentity, disposition: str) -> None
 
 def _finish_policy_turn(identity: _PolicyIdentity, disposition: str) -> None:
     with _POLICY_LOCK:
-        _TURN_POLICY_DECISIONS.pop(identity.turn_key, None)
+        previous = _TURN_POLICY_DECISIONS.pop(identity.turn_key, None)
+        prior_terminal = _TERMINAL_POLICY_DECISIONS.get(identity.turn_key)
+        home_binding = (previous.home_binding if previous is not None else
+                        prior_terminal.home_binding if prior_terminal is not None else identity.home_binding)
         if _ACTIVE_POLICY_TURNS.get(identity.scope_key) == identity.turn_key:
             _ACTIVE_POLICY_TURNS.pop(identity.scope_key, None)
         _TERMINAL_POLICY_DECISIONS[identity.turn_key] = _PolicyCacheEntry(
             disposition,
             math.inf,
+            home_binding,
         )
         _TERMINAL_POLICY_DECISIONS.move_to_end(identity.turn_key)
         _bound_ordered_dict(_TERMINAL_POLICY_DECISIONS)
@@ -1811,7 +1851,7 @@ def emit_from_hermes_locals(
     event_name: str = "message.started",
 ) -> bool:
     try:
-        config = load_runtime_config()
+        config = _config_for_terminal(load_runtime_config(), local_vars, event_name)
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
@@ -1841,7 +1881,7 @@ def emit_from_hermes_locals_threadsafe(
     event_name: str = "message.started",
 ) -> bool:
     try:
-        config = load_runtime_config()
+        config = _config_for_terminal(load_runtime_config(), local_vars, event_name)
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
@@ -1980,7 +2020,7 @@ async def emit_from_hermes_locals_async(
     *, require_ack: bool = False,
 ) -> bool:
     try:
-        config = load_runtime_config()
+        config = _config_for_terminal(load_runtime_config(), local_vars, event_name)
         if not config.enabled:
             return False
         _ensure_runtime_control_started(config)
@@ -2103,7 +2143,7 @@ async def stage_message_completed_from_hermes_locals_async(
     """
     _HFC_EXACT_COMPLETION_STAGE.set(None)
     try:
-        config = load_runtime_config()
+        config = _config_for_terminal(load_runtime_config(), local_vars, "message.completed")
         if not config.enabled:
             _warn_stage_diagnostic("config-disabled")
             return False
