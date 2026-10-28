@@ -525,6 +525,15 @@ def test_existing_schema3_marker_is_bound_on_repeat(tmp_path, monkeypatch, chang
 
 
 def test_pm_graph_binds_current_stamp_facts_lock_and_owned_wheels(tmp_path, monkeypatch):
+    # This test runs on the HFC host matrix, including Python 3.9/3.10. The
+    # selected 9b904 Hermes runtime requires Python >=3.11 and has tomllib;
+    # on an older test host, use the declared tomli test dependency to execute
+    # the unchanged child parser instead of skipping its provenance checks.
+    if sys.version_info < (3, 11):
+        monkeypatch.setattr(
+            legacy_9b904, '_LOCK_CHILD',
+            'import sys, tomli\nsys.modules["tomllib"] = tomli\n' + legacy_9b904._LOCK_CHILD,
+        )
     root, home = tmp_path / 'checkout', tmp_path / 'home'
     root.mkdir()
     home.mkdir()
@@ -566,6 +575,13 @@ requires-dist = [{{ name = "hermes-feishu-streaming-card", path = {json.dumps(hf
     graph = legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation), 'config-digest')
     legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation),
                                 'config-digest', expected=graph)
+    original_lock = lock.read_bytes()
+    expected_sdk_hash = ('sha256:' + sdk['sha256']).encode()
+    assert expected_sdk_hash in original_lock
+    lock.write_bytes(original_lock.replace(expected_sdk_hash, ('sha256:' + 'c' * 64).encode()))
+    with pytest.raises(legacy_9b904.LegacyAdoptionRefused, match='resolved lock is unverified'):
+        legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation), 'config-digest')
+    lock.write_bytes(original_lock)
     original_facts = facts.read_bytes()
     def drift_during_current(*_args):
         changed = json.loads(original_facts)
