@@ -121,7 +121,7 @@ def test_apply_patch_013_plus_started_hook_uses_real_message_id_with_anchor_fall
 
 
 def test_started_hook_publishes_real_message_id_onto_source_message_id(monkeypatch):
-    """The started hook must mirror the canonical anchor onto ``source.message_id``.
+    """The started hook mirrors a Feishu anchor without stamping other platforms.
 
     The gateway fills ``HERMES_SESSION_MESSAGE_ID`` from ``source.message_id`` alone, so a
     source left at ``message_id=None`` makes every consumer of that variable — cron origin
@@ -137,12 +137,15 @@ def test_started_hook_publishes_real_message_id_onto_source_message_id(monkeypat
     fake_runtime = types.ModuleType("hermes_feishu_card.hook_runtime")
     fake_runtime.emit_from_hermes_locals = lambda *args, **kwargs: None
     fake_runtime.handle_hfc_command_from_hermes_locals = lambda *args, **kwargs: False
+    # Keep the rendered hook's turn copy observable while exercising its platform gate.
+    fake_runtime.queued_followup_source = lambda source, event: source
     monkeypatch.setitem(sys.modules, "hermes_feishu_card.hook_runtime", fake_runtime)
 
     block = "".join(_render_hook_block("    ", "\n", strategy="gateway_run_013_plus"))
 
     # Published before the command hook can early-return the turn.
     assert "_hfc_anchor_source = locals().get(\"source\")" in block
+    assert "_hfc_anchor_platform" in block
     assert "_hfc_anchor_source.message_id = _hfc_started_message_id" in block
     assert block.index("_hfc_anchor_source.message_id") < block.index(
         "_hfc_handle_command("
@@ -169,15 +172,39 @@ def test_started_hook_publishes_real_message_id_onto_source_message_id(monkeypat
 
     # The REAL incoming message id wins over the quoted/reply anchor.
     event = types.SimpleNamespace(message_id="om_current", reply_to_message_id="om_parent")
-    source = types.SimpleNamespace(message_id=None, chat_id="oc_chat")
+    source = types.SimpleNamespace(
+        message_id=None, chat_id="oc_chat", platform="feishu"
+    )
     assert _run(event, source) == "ok"
     assert source.message_id == "om_current"
 
     # Without a real message id the reply anchor is still the best available anchor.
     fallback_event = types.SimpleNamespace(message_id=None, reply_to_message_id="om_parent")
-    fallback_source = types.SimpleNamespace(message_id=None, chat_id="oc_chat")
+    fallback_source = types.SimpleNamespace(
+        message_id=None, chat_id="oc_chat", platform=types.SimpleNamespace(value="FEISHU")
+    )
     assert _run(fallback_event, fallback_source) == "ok"
     assert fallback_source.message_id == "om_parent"
+
+    # Feishu keeps its existing publish semantics, including replacing a stale field.
+    existing_feishu = types.SimpleNamespace(
+        message_id="om_existing", chat_id="oc_chat", platform="feishu"
+    )
+    assert _run(event, existing_feishu) == "ok"
+    assert existing_feishu.message_id == "om_current"
+
+    # LOCAL and unknown platforms must retain the exact source field.  Hermes v0.22.5
+    # compares a LOCAL live source with its receipt through ``to_dict()``.
+    for platform, existing in (
+        ("local", None),
+        ("slack", "om_existing"),
+        (None, None),
+    ):
+        untouched = types.SimpleNamespace(
+            message_id=existing, chat_id="oc_chat", platform=platform
+        )
+        assert _run(event, untouched) == "ok"
+        assert untouched.message_id == existing
 
 
 def test_apply_patch_013_plus_inserts_cron_delivery_hook():

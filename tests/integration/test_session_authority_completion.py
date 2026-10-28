@@ -379,7 +379,9 @@ def harness(tmp_path, monkeypatch, request):
             if result.rebuild_source:
                 event.source = replace(source)
                 result.mutate_source(event.source)
-            await result.before_response(self, event, source)
+            replacement_source = await result.before_response(self, event, source)
+            if replacement_source is not None:
+                source = replacement_source
             reply_text = result.body
             if result.footer:
                 reply_text = f"{reply_text}\n\n{result.footer}"
@@ -1032,10 +1034,19 @@ async def test_invalid_owner_cannot_pin_notice_or_interaction_first(
     assert harness.native == ["complete answer"]
 
 
-@pytest.mark.parametrize("harness", [ISSUE471_FIXTURE], ids=["9b904"], indirect=True)
-@pytest.mark.parametrize("internal", [False, True])
+@pytest.mark.parametrize(
+    "harness,internal,use_real_gate",
+    [
+        ((V0225_FIXTURE, True), False, True),
+        ((V0225_FIXTURE, True), True, True),
+        (ISSUE471_FIXTURE, False, True),
+        (ISSUE471_FIXTURE, True, True),
+    ],
+    indirect=["harness"],
+    ids=["0225-normal", "0225-internal", "9b904-normal", "9b904-internal"],
+)
 async def test_rendered_start_hook_accepts_its_source_copy_before_completion(
-    harness, monkeypatch, internal
+    harness, monkeypatch, internal, use_real_gate
 ):
     event = Event(
         source=Source(user_id="current-sender"),
@@ -1055,9 +1066,16 @@ async def test_rendered_start_hook_accepts_its_source_copy_before_completion(
     namespace = {}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[hook_function], type_ignores=[])),
                  "rendered-9b904-start", "exec"), namespace)
-    monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
+    if use_real_gate:
+        monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
     monkeypatch.setattr(h, "_hfc_eager_ensure_command_card_hooks", lambda *a: None)
-    monkeypatch.setattr(h, "handle_hfc_command_from_hermes_locals", lambda *a: False)
+    hook_sources = []
+
+    def handle_command(local_vars):
+        hook_sources.append(local_vars["source"])
+        return False
+
+    monkeypatch.setattr(h, "handle_hfc_command_from_hermes_locals", handle_command)
     monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: {
         "ok": True, "disposition": "card", "ttl_ms": 0,
     })
@@ -1077,6 +1095,10 @@ async def test_rendered_start_hook_accepts_its_source_copy_before_completion(
         namespace["run_start"](runner, current_event, source, "route-key", 101)
         await asyncio.wait_for(first_sent.wait(), 3)
         assert source.message_id is None  # the rendered hook modified its copy only
+        assert current_event.source.message_id is None
+        assert hook_sources[-1].message_id == current_event.message_id
+        assert hook_sources[-1]._hfc_turn_id == current_event.message_id
+        return hook_sources[-1]
 
     harness.before_response = started
     await authority._port_drain(authority.ref)

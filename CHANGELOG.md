@@ -1,5 +1,12 @@
 # Changelog
 
+## v5.0.12 — 2026-10-28
+
+- Restrict HFC source-anchor publication to Feishu, preserving LOCAL and other platform sources (#474).
+- Bound the Feishu terminal source-anchor exception to a verified current turn while preserving all other source, claim and routing checks (#469).
+- Validate existing managed-patch upgrade and restore independently of package installation. See the release notes for final evidence and remaining limits.
+- Thanks to @Alex-HJY and @leavrcn for the reports, analysis and retest evidence; existing credits and release history remain intact.
+
 ## v5.0.11 — 2026-10-28
 
 - Verify the original admitted owner before the first card decision and again after policy lookup, preventing a stale automation profile/route from starting a card that cannot accept its terminal handoff (#471). Keep native fallback and terminal identity checks intact.

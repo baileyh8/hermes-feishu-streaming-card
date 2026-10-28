@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v5.0.2](release-notes-v5.0.2.en.md) | Known en/zh transient-notice recall; preserve queue guidance and native heartbeat cleanup |
 | [v5.0.1](release-notes-v5.0.1.en.md) | Hermes 0.22.x completion/approval compatibility and persistent PM dependencies |
 | [v5.0.0](release-notes-v5.0.0.en.md) | Task sections, interaction continuity, turn metrics and installation boundaries |
 | [v4.7.7](release-notes-v4.7.7.en.md) | Opt-in native tables; preserve long cells and indivisible Markdown tables |
