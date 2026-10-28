@@ -189,14 +189,14 @@ def _pm_child_source_fixture(tmp_path):
         ),
     }
     for name, content in files.items():
-        (root / name).write_text(content)
+        (root / name).write_bytes(content.encode('utf-8'))
     return root, files
 
 
 def test_guarded_pm_current_is_a_read_only_source_bound_probe(tmp_path):
     root, files = _pm_child_source_fixture(tmp_path)
     files['pm/install.py'] = 'def venv_is_current(*, project_root): return True\n'
-    (root / 'pm/install.py').write_text(files['pm/install.py'])
+    (root / 'pm/install.py').write_bytes(files['pm/install.py'].encode('utf-8'))
     sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
     result = subprocess.run(
         [sys.executable, '-I', '-B', '-c', pm._CHILD, str(root)],
@@ -214,12 +214,14 @@ def test_pm_child_executes_source_not_poisoned_checkout_bytecode(tmp_path, targe
     evil = tmp_path / 'cache-evil'
     assert len(str(good)) == len(str(evil))
     good_code = f'from pathlib import Path\nPath({str(good)!r}).write_text("source")\n' + files[target]
-    evil_code = good_code.replace(str(good), str(evil))
+    evil_code = good_code.replace(repr(str(good)), repr(str(evil)))
+    assert good_code != evil_code
+    assert len(good_code.encode('utf-8')) == len(evil_code.encode('utf-8'))
     path = root / target
-    path.write_text(evil_code)
+    path.write_bytes(evil_code.encode('utf-8'))
     previous = path.stat()
     py_compile.compile(str(path), doraise=True)
-    path.write_text(good_code)
+    path.write_bytes(good_code.encode('utf-8'))
     os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns))
     assert path.stat().st_size == previous.st_size
     files[target] = good_code
@@ -249,6 +251,28 @@ def test_pm_child_rejects_preloaded_pm_modules_before_upstream_import(tmp_path):
     assert 'module was loaded before source verification' in result.stderr
 
 
+@pytest.mark.parametrize('expected_newline,actual_newline', [(b'\n', b'\r\n'), (b'\r\n', b'\n')])
+def test_pm_child_rejects_line_ending_changes_before_source_exec(tmp_path, expected_newline, actual_newline):
+    root, files = _pm_child_source_fixture(tmp_path)
+    sentinel = tmp_path / 'line-ending-source-executed'
+    source = (f'from pathlib import Path\nPath({str(sentinel)!r}).write_text("executed")\n'
+              f'def get_hermes_home(): return Path({str(tmp_path / "home")!r})\n').encode('utf-8')
+    expected = source.replace(b'\n', expected_newline)
+    actual = source.replace(b'\n', actual_newline)
+    assert expected != actual
+    (root / 'hermes_constants.py').write_bytes(actual)
+    sources = {name: sha256(content.encode('utf-8')).hexdigest() for name, content in files.items()}
+    sources['hermes_constants.py'] = sha256(expected).hexdigest()
+    result = subprocess.run(
+        [sys.executable, '-I', '-B', '-c', pm._CHILD, str(root)],
+        input=json.dumps({'operation': 'probe', 'source_digests': sources}),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert 'PM source evidence changed' in result.stderr
+    assert not sentinel.exists()
+
+
 def test_pm_child_refuses_source_drift_before_import_execution(tmp_path):
     root, files = _pm_child_source_fixture(tmp_path)
     sentinel = tmp_path / 'unverified-executed'
@@ -257,7 +281,7 @@ def test_pm_child_refuses_source_drift_before_import_execution(tmp_path):
     files['pm/__init__.py'] = (
         f'from pathlib import Path\nPath({str(target)!r}).write_text({injected!r})\n'
     )
-    (root / 'pm/__init__.py').write_text(files['pm/__init__.py'])
+    (root / 'pm/__init__.py').write_bytes(files['pm/__init__.py'].encode('utf-8'))
     sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
     result = subprocess.run(
         [sys.executable, '-I', '-c', pm._CHILD, str(root)],
@@ -265,17 +289,18 @@ def test_pm_child_refuses_source_drift_before_import_execution(tmp_path):
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode != 0
+    assert 'PM source evidence changed' in result.stderr
     assert not sentinel.exists()
 
 
 def test_pm_child_refuses_config_drift_between_selection_and_digest(tmp_path):
     root, files = _pm_child_source_fixture(tmp_path)
     config = tmp_path / 'home/config.yaml'
-    config.write_text('plugins: {enabled: [], disabled: []}\n')
+    config.write_bytes(b'plugins: {enabled: [], disabled: []}\n')
     sentinel = tmp_path / 'admission-executed'
     files['pm/plugins_state.py'] = (
         'def read_home_selection(home):\n'
-        '    (home / "config.yaml").write_text("plugins: {enabled: [changed], disabled: []}\\n")\n'
+        '    (home / "config.yaml").write_bytes(b"plugins: {enabled: [changed], disabled: []}\\n")\n'
         '    return {"plugins": {"enabled": [], "disabled": []}}\n'
     )
     files['hermes_cli/plugins_admission.py'] = (
@@ -284,7 +309,7 @@ def test_pm_child_refuses_config_drift_between_selection_and_digest(tmp_path):
         f'    Path({str(sentinel)!r}).write_text("executed")\n'
     )
     for name in ('pm/plugins_state.py', 'hermes_cli/plugins_admission.py'):
-        (root / name).write_text(files[name])
+        (root / name).write_bytes(files[name].encode('utf-8'))
     sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
     result = subprocess.run(
         [sys.executable, '-I', '-c', pm._CHILD, str(root)],
@@ -296,6 +321,7 @@ def test_pm_child_refuses_config_drift_between_selection_and_digest(tmp_path):
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode != 0
+    assert 'PM selection config changed' in result.stderr
     assert not sentinel.exists()
 
 
@@ -309,7 +335,7 @@ def test_pm_child_post_admission_source_drift_has_uncertain_outcome(tmp_path):
         f'    Path({str(committed)!r}).write_text("committed")\n'
         f'    Path({str(admission)!r}).write_text("changed")\n'
     )
-    admission.write_text(files['hermes_cli/plugins_admission.py'])
+    admission.write_bytes(files['hermes_cli/plugins_admission.py'].encode('utf-8'))
     sources = {name: sha256(content.encode()).hexdigest() for name, content in files.items()}
     with pytest.raises(pm.PMAdmissionOutcomeUncertain, match='outcome uncertain'):
         pm._call(root, Path(sys.executable), tmp_path / 'home', {
@@ -587,10 +613,17 @@ def test_schema3_owns_exact_sdk_wheel_without_changing_schema2(pm_env, monkeypat
     monkeypatch.setattr(pm_wheel_store, '_SDK_WHEEL_SHA256', sha256(payload).hexdigest())
     sdk = pm_wheel_store.publish_sdk(pm_env.home, payload)
     project = pm._sdk_project_source(old['version'], old['external_wheel'], sdk)
-    (member / 'pyproject.toml').write_text(project)
+    (member / 'pyproject.toml').write_bytes(project.encode('utf-8'))
     owner = {**old, 'schema': 3, 'sdk_wheel': sdk,
              'files': {**old['files'], 'pyproject.toml': sha256(project.encode()).hexdigest()}}
     (member / pm.OWNER).write_text(json.dumps(owner))
+    assert pm._owned(member) == owner
+    project_bytes = project.encode('utf-8')
+    assert b'\n' in project_bytes and b'\r\n' not in project_bytes
+    (member / 'pyproject.toml').write_bytes(project_bytes.replace(b'\n', b'\r\n'))
+    with pytest.raises(ValueError, match='ownership cannot be verified'):
+        pm._owned(member)
+    (member / 'pyproject.toml').write_bytes(project_bytes)
     assert pm._owned(member) == owner
     calls_before = len(pm_env.calls)
     with pytest.raises(ValueError, match='PM removal is not yet supported'):
@@ -613,7 +646,7 @@ def test_same_schema3_receipt_is_revalidated_without_new_pm_admission(pm_env, mo
     monkeypatch.setattr(pm_wheel_store, '_SDK_WHEEL_SHA256', sha256(payload).hexdigest())
     sdk = pm_wheel_store.publish_sdk(pm_env.home, payload)
     project = pm._sdk_project_source(old['version'], old['external_wheel'], sdk)
-    (member / 'pyproject.toml').write_text(project)
+    (member / 'pyproject.toml').write_bytes(project.encode('utf-8'))
     owner = {**old, 'schema': 3, 'sdk_wheel': sdk,
              'files': {**old['files'], 'pyproject.toml': sha256(project.encode()).hexdigest()}}
     (member / pm.OWNER).write_text(json.dumps(owner))
