@@ -505,22 +505,57 @@ def _route_source(source: Any, message_id: str, profile: str) -> tuple[str, ...]
     return _route(SimpleNamespace(source=source, message_id=message_id), profile)
 
 
-def _same_source(source: Any, current: Any) -> bool:
+def _source_platform(source: Any) -> str:
+    platform = getattr(source, "platform", None)
+    return str(getattr(platform, "value", platform) or "").lower()
+
+
+def _same_source(
+    source: Any, current: Any, *, canonical_message_id: str | None = None
+) -> bool:
     """Accept a native dataclass copy, including fields excluded from its __eq__.
 
     This is only a presentation check inside the verified execute_admission
     frame. The original claim, durable row, epoch and adapter remain mandatory.
     Dynamic HFC display attributes are not native source authority.
+
+    Feishu's rendered hook binds a per-turn ``message_id`` on its copied source;
+    the admission snapshot can retain the pre-hook copy with that optional field
+    absent.  Only that exact one-sided omission is tolerated, and only when the
+    live source is bound to the same canonical event by HFC's turn marker and
+    carries the same triggering anchor.
     """
     if source is current:
         return True
     if type(source) is not type(current) or not is_dataclass(source):
         return False
     try:
-        return all(
-            type(getattr(source, field.name)) is type(getattr(current, field.name))
-            and getattr(source, field.name) == getattr(current, field.name)
-            for field in fields(source)
+        declared = fields(source)
+        has_anchor = False
+        for field in declared:
+            if field.name == "message_id":
+                has_anchor = True
+                continue
+            left = getattr(source, field.name)
+            right = getattr(current, field.name)
+            if type(left) is not type(right) or left != right:
+                return False
+        if not has_anchor:
+            return True
+        live_anchor = getattr(source, "message_id", None)
+        restored_anchor = getattr(current, "message_id", None)
+        if type(live_anchor) is type(restored_anchor) and live_anchor == restored_anchor:
+            return True
+        canonical = _text(canonical_message_id)
+        turn_id = getattr(source, "_hfc_turn_id", None)
+        return bool(
+            canonical is not None
+            and _source_platform(source) == _source_platform(current) == "feishu"
+            and restored_anchor is None
+            and type(live_anchor) is str
+            and live_anchor == canonical
+            and type(turn_id) is str
+            and turn_id == canonical
         )
     except (AttributeError, TypeError, ValueError):
         return False
@@ -832,7 +867,11 @@ def prepare(
     response = values.get("response")
     if route is None:
         return _prepare_failed("route-invalid")
-    if not _same_source(source, getattr(event, "source", None)):
+    if not _same_source(
+        source,
+        getattr(event, "source", None),
+        canonical_message_id=route[-1],
+    ):
         return _prepare_failed("source-mismatch")
     if (
         _route_source(source, route[-1], profile) != route

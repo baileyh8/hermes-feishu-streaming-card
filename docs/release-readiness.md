@@ -2,6 +2,10 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
+本分支目标版本为 `5.0.12`；本轮针对 #474/#469 修复 source 锚点写入和比较边界。候选须通过独立复现、QA/review、普通 wheel 旧补丁升级/恢复、精确完整 CI 和公开安装/资产验收。真实 Gateway/model 和客户端证据分别记录，不将模拟结果写作现场验收。见[发行说明](release-notes-v5.0.12.md)。
+
+## v5.0.11 历史记录
+
 本分支目标版本为 `5.0.11`；#471 包含固定 Hermes `9b904dcc22` 的 admission 归属修复与受限安装迁移。已启用 HFC、strict-false flag、schema2 无 marker、已有官方 PM 的前态进入候选验收；全新安装、旧 v1 receipt 和手装 SDK 等未支持前态提前拒绝。恢复循环已有普通 wheel 证据，HOME 级卸载已完成私有真实 PM 故障/重试和双 HOME loopback 检查；最终精确提交 CI、公开安装、发行资产须独立验收。旧 `66a29a7` 完整 CI 不覆盖新安装改动。报告者现场、真实 Gateway/model 与 Feishu 客户端未复测。见[发行说明](release-notes-v5.0.11.md)。
 
 ## v5.0.10 历史记录

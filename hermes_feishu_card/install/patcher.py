@@ -2756,7 +2756,8 @@ def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gatewa
                 # This block runs before ``_hmwa_prepare_turn`` snapshots the source, and the
                 # value matches the field's documented meaning ("triggering message").
                 f"{inner_indent}_hfc_anchor_source = locals().get(\"source\"){newline}",
-                f"{inner_indent}if _hfc_started_message_id and _hfc_anchor_source is not None:{newline}",
+                f"{inner_indent}_hfc_anchor_platform = str(getattr(getattr(_hfc_anchor_source, \"platform\", None), \"value\", getattr(_hfc_anchor_source, \"platform\", None))).lower(){newline}",
+                f"{inner_indent}if _hfc_started_message_id and _hfc_anchor_source is not None and _hfc_anchor_platform == \"feishu\":{newline}",
                 f"{deeper_indent}_hfc_anchor_source.message_id = _hfc_started_message_id{newline}",
                 f"{inner_indent}if _hfc_handle_command({{**locals(), \"message_id\": _hfc_started_message_id}}):{newline}",
                 f"{deeper_indent}return None{newline}",

@@ -516,6 +516,12 @@ class Registration:
     adoption_generation: str | None = None
     adoption_graph: Any = None
     repeat: bool = False
+    # The verified interpreter selected after admission. ``python`` remains the
+    # interpreter that opened this transaction so rollback cannot silently
+    # operate on the replacement generation.
+    post_python: Path | None = None
+    rollback_binding_before: Any | None = None
+    rollback_binding_after: Any | None = None
     identity: tuple[int, int] = field(init=False)
     owner: dict[str, Any] = field(init=False)
 
@@ -565,6 +571,33 @@ class Registration:
         from .transaction_lock import _root_lock
         with _root_lock(self.root):
             self._rollback()
+
+    def rollback_with_evidence(self) -> tuple[Any | None, Any | None]:
+        """Roll back PM and record the real bindings around that operation."""
+        from . import plugin
+        from .transaction_lock import _root_lock
+
+        with _root_lock(self.root):
+            try:
+                before = plugin.resolve_runtime_binding(
+                    checkout_root=self.root,
+                    hermes_home=self.home,
+                    profile_id=None,
+                )
+            except (OSError, ValueError):
+                before = None
+            self._rollback()
+            try:
+                after = plugin.resolve_runtime_binding(
+                    checkout_root=self.root,
+                    hermes_home=self.home,
+                    profile_id=None,
+                )
+            except (OSError, ValueError):
+                after = None
+            self.rollback_binding_before = before
+            self.rollback_binding_after = after
+            return before, after
 
     def _rollback(self) -> None:
         self._assert_current()

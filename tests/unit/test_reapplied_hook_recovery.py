@@ -146,7 +146,7 @@ def test_reapplied_recovery_rolls_back_sources_and_ownership(reapplied, monkeypa
 
 def test_reapplied_cli_diagnoses_and_requires_explicit_upgrade(reapplied, monkeypatch, capsys):
     root, _ = reapplied
-    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda detection: None)
+    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     detection = detect_hermes(root)
     report = cli._diagnose_install_state(detection)

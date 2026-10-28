@@ -47,7 +47,7 @@ def sources(root):
 def test_decomposed_cli_install_doctor_repeat_remove_roundtrip(hermes, monkeypatch):
     # Runtime installation and SDK setup belong to deployment. This fixture
     # has no venv or adapter SDK; all patch/ownership/doctor calls remain real.
-    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda detection: None)
+    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     before = sources(hermes)
     detection = detect_hermes(hermes)

@@ -547,7 +547,13 @@ def test_full_module_compiler_keeps_import_symbol_table_contract():
     assert ac._shape(first) != ac._shape(altered)
 
 
-def test_native_source_copy_compares_every_declared_field_including_noncompare(monkeypatch):
+@pytest.mark.parametrize(
+    "fixture_name",
+    ["session_authority_0224.json.gz", "session_authority_0225.json.gz"],
+)
+def test_native_source_copy_compares_every_declared_field_including_noncompare(
+    monkeypatch, fixture_name
+):
     import ast
     from dataclasses import dataclass, field, fields, replace
     import gzip
@@ -555,7 +561,7 @@ def test_native_source_copy_compares_every_declared_field_including_noncompare(m
     from pathlib import Path
     import sys
 
-    archive = Path(__file__).parents[1] / "fixtures/session_authority_0224.json.gz"
+    archive = Path(__file__).parents[1] / "fixtures" / fixture_name
     raw = json.loads(gzip.decompress(archive.read_bytes()))["files"][
         "gateway/session.py"
     ]
@@ -579,6 +585,8 @@ def test_native_source_copy_compares_every_declared_field_including_noncompare(m
     source._hfc_turn_id = "display-only-turn"
     assert ac._same_source(source, replace(source))
     for declared in fields(source):
+        if declared.name == "message_id":
+            continue
         copied = replace(source)
         current = getattr(copied, declared.name)
         setattr(
@@ -586,6 +594,59 @@ def test_native_source_copy_compares_every_declared_field_including_noncompare(m
             not current if isinstance(current, bool) else "changed",
         )
         assert not ac._same_source(source, copied), declared.name
+    assert not ac._same_source(
+        replace(source, message_id="om_live"),
+        replace(source, message_id="om_other"),
+        canonical_message_id="display-only-turn",
+    )
+
+    # The only tolerated native-field difference is a restored copy that omitted
+    # the Feishu turn anchor while the live source remains bound to this HFC turn.
+    source._hfc_turn_id = '["async_delegation","delegation-a",""]'
+    source.message_id = source._hfc_turn_id
+    restored = replace(source, message_id=None)
+    assert ac._same_source(
+        source, restored, canonical_message_id=source._hfc_turn_id
+    )
+    assert not ac._same_source(
+        source, restored, canonical_message_id='["async_delegation","other",""]'
+    )
+    assert not ac._same_source(
+        replace(source, message_id="om_other"),
+        restored,
+        canonical_message_id=source._hfc_turn_id,
+    )
+    assert not ac._same_source(source, restored)
+    assert not ac._same_source(
+        restored, source, canonical_message_id=source._hfc_turn_id
+    )
+    source._hfc_turn_id = ""
+    assert not ac._same_source(
+        source, restored, canonical_message_id=source._hfc_turn_id
+    )
+    source._hfc_turn_id = '["async_delegation","delegation-a",""]'
+    source.message_id = source._hfc_turn_id
+    local = replace(source, platform="local")
+    local_restored = replace(local, message_id=None)
+    assert not ac._same_source(
+        local, local_restored, canonical_message_id=source._hfc_turn_id
+    )
+    for invalid in (1, "", "   ", ["om_trigger"]):
+        assert not ac._same_source(
+            replace(source, message_id=invalid),
+            restored,
+            canonical_message_id=source._hfc_turn_id,
+        )
+    assert not ac._same_source(
+        replace(source, chat_name="display changed"),
+        restored,
+        canonical_message_id=source._hfc_turn_id,
+    )
+    assert not ac._same_source(
+        replace(source, user_name="display changed"),
+        restored,
+        canonical_message_id=source._hfc_turn_id,
+    )
     copied = replace(source, profile_route_rejected=True)
     assert source == copied  # Native dataclass eq explicitly excludes this field.
     assert not ac._same_source(source, copied)

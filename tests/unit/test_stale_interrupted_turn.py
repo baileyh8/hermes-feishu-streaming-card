@@ -201,7 +201,7 @@ def test_cli_upgrade_old_owned_hooks_and_uninstall_exactly(tmp_path, monkeypatch
     (root / "gateway/run_turn.py").write_text(stop_source())
     before = {name: (root / name).read_bytes() for name in decomposed.SOURCE_TARGETS
               if (root / name).exists()}
-    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda detection: None)
+    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     args = ["install", "--hermes-dir", str(root), "--yes"]
     with monkeypatch.context() as old:

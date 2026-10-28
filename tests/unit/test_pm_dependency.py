@@ -796,6 +796,26 @@ def test_first_registration_rollback_removes_only_new_owned_member(pm_env):
     assert not (pm_env.home / 'plugins' / pm.NAME).exists()
 
 
+def test_rollback_with_evidence_records_bindings_around_the_transaction(pm_env, monkeypatch):
+    from hermes_feishu_card.install import plugin
+
+    receipt = register(pm_env)
+    before = SimpleNamespace(python_identity='before')
+    after = SimpleNamespace(python_identity='after')
+    resolved = iter((before, after))
+    events = []
+    monkeypatch.setattr(
+        plugin,
+        'resolve_runtime_binding',
+        lambda **kwargs: next(resolved),
+    )
+    monkeypatch.setattr(receipt, '_rollback', lambda: events.append('rollback'))
+    assert receipt.rollback_with_evidence() == (before, after)
+    assert events == ['rollback']
+    assert receipt.rollback_binding_before is before
+    assert receipt.rollback_binding_after is after
+
+
 def test_preexisting_selection_is_not_uninstalled(pm_env):
     pm_env.state['enabled'].append(pm.NAME)
     receipt = register(pm_env)
@@ -849,7 +869,9 @@ def test_ensure_matching_runtime_still_registers_and_resolves_new_python(tmp_pat
     selected = iter([old, new])
     monkeypatch.setattr(cli, '_detect_hermes_runtime_python', lambda *a, **kw: next(selected))
     monkeypatch.setattr(pm, 'available', lambda root: True)
-    receipt = SimpleNamespace(rollback=lambda: pytest.fail('unexpected rollback'))
+    receipt = SimpleNamespace(
+        python=old, rollback=lambda: pytest.fail('unexpected rollback')
+    )
     seen = []
     monkeypatch.setattr(pm, 'ensure', lambda root, python, **kw: seen.append(python) or receipt)
     monkeypatch.setattr(pm, '_call', lambda *a, **kw: {'home': str(tmp_path)})
@@ -859,6 +881,8 @@ def test_ensure_matching_runtime_still_registers_and_resolves_new_python(tmp_pat
     monkeypatch.setattr(cli, '_runtime_report_uses_installed_package', lambda *a: True)
     assert cli._ensure_hermes_runtime_package(detection) is receipt
     assert seen == [old]
+    assert receipt.python == old
+    assert receipt.post_python == new
 
 
 def test_pm_resolution_failure_rolls_back_registration(tmp_path, monkeypatch):

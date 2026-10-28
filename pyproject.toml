@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.11"
+version = "5.0.12"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -86,6 +86,7 @@ include = [
   "hermes_feishu_card/install/legacy_home_revocation.py",
   "hermes_feishu_card/install/transaction_lock.py",
   "hermes_feishu_card/install/legacy_rebind.py",
+  "hermes_feishu_card/install/legacy_handoff.py",
   "hermes_feishu_card/install/plugin_config_bytes.py",
   "hermes_feishu_card/install/plugin_config_delta.py",
   "hermes_feishu_card/canonical_turn.py",
@@ -147,6 +148,7 @@ files = [
   "hermes_feishu_card/install/legacy_home_revocation.py",
   "hermes_feishu_card/install/transaction_lock.py",
   "hermes_feishu_card/install/legacy_rebind.py",
+  "hermes_feishu_card/install/legacy_handoff.py",
   "hermes_feishu_card/install/plugin_config_bytes.py",
   "hermes_feishu_card/install/plugin_config_delta.py",
   "hermes_feishu_card/canonical_turn.py",
