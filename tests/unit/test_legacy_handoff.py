@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -129,6 +130,16 @@ def _rewrite_same_bytes(path, snapshot):
     )
 
 
+def _restore_old_member(registration, precondition, monkeypatch):
+    registration.member.rmdir()
+    registration.backup.rename(registration.member)
+    monkeypatch.setattr(
+        pm_dependency,
+        "_owned",
+        lambda path: precondition.member_owner if path == precondition.member else None,
+    )
+
+
 def test_apply_changes_only_marker_identity_and_rolls_back_exactly(tmp_path, monkeypatch):
     precondition, new_binding, registration, marker, config = _setup(tmp_path, monkeypatch)
     before = marker.read_bytes()
@@ -146,6 +157,9 @@ def test_apply_changes_only_marker_identity_and_rolls_back_exactly(tmp_path, mon
     handoff.rollback()
     assert marker.read_bytes() == before
     assert config.read_bytes() == config_before
+    assert handoff.rollback_snapshot == posix_transaction.read_path_snapshot(
+        marker, ValueError, "marker changed"
+    )
 
 
 def test_concurrent_marker_change_refuses_before_write(tmp_path, monkeypatch):
@@ -323,6 +337,314 @@ def test_same_bytes_marker_rewrite_is_refused(tmp_path, monkeypatch):
     with pytest.raises(legacy_handoff.HandoffRefused, match="evidence_changed"):
         legacy_handoff.apply(precondition, new_binding, registration)
     assert marker.read_bytes() == before
+
+
+def test_reconcile_after_pm_rollback_rebinds_marker_to_real_runtime(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    verified = []
+    monkeypatch.setattr(
+        legacy_rebind, "_verify_runtime", lambda binding: verified.append(binding)
+    )
+    before = marker.read_bytes()
+    config_before = config.read_bytes()
+
+    outcome = legacy_handoff.reconcile_after_rollback(
+        precondition,
+        pm_rollback_before=precondition.binding,
+        pm_rollback_after=new_binding,
+    )
+
+    assert outcome == "rebound"
+    assert json.loads(marker.read_bytes())["python_identity"] == new_binding.python_identity
+    assert marker.read_bytes() != before
+    assert config.read_bytes() == config_before
+    assert verified == [new_binding]
+
+    after = marker.read_bytes()
+    assert (
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+        == "unchanged"
+    )
+    assert marker.read_bytes() == after
+
+
+def test_reconcile_is_a_noop_when_runtime_did_not_change(tmp_path, monkeypatch):
+    precondition, _new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    monkeypatch.setattr(
+        legacy_handoff.plugin,
+        "resolve_runtime_binding",
+        lambda **kwargs: precondition.binding,
+    )
+    before = marker.read_bytes()
+    assert (
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=precondition.binding,
+        )
+        == "unchanged"
+    )
+    assert marker.read_bytes() == before
+
+
+def test_reconcile_allows_pm_rollback_back_to_the_original_runtime(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    monkeypatch.setattr(
+        legacy_handoff.plugin,
+        "resolve_runtime_binding",
+        lambda **kwargs: precondition.binding,
+    )
+    before = marker.read_bytes()
+    assert (
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=new_binding,
+            pm_rollback_after=precondition.binding,
+        )
+        == "unchanged"
+    )
+    assert marker.read_bytes() == before
+
+
+def test_reconcile_uses_the_marker_snapshot_produced_by_rollback(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    restored = _rewrite_same_bytes(marker, precondition.marker_snapshot)
+    assert restored[:2] != precondition.marker_snapshot[:2]
+
+    assert (
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            marker_snapshot=restored,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+        == "rebound"
+    )
+    assert json.loads(marker.read_bytes())["python_identity"] == new_binding.python_identity
+
+
+def test_reconcile_validates_current_marker_before_returning_unchanged(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    assert (
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+        == "rebound"
+    )
+    current = marker.read_bytes()
+    config.write_bytes(config.read_bytes() + b"# drift after no-op\n")
+    with pytest.raises(legacy_handoff.HandoffRefused, match="config_changed"):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+    assert marker.read_bytes() == current
+
+
+def test_reconcile_refuses_replaced_marker_parent(tmp_path, monkeypatch):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    before = marker.read_bytes()
+    root = precondition.binding.checkout_root
+    moved = tmp_path / "root-moved"
+    root.rename(moved)
+    root.mkdir()
+    os.link(moved / legacy_observer.MARKER, root / legacy_observer.MARKER)
+    with pytest.raises(legacy_handoff.HandoffRefused, match="marker_changed"):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+    assert (moved / legacy_observer.MARKER).read_bytes() == before
+    assert (root / legacy_observer.MARKER).read_bytes() == before
+
+
+def test_reconcile_refuses_missing_or_unchanged_pm_rollback_evidence(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    before = marker.read_bytes()
+    with pytest.raises(legacy_handoff.HandoffRefused, match="binding_missing"):
+        legacy_handoff.reconcile_after_rollback(precondition)
+    assert marker.read_bytes() == before
+    with pytest.raises(legacy_handoff.HandoffRefused, match="generation_unchanged"):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=new_binding,
+            pm_rollback_after=new_binding,
+        )
+    assert marker.read_bytes() == before
+
+
+def test_reconcile_refuses_a_generation_not_produced_by_this_rollback(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    before = marker.read_bytes()
+    other = SimpleNamespace(
+        checkout_root=new_binding.checkout_root,
+        hermes_home=new_binding.hermes_home,
+        runtime_python=tmp_path / "other-python",
+        python_identity="sha256:" + "c" * 64,
+        config_path=new_binding.config_path,
+    )
+    with pytest.raises(legacy_handoff.HandoffRefused, match="binding_changed"):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=other,
+        )
+    assert marker.read_bytes() == before
+
+
+def test_reconcile_refuses_a_recreated_old_member(tmp_path, monkeypatch):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    shutil.rmtree(precondition.member)
+    precondition.member.mkdir()
+    before = marker.read_bytes()
+    with pytest.raises(legacy_handoff.HandoffRefused, match="member_changed"):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+    assert marker.read_bytes() == before
+
+
+@pytest.mark.parametrize("drift", ("marker", "config", "source"))
+def test_reconcile_refuses_real_evidence_drift(tmp_path, monkeypatch, drift):
+    precondition, new_binding, registration, marker, config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    if drift == "marker":
+        marker.write_bytes(marker.read_bytes() + b" ")
+        expected = "marker_changed"
+    elif drift == "config":
+        config.write_bytes(config.read_bytes() + b"# drift\n")
+        expected = "config_changed"
+    else:
+        monkeypatch.setattr(legacy_rebind, "_source_fingerprint", lambda _: "drift")
+        expected = "source_changed"
+    before = marker.read_bytes()
+    with pytest.raises(legacy_handoff.HandoffRefused, match=expected):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+    assert marker.read_bytes() == before
+
+
+def test_reconcile_restores_marker_if_post_write_validation_fails(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    _restore_old_member(registration, precondition, monkeypatch)
+    monkeypatch.setattr(legacy_observer, "_config_state", lambda *args: "installed")
+    original_inspect = legacy_observer.inspect
+    calls = []
+
+    def inspect(*args, **kwargs):
+        calls.append(True)
+        if len(calls) == 1:
+            return original_inspect(*args, **kwargs)
+        raise ValueError("post-write observer inspection failed")
+
+    monkeypatch.setattr(legacy_observer, "inspect", inspect)
+    before = marker.read_bytes()
+    with pytest.raises(ValueError, match="post-write observer"):
+        legacy_handoff.reconcile_after_rollback(
+            precondition,
+            pm_rollback_before=precondition.binding,
+            pm_rollback_after=new_binding,
+        )
+    assert marker.read_bytes() == before
+
+
+def test_apply_post_write_failure_exposes_restored_marker_snapshot(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    def inspect(*args, **kwargs):
+        raise ValueError("post-write inspect failed")
+
+    monkeypatch.setattr(legacy_observer, "inspect", inspect)
+    before = marker.read_bytes()
+    with pytest.raises(ValueError, match="post-write inspect") as exc_info:
+        legacy_handoff.apply(precondition, new_binding, registration)
+    assert marker.read_bytes() == before
+    assert exc_info.value.rollback_snapshot == posix_transaction.read_path_snapshot(
+        marker, ValueError, "marker changed"
+    )
+
+
+def test_apply_rollback_failure_preserves_original_and_rollback_error(
+    tmp_path, monkeypatch
+):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    def inspect(*args, **kwargs):
+        marker.write_bytes(marker.read_bytes() + b" ")
+        raise ValueError("post-write inspect failed")
+
+    monkeypatch.setattr(legacy_observer, "inspect", inspect)
+    with pytest.raises(ValueError, match="post-write inspect") as exc_info:
+        legacy_handoff.apply(precondition, new_binding, registration)
+    assert isinstance(exc_info.value.rollback_error, legacy_handoff.HandoffRefused)
+    assert marker.read_bytes().endswith(b" ")
 
 
 def test_checkout_root_replacement_during_runtime_probe_is_refused(

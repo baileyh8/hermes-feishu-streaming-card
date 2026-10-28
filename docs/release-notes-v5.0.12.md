@@ -14,6 +14,8 @@ Feishu 的完成交接需区别已核验的当前轮消息锚点与原生执行�
 
 对本次安装操作自身产生的受管 PM generation 切换，先核验旧 observer、源码、配置和 runtime 来源，再将 observer 的 runtime identity 交给本次已验证的新 generation；不改配置内容。源码修复放在 admission 完成后，交接失败按原注册事务回滚。安装前已存在的外部运行时漂移不会被自动接受。
 
+失败回滚若由 PM 为旧包重建运行环境，安装器还需核验本次回滚的运行时证据，并让 observer 绑定与已恢复的旧包环境一致。PM facts 保持由 Hermes 管理；证据缺失或漂移会明确报告回滚未完成。
+
 若旧安装升级时 PM generation 已变化，`setup` 可能先以 `legacy observer runtime binding changed` 安全拒绝。这时用同一实际 checkout 和 HOME 执行官方 `integrity rebind-legacy --hermes-dir <checkout> --hermes-home <HOME>` 预览；核对后加 `--yes`，再重试原来的 `setup --repair`。该路径核验已安装源码与备份的归属，不把新版 renderer 的变化误判为旧源码未安装；它不接受源码漂移、部分恢复或未知备份。不要删 marker 绕过重绑。
 
 本补丁不扩大 v5.0.11 的精确 Hermes 9b904 安装前态支持范围；全新 PM、旧 receipt、未核验 SDK 和来源漂移仍按原合同拒绝。解压后进入 hermes-feishu-card-v5.0.12-<platform>/ 再执行安装器。

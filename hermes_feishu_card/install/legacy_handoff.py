@@ -17,6 +17,15 @@ class HandoffRefused(ValueError):
     pass
 
 
+def _attach_error_evidence(
+    error: BaseException, name: str, value: Any
+) -> None:
+    try:
+        object.__setattr__(error, name, value)
+    except (AttributeError, TypeError):
+        pass
+
+
 @dataclass(frozen=True)
 class Precondition:
     binding: plugin.HermesRuntimeBinding
@@ -55,6 +64,7 @@ class HandoffRegistration:
     config_parent_identity: tuple[int, int]
     config_mode: int
     config_uid: int
+    rollback_snapshot: Any | None = None
 
     def finish(self) -> None:
         return None
@@ -107,6 +117,7 @@ class HandoffRegistration:
                 payload=self.marker_before,
                 refusal="legacy_handoff_rollback_failed",
             )
+            self.rollback_snapshot = restored
         finally:
             for evidence in (config_binding, marker_binding):
                 if evidence is not None:
@@ -296,17 +307,23 @@ def _assert_precondition_current(
     precondition: Precondition,
     root: Path,
     *,
+    marker_snapshot: Any | None = None,
+    marker_raw: bytes | None = None,
     config_snapshot: Any | None = None,
 ) -> None:
+    expected_marker = (
+        precondition.marker_snapshot if marker_snapshot is None else marker_snapshot
+    )
     expected_config = (
         precondition.config_snapshot if config_snapshot is None else config_snapshot
     )
+    expected_marker_raw = precondition.marker_raw if marker_raw is None else marker_raw
     if (
         io.read_path_snapshot(
             precondition.marker, HandoffRefused, "legacy_handoff_marker_changed"
         )
-        != precondition.marker_snapshot
-        or precondition.marker.read_bytes() != precondition.marker_raw
+        != expected_marker
+        or precondition.marker.read_bytes() != expected_marker_raw
     ):
         raise HandoffRefused("legacy_handoff_marker_changed")
     if (
@@ -364,6 +381,78 @@ def _config_snapshot_after_pm(
     ):
         raise HandoffRefused(refusal)
     return current
+
+
+def _marker_identity_swap(
+    raw: bytes, old_identity: str, new_identity: str
+) -> bytes:
+    record = _record(raw)
+    if record.get("python_identity") != old_identity:
+        raise HandoffRefused("legacy_handoff_marker_changed")
+    old_token = json.dumps(old_identity).encode("utf-8")
+    new_token = json.dumps(new_identity).encode("utf-8")
+    if raw.count(old_token) != 1:
+        raise HandoffRefused("legacy_handoff_marker_ambiguous")
+    marker_after = raw.replace(old_token, new_token, 1)
+    expected_record = {**record, "python_identity": new_identity}
+    if _record(marker_after) != expected_record:
+        raise HandoffRefused("legacy_handoff_marker_ambiguous")
+    return marker_after
+
+
+def _assert_rollback_member(precondition: Precondition) -> None:
+    if (
+        io.read_directory_identity(
+            precondition.member,
+            HandoffRefused,
+            "legacy_handoff_rollback_member_changed",
+        )
+        != precondition.member_identity
+        or pm_dependency._owned(precondition.member) != precondition.member_owner
+    ):
+        raise HandoffRefused("legacy_handoff_rollback_member_changed")
+
+
+def _assert_rollback_runtime(
+    precondition: Precondition,
+    expected: Any,
+    marker_binding: io._CliTargetBinding,
+    config_binding: io._CliTargetBinding,
+    *,
+    marker_snapshot: Any,
+    marker_raw: bytes,
+    config_snapshot: Any,
+) -> None:
+    if marker_binding.parent_identity != precondition.marker_parent_identity:
+        raise HandoffRefused("legacy_handoff_marker_changed")
+    current = plugin.resolve_runtime_binding(
+        checkout_root=precondition.binding.checkout_root,
+        hermes_home=precondition.binding.hermes_home,
+        profile_id=None,
+    )
+    if current != expected:
+        raise HandoffRefused("legacy_handoff_rollback_binding_changed")
+    _assert_rollback_member(precondition)
+    _assert_bound_evidence(
+        marker_binding,
+        snapshot=marker_snapshot,
+        mode=precondition.marker_mode,
+        uid=precondition.marker_uid,
+        payload=marker_raw,
+        refusal="legacy_handoff_marker_changed",
+    )
+    _assert_bound_evidence(
+        config_binding,
+        snapshot=config_snapshot,
+        mode=precondition.config_mode,
+        uid=precondition.config_uid,
+        payload=None,
+        refusal="legacy_handoff_config_changed",
+    )
+    if legacy_rebind._source_fingerprint(
+        precondition.binding.checkout_root
+    ) != precondition.source_fingerprint:
+        raise HandoffRefused("legacy_handoff_source_changed")
 
 
 def apply(
@@ -472,18 +561,11 @@ def _apply_locked(
     )
     if legacy_rebind._source_fingerprint(root) != precondition.source_fingerprint:
         raise HandoffRefused("legacy_handoff_source_changed")
-    record = _record(precondition.marker_raw)
-    old_identity = record.get("python_identity")
-    if old_identity != precondition.binding.python_identity:
-        raise HandoffRefused("legacy_handoff_marker_changed")
-    old_token = json.dumps(old_identity).encode("utf-8")
-    new_token = json.dumps(binding.python_identity).encode("utf-8")
-    if precondition.marker_raw.count(old_token) != 1:
-        raise HandoffRefused("legacy_handoff_marker_ambiguous")
-    marker_after = precondition.marker_raw.replace(old_token, new_token, 1)
-    expected_record = {**record, "python_identity": binding.python_identity}
-    if _record(marker_after) != expected_record:
-        raise HandoffRefused("legacy_handoff_marker_ambiguous")
+    marker_after = _marker_identity_swap(
+        precondition.marker_raw,
+        precondition.binding.python_identity,
+        binding.python_identity,
+    )
     after_snapshot = io._atomic_write_text(
         precondition.marker,
         marker_after.decode("utf-8"),
@@ -512,7 +594,224 @@ def _apply_locked(
             precondition.marker, HandoffRefused, "legacy_handoff_marker_changed"
         ) != after_snapshot:
             raise HandoffRefused("legacy_handoff_marker_changed")
-    except BaseException:
-        handoff._rollback_locked()
+    except BaseException as original_error:
+        try:
+            handoff._rollback_locked()
+        except BaseException as rollback_error:
+            _attach_error_evidence(original_error, "rollback_error", rollback_error)
+            raise original_error from rollback_error
+        _attach_error_evidence(original_error, "marker_written", True)
+        _attach_error_evidence(
+            original_error, "rollback_snapshot", handoff.rollback_snapshot
+        )
         raise
     return handoff
+
+
+def reconcile_after_rollback(
+    precondition: Precondition,
+    *,
+    marker_snapshot: Any | None = None,
+    pm_rollback_before: Any | None = None,
+    pm_rollback_after: Any | None = None,
+) -> str:
+    """Point the HFC marker at the runtime PM selected during rollback.
+
+    PM may commit a fresh generation while undoing its member transaction. The
+    HFC marker is rolled back first, so it can be stale even though the old
+    member, source and config were restored. Only the marker identity changes;
+    PM facts, config and source remain PM/HFC-owned evidence.
+    """
+    root = precondition.binding.checkout_root
+    with _root_lock(root):
+        return _reconcile_after_rollback_locked(
+            precondition,
+            marker_snapshot=marker_snapshot,
+            pm_rollback_before=pm_rollback_before,
+            pm_rollback_after=pm_rollback_after,
+        )
+
+
+def _reconcile_after_rollback_locked(
+    precondition: Precondition,
+    *,
+    marker_snapshot: Any | None,
+    pm_rollback_before: Any | None,
+    pm_rollback_after: Any | None,
+) -> str:
+    root = precondition.binding.checkout_root
+    current = plugin.resolve_runtime_binding(
+        checkout_root=root,
+        hermes_home=precondition.binding.hermes_home,
+        profile_id=None,
+    )
+    if pm_rollback_before is None or pm_rollback_after is None:
+        raise HandoffRefused("legacy_handoff_rollback_binding_missing")
+    if current != pm_rollback_after:
+        raise HandoffRefused("legacy_handoff_rollback_binding_changed")
+    current_changed = (
+        current.python_identity != precondition.binding.python_identity
+    )
+    if current_changed and pm_rollback_before == pm_rollback_after:
+        raise HandoffRefused("legacy_handoff_rollback_generation_unchanged")
+    if (
+        io.read_directory_identity(
+            precondition.member,
+            HandoffRefused,
+            "legacy_handoff_rollback_member_changed",
+        )
+        != precondition.member_identity
+        or pm_dependency._owned(precondition.member) != precondition.member_owner
+    ):
+        raise HandoffRefused("legacy_handoff_rollback_member_changed")
+    marker_binding = _bind_evidence(
+        precondition.marker, "legacy_handoff_marker_changed"
+    )
+    config_binding = None
+    try:
+        raw = marker_binding.initial_bytes
+        if raw is None:
+            raise HandoffRefused("legacy_handoff_marker_changed")
+        if marker_binding.parent_identity != precondition.marker_parent_identity:
+            raise HandoffRefused("legacy_handoff_marker_changed")
+        marker_identity = _record(raw).get("python_identity")
+        if marker_identity == current.python_identity:
+            marker_is_current = True
+            expected_marker_raw = (
+                _marker_identity_swap(
+                    precondition.marker_raw,
+                    precondition.binding.python_identity,
+                    current.python_identity,
+                )
+                if current_changed
+                else precondition.marker_raw
+            )
+            expected_marker = marker_binding.initial_snapshot
+        elif marker_identity == precondition.binding.python_identity:
+            marker_is_current = False
+            expected_marker_raw = precondition.marker_raw
+            expected_marker = (
+                precondition.marker_snapshot
+                if marker_snapshot is None
+                else marker_snapshot
+            )
+        else:
+            raise HandoffRefused("legacy_handoff_marker_changed")
+        if expected_marker is None or raw != expected_marker_raw:
+            raise HandoffRefused("legacy_handoff_marker_changed")
+        config_binding = _bind_evidence(
+            precondition.config, "legacy_handoff_config_changed"
+        )
+        _assert_bound_evidence(
+            marker_binding,
+            snapshot=expected_marker,
+            mode=precondition.marker_mode,
+            uid=precondition.marker_uid,
+            payload=expected_marker_raw,
+            refusal="legacy_handoff_marker_changed",
+        )
+        config_snapshot = _config_snapshot_after_pm(precondition, config_binding)
+        _assert_precondition_current(
+            precondition,
+            root,
+            marker_snapshot=expected_marker,
+            marker_raw=expected_marker_raw,
+            config_snapshot=config_snapshot,
+        )
+        _assert_rollback_runtime(
+            precondition,
+            current,
+            marker_binding,
+            config_binding,
+            marker_snapshot=expected_marker,
+            marker_raw=expected_marker_raw,
+            config_snapshot=config_snapshot,
+        )
+        legacy_rebind._verify_runtime(current)
+        _assert_rollback_runtime(
+            precondition,
+            current,
+            marker_binding,
+            config_binding,
+            marker_snapshot=expected_marker,
+            marker_raw=expected_marker_raw,
+            config_snapshot=config_snapshot,
+        )
+        evidence = legacy_observer.inspect(root, home=current.hermes_home)
+        if (
+            evidence is None
+            or legacy_observer._config_state(evidence, root) != "installed"
+        ):
+            raise HandoffRefused("legacy_handoff_rollback_config_unverified")
+        if marker_is_current or not current_changed:
+            return "unchanged"
+        marker_after = _marker_identity_swap(
+            precondition.marker_raw,
+            precondition.binding.python_identity,
+            current.python_identity,
+        )
+        after_snapshot = io._atomic_write_text(
+            precondition.marker,
+            marker_after.decode("utf-8"),
+            _binding=marker_binding,
+            _expected_before=expected_marker,
+        )
+        handoff = HandoffRegistration(
+            root=root,
+            marker=precondition.marker,
+            marker_before=precondition.marker_raw,
+            marker_after=marker_after,
+            before_snapshot=expected_marker,
+            after_snapshot=after_snapshot,
+            config=precondition.config,
+            config_snapshot=config_snapshot,
+            marker_before_mode=precondition.marker_mode,
+            marker_before_uid=precondition.marker_uid,
+            marker_parent_identity=precondition.marker_parent_identity,
+            config_parent_identity=precondition.config_parent_identity,
+            config_mode=precondition.config_mode,
+            config_uid=precondition.config_uid,
+        )
+        try:
+            refreshed = plugin.resolve_runtime_binding(
+                checkout_root=root,
+                hermes_home=precondition.binding.hermes_home,
+                profile_id=None,
+            )
+            if refreshed != current:
+                raise HandoffRefused("legacy_handoff_rollback_binding_changed")
+            _assert_rollback_member(precondition)
+            legacy_observer.inspect(root, home=current.hermes_home)
+            if (
+                io.read_path_snapshot(
+                    precondition.marker,
+                    HandoffRefused,
+                    "legacy_handoff_marker_changed",
+                )
+                != after_snapshot
+            ):
+                raise HandoffRefused("legacy_handoff_marker_changed")
+            if (
+                legacy_rebind._source_fingerprint(root)
+                != precondition.source_fingerprint
+            ):
+                raise HandoffRefused("legacy_handoff_source_changed")
+            _assert_bound_evidence(
+                config_binding,
+                snapshot=config_snapshot,
+                mode=precondition.config_mode,
+                uid=precondition.config_uid,
+                payload=None,
+                refusal="legacy_handoff_config_changed",
+            )
+        except BaseException:
+            handoff._rollback_locked()
+            raise
+        return "rebound"
+    finally:
+        for bound in (config_binding, marker_binding):
+            if bound is not None:
+                try:
+                    bound.close()
+                except OSError:
+                    pass

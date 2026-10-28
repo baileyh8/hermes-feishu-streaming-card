@@ -44,7 +44,7 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     # Deliberately source-only: official Docker images need not contain .git.
     # Only package/SDK installation is skipped; detection, patching, ownership,
     # CLI dispatch, repeat installation and restore execute unchanged.
-    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda detection: None)
+    monkeypatch.setattr(cli, "_ensure_hermes_runtime_package", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     detection = detect_hermes(target)
     assert detection.supported, detection.reason

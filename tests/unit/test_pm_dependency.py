@@ -796,6 +796,26 @@ def test_first_registration_rollback_removes_only_new_owned_member(pm_env):
     assert not (pm_env.home / 'plugins' / pm.NAME).exists()
 
 
+def test_rollback_with_evidence_records_bindings_around_the_transaction(pm_env, monkeypatch):
+    from hermes_feishu_card.install import plugin
+
+    receipt = register(pm_env)
+    before = SimpleNamespace(python_identity='before')
+    after = SimpleNamespace(python_identity='after')
+    resolved = iter((before, after))
+    events = []
+    monkeypatch.setattr(
+        plugin,
+        'resolve_runtime_binding',
+        lambda **kwargs: next(resolved),
+    )
+    monkeypatch.setattr(receipt, '_rollback', lambda: events.append('rollback'))
+    assert receipt.rollback_with_evidence() == (before, after)
+    assert events == ['rollback']
+    assert receipt.rollback_binding_before is before
+    assert receipt.rollback_binding_after is after
+
+
 def test_preexisting_selection_is_not_uninstalled(pm_env):
     pm_env.state['enabled'].append(pm.NAME)
     receipt = register(pm_env)

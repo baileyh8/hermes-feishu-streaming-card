@@ -128,6 +128,8 @@ Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py
 
 `legacy_rebind` 核验旧源码归属时使用 `decomposed_ownership._inspect(render_hooks=False)`，不因新版 renderer 与旧已安装字节不同而拒绝；manifest、备份摘要、源码漂移与部分恢复门禁仍保留。普通源码修复仍使用实际 renderer，两个判定职责不可混用。
 
+PM 回滚可能为旧包重新生成运行环境。注册栈恢复后，须凭本次 PM 回滚的前后 binding、旧 member 身份及原源码/配置/marker 证据核验实际运行时，再仅调整 observer 的 python identity；不修改 PM facts。交接尚未完成时的安装失败也受同一边界保护。外部漂移、证据缺失或回滚失败须明确报告，不能宣称恢复完成；回归应验证故障后无需手工重绑即可重试安装。
+
 职责：
 
 - `plan_recovery(...)` 只根据当前 Hermes detection、manifest、backup 和 marker 证据生成可脱敏展示的 recovery plan。

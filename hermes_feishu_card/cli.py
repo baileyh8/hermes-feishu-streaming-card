@@ -2038,7 +2038,13 @@ def _hermes_runtime_cwd(runtime_python: Path) -> Path | None:
     return root if root.exists() else None
 
 
-def _ensure_hermes_runtime_package(detection: HermesDetection, *, hermes_home: Path | None = None):
+def _ensure_hermes_runtime_package(
+    detection: HermesDetection,
+    *,
+    hermes_home: Path | None = None,
+    registrations=None,
+    observer_state=None,
+):
     runtime_python = _detect_hermes_runtime_python(detection.root, **({"hermes_home": hermes_home} if hermes_home is not None else {}))
     if runtime_python is None:
         print("runtime package: skipped (Hermes venv Python not found)")
@@ -2047,6 +2053,11 @@ def _ensure_hermes_runtime_package(detection: HermesDetection, *, hermes_home: P
     if pm_dependency.available(detection.root):
         registration = pm_dependency.ensure(detection.root, runtime_python, home=hermes_home,
                                             spec=_runtime_install_spec(), version=PACKAGE_VERSION)
+        managed_here = registrations is None
+        if registration is not None and registrations is not None:
+            registrations.append(registration)
+            if observer_state is not None:
+                observer_state["pm_registration_seen"] = True
         # Admission publishes a new generation; the old interpreter is stale.
         try:
             selected = _detect_hermes_runtime_python(detection.root, **({"hermes_home": hermes_home} if hermes_home is not None else {}))
@@ -2068,7 +2079,7 @@ def _ensure_hermes_runtime_package(detection: HermesDetection, *, hermes_home: P
                 # handoff verifies the selected generation separately.
                 registration.post_python = selected
         except (OSError, ValueError):
-            if registration is not None:
+            if registration is not None and managed_here:
                 registration.rollback()
             raise
         print(f"runtime package: {PACKAGE_VERSION} registered with Hermes PM ({selected})")
@@ -3875,36 +3886,120 @@ def _secret_values(config: dict | None) -> list[str]:
     return secrets
 
 
+def _rollback_registrations(
+    registrations, *, catch_base: bool, observer_state=None
+) -> bool:
+    rollback_failed = False
+    for registration in reversed(registrations):
+        try:
+            rollback_with_evidence = getattr(
+                registration, "rollback_with_evidence", None
+            )
+            if callable(rollback_with_evidence):
+                before, after = rollback_with_evidence()
+                if observer_state is not None:
+                    observer_state["pm_rollback_before"] = before
+                    observer_state["pm_rollback_after"] = after
+            else:
+                registration.rollback()
+                snapshot = getattr(registration, "rollback_snapshot", None)
+                if observer_state is not None:
+                    if snapshot is not None:
+                        observer_state["marker_snapshot"] = snapshot
+                    elif hasattr(registration, "marker_before"):
+                        observer_state["marker_snapshot_missing"] = True
+        except BaseException as exc:
+            if observer_state is not None and hasattr(registration, "marker_before"):
+                observer_state["observer_rollback_error"] = exc
+                print(
+                    f"error: observer rollback did not complete: {exc}",
+                    file=sys.stderr,
+                )
+            if not catch_base and not isinstance(exc, (OSError, ValueError)):
+                raise
+            rollback_failed = True
+    return rollback_failed
+
+
+def _reconcile_observer_after_rollback(observer_state) -> bool:
+    if not observer_state or not observer_state.get("pm_registration_seen"):
+        return True
+    if observer_state.get("observer_rollback_error") is not None:
+        return False
+    if observer_state.get("marker_snapshot_missing"):
+        print(
+            "error: observer rollback reconciliation failed: marker snapshot unavailable",
+            file=sys.stderr,
+        )
+        return False
+    precondition = observer_state.get("observer_precondition")
+    if precondition is None:
+        return True
+    from .install import legacy_handoff
+
+    try:
+        outcome = legacy_handoff.reconcile_after_rollback(
+            precondition,
+            marker_snapshot=observer_state.get("marker_snapshot"),
+            pm_rollback_before=observer_state.get("pm_rollback_before"),
+            pm_rollback_after=observer_state.get("pm_rollback_after"),
+        )
+    except Exception as exc:
+        print(
+            f"error: observer rollback reconciliation failed: {exc}",
+            file=sys.stderr,
+        )
+        return False
+    if outcome == "rebound":
+        print("observer: rebound to verified rollback runtime")
+    return True
+
+
 def _run_install(args: argparse.Namespace) -> int:
     registrations = []
+    observer_state = {}
     try:
-        result = _run_install_core(args, registrations)
-    except BaseException as original_error:
-        rollback_failed = False
-        for registration in reversed(registrations):
-            try:
-                registration.rollback()
-            except BaseException:
-                rollback_failed = True
+        result = _run_install_core(args, registrations, observer_state)
+    except BaseException:
+        rollback_failed = _rollback_registrations(
+            registrations, catch_base=True, observer_state=observer_state
+        )
         if rollback_failed:
             print(
                 "error: install rollback did not complete; evidence retained",
                 file=sys.stderr,
             )
-        raise original_error
-    try:
-        for registration in (registrations if result == 0 else reversed(registrations)):
-            if result == 0:
+        else:
+            try:
+                _reconcile_observer_after_rollback(observer_state)
+            except BaseException as exc:
+                print(
+                    f"error: observer rollback reconciliation failed: {exc}",
+                    file=sys.stderr,
+                )
+        raise
+    if result == 0:
+        try:
+            for registration in registrations:
                 registration.finish()
-            else:
-                registration.rollback()
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    rollback_failed = _rollback_registrations(
+        registrations, catch_base=False, observer_state=observer_state
+    )
+    if rollback_failed:
+        print(
+            "error: install rollback did not complete; evidence retained",
+            file=sys.stderr,
+        )
         return 1
+    _reconcile_observer_after_rollback(observer_state)
     return result
 
 
-def _run_install_core(args: argparse.Namespace, registrations) -> int:
+def _run_install_core(args: argparse.Namespace, registrations, observer_state=None) -> int:
     detection = detect_hermes(args.hermes_dir)
     if not detection.supported:
         print(_format_hermes_detection(detection), file=sys.stderr)
@@ -3924,6 +4019,8 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
             hermes_home=getattr(args, "hermes_home", None),
             profile_id=profile_id,
         )
+        if observer_state is not None:
+            observer_state["observer_precondition"] = observer_precondition
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -3934,9 +4031,18 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
             home_options["hermes_home"] = configured_hermes_home(
                 detection.root, {"service": {"hermes_home": str(args.hermes_home)}},
             )
-        registration = _ensure_hermes_runtime_package(detection, **home_options)
-        if registration is not None:
+        registration = _ensure_hermes_runtime_package(
+            detection,
+            registrations=registrations,
+            observer_state=observer_state,
+            **home_options,
+        )
+        if registration is not None and all(
+            existing is not registration for existing in registrations
+        ):
             registrations.append(registration)
+        if registration is not None and observer_state is not None:
+            observer_state["pm_registration_seen"] = True
         if registration is not None and getattr(registration, 'adoption', None) is not None:
             # Schema 3 owns the upstream-locked SDK in the PM generation. Never
             # run the older pip fallback, which would replace it with 1.6.8.
@@ -3980,6 +4086,19 @@ def _run_install_core(args: argparse.Namespace, registrations) -> int:
             if observer_registration is not None:
                 registrations.append(observer_registration)
     except (OSError, UnicodeError, ValueError) as exc:
+        if observer_state is not None:
+            rollback_error = getattr(exc, "rollback_error", None)
+            if rollback_error is not None:
+                observer_state["observer_rollback_error"] = rollback_error
+                print(
+                    f"error: observer rollback did not complete: {rollback_error}",
+                    file=sys.stderr,
+                )
+            rollback_snapshot = getattr(exc, "rollback_snapshot", None)
+            if rollback_snapshot is not None:
+                observer_state["marker_snapshot"] = rollback_snapshot
+            elif getattr(exc, "marker_written", False):
+                observer_state["marker_snapshot_missing"] = True
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

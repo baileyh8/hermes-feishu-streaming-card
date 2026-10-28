@@ -14,6 +14,8 @@ Installing a new wheel alone does not refresh the hook already loaded by Gateway
 
 For a managed PM generation change performed by this installation itself, the installer first verifies the old observer, source, config and runtime provenance, then hands only the observer runtime identity to that operation’s verified new generation. Config contents remain unchanged. Source repair follows admission, and failed handoff rolls back through the registration transaction. Pre-existing external runtime drift is not automatically accepted.
 
+If PM rebuilds an environment for the old package during rollback, the installer verifies that rollback's runtime evidence before aligning the observer with the restored package environment. Hermes retains ownership of PM facts; missing or changed evidence is reported as incomplete rollback.
+
 If PM generation changed during an upgrade, `setup` can first refuse safely with `legacy observer runtime binding changed`. Preview the official `integrity rebind-legacy --hermes-dir <checkout> --hermes-home <HOME>` using the same actual checkout and HOME, then explicitly apply with `--yes` and retry the original `setup --repair`. Rebinding verifies ownership of the installed source and backups without mistaking a newer renderer for an uninstalled source; source drift, partial restore and unknown backups remain rejected. Do not delete markers to bypass rebinding.
 
 This patch does not expand v5.0.11's restricted exact Hermes 9b904 installation starting states. Fresh PM, old receipts, unverified SDKs and source drift retain their existing refusal contracts. Enter hermes-feishu-card-v5.0.12-<platform>/ after extraction before running an installer.
