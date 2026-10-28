@@ -2064,9 +2064,9 @@ def _ensure_hermes_runtime_package(detection: HermesDetection, *, hermes_home: P
             if not pm_dependency.verify_installed(Path(probe['home']) / 'plugins' / pm_dependency.NAME, selected):
                 raise ValueError("PM installed package does not match the cached exact HFC wheel")
             if registration is not None:
-                # Subsequent observer handoff and rollback belong to the
-                # generation selected after PM admission.
-                registration.python = selected
+                # Keep the opening interpreter for PM rollback. The observer
+                # handoff verifies the selected generation separately.
+                registration.post_python = selected
         except (OSError, ValueError):
             if registration is not None:
                 registration.rollback()

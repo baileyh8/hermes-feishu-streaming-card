@@ -516,6 +516,10 @@ class Registration:
     adoption_generation: str | None = None
     adoption_graph: Any = None
     repeat: bool = False
+    # The verified interpreter selected after admission. ``python`` remains the
+    # interpreter that opened this transaction so rollback cannot silently
+    # operate on the replacement generation.
+    post_python: Path | None = None
     identity: tuple[int, int] = field(init=False)
     owner: dict[str, Any] = field(init=False)
 

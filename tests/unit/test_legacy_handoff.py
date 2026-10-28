@@ -94,7 +94,8 @@ def _setup(tmp_path, monkeypatch):
     registration = object.__new__(pm_dependency.Registration)
     registration.root = root
     registration.home = home
-    registration.python = new_binding.runtime_python
+    registration.python = old_binding.runtime_python
+    registration.post_python = new_binding.runtime_python
     registration.member = member
     registration.backup = backup
     registration.owner = {"version": "5.0.12"}
@@ -118,6 +119,14 @@ def _setup(tmp_path, monkeypatch):
         legacy_observer, "inspect", lambda *args, **kwargs: (record, b"", None, None, b"")
     )
     return precondition, new_binding, registration, marker, config
+
+
+def _rewrite_same_bytes(path, snapshot):
+    return posix_transaction._atomic_write_text(
+        path,
+        path.read_bytes().decode("utf-8"),
+        _expected_before=snapshot,
+    )
 
 
 def test_apply_changes_only_marker_identity_and_rolls_back_exactly(tmp_path, monkeypatch):
@@ -252,6 +261,70 @@ def test_config_change_during_runtime_probe_is_refused(tmp_path, monkeypatch):
     assert config.read_bytes() == mutated
 
 
+def test_same_bytes_config_rewrite_after_pm_is_accepted(tmp_path, monkeypatch):
+    precondition, new_binding, registration, marker, config = _setup(
+        tmp_path, monkeypatch
+    )
+    before = marker.read_bytes()
+    config_before = config.read_bytes()
+    rewritten = _rewrite_same_bytes(config, precondition.config_snapshot)
+    assert rewritten[:2] != precondition.config_snapshot[:2]
+    assert rewritten[2] == precondition.config_snapshot[2]
+
+    handoff = legacy_handoff.apply(precondition, new_binding, registration)
+    assert marker.read_bytes() != before
+    assert config.read_bytes() == config_before
+    assert (config.lstat().st_dev, config.lstat().st_ino) == rewritten[:2]
+
+    handoff.rollback()
+    assert marker.read_bytes() == before
+    assert config.read_bytes() == config_before
+    assert (config.lstat().st_dev, config.lstat().st_ino) == rewritten[:2]
+
+
+def test_same_bytes_config_rewrite_during_probe_is_refused(tmp_path, monkeypatch):
+    precondition, new_binding, registration, marker, config = _setup(
+        tmp_path, monkeypatch
+    )
+    before = marker.read_bytes()
+    _rewrite_same_bytes(config, precondition.config_snapshot)
+
+    def probe(_binding):
+        current = posix_transaction.read_path_snapshot(
+            config, ValueError, "config changed"
+        )
+        _rewrite_same_bytes(config, current)
+
+    monkeypatch.setattr(legacy_rebind, "_verify_runtime", probe)
+    with pytest.raises(legacy_handoff.HandoffRefused, match="config_changed"):
+        legacy_handoff.apply(precondition, new_binding, registration)
+    assert marker.read_bytes() == before
+
+
+def test_config_content_change_before_apply_is_refused(tmp_path, monkeypatch):
+    precondition, new_binding, registration, marker, config = _setup(
+        tmp_path, monkeypatch
+    )
+    before = marker.read_bytes()
+    config.write_bytes(config.read_bytes() + b"# changed before apply\n")
+    with pytest.raises(legacy_handoff.HandoffRefused, match="evidence_changed"):
+        legacy_handoff.apply(precondition, new_binding, registration)
+    assert marker.read_bytes() == before
+
+
+def test_same_bytes_marker_rewrite_is_refused(tmp_path, monkeypatch):
+    precondition, new_binding, registration, marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    before = marker.read_bytes()
+    rewritten = _rewrite_same_bytes(marker, precondition.marker_snapshot)
+    assert rewritten[:2] != precondition.marker_snapshot[:2]
+    assert rewritten[2] == precondition.marker_snapshot[2]
+    with pytest.raises(legacy_handoff.HandoffRefused, match="evidence_changed"):
+        legacy_handoff.apply(precondition, new_binding, registration)
+    assert marker.read_bytes() == before
+
+
 def test_checkout_root_replacement_during_runtime_probe_is_refused(
     tmp_path, monkeypatch
 ):
@@ -306,6 +379,33 @@ def test_registration_owner_mismatch_is_refused(tmp_path, monkeypatch):
     )
     registration.owner = {"version": "other"}
     with pytest.raises(ValueError, match="PM dependency changed"):
+        legacy_handoff.apply(precondition, new_binding, registration)
+
+
+def test_registration_keeps_the_rollback_python(tmp_path, monkeypatch):
+    precondition, new_binding, registration, _marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    registration.python = new_binding.runtime_python
+    with pytest.raises(legacy_handoff.HandoffRefused, match="registration_mismatch"):
+        legacy_handoff.apply(precondition, new_binding, registration)
+
+
+def test_registration_post_python_must_be_the_selected_generation(tmp_path, monkeypatch):
+    precondition, new_binding, registration, _marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    registration.post_python = precondition.binding.runtime_python
+    with pytest.raises(legacy_handoff.HandoffRefused, match="registration_mismatch"):
+        legacy_handoff.apply(precondition, new_binding, registration)
+
+
+def test_registration_requires_post_python(tmp_path, monkeypatch):
+    precondition, new_binding, registration, _marker, _config = _setup(
+        tmp_path, monkeypatch
+    )
+    registration.post_python = None
+    with pytest.raises(legacy_handoff.HandoffRefused, match="registration_mismatch"):
         legacy_handoff.apply(precondition, new_binding, registration)
 
 

@@ -270,6 +270,7 @@ def _validate_registration(
     *,
     binding: plugin.HermesRuntimeBinding,
     detection_root: Path,
+    rollback_python: Path,
 ) -> None:
     if type(registration) is not pm_dependency.Registration:
         raise HandoffRefused("legacy_handoff_registration_required")
@@ -279,7 +280,9 @@ def _validate_registration(
     if (
         not _same_path(registration.root, detection_root)
         or not _same_path(registration.home, binding.hermes_home)
-        or not _same_path(registration.python, binding.runtime_python)
+        or not _same_path(registration.python, rollback_python)
+        or registration.post_python is None
+        or not _same_path(registration.post_python, binding.runtime_python)
         or not _same_path(
             registration.member,
             binding.hermes_home / "plugins" / pm_dependency.NAME,
@@ -289,7 +292,15 @@ def _validate_registration(
         raise HandoffRefused("legacy_handoff_registration_mismatch")
 
 
-def _assert_precondition_current(precondition: Precondition, root: Path) -> None:
+def _assert_precondition_current(
+    precondition: Precondition,
+    root: Path,
+    *,
+    config_snapshot: Any | None = None,
+) -> None:
+    expected_config = (
+        precondition.config_snapshot if config_snapshot is None else config_snapshot
+    )
     if (
         io.read_path_snapshot(
             precondition.marker, HandoffRefused, "legacy_handoff_marker_changed"
@@ -302,7 +313,7 @@ def _assert_precondition_current(precondition: Precondition, root: Path) -> None
         io.read_path_snapshot(
             precondition.config, HandoffRefused, "legacy_handoff_config_changed"
         )
-        != precondition.config_snapshot
+        != expected_config
     ):
         raise HandoffRefused("legacy_handoff_config_changed")
     marker_metadata = precondition.marker.lstat()
@@ -316,6 +327,43 @@ def _assert_precondition_current(precondition: Precondition, root: Path) -> None
         raise HandoffRefused("legacy_handoff_metadata_changed")
     if legacy_rebind._source_fingerprint(root) != precondition.source_fingerprint:
         raise HandoffRefused("legacy_handoff_source_changed")
+
+
+def _config_snapshot_after_pm(
+    precondition: Precondition, binding: io._CliTargetBinding
+) -> Any:
+    """Re-capture config only when PM rewrote it with identical content."""
+    refusal = "legacy_handoff_config_changed"
+    try:
+        io.assert_bound_parent(binding, HandoffRefused, refusal)
+        io.assert_path_parent(binding, HandoffRefused, refusal)
+        current, _payload, mode = io.read_file_state(
+            binding.basename,
+            parent_fd=binding.parent_fd,
+            missing_allowed=False,
+            refused=HandoffRefused,
+            non_regular_refusal=refusal,
+            changed_refusal=refusal,
+            wrap_read_error=True,
+        )
+        metadata = os.stat(
+            binding.basename,
+            dir_fd=binding.parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError as exc:
+        raise HandoffRefused(refusal) from exc
+    if (
+        current is None
+        or binding.parent_identity != precondition.config_parent_identity
+        or current[2] != precondition.config_snapshot[2]
+        or mode != precondition.config_mode
+        or metadata.st_mode & 0o7777 != precondition.config_mode
+        or metadata.st_uid != precondition.config_uid
+        or (metadata.st_dev, metadata.st_ino) != current[:2]
+    ):
+        raise HandoffRefused(refusal)
+    return current
 
 
 def apply(
@@ -370,7 +418,8 @@ def _apply_locked(
         or marker_binding.initial_bytes != precondition.marker_raw
         or marker_binding.initial_mode != precondition.marker_mode
         or marker_binding.parent_identity != precondition.marker_parent_identity
-        or config_binding.initial_snapshot != precondition.config_snapshot
+        or config_binding.initial_snapshot is None
+        or config_binding.initial_snapshot[2] != precondition.config_snapshot[2]
         or config_binding.initial_mode != precondition.config_mode
         or config_binding.parent_identity != precondition.config_parent_identity
     ):
@@ -382,9 +431,11 @@ def _apply_locked(
     )
     if fresh != binding or fresh.python_identity == precondition.binding.python_identity:
         raise HandoffRefused("legacy_handoff_binding_changed")
-    _assert_precondition_current(precondition, root)
     _validate_registration(
-        registration, binding=binding, detection_root=root
+        registration,
+        binding=binding,
+        detection_root=root,
+        rollback_python=precondition.binding.runtime_python,
     )
     if (
         registration.backup is None
@@ -395,6 +446,10 @@ def _apply_locked(
         or pm_dependency._owned(registration.backup) != precondition.member_owner
     ):
         raise HandoffRefused("legacy_handoff_member_changed")
+    config_snapshot = _config_snapshot_after_pm(precondition, config_binding)
+    _assert_precondition_current(
+        precondition, root, config_snapshot=config_snapshot
+    )
     legacy_rebind._verify_runtime(binding)
     # Runtime probing launches child processes. Re-read both evidence files
     # through their original directory descriptors, then re-check source
@@ -409,7 +464,7 @@ def _apply_locked(
     )
     _assert_bound_evidence(
         config_binding,
-        snapshot=precondition.config_snapshot,
+        snapshot=config_snapshot,
         mode=precondition.config_mode,
         uid=precondition.config_uid,
         payload=None,
@@ -443,7 +498,7 @@ def _apply_locked(
         before_snapshot=precondition.marker_snapshot,
         after_snapshot=after_snapshot,
         config=precondition.config,
-        config_snapshot=precondition.config_snapshot,
+        config_snapshot=config_snapshot,
         marker_before_mode=precondition.marker_mode,
         marker_before_uid=precondition.marker_uid,
         marker_parent_identity=precondition.marker_parent_identity,

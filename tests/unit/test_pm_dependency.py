@@ -849,7 +849,9 @@ def test_ensure_matching_runtime_still_registers_and_resolves_new_python(tmp_pat
     selected = iter([old, new])
     monkeypatch.setattr(cli, '_detect_hermes_runtime_python', lambda *a, **kw: next(selected))
     monkeypatch.setattr(pm, 'available', lambda root: True)
-    receipt = SimpleNamespace(rollback=lambda: pytest.fail('unexpected rollback'))
+    receipt = SimpleNamespace(
+        python=old, rollback=lambda: pytest.fail('unexpected rollback')
+    )
     seen = []
     monkeypatch.setattr(pm, 'ensure', lambda root, python, **kw: seen.append(python) or receipt)
     monkeypatch.setattr(pm, '_call', lambda *a, **kw: {'home': str(tmp_path)})
@@ -859,6 +861,8 @@ def test_ensure_matching_runtime_still_registers_and_resolves_new_python(tmp_pat
     monkeypatch.setattr(cli, '_runtime_report_uses_installed_package', lambda *a: True)
     assert cli._ensure_hermes_runtime_package(detection) is receipt
     assert seen == [old]
+    assert receipt.python == old
+    assert receipt.post_python == new
 
 
 def test_pm_resolution_failure_rolls_back_registration(tmp_path, monkeypatch):
