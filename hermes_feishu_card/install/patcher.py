@@ -2142,8 +2142,21 @@ def _find_owned_complete_block(content: str):
     previous_async_without_platform_silent = _with_silent_exception_handler(
         previous_async_without_platform, indent, newline
     )
+    unscoped = _render_unscoped_complete_hook_block(indent, newline)
+    unscoped_with_anchor = _render_complete_hook_block_with_reply_anchor(
+        indent, newline, _scoped=False
+    )
+    unscoped_decomposed = [
+        line.replace('"duration": _response_time,', '"duration": agent_result.get("_hfc_turn_seconds"),')
+        for line in unscoped_with_anchor
+    ]
     actual = lines[begin_index : end_index + 1]
     if actual not in (
+        unscoped,
+        unscoped_with_anchor,
+        unscoped_decomposed,
+        _with_silent_exception_handler(unscoped, indent, newline),
+        _with_silent_exception_handler(unscoped_with_anchor, indent, newline),
         _render_decomposed_complete_hook_block(indent, newline),
         expected_with_anchor,
         expected,
@@ -2796,7 +2809,33 @@ def _render_hook_block(indent: str, newline: str, strategy: str = "legacy_gatewa
     return block
 
 
+def _scope_complete_hook_to_feishu(block, indent: str, newline: str):
+    """Leave non-Feishu delivery entirely to Hermes, including already_sent.
+
+    Keep the guard inside the existing exception boundary. Only indent the
+    try body so both native fallthrough and hook failure handling stay intact.
+    """
+    inner_indent = _child_indent(indent)
+    except_index = next(
+        index for index, line in enumerate(block)
+        if line.startswith(f"{indent}except ")
+    )
+    return [
+        *block[:2],
+        f'{inner_indent}if str(getattr(source.platform, "value", source.platform)).lower() == "feishu":{newline}',
+        *[inner_indent[len(indent):] + line for line in block[2:except_index]],
+        *block[except_index:],
+    ]
+
+
 def _render_complete_hook_block(indent: str, newline: str):
+    return _scope_complete_hook_to_feishu(
+        _render_unscoped_complete_hook_block(indent, newline), indent, newline
+    )
+
+
+def _render_unscoped_complete_hook_block(indent: str, newline: str):
+    """Historical v5.0.5-v5.0.12 bytes, retained for exact owned migration."""
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     deepest_indent = _child_indent(deeper_indent)
@@ -2879,7 +2918,7 @@ def _render_complete_hook_block(indent: str, newline: str):
     ]
 
 
-def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str):
+def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str, *, _scoped=True):
     """Completion hook for gateway_run_013_plus handlers.
 
     Derives an explicit message_id from the same reply anchor the started and
@@ -2889,7 +2928,7 @@ def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str):
     """
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
-    block = list(_render_complete_hook_block(indent, newline))
+    block = list(_render_unscoped_complete_hook_block(indent, newline))
     anchor_lines = [
         f"{inner_indent}_hfc_completed_message_id = None{newline}",
         f"{inner_indent}try:{newline}",
@@ -2909,7 +2948,7 @@ def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str):
     block[locals_index + 1 : locals_index + 1] = [
         f"{deeper_indent}\"message_id\": _hfc_completed_message_id,{newline}"
     ]
-    return block
+    return _scope_complete_hook_to_feishu(block, indent, newline) if _scoped else block
 
 
 def _render_pre_exact_complete_hook_block(indent: str, newline: str):
@@ -3008,7 +3047,7 @@ def _render_pre_exact_v400_complete_hook_block(indent: str, newline: str):
 def _render_v400_complete_hook_block(indent: str, newline: str):
     return [
         line
-        for line in _render_complete_hook_block(indent, newline)
+        for line in _render_unscoped_complete_hook_block(indent, newline)
         if "native_media_only_response as _hfc_media_only" not in line
         and '_hfc_native_delivery == "required"' not in line
         and "response = _hfc_media_only(response)" not in line

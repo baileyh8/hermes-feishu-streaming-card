@@ -526,3 +526,69 @@ def test_issue453_v0225_gateway_agent_progress_contract(monkeypatch):
         for node in ast.walk(run_turn)
     )
     assert "GatewayAgent" not in (root / "gateway/run_turn.py").read_text()
+
+
+@pytest.fixture(scope="module")
+def issue479_native_delivery_functions():
+    """Execute the unchanged native method and its patched v0.22.5 counterpart."""
+    import logging
+    from contextlib import suppress
+
+    sources = _pinned_sources(ISSUE456_ENV)
+    rendered = decomposed_ownership.render(sources)
+    functions = []
+    target = "gateway/run_turn_persistence.py"
+    for source in (sources[target], rendered[target]):
+        tree = ast.parse(source)
+        method = next(node for node in ast.walk(tree)
+                      if isinstance(node, ast.AsyncFunctionDef)
+                      and node.name == "_hmwa_deliver_turn_response")
+        namespace = {"diagnostic_wake_muted": lambda event: False,
+                     "logger": logging.getLogger(__name__), "suppress": suppress}
+        exec(compile(ast.Module(body=[method], type_ignores=[]), target, "exec"), namespace)
+        functions.append(namespace[method.name])
+    return functions
+
+
+@pytest.mark.parametrize("platform", ["telegram", "discord", "slack"])
+@pytest.mark.parametrize("mode", ["native", "handoff"])
+@pytest.mark.parametrize("flags", [
+    {"already_sent": True},
+    {"already_sent": False},
+    {"already_sent": True, "failed": True},
+    {"already_sent": True, "media_already_delivered": True},
+])
+def test_issue479_pinned_native_media_footer_and_final_response_unchanged(
+    monkeypatch, issue479_native_delivery_functions, platform, mode, flags,
+):
+    from unittest.mock import AsyncMock, Mock
+
+    admission = Mock(return_value=mode)
+    monkeypatch.setattr(hook_runtime, "admission_completion_mode", admission)
+    monkeypatch.setattr(hook_runtime, "can_stage_exact_base_completion", lambda _: False)
+    outcomes = []
+    for deliver in issue479_native_delivery_functions:
+        adapter = SimpleNamespace(send=AsyncMock())
+        runner = SimpleNamespace(
+            _delivery_adapter_for=lambda source: adapter,
+            _should_send_voice_reply=lambda *args, **kwargs: False,
+            _deliver_media_from_response=AsyncMock(),
+            _event_thread_metadata=lambda event, source: {"thread_id": "test-thread"},
+            _reply_anchor_for_event=lambda event: "test-reply",
+        )
+        source = SimpleNamespace(platform=SimpleNamespace(value=platform), chat_id="test-chat")
+        event = SimpleNamespace()
+        answer = "answer\nMEDIA:/tmp/example.png"
+        result = asyncio.run(deliver(
+            runner, event, source, None, "test-session", 1,
+            dict(flags), [], answer, "footer", False,
+        ))
+        outcomes.append((result, runner._deliver_media_from_response.await_count,
+                         adapter.send.await_args_list, vars(event)))
+    assert outcomes[1] == outcomes[0]
+    suppressed = flags.get("already_sent") and not flags.get("failed")
+    assert outcomes[1][0] == (None if suppressed else answer)
+    assert outcomes[1][1] == int(bool(suppressed and not flags.get("media_already_delivered")))
+    assert len(outcomes[1][2]) == int(bool(suppressed))
+    assert outcomes[1][3] == ({"_streamed_final_response": answer} if suppressed else {})
+    admission.assert_not_called()

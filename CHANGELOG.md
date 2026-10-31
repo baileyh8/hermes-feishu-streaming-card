@@ -1,5 +1,12 @@
 # Changelog
 
+## v5.0.13 — 2026-10-31
+
+- Limit completion-hook handling to Feishu so native streamed replies on Telegram and other platforms retain Hermes suppression, media and footer handling (#479).
+- Repair the provider-selection entry and narrowly bound missing-chat DM callbacks in the model picker (#478); preserve unknown-identity rejection.
+- Retain exact historical patch ownership, idempotent upgrade and restore contracts. Validation and remaining limits follow the release notes.
+- Thanks to @Lite-G and @Kevinzz224 for issue evidence; the initial #479 patch was supplied by Bailey from a separate ChatGPT repair session. Earlier credits remain intact.
+
 ## v5.0.12 — 2026-10-28
 
 - Restrict HFC source-anchor publication to Feishu, preserving LOCAL and other platform sources (#474).

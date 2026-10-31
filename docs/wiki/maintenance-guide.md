@@ -118,6 +118,7 @@ Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py
 - Base media/local delivery filter 的 exact matcher 只接受旧版单位置参数调用，或唯一 `session_key=session_key` 关键字调用；extra/wrong/unpacked keyword 与位置参数漂移必须 fail-closed，并保持 apply/remove/restore 逐字往返。
 - Hermes source-stripped Docker 目录缺少 `VERSION`，或版本 metadata 可读但格式不可解析时，只能在 gateway anchors 可验证时兜底。
 - 新 hook block 必须有 patcher 单测和 remove/restore 覆盖。
+- completion hook 只允许飞书进入 HFC 的 admission、queued-final 和卡片交接分支；Telegram 等其他平台必须继续 Hermes 原有 `already_sent`、媒体及最终回复逻辑。平台隔离须覆盖普通、reply-anchor 与拆分 handler，并保留旧版受管 block 的精确识别和可逆升级（#479）。
 - Hermes 0.20 将同步 delivery-ledger 写入包装为 `await asyncio.to_thread(...)`；只可在已验证的 ledger anchor 内解包这一精确结构，未 `await`、其他 wrapper 或全局 call 解包必须继续拒绝。
 - `_status_callback_sync` 是 optional `status_callback` capability；缺失时保持其他安装路径可用并由 doctor 报 partial compatibility。
 - Hermes `79445a496c` facade 拆分的路由、Base helper 契约与 V4 ownership 边界见 [拆分适配说明](hermes-decomposed-patcher.md)。源码布局不得被用作 native hook 能力证明。

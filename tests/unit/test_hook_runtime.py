@@ -5826,7 +5826,7 @@ def test_model_picker_provider_card_marks_current_provider_and_counts_models():
         "hfc_model_picker_id": "model-1",
         "hfc_model_picker_view": "providers",
     }
-    assert select["initial_option"] == "deepseek"
+    assert "initial_option" not in select
     assert [option["text"]["content"] for option in select["options"]] == [
         "当前 · DeepSeek (4 个模型)",
         "OpenRouter (36 个模型)",

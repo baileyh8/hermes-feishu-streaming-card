@@ -3,6 +3,7 @@
   "groups": {
     "runtime": [
       "tests/unit/test_hook_runtime.py",
+      "tests/unit/test_issue_478_model_picker.py",
       "tests/integration/test_server.py",
       "tests/unit/test_legacy_observed_rate.py",
       "tests/integration/test_session_authority_completion.py",
@@ -34,6 +35,7 @@
     ],
     "install": [
       "tests/unit/test_patcher.py",
+      "tests/unit/test_completion_platform_isolation.py",
       "tests/unit/test_issue_456_453_contracts.py",
       "tests/unit/test_gateway_contracts.py",
       "tests/unit/test_stale_interrupted_turn.py",
@@ -229,6 +231,7 @@
     "commands": [
       "tests/unit/test_native_commands.py",
       "tests/unit/test_hook_runtime.py",
+      "tests/unit/test_issue_478_model_picker.py",
       "tests/integration/test_feishu_sdk_compat.py"
     ],
     "upstream": [

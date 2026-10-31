@@ -9,9 +9,9 @@ load the new protocol. See the [runtime configuration guide](docs/user-guide.en.
 
 [中文](README.md) | [English](README.en.md)
 
-V5.0.12 addresses LOCAL source-anchor pollution (#474) and a Feishu source-anchor mismatch during terminal handoff (#469), preserving native ownership and routing checks. Existing installations must refresh the managed hook through the normal installer and restart Gateway through its service owner. See the [release notes](docs/release-notes-v5.0.12.en.md) for acceptance and scope.
+V5.0.13 isolates completion hooks from non-Feishu delivery (#479) and repairs the native model-picker entry and verified DM callback handling (#478). Existing installations must refresh the managed hook through the normal installer and restart Gateway through its service owner. See the [release notes](docs/release-notes-v5.0.13.en.md) for acceptance and scope.
 
-**Release version: v5.0.12.** The default `latest` selects the published stable release. V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
+**Release version: v5.0.13.** The default `latest` selects the published stable release. V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
 
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
@@ -312,20 +312,20 @@ unknown same-name units, drift, or unsafe shutdown. Remove the owned unit with
 ## Extracting release assets (v5.0.6 and later)
 
 Use a new dedicated extraction directory and verify the published checksums first.
-Each archive contains nine files under `hermes-feishu-card-v5.0.12-linux/`,
-`hermes-feishu-card-v5.0.12-macos/` or `hermes-feishu-card-v5.0.12-windows/`.
+Each archive contains nine files under `hermes-feishu-card-v5.0.13-linux/`,
+`hermes-feishu-card-v5.0.13-macos/` or `hermes-feishu-card-v5.0.13-windows/`.
 The old flat layout allowed `./install.sh` immediately in the extraction target;
 enter the versioned platform directory first with these assets.
 
 ```bash
-mkdir hfc-install-v5.0.12
-tar -xzf hermes-feishu-card-v5.0.12-linux.tar.gz -C hfc-install-v5.0.12
-cd hfc-install-v5.0.12/hermes-feishu-card-v5.0.12-linux
-./install.sh --version v5.0.12
+mkdir hfc-install-v5.0.13
+tar -xzf hermes-feishu-card-v5.0.13-linux.tar.gz -C hfc-install-v5.0.13
+cd hfc-install-v5.0.13/hermes-feishu-card-v5.0.13-linux
+./install.sh --version v5.0.13
 ```
 
 For macOS, use the `macos` asset and subdirectory. On Windows, extract the ZIP,
-enter `hermes-feishu-card-v5.0.12-windows`, then run `.\install.ps1`.
+enter `hermes-feishu-card-v5.0.13-windows`, then run `.\install.ps1`.
 Tar metadata uses uid/gid 0, directories and shell installers 0755, other regular
 files 0644. These archive modes do not represent Windows ACL validation.
 Published v5.0.6 and earlier assets and tags are retained. See the [v5.0.6 release notes](docs/release-notes-v5.0.6.en.md)
@@ -396,7 +396,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.12
+export HFC_VERSION=v5.0.13
 bash install-docker.sh
 ```
 

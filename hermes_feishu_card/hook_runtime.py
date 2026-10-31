@@ -6784,6 +6784,7 @@ async def _hfc_send_native_model_picker(
     state[picker_id] = {
         **_hfc_pending_command_identity(str(chat_id or "")),
         "chat_id": str(chat_id or ""),
+        "bot_app_id": str(getattr(self, "_app_id", "") or "").strip(),
         "session_key": str(session_key or ""),
         "message_id": message_id,
         "on_model_selected": on_model_selected,
@@ -6979,25 +6980,37 @@ def _hfc_action_chat_id(data: Any) -> str:
     return str(getattr(context, "open_chat_id", "") or "")
 
 
+def _hfc_action_message_id(data: Any) -> str:
+    event = getattr(data, "event", None)
+    context = getattr(event, "context", None)
+    return str(getattr(context, "open_message_id", "") or "").strip()
+
+
 def _hfc_action_open_id(data: Any) -> str:
     event = getattr(data, "event", None)
     operator = getattr(event, "operator", None)
     return str(getattr(operator, "open_id", "") or "")
 
 
-def _hfc_pending_command_identity(chat_id: str) -> dict[str, str]:
-    """Snapshot the admitted command, never the callback's claimed chat type."""
+def _hfc_pending_command_identity(chat_id: str) -> dict[str, Any]:
+    """Snapshot admitted command identity and its absolute expiry.
+
+    Existing slash-confirm handling consumes only actor/chat. The expiry is
+    enforced by the narrow missing-chat model-picker path.
+    """
     context = _HFC_FEISHU_COMMAND_RESULT_CONTEXT.get()
     if not isinstance(context, dict) or context.get("chat_id") != chat_id:
         return {}
     try:
-        if float(context.get("expires_at") or 0) <= time.monotonic():
+        expires_at = float(context.get("expires_at") or 0)
+        if not math.isfinite(expires_at) or expires_at <= time.monotonic():
             return {}
     except (TypeError, ValueError):
         return {}
     return {
         "chat_type": str(context.get("chat_type") or "").strip().lower(),
         "operator_open_id": str(context.get("operator_open_id") or "").strip(),
+        "expires_at": expires_at,
     }
 
 
@@ -7113,6 +7126,45 @@ def _hfc_native_slash_result_card(
     )
 
 
+def _hfc_model_picker_missing_chat_allowed(
+    adapter: Any,
+    data: Any,
+    item: dict[str, Any],
+) -> bool:
+    """Authorize the DM /model callback shape that omits open_chat_id.
+
+    The picker state was created only after the command passed Hermes
+    admission. A missing chat is still insufficient by itself, so bind the
+    callback to the original message, actor, adapter app and a finite TTL.
+    Other card actions continue to require their callback chat.
+    """
+    pending_chat_id = str(item.get("chat_id") or "").strip()
+    pending_message_id = str(item.get("message_id") or "").strip()
+    pending_operator = str(item.get("operator_open_id") or "").strip()
+    pending_bot = str(item.get("bot_app_id") or "").strip()
+    adapter_bot = str(getattr(adapter, "_app_id", "") or "").strip()
+    chat_type = str(item.get("chat_type") or "").strip().lower()
+    raw_expires_at = item.get("expires_at")
+    if isinstance(raw_expires_at, bool):
+        return False
+    try:
+        expires_at = float(raw_expires_at)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        pending_chat_id
+        and pending_message_id
+        and pending_operator
+        and pending_bot
+        and adapter_bot == pending_bot
+        and chat_type in {"dm", "p2p", "private"}
+        and _hfc_action_message_id(data) == pending_message_id
+        and _hfc_action_open_id(data) == pending_operator
+        and math.isfinite(expires_at)
+        and expires_at > time.monotonic()
+    )
+
+
 def _hfc_prepare_native_model_action(
     adapter: Any,
     data: Any,
@@ -7136,7 +7188,12 @@ def _hfc_prepare_native_model_action(
     expected_chat_id = str(item.get("chat_id") or "")
     if expected_chat_id and chat_id and expected_chat_id != chat_id:
         return None
-    if not _hfc_card_operator_allowed(adapter, data, expected_chat_id or chat_id, pending=item):
+    if chat_id:
+        if not _hfc_card_operator_allowed(
+            adapter, data, expected_chat_id or chat_id, pending=item
+        ):
+            return None
+    elif not _hfc_model_picker_missing_chat_allowed(adapter, data, item):
         return None
     return {
         "loop": loop,
