@@ -2142,8 +2142,16 @@ def _find_owned_complete_block(content: str):
     previous_async_without_platform_silent = _with_silent_exception_handler(
         previous_async_without_platform, indent, newline
     )
+    previous = [renderer(indent, newline) for renderer in (
+        _render_v5012_complete_hook_block,
+        _render_v5012_complete_hook_block_with_reply_anchor,
+        _render_v5012_decomposed_complete_hook_block,
+    )]
+    previous_silent = [_with_silent_exception_handler(block, indent, newline) for block in previous]
     actual = lines[begin_index : end_index + 1]
     if actual not in (
+        *previous,
+        *previous_silent,
         _render_decomposed_complete_hook_block(indent, newline),
         expected_with_anchor,
         expected,
@@ -2841,6 +2849,87 @@ def _render_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}    \"max_tokens\": agent_result.get(\"context_length\", 0),{newline}",
         f"{deeper_indent}}},{newline}",
         f"{inner_indent}}}{newline}",
+        f"{inner_indent}_hfc_keep_native = agent_result.get(\"_hfc_queued_final_attempted\") is True and agent_result.get(\"_hfc_queued_final_delivered\") is not True{newline}",
+        # The outer handler still owns the original turn. A failed queued
+        # final must continue native delivery (including streamed media/footer)
+        # rather than completing that old, already-terminal card again.
+        f"{inner_indent}if agent_result.get(\"_hfc_queued_final_delivered\") is True:{newline}",
+        f"{deeper_indent}_hfc_queued_preview = _hfc_build_event(\"message.completed\", _hfc_completed_locals, preview=True){newline}",
+        f"{deeper_indent}if _hfc_queued_preview and _hfc_queued_preview.get(\"data\", {{}}).get(\"native_delivery\") == \"required\":{newline}",
+        f"{deepest_indent}return _hfc_media_only(response){newline}",
+        f"{deeper_indent}return None{newline}",
+        f"{inner_indent}from hermes_feishu_card.hook_runtime import admission_completion_mode as _hfc_admission_mode{newline}",
+        f"{inner_indent}_hfc_admission = \"native\" if _hfc_keep_native else _hfc_admission_mode(_hfc_completed_locals){newline}",
+        f"{inner_indent}_hfc_exact_staged = False{newline}",
+        f"{inner_indent}if _hfc_admission != \"native\" and _hfc_can_stage_exact(_hfc_completed_locals):{newline}",
+        f"{deeper_indent}_hfc_exact_staged = await _hfc_stage_exact(_hfc_completed_locals){newline}",
+        # Native/unstaged handoff must reach Hermes' own already_sent guard,
+        # media/footer handling and final return below COMPLETE_PATCH_END.
+        f"{inner_indent}if _hfc_admission not in (\"native\", \"handoff\") and not _hfc_exact_staged:{newline}",
+        f"{deeper_indent}_hfc_completed_event = _hfc_build_event(\"message.completed\", _hfc_completed_locals, preview=True){newline}",
+        f"{deeper_indent}_hfc_attachments = []{newline}",
+        f"{deeper_indent}_hfc_native_delivery = \"allowed\"{newline}",
+        f"{deeper_indent}if _hfc_completed_event is not None:{newline}",
+        f"{deepest_indent}_hfc_completed_data = _hfc_completed_event.get(\"data\", {{}}){newline}",
+        f"{deepest_indent}_hfc_attachments = _hfc_completed_data.get(\"attachments\", []){newline}",
+        f"{deepest_indent}_hfc_native_delivery = _hfc_completed_data.get(\"native_delivery\", \"required\" if _hfc_attachments else \"allowed\"){newline}",
+        f"{deeper_indent}_hfc_card_delivered = await _hfc_emit_async(_hfc_completed_locals, event_name=\"message.completed\"){newline}",
+        f"{deeper_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
+        f"{deeper_indent}if str(_hfc_platform).lower() == \"feishu\" and _hfc_card_delivered and _hfc_native_delivery == \"required\":{newline}",
+        f"{deepest_indent}response = _hfc_media_only(response){newline}",
+        f"{deeper_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery):{newline}",
+        f"{deepest_indent}return None{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{COMPLETE_PATCH_END}{newline}",
+    ]
+
+
+def _render_v5012_complete_hook_block(indent: str, newline: str):
+    """Frozen pre-#479 bytes for owned upgrade/removal, independent of current."""
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    deepest_indent = _child_indent(deeper_indent)
+    return [
+        f"{indent}{COMPLETE_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import build_event as _hfc_build_event{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals_async as _hfc_emit_async{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import can_stage_exact_base_completion as _hfc_can_stage_exact{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import stage_message_completed_from_hermes_locals_async as _hfc_stage_exact{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import should_suppress_native_response as _hfc_should_suppress{newline}"
+        ),
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import native_media_only_response as _hfc_media_only{newline}"
+        ),
+        f"{inner_indent}_hfc_completed_locals = {{{newline}",
+        f"{deeper_indent}**locals(),{newline}",
+        f"{deeper_indent}\"answer\": response,{newline}",
+        f"{deeper_indent}\"duration\": _response_time,{newline}",
+        f"{deeper_indent}\"model\": agent_result.get(\"model\", \"\"),{newline}",
+        f"{deeper_indent}\"tokens\": {{{newline}",
+        f"{deeper_indent}    \"input_tokens\": agent_result.get(\"input_tokens\", 0),{newline}",
+        f"{deeper_indent}    \"output_tokens\": agent_result.get(\"output_tokens\", 0),{newline}",
+        f"{deeper_indent}}},{newline}",
+        f"{deeper_indent}\"context\": {{{newline}",
+        f"{deeper_indent}    \"used_tokens\": agent_result.get(\"last_prompt_tokens\", 0),{newline}",
+        f"{deeper_indent}    \"max_tokens\": agent_result.get(\"context_length\", 0),{newline}",
+        f"{deeper_indent}}},{newline}",
+        f"{inner_indent}}}{newline}",
         f"{inner_indent}if agent_result.get(\"_hfc_queued_final_attempted\") is True and agent_result.get(\"_hfc_queued_final_delivered\") is not True:{newline}",
         # The outer handler still owns the original turn. A failed queued
         # final must fall back with its complete response, including media,
@@ -2887,9 +2976,13 @@ def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str):
     owns the card instead of relying on the ambiguous terminal fallback cache
     (which can make build_event return None on streamed turns).
     """
+    return _with_complete_reply_anchor(_render_complete_hook_block(indent, newline), indent, newline)
+
+
+def _with_complete_reply_anchor(block, indent, newline):
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
-    block = list(_render_complete_hook_block(indent, newline))
+    block = list(block)
     anchor_lines = [
         f"{inner_indent}_hfc_completed_message_id = None{newline}",
         f"{inner_indent}try:{newline}",
@@ -2910,6 +3003,15 @@ def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str):
         f"{deeper_indent}\"message_id\": _hfc_completed_message_id,{newline}"
     ]
     return block
+
+
+def _render_v5012_complete_hook_block_with_reply_anchor(indent, newline):
+    return _with_complete_reply_anchor(_render_v5012_complete_hook_block(indent, newline), indent, newline)
+
+
+def _render_v5012_decomposed_complete_hook_block(indent, newline):
+    return [line.replace('"duration": _response_time,', '"duration": agent_result.get("_hfc_turn_seconds"),')
+            for line in _render_v5012_complete_hook_block_with_reply_anchor(indent, newline)]
 
 
 def _render_pre_exact_complete_hook_block(indent: str, newline: str):
@@ -3008,7 +3110,7 @@ def _render_pre_exact_v400_complete_hook_block(indent: str, newline: str):
 def _render_v400_complete_hook_block(indent: str, newline: str):
     return [
         line
-        for line in _render_complete_hook_block(indent, newline)
+        for line in _render_v5012_complete_hook_block(indent, newline)
         if "native_media_only_response as _hfc_media_only" not in line
         and '_hfc_native_delivery == "required"' not in line
         and "response = _hfc_media_only(response)" not in line

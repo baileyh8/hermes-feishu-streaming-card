@@ -816,15 +816,10 @@ def test_apply_patch_upgrades_v400_completion_hook_with_media_text_split():
         "    agent_result = {'input_tokens': 1, 'output_tokens': 2}\n"
         "    return response\n"
     )
-    latest = patcher.apply_patch(content)
-    v400 = latest.replace(
-        "        from hermes_feishu_card.hook_runtime import native_media_only_response as _hfc_media_only\n",
-        "",
-    ).replace(
-            '            if str(_hfc_platform).lower() == "feishu" and '
-            '_hfc_card_delivered and _hfc_native_delivery == "required":\n'
-            "                response = _hfc_media_only(response)\n",
-        "",
+    v400 = content.replace(
+        "    return response\n",
+        "".join(patcher._render_v400_complete_hook_block("    ", "\n"))
+        + "    return response\n",
     )
 
     upgraded = patcher.apply_patch(v400)
@@ -2075,7 +2070,8 @@ def test_complete_hook_block_contains_suppression_guard():
     assert "_hfc_attachments" in block
     assert "can_stage_exact_base_completion as _hfc_can_stage_exact" in block
     assert "stage_message_completed_from_hermes_locals_async as _hfc_stage_exact" in block
-    assert "if not _hfc_exact_staged:" in block
+    assert 'if _hfc_admission not in ("native", "handoff") and not _hfc_exact_staged:' in block
+    assert "return response" not in block
     assert "return None" in block
 
 
@@ -2141,6 +2137,38 @@ def test_apply_patch_migrates_owned_pre_exact_completion_block():
     assert upgraded != source
     assert patcher.apply_patch(upgraded, strategy="gateway_run_013_plus") == upgraded
     ast.parse(upgraded)
+
+
+@pytest.mark.parametrize("renderer,digest", [
+    (patcher._render_v5012_complete_hook_block,
+     "d6584672bea204087c293fc3b1085e15c661af38d80a3de921f9e779b7a44aee"),
+    (patcher._render_v5012_complete_hook_block_with_reply_anchor,
+     "b93fbca78856834980100ab97b4407019be54ed8f4ae56e95e15544d00bbf1d2"),
+    (patcher._render_v5012_decomposed_complete_hook_block,
+     "2f30eccc6f195f9f26f02dbf55d33579f9f3ad9793a28206938c05a7d94666ab"),
+    (patcher._render_v400_complete_hook_block,
+     "e230f168e113fe61e4251bd5122bec96ee160addd6c01a4a913f3d7712523b34"),
+])
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("silent", [False, True])
+def test_issue479_historical_completion_bytes_upgrade_and_remove(renderer, digest, newline, silent):
+    # Digests captured from fd38812 before changing the current renderer.
+    block = renderer("        ", "\n")
+    assert hashlib.sha256("".join(block).encode()).hexdigest() == digest
+    block = renderer("        ", newline)
+    if silent:
+        block = patcher._with_silent_exception_handler(block, "        ", newline)
+    original = _ALREADY_SENT_HANDLER.replace("\n", newline)
+    anchor = '        if agent_result.get("already_sent")'
+    installed = original.replace(anchor, "".join(block) + anchor)
+    assert patcher.remove_patch(installed).encode() == original.encode()
+    upgraded = patcher.apply_patch(installed, strategy="gateway_run_013_plus")
+    assert upgraded != installed
+    assert "_hfc_keep_native =" in upgraded
+    assert patcher.apply_patch(upgraded, strategy="gateway_run_013_plus") == upgraded
+    assert patcher.remove_patch(upgraded).encode() == original.encode()
+    with pytest.raises(ValueError, match="corrupt completion"):
+        patcher.remove_patch(installed.replace('"input_tokens", 0', '"input_tokens", 1'))
 
 
 def test_complete_hook_keeps_final_return_location_without_already_sent_branch():

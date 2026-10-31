@@ -46,6 +46,79 @@ def load_sources(fixture=FIXTURE):
     return files
 
 
+@pytest.mark.parametrize("mode", ["handoff", "native", "queued-failed"])
+@pytest.mark.parametrize("already_sent,failed", [(True, False), (True, True), (False, False)])
+@pytest.mark.parametrize("media_already_delivered", [False, True])
+def test_issue479_native_completion_continues_streamed_delivery(
+    monkeypatch, mode, already_sent, failed, media_already_delivered,
+):
+    """Execute the patched, hash-verified 0.22.5 delivery method, including its tail."""
+    from hermes_feishu_card.install import patcher
+
+    sources = load_sources(V0225_FIXTURE)
+    target = "gateway/run_turn_persistence.py"
+    patched = patcher.apply_gateway_fragment(
+        sources[target], target, strategy="gateway_run_013_plus",
+        completion_sources=sources,
+    )
+    assert patched.index(patcher.COMPLETE_PATCH_END) < patched.index(
+        'if agent_result.get("already_sent") and not agent_result.get("failed"):'
+    )
+    calls = []
+
+    def admission(local_vars):
+        assert mode != "queued-failed", "failed queued completion must not complete the old card"
+        return mode
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("native fallback must not stage or emit a card")
+
+    monkeypatch.setattr(h, "admission_completion_mode", admission)
+    monkeypatch.setattr(h, "can_stage_exact_base_completion", lambda _: False)
+    monkeypatch.setattr(h, "stage_message_completed_from_hermes_locals_async", forbidden)
+    monkeypatch.setattr(h, "emit_from_hermes_locals_async", forbidden)
+    monkeypatch.setattr(h, "build_event", forbidden)
+
+    async def media(response, event, adapter):
+        calls.append(("media", response))
+
+    async def send(chat_id, text, **kwargs):
+        calls.append(("footer", text))
+
+    adapter = SimpleNamespace(send=send)
+    runner = SimpleNamespace(
+        _delivery_adapter_for=lambda _: adapter,
+        _should_send_voice_reply=lambda *a, **k: False,
+        _reply_anchor_for_event=lambda e: e.message_id,
+        _deliver_media_from_response=media,
+        _event_thread_metadata=lambda *a: {},
+    )
+    globs = dict(diagnostic_wake_muted=lambda _: False, suppress=suppress,
+                 logger=logging.getLogger(__name__))
+    functions(patched, {"_hmwa_deliver_turn_response"}, globs, "issue479-fixture.py")
+    event = SimpleNamespace(message_id="synthetic-message")
+    source = SimpleNamespace(platform="telegram", chat_id="synthetic-chat")
+    response = "answer\nMEDIA: /synthetic/report.txt"
+    result = dict(already_sent=already_sent, failed=failed,
+                  media_already_delivered=media_already_delivered)
+    if mode == "queued-failed":
+        result.update(_hfc_queued_final_attempted=True, _hfc_queued_final_delivered=False)
+    returned = asyncio.run(globs["_hmwa_deliver_turn_response"](
+        runner, event, source, SimpleNamespace(), "synthetic-session", 1,
+        result, [], response, "synthetic-footer", False,
+    ))
+    if already_sent and not failed:
+        assert returned is None
+        assert calls == ([] if media_already_delivered else [("media", response)]) + [
+            ("footer", "synthetic-footer")
+        ]
+        assert event._streamed_final_response == response
+    else:
+        assert returned == response
+        assert calls == []
+        assert not hasattr(event, "_streamed_final_response")
+
+
 @lru_cache(maxsize=4)
 def _rendered_source_template(source_items):
     # Only the unmodified runtime harness uses this immutable, full-content cache.
@@ -190,7 +263,9 @@ def harness(tmp_path, monkeypatch, request):
     for path, raw in files.items():
         dest = tmp_path / path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(raw)
+        # Admission verifies raw SHA-256; Windows text newline conversion
+        # must not turn a supported pinned fixture into an unknown source.
+        dest.write_bytes(raw.encode("utf-8"))
     from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
 
     source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
@@ -1585,7 +1660,7 @@ def test_mixed_known_source_files_are_not_a_supported_cohort(harness):
     # Choose the opposite source family using the current file's digest.
     old = hashlib.sha256(current.read_bytes()).hexdigest() == ac.SOURCE_HASHES["gateway.session_authority"]
     files = load_sources(NEW_FIXTURE if old else FIXTURE)
-    current.write_text(files["gateway/session_authority.py"])
+    current.write_bytes(files["gateway/session_authority.py"].encode("utf-8"))
     assert ac._verified() is None
     assert ac.unsupported_reason() == "unsupported-source"
 
