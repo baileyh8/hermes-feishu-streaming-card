@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.3](release-notes-v5.0.3.md) | Hermes 频道继承兼容、过期交互续答与可选生成速率 |
 | [v5.0.2](release-notes-v5.0.2.md) | 已知中英文瞬态提示撤回，保留排队信息与原生心跳收尾 |
 | [v5.0.1](release-notes-v5.0.1.md) | Hermes 0.22.x completion/审批兼容与 PM 持久依赖登记 |
 | [v5.0.0](release-notes-v5.0.0.md) | 任务分区、交互续答、本轮统计与安装恢复边界 |

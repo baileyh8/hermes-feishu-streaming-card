@@ -2,27 +2,27 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.12`; this batch addresses source-anchor mutation and comparison boundaries in #474/#469. Independent reproduction, QA/review, ordinary-wheel old-patch upgrade/restore, exact full CI and public installation/assets are required. Real Gateway/model and client evidence is recorded separately; simulation does not establish field acceptance. See the [release notes](release-notes-v5.0.12.en.md).
+This branch targets `5.0.13`, repairing non-Feishu completion isolation (#479) and model selection (#478). Candidate acceptance requires independent reproduction, QA/review, ordinary-wheel upgrade/restore, exact-commit full CI and public installation/archive verification. Real Gateway/model and client evidence are recorded separately. See the [release notes](release-notes-v5.0.13.en.md).
 
 ## v5.0.11 historical record
 
-This branch targets `5.0.11`; #471 includes pinned Hermes `9b904dcc22` admission ownership and a restricted installation migration. Candidate acceptance covers HFC already enabled, a strict-false flag, a schema2 member without a marker, and an existing official PM generation. Fresh installs, old v1 receipts and manually installed SDKs remain unsupported and are rejected before admission. An ordinary wheel has passed the restore/reinstall cycle; HOME-scoped uninstall has passed private real-PM failure/retry and two-HOME loopback checks; exact final CI, public installation and assets require separate acceptance. Earlier full CI for `66a29a7` does not cover the new installer changes. The reporter deployment, real Gateway/model and Feishu clients have not been retested. See the [release notes](release-notes-v5.0.11.en.md).
+This branch targets `5.0.13`, repairing non-Feishu completion isolation (#479) and model selection (#478). Candidate acceptance requires independent reproduction, QA/review, ordinary-wheel upgrade/restore, exact-commit full CI and public installation/archive verification. Real Gateway/model and client evidence are recorded separately. See the [release notes](release-notes-v5.0.13.en.md).
 
 ## v5.0.10 historical record
 
-This branch targets `5.0.10`; this batch addresses #469/#470 and adds #451 diagnostics. Independent review/QA, exact full CI, ordinary-wheel provenance, controlled real Feishu API, public installation and release assets are separate release gates. Actual reporter deployments and real Gateway/model execution remain unverified; desktop/Android visual and click checks remain unverified, and iOS/new-user trials are outside scope. Final evidence is published with the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.10).
+This branch targets `5.0.13`, repairing non-Feishu completion isolation (#479) and model selection (#478). Candidate acceptance requires independent reproduction, QA/review, ordinary-wheel upgrade/restore, exact-commit full CI and public installation/archive verification. Real Gateway/model and client evidence are recorded separately. See the [release notes](release-notes-v5.0.13.en.md).
 
 ## Historical records through v5.0.9
 
 The earlier records below are not evidence that the v5.0.10 gates passed.
 
-This branch targets `5.0.9`; this batch repairs #451/#459/#462/#463 and integrates #464/#465/#466 through #467. Independent QA/review, exact final CI, native Windows, ordinary wheel/public install and release assets are separate release gates, with each result bound to its actual commit and recorded in Release. Actual Gateway/model and desktop/Android visual/click acceptance are unverified; iOS/new-user trials are excluded. Final evidence will be linked from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.9).
+This branch targets `5.0.13`, repairing non-Feishu completion isolation (#479) and model selection (#478). Candidate acceptance requires independent reproduction, QA/review, ordinary-wheel upgrade/restore, exact-commit full CI and public installation/archive verification. Real Gateway/model and client evidence are recorded separately. See the [release notes](release-notes-v5.0.13.en.md).
 
 ## Historical records through v5.0.8
 
 The records below are retained evidence and are not v5.0.9 passes.
 
-This branch targets `5.0.8`; this batch combines #458/#459/#461 and handles #462. Final publication and exact evidence are recorded in the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.8).
+This branch targets `5.0.13`, repairing non-Feishu completion isolation (#479) and model selection (#478). Candidate acceptance requires independent reproduction, QA/review, ordinary-wheel upgrade/restore, exact-commit full CI and public installation/archive verification. Real Gateway/model and client evidence are recorded separately. See the [release notes](release-notes-v5.0.13.en.md).
 
 Current candidate: #456, #453 and #451. Pinned v0.22.5 reproduces the original completion-contract rejection; v0.22.4 renders/restores successfully. Unsupported CLI exits 1 locally; exit 0 remains unreproduced. Callback overwrite is confirmed in generated source; 22 contract regressions passed. Expanded four/five-call, footer, normal/waiter and actual Base-function cases did not reproduce #451; bounded diagnostics are added and the issue stays open. Final ordinary-wheel v0.22.5 install/reinstall/doctor/13-source restore passed. Real API no-waiter passed full-answer/terminal-marker readback with 2 successful PATCHes and zero failures; the first waiter attempt failed the old helper assertion before terminal readback. Both cards were recalled and deletion read back. Final CI/CodeQL, public installation and assets remain separate pending gates. Gateway/model, reporter reproduction and desktop/Android visuals/clicks are unverified; iOS/new-user trials are excluded. See [release notes](release-notes-v5.0.7.en.md).
 

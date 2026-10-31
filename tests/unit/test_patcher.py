@@ -817,14 +817,10 @@ def test_apply_patch_upgrades_v400_completion_hook_with_media_text_split():
         "    return response\n"
     )
     latest = patcher.apply_patch(content)
+    # Use the historical bytes rather than editing today's nested renderer.
     v400 = latest.replace(
-        "        from hermes_feishu_card.hook_runtime import native_media_only_response as _hfc_media_only\n",
-        "",
-    ).replace(
-            '            if str(_hfc_platform).lower() == "feishu" and '
-            '_hfc_card_delivered and _hfc_native_delivery == "required":\n'
-            "                response = _hfc_media_only(response)\n",
-        "",
+        "".join(patcher._render_complete_hook_block("    ", "\n")),
+        "".join(patcher._render_v400_complete_hook_block("    ", "\n")),
     )
 
     upgraded = patcher.apply_patch(v400)

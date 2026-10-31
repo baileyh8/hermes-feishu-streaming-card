@@ -187,9 +187,6 @@ def hfc_native_model_picker_card(
 ) -> dict[str, Any]:
     provider = model_picker_provider(providers, selected_provider)
     if provider is None:
-        current_provider_slug = model_picker_current_provider_slug(
-            providers, current_provider
-        )
         options = model_picker_provider_options(
             providers,
             current_provider=current_provider,
@@ -213,15 +210,6 @@ def hfc_native_model_picker_card(
                             "hfc_model_picker_view": "providers",
                         },
                         options=options,
-                        initial_option=next(
-                            (
-                                option["value"]
-                                for option in options
-                                if option["value"].casefold()
-                                == current_provider_slug.casefold()
-                            ),
-                            "",
-                        ),
                     )
                 ],
             },
@@ -302,7 +290,7 @@ def hfc_native_model_picker_card(
         title = f"选择模型 · {provider_name}"
 
     return {
-        "config": {"wide_screen_mode": True},
+        "config": {"wide_screen_mode": True, "update_multi": True},
         "header": {
             "title": {"content": title, "tag": "plain_text"},
             "template": "blue",
