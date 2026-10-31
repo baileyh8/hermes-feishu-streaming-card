@@ -101,6 +101,8 @@ native 来源探测在快照前后分别用可信 Git 验证 HEAD 与 clean stat
 
 V5.0.7 的 `install/completion_contracts.py` 校验 v0.22.5 完成包装器的参数、原始投递调用、后置 usage-limit offer 和原返回值。patcher 继续负责继承/MRO 归属、唯一接点与逐字恢复；不接受任意同形方法名。回调绑定移到当前轮最终配置后，保留静默回合的精确清空分支与审批回调；缓存 Agent 不得复用上一轮 sink。
 
+completion hook 的“保留原生”必须退出 HFC 分支并继续 Hermes 后续控制流，不能提前 `return response`。这包括 `native`、未能 exact staging 的 `handoff` 及排队终局尝试失败：原生 `already_sent` 分支负责媒体、页脚与已流式回复的去重；`failed` 或未流式发送时仍返回完整响应。Feishu 已确认卡片投递的抑制与 media-only 路径保持独立。历史模板必须冻结并精确识别，不能从修改后的当前 renderer 推导旧版字节（#479）。
+
 
 Cron 的交付位置定位在 `install/cron_contracts.py`，通用正文/docstring 位置在 `install/ast_contracts.py`；不得把媒体 hook 移到 extract/filter 之前，或用文件拆分改变旧源码接受范围。
 

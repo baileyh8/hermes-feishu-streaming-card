@@ -988,6 +988,32 @@ def test_renderer_upgrade_refreshes_manifest_without_losing_originals(hermes):
     assert sources(hermes) == before
 
 
+@pytest.mark.parametrize("silent", [False, True])
+@pytest.mark.parametrize("upgrade", [False, True])
+def test_issue479_v5012_installed_completion_upgrade_and_restore(hermes, monkeypatch, silent, upgrade):
+    before = sources(hermes)
+
+    def previous(indent, newline):
+        block = patcher._render_v5012_decomposed_complete_hook_block(indent, newline)
+        return patcher._with_silent_exception_handler(block, indent, newline) if silent else block
+
+    with monkeypatch.context() as old:
+        old.setattr(patcher, "_render_decomposed_complete_hook_block", previous)
+        assert decomposed.install(detect_hermes(hermes))
+    installed = sources(hermes)
+    assert recovery.plan_recovery(detect_hermes(hermes)).state == "owned_incomplete"
+    assert all(decomposed_ownership._remove_target(name, raw) == before[name]
+               for name, raw in installed.items())
+    if upgrade:
+        assert decomposed.install(detect_hermes(hermes))
+        changed = {name for name, raw in sources(hermes).items() if raw != installed[name]}
+        assert changed == {"gateway/run_turn.py"}
+        assert recovery.plan_recovery(detect_hermes(hermes)).state == "installed"
+        assert not decomposed.install(detect_hermes(hermes))
+    decomposed.restore(detect_hermes(hermes))
+    assert sources(hermes) == before
+
+
 def test_explicit_install_uses_verified_portable_writer_without_dirfd(hermes, monkeypatch):
     before = sources(hermes)
     monkeypatch.setattr(recovery, "_secure_dirfd_transactions_supported", lambda: False)

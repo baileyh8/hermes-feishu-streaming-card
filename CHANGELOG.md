@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Preserve Hermes native completion fall-through for non-Feishu streamed replies and failed queued finals, retaining the original media/footer delivery and preventing duplicate Telegram responses (#479).
+- Retain exact historical completion-hook ownership for upgrade and byte-for-byte removal, including reply-anchor, decomposed and silent variants.
+
 ## v5.0.12 — 2026-10-28
 
 - Restrict HFC source-anchor publication to Feishu, preserving LOCAL and other platform sources (#474).
