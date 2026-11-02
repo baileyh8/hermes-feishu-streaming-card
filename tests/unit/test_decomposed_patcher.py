@@ -1190,6 +1190,92 @@ def test_inherited_persistence_earlier_mro_shadow_refused(persistence_hermes):
     assert not detect_hermes(root).supported
 
 
+def add_background_mixins(root):
+    path = root / 'gateway/run_turn.py'
+    bases = ('GatewayBackgroundMixin', 'GatewayTurnPrepareMixin',
+             'GatewayTurnHygieneMixin', 'GatewayTurnPersistenceMixin')
+    modules = ('run_background', 'run_turn_prepare', 'run_turn_hygiene')
+    imports = ''
+    for name, module in zip(bases, modules):
+        imports += f'from gateway.{module} import {name}\n'
+        (root / f'gateway/{module}.py').write_text(f'class {name}:\n    pass\n')
+    path.write_text(imports + path.read_text().replace(
+        'GatewayTurnMixin(GatewayTurnPersistenceMixin)',
+        f"GatewayTurnMixin({', '.join(bases)})"))
+    return root
+
+
+@pytest.fixture
+def background_hermes(persistence_hermes):
+    return add_background_mixins(persistence_hermes)
+
+
+def test_background_owned_target_extension_requires_upgrade(persistence_hermes):
+    root = persistence_hermes
+    decomposed.install(detect_hermes(root))
+    path = root / 'gateway/run_turn.py'
+    path.write_text(patcher.remove_patch(path.read_text()))
+    add_background_mixins(root)
+    expected = {name: decomposed_ownership._remove_target(name, raw)
+                for name, raw in sources(root).items()}
+    assert recovery.plan_recovery(detect_hermes(root)).state == 'stale_unpatched'
+    with pytest.raises(ValueError, match='accept-hermes-upgrade'):
+        decomposed.install(detect_hermes(root))
+    decomposed.install(detect_hermes(root), accept_hermes_upgrade=True)
+    assert recovery.plan_recovery(detect_hermes(root)).state == 'installed'
+    decomposed.restore(detect_hermes(root))
+    assert sources(root) == expected
+
+
+def test_background_mixin_source_ownership_and_roundtrip(background_hermes):
+    root = background_hermes
+    detection = detect_hermes(root)
+    assert detection.supported, detection.reason
+    assert 'gateway/run_background.py' in detection.gateway_files
+    assert detection.capability_locations['completion_return'] == ('gateway/run_turn_persistence.py',)
+    before = sources(root)
+    rendered = decomposed_ownership.render(before)
+    assert rendered['gateway/run_background.py'] == before['gateway/run_background.py']
+    assert {name: decomposed_ownership._remove_target(name, raw)
+            for name, raw in rendered.items()} == before
+    decomposed.install(detection)
+    manifest = json.loads((root / '.hermes_feishu_card_manifest').read_text())
+    assert manifest['targets']['gateway/run_background.py']['original_sha256'] == sha256(
+        before['gateway/run_background.py']).hexdigest()
+    decomposed.install(detect_hermes(root))
+    assert sources(root) == rendered
+    fingerprint = decomposed_ownership._fingerprint(decomposed_ownership._snapshot(root))
+    path = root / 'gateway/run_background.py'
+    path.write_bytes(path.read_bytes() + b'\n# changed background source\n')
+    assert decomposed_ownership._fingerprint(decomposed_ownership._snapshot(root)) != fingerprint
+
+
+@pytest.mark.parametrize('method', sorted(patcher._COMPLETION_METHODS))
+@pytest.mark.parametrize('binding', ['async def {method}(self):\n        pass', '{method} = other'])
+def test_background_completion_shadow_refused(background_hermes, method, binding):
+    path = background_hermes / 'gateway/run_background.py'
+    path.write_text('class GatewayBackgroundMixin:\n    ' + binding.format(method=method) + '\n')
+    detection = detect_hermes(background_hermes)
+    assert detection.compatibility == 'unsupported'
+    assert 'earlier base shadow or rebinding' in detection.reason
+
+
+@pytest.mark.parametrize('old,new', [
+    ('GatewayBackgroundMixin, GatewayTurnPrepareMixin', 'UnknownMixin, GatewayTurnPrepareMixin'),
+    ('GatewayBackgroundMixin, GatewayTurnPrepareMixin', 'GatewayTurnPrepareMixin, GatewayBackgroundMixin'),
+    ('from gateway.run_background import', 'from gateway.other import'),
+])
+def test_background_unknown_shape_refused(background_hermes, old, new):
+    path = background_hermes / 'gateway/run_turn.py'
+    path.write_text(path.read_text().replace(old, new))
+    assert detect_hermes(background_hermes).compatibility == 'unsupported'
+
+
+def test_background_missing_source_refused(background_hermes):
+    (background_hermes / 'gateway/run_background.py').unlink()
+    assert detect_hermes(background_hermes).compatibility == 'unsupported'
+
+
 def test_v4_owned_target_extension_requires_explicit_upgrade_and_restores(hermes):
     decomposed.install(detect_hermes(hermes))
     target = hermes / 'gateway/run_turn.py'

@@ -20,6 +20,51 @@ SOURCES = json.loads(
     (Path(__file__).parents[1] / "fixtures/hermes_upstream_sources.json").read_text()
 )
 
+BACKGROUND_SOURCES = json.loads(
+    (Path(__file__).parents[1] / 'fixtures/hermes_background_sources.json').read_text()
+)
+
+
+@pytest.mark.parametrize('baseline', list(BACKGROUND_SOURCES))
+def test_background_upstream_source_cohort(baseline, tmp_path):
+    """Hash-bound extraction sources; never modify the supplied checkout."""
+    from hermes_feishu_card.install import decomposed, decomposed_ownership, patcher
+    configured = os.environ.get(f'HFC_UPSTREAM_BACKGROUND_{baseline.upper()}_ROOT')
+    if not configured:
+        pytest.skip(f'exact background {baseline} source not supplied')
+    root = tmp_path / 'hermes'
+    expected = BACKGROUND_SOURCES[baseline]
+    for name, digest in expected['sha256'].items():
+        raw = (Path(configured) / name).read_bytes()
+        assert sha256(raw).hexdigest() == digest, (expected['commit'], name)
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    detection = detect_hermes(root)
+    assert detection.supported, detection.reason
+    assert detection.compatibility == 'partial'
+    assert detection.reason == 'supported; admission completion unavailable: unsupported-source'
+    assert 'gateway/run_background.py' in detection.gateway_files
+    originals = {name: (root / name).read_bytes() for name in decomposed.SOURCE_TARGETS
+                 if (root / name).is_file()}
+    rendered = decomposed_ownership.render(originals)
+    assert {name: decomposed_ownership._remove_target(name, raw)
+            for name, raw in rendered.items()} == originals
+    decomposed.install(detection)
+    decomposed.install(detect_hermes(root))
+    assert {name: (root / name).read_bytes() for name in originals} == rendered
+    decomposed.restore(detect_hermes(root))
+    assert {name: (root / name).read_bytes() for name in originals} == originals
+    assert not (root / '.hermes_feishu_card_manifest').exists()
+    assert not list(root.rglob('*.hermes_feishu_card.bak'))
+    background = root / 'gateway/run_background.py'
+    for method in sorted(patcher._COMPLETION_METHODS):
+        text = originals['gateway/run_background.py'].decode()
+        background.write_text(text.replace('class GatewayBackgroundMixin:',
+                              f'class GatewayBackgroundMixin:\n    {method} = None\n'),
+                              encoding='utf-8')
+        assert detect_hermes(root).compatibility == 'unsupported'
+
 
 @pytest.mark.parametrize("baseline", list(SOURCES))
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Recognize the exact Hermes `GatewayBackgroundMixin` extraction without relaxing completion ownership checks (#485). Reject missing, rebound or completion-shadowing background mixins and unknown base orders; include `gateway/run_background.py` in source hashes, ownership and explicit-upgrade evidence.
+
 ## v5.0.13 — 2026-10-31
 
 - Limit completion-hook handling to Feishu so native streamed replies on Telegram and other platforms retain Hermes suppression, media and footer handling (#479).

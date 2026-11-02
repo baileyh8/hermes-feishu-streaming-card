@@ -4298,7 +4298,9 @@ def _split_completion_node(sources, target):
     if (len(owners) != 1 or len(peers) != 1 or len(imports) != 1
             or tuple(ast.unparse(base) for base in owners[0].bases) not in {
                 ("GatewayTurnPersistenceMixin",),
-                ("GatewayTurnPrepareMixin", "GatewayTurnHygieneMixin", "GatewayTurnPersistenceMixin")}
+                ("GatewayTurnPrepareMixin", "GatewayTurnHygieneMixin", "GatewayTurnPersistenceMixin"),
+                ("GatewayBackgroundMixin", "GatewayTurnPrepareMixin", "GatewayTurnHygieneMixin",
+                 "GatewayTurnPersistenceMixin")}
             or any(getattr(node, "name", None) in methods for node in owners[0].body)):
         raise ValueError("inherited completion ownership contract changed")
     # Earlier bases must be proven not to shadow persistence. Bind their
@@ -4307,7 +4309,8 @@ def _split_completion_node(sources, target):
         if not isinstance(base, ast.Name):
             raise ValueError("inherited completion base is not a direct name")
         name = base.id
-        module = {"GatewayTurnPrepareMixin": "gateway.run_turn_prepare",
+        module = {"GatewayBackgroundMixin": "gateway.run_background",
+                  "GatewayTurnPrepareMixin": "gateway.run_turn_prepare",
                   "GatewayTurnHygieneMixin": "gateway.run_turn_hygiene",
                   "GatewayTurnPersistenceMixin": "gateway.run_turn_persistence"}[name]
         bindings = [node for node in handler_tree.body if isinstance(node, ast.ImportFrom)

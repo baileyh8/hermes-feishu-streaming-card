@@ -58,7 +58,8 @@ def _pinned_sources(env_name: str) -> dict[str, bytes]:
         assert sha256(path.read_bytes()).hexdigest() == digest, (
             f"source digest changed: {baseline} {name}"
         )
-    return {name: (root / name).read_bytes() for name in decomposed.SOURCE_TARGETS}
+    return {name: (root / name).read_bytes() for name in decomposed.SOURCE_TARGETS
+            if name in expected['sha256']}
 
 
 def _replace_once(text: str, old: str, new: str) -> str:
