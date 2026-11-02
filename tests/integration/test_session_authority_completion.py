@@ -190,10 +190,12 @@ def harness(tmp_path, monkeypatch, request):
     for path, raw in files.items():
         dest = tmp_path / path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(raw)
+        # Admission verifies exact source bytes; Windows text writes translate LF.
+        dest.write_bytes(raw.encode("utf-8"))
     from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
 
-    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
+    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS
+                         if k in files)
     rendered = dict(_rendered_source_template(source_items))
     result = SimpleNamespace(
         posts=[],
@@ -654,11 +656,28 @@ def harness(tmp_path, monkeypatch, request):
         connection.close()
 
 
+@pytest.mark.parametrize('fixture', [FIXTURE, NEW_FIXTURE, V0225_FIXTURE, ISSUE471_FIXTURE],
+                         ids=['5fc', '0224', '0225', '9b904'])
+def test_old_cohort_renders_without_background_source(fixture):
+    from hermes_feishu_card.install.decomposed_ownership import _remove_target
+    from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
+
+    files = load_sources(fixture)  # Verify the complete cohort before selecting targets.
+    assert 'gateway/run_background.py' not in files
+    originals = {name: files[name].encode() for name in DECOMPOSED_SOURCE_TARGETS
+                 if name in files}
+    rendered = render(originals)
+    assert set(rendered) == set(originals)
+    assert 'gateway/run_background.py' not in rendered
+    assert {name: _remove_target(name, raw) for name, raw in rendered.items()} == originals
+
+
 def test_harness_rendered_templates_isolate_case_and_source_mutations(tmp_path):
     from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
 
     files = load_sources(ISSUE471_FIXTURE)
-    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS)
+    source_items = tuple((k, files[k].encode()) for k in DECOMPOSED_SOURCE_TARGETS
+                         if k in files)
     target = "gateway/platforms/base.py"
 
     @contextmanager
@@ -676,6 +695,7 @@ def test_harness_rendered_templates_isolate_case_and_source_mutations(tmp_path):
         first_ingress = first.ingress
         first_globals = first.ingress.admit_message.__globals__
         first_path = Path(first.ingress.__file__)
+        assert first_path.read_bytes() == files['gateway/session_ingress.py'].encode('utf-8')
         original_ingress = first_path.read_text()
         first_authority = first.Authority(Event())
         with first_authority.db._read_ctx() as connection:
@@ -1642,7 +1662,8 @@ def test_full_official_family_idempotence_and_original_bytes_restore(fixture):
         from hermes_feishu_card.install.decomposed_ownership import _remove_target
         from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
 
-        originals = {name: files[name].encode() for name in DECOMPOSED_SOURCE_TARGETS}
+        originals = {name: files[name].encode() for name in DECOMPOSED_SOURCE_TARGETS
+                     if name in files}
         patched_sources = render(originals)
         assert render(originals) == patched_sources
         assert {name: _remove_target(name, raw) for name, raw in patched_sources.items()} == originals

@@ -1248,6 +1248,18 @@ def test_background_mixin_source_ownership_and_roundtrip(background_hermes):
     path = root / 'gateway/run_background.py'
     path.write_bytes(path.read_bytes() + b'\n# changed background source\n')
     assert decomposed_ownership._fingerprint(decomposed_ownership._snapshot(root)) != fingerprint
+    changed = sources(root)
+    assert recovery.plan_recovery(detect_hermes(root)).state == 'stale_unpatched'
+    with pytest.raises(ValueError, match='accept-hermes-upgrade'):
+        decomposed.install(detect_hermes(root))
+    with pytest.raises(ValueError, match='source drift'):
+        decomposed.restore(detect_hermes(root))
+    assert sources(root) == changed
+    backup = root / 'gateway/run_background.py.hermes_feishu_card.bak'
+    assert backup.read_bytes() == before['gateway/run_background.py']
+    backup.write_bytes(backup.read_bytes() + b'\n# tampered backup\n')
+    with pytest.raises(ValueError, match='backup missing or changed'):
+        decomposed_ownership._inspect(root)
 
 
 @pytest.mark.parametrize('method', sorted(patcher._COMPLETION_METHODS))
