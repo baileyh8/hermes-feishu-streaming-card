@@ -61,6 +61,7 @@
       "tests/unit/test_cli_setup_order.py",
       "tests/unit/test_issue470_config_ownership.py",
       "tests/integration/test_legacy_observer_install.py",
+      "tests/integration/test_install_sensor.py",
       "tests/integration/test_pm_rebind.py",
       "tests/integration/test_official_enable_root.py",
       "tests/unit/test_launch_source_paths.py",
