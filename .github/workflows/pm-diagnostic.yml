@@ -9,13 +9,15 @@ concurrency:
   cancel-in-progress: true
 jobs:
   official225:
-    name: pinned225 (${{ matrix.pyc_mode }})
+    name: pinned225 (${{ matrix.pyc_mode }}, sample ${{ matrix.sample }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
-      fail-fast: false
+      fail-fast: true
+      max-parallel: 2
       matrix:
         pyc_mode: [preserved, cleared]
+        sample: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,7 +45,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: pinned225-${{ matrix.pyc_mode }}
+          name: pinned225-${{ matrix.pyc_mode }}-${{ matrix.sample }}
           path: ${{ runner.temp }}/pm-diagnostic
           if-no-files-found: error
           retention-days: 7
