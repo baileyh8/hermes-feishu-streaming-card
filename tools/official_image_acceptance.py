@@ -602,7 +602,7 @@ def _base_cli() -> list[str]:
 def _pm_observed_cli_code() -> str:
     """Observe PM subprocess metadata once; never publish resolver messages."""
     return r'''
-import hashlib,json,re,runpy,sys
+import collections,hashlib,io,json,re,runpy,sys
 from pathlib import Path
 from hermes_feishu_card.install import pm_dependency as p
 capture=Path(sys.argv[1])
@@ -638,27 +638,30 @@ def record(command,kwargs,result=None,error=None):
             item['stdout']=metadata(result.stdout);item['stderr']=metadata(result.stderr)
             text=(result.stderr.decode('utf-8',errors='replace') if isinstance(result.stderr,bytes)
                   else result.stderr or '')
-            sample=(text if len(text)<=32768 else text[:16384]+'\n[omitted]\n'+text[-16384:])
-            sample=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',sample)
-            frames=[]
-            matches=[]
-            patterns=(r'File "([^"\n]+)", line (\d+), in ([^\n]+)',
-                      r'(?m)^[\s│┃]*((?:[A-Za-z]:[\\/]|/)[^\n:]+|<string>):(\d+)\s+in\s+([^\n]+)')
-            for pattern in patterns:
-                matches.extend((m.start(),m.groups()) for m in re.finditer(pattern,sample))
-            for _,(path,line,name) in sorted(matches):
-                base=path.replace('\\','/').rsplit('/',1)[-1]
-                name=name.strip().rstrip('│┃ ').strip()
-                frames.append({'file':base if base in files else 'unknown',
-                               'line':int(line) if base in files and 0<int(line)<=10000 else 0,
-                               'function':name if name in functions else 'unknown'})
-            item['frames']=frames[-12:]
-            # These are observed literal headers, not a guessed root cause.
-            headers=re.findall(r'(?m)^\s*(?:[A-Za-z_]\w*\.)*('
-                               +'|'.join(re.escape(n) for n in sorted(exceptions))
-                               +r'):',sample)
-            item['exception_headers']=sorted(set(headers))
-            tail=text.strip().splitlines()[-1] if text.strip() else ''
+            f_pat=re.compile(r'File "([^"\n]+)", line (\d+), in ([^\n]+)')
+            r_pat=re.compile(r'^[\s│┃]*((?:[A-Za-z]:[\\/]|/)[^\n:]+|<string>):(\d+)\s+in\s+([^\n]+)')
+            h_pat=re.compile(r'^[\s│┃]*(?:[A-Za-z_]\w*\.)*('+'|'.join(re.escape(n) for n in sorted(exceptions))+r'):')
+            a_pat=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+            frames_deque=collections.deque(maxlen=12)
+            headers_set=set()
+            tail=''
+            for raw in io.StringIO(text):
+                line=a_pat.sub('',raw).strip()
+                if not line:continue
+                tail=line
+                m=f_pat.search(line)
+                if not m:m=r_pat.match(line)
+                if m:
+                    p_str,l_str,f_str=m.groups()
+                    base=p_str.replace('\\','/').rsplit('/',1)[-1]
+                    f_str=f_str.strip().rstrip('│┃ ').strip()
+                    frames_deque.append({'file':base if base in files else 'unknown',
+                                         'line':int(l_str) if base in files and 0<int(l_str)<=10000 else 0,
+                                         'function':f_str if f_str in functions else 'unknown'})
+                m_h=h_pat.match(line)
+                if m_h:headers_set.add(m_h.group(1))
+            item['frames']=list(frames_deque)
+            item['exception_headers']=sorted(headers_set)
             kind=tail.split(':',1)[0]
         else:
             kind=type(error).__name__

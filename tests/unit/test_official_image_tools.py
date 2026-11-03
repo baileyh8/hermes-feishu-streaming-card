@@ -849,3 +849,35 @@ def test_pm_observer_does_not_match_private_class_prefixes(tmp_path, monkeypatch
     assert len(calls) == 1 and record['exception_headers'] == []
     assert record['exception'] == 'unknown'
     assert header not in output.read_text() and 'secret' not in output.read_text()
+
+
+def test_pm_observer_captures_middle_exception_headers_and_frames(tmp_path, monkeypatch):
+    output = tmp_path / "observations.jsonl"
+    head_padding = "  File \"/private/unrelated/other.py\", line 1, in run\n" * 500
+    middle_frame = "│ /opt/hermes/plugins_admission.py:81 in admit_plugin_set_change │\n"
+    middle_header = "ResolutionConflict: synthetic conflict details\n"
+    tail_padding = "  arbitrary tail noise without recognized header\n" * 600
+    stderr = head_padding + middle_frame + middle_header + tail_padding
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(command, {"input": '{"operation":"add"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert {"file": "plugins_admission.py", "line": 81, "function": "admit_plugin_set_change"} in record["frames"]
+    assert record["exception_headers"] == ["ResolutionConflict"]
+
+
+def test_pm_observer_bounds_frames_capacity_to_twelve(tmp_path, monkeypatch):
+    output = tmp_path / "observations.jsonl"
+    lines = [f"  File \"/opt/hermes/install.py\", line {i}, in sync_venv\n" for i in range(1, 31)]
+    lines.append("RuntimeError: finished\n")
+    stderr = "".join(lines)
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(command, {"input": '{"operation":"add"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert len(record["frames"]) == 12
+    assert record["frames"][-1] == {"file": "install.py", "line": 30, "function": "sync_venv"}
+    assert record["frames"][0] == {"file": "install.py", "line": 19, "function": "sync_venv"}
+    assert record["exception_headers"] == ["RuntimeError"]
