@@ -138,7 +138,11 @@ def _run(python, root, home, code, *args, expected=0, stage, timeout=180):
     log = home / (stage + ".log")
     started = time.monotonic()
     print(f"HFC stage={stage} BEGIN budget={timeout}s log={log}", flush=True)
+    # Keep the existing deadline; retain stacks for slow CI stages instead of
+    # leaving only START when the process group must be terminated.
     command = [str(python), "-I", "-u", "-c",
+               "import faulthandler\n"
+               "faulthandler.dump_traceback_later(60, repeat=True)\n"
                f"print('HFC child stage={stage} START', flush=True)\n" + code,
                str(root), *map(str, args)]
     timed_out = False

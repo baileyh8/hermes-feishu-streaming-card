@@ -1390,10 +1390,9 @@ def test_pm_0225_shadow_acl_uses_real_failure_path_without_success_cache(tmp_pat
     # Execute the complete production guard and ACL binding in a real subprocess.
     # Force only adapter admission on non-Windows hosts; upstream stays unmodified.
     child = plugin_config_bytes._CHILD.split("migrate_on_boot=request.get", 1)[0]
-    child = child.replace(
-        "sys.platform=='win32' and request['family']=='pm-0225'",
-        "request['family']=='pm-0225'",
-    )
+    guard = "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226')"
+    assert child.count(guard) == 2, "production ACL audit/binding anchors changed"
+    child = child.replace(guard, "request['family'] in ('pm-0225', 'pm-0226')")
     child += r'''
 acl=sys.modules['hermes_dir_acl']
 assert acl._grant is _refuse_shadow_acl_grant

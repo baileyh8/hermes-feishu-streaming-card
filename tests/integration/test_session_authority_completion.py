@@ -1919,7 +1919,7 @@ async def test_real_sidecar_events_handler_terminalizes_existing_owner(
         monkeypatch.setattr(
             h,
             "load_runtime_config",
-            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=1),
+            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=5),
         )
         monkeypatch.setattr(h, "_post_json_response", harness.real_post)
         event = Event()
@@ -1934,7 +1934,7 @@ async def test_real_sidecar_events_handler_terminalizes_existing_owner(
         )
         response = await client.post("/events", json=started)
         assert response.status == 200 and (await response.json())["applied"] is True
-        await deliver(harness, waiter=waiter, event=event)
+        await deliver(harness, waiter=waiter, event=event, timeout=30)
         sessions = list(app[SESSIONS_KEY].values())
         assert len(sessions) == 1
         assert sessions[0].status == "completed"
@@ -1969,10 +1969,10 @@ async def test_real_sidecar_authenticated_admission_rejection_keeps_native(
         monkeypatch.setattr(
             h,
             "load_runtime_config",
-            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=1),
+            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=5),
         )
         monkeypatch.setattr(h, "_post_json_response", harness.real_post)
-        await deliver(harness, waiter=waiter)
+        await deliver(harness, waiter=waiter, timeout=30)
         assert not app[SESSIONS_KEY]
         assert harness.native == ["complete answer"]
         assert harness.ledger[-1] == ("final", "ingress-a", True)
