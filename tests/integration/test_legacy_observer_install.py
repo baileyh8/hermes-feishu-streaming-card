@@ -263,7 +263,8 @@ values=dict(session_id="synthetic-session",turn_id="synthetic-turn",platform="fe
     usage={"input_tokens":10,"output_tokens":80},api_duration=2.0)
 plugins.invoke_hook("pre_llm_call",**values)
 plugins.invoke_hook("post_api_request",**values)
-assert rt.take_observed_rate("synthetic-session")[1] == 80
+assert rt.take_observed_rate("synthetic-session") is None
+assert rt.take_observed_rate("synthetic-session", "synthetic-turn")[1] == 80
 assert rt.runtime_activity_snapshot() == (0,True)
 assert rt.runtime_interaction_listener_snapshot()["accepting"] is False
 runtime.reset_production_plugin_runtime_for_tests()

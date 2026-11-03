@@ -854,7 +854,7 @@ async def test_native_admission_waiter_and_drain_owned_finish_exact_card(
     ]
 
 
-async def deliver(harness, *, waiter=False, event=None):
+async def deliver(harness, *, waiter=False, event=None, timeout=3):
     event = event or Event()
     authority = harness.Authority(event)
     if waiter:
@@ -862,7 +862,7 @@ async def deliver(harness, *, waiter=False, event=None):
             authority, e
         )
         await asyncio.wait_for(
-            harness.adapter._process_message_background(event, "route-key"), 3
+            harness.adapter._process_message_background(event, "route-key"), timeout
         )
         await authority.sessions["authority-session"].task
     else:
@@ -1870,11 +1870,14 @@ async def test_carrier_final_crosses_real_loopback_http_without_broadening_ack(
             lambda: SimpleNamespace(
                 enabled=True,
                 event_url=f"http://127.0.0.1:{port}/events",
-                timeout_seconds=1,
+                timeout_seconds=5,
             ),
         )
         monkeypatch.setattr(h, "_post_json_response", harness.real_post)
-        await deliver(harness, waiter=waiter)
+        # This checks ACK semantics, not a three-second latency contract.
+        # Source verification and real loopback run concurrently with CI shards;
+        # retain a finite deadlock guard without cancelling a valid delivery.
+        await deliver(harness, waiter=waiter, timeout=30)
         assert len(seen) == 1
         assert seen[0]["data"]["answer"] == "complete answer"
         assert seen[0]["data"]["native_handoff"]["obligation_key"]
