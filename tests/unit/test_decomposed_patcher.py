@@ -115,20 +115,27 @@ def test_mixin_status_handoff_is_detected_patched_and_restored(hermes):
     assert sources(hermes) == before
 
 
-def test_status_binding_upgrades_existing_owned_target_without_target_expansion(hermes):
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_status_binding_upgrades_existing_owned_target_without_target_expansion(
+    hermes, newline,
+):
     _use_mixin_status_handoff(hermes)
     decomposed.install(detect_hermes(hermes))
     target = hermes / "gateway/run_turn_runner.py"
     installed = target.read_text()
-    lines = installed.splitlines(keepends=True)
-    begin = next(i for i, line in enumerate(lines) if patcher.STATUS_PATCH_BEGIN in line)
-    end = next(i for i, line in enumerate(lines) if patcher.STATUS_PATCH_END in line)
-    previous = "".join(lines[:begin] + lines[end + 1 :])
-    target.write_text(previous)
+    installed_bytes = target.read_bytes().replace(b"\r\n", b"\n")
+    previous = installed_bytes.replace(b"\n", newline)
+    lines = previous.splitlines(keepends=True)
+    begin_marker = patcher.STATUS_PATCH_BEGIN.encode()
+    end_marker = patcher.STATUS_PATCH_END.encode()
+    begin = next(i for i, line in enumerate(lines) if begin_marker in line)
+    end = next(i for i, line in enumerate(lines) if end_marker in line)
+    previous = b"".join(lines[:begin] + lines[end + 1 :])
+    target.write_bytes(previous)
     manifest_path = hermes / decomposed.MANIFEST_NAME
     manifest = json.loads(manifest_path.read_text())
     target_name = "gateway/run_turn_runner.py"
-    previous_hash = sha256(previous.encode()).hexdigest()
+    previous_hash = sha256(target.read_bytes()).hexdigest()
     manifest["targets"][target_name]["patched_sha256"] = previous_hash
     manifest["integrity"]["targets"][target_name]["patched_sha256"] = previous_hash
     targets_before = set(manifest["targets"])
