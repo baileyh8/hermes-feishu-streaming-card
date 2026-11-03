@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 from types import SimpleNamespace
 import zipfile
 
@@ -726,3 +728,90 @@ def test_runtime_verify_does_not_overwrite_capture_mode(tmp_path, monkeypatch):
     )
     assert result == 0
     assert json.loads(marker.read_text()) == {"diagnostic_wrapper": True}
+
+
+def _attach_pm_probe(monkeypatch, output, result=None, error=None):
+    from hermes_feishu_card.install import pm_dependency as pm
+    calls = []
+
+    def original(*args, **kwargs):
+        calls.append((args, kwargs))
+        if error is not None:
+            raise error
+        return result
+
+    def call(command, kwargs):
+        return pm.subprocess.run(command, **kwargs)
+
+    monkeypatch.setattr(pm, '_call', call)
+    monkeypatch.setattr(pm.subprocess, 'run', original)
+    monkeypatch.setattr(sys, 'argv', ['observer', str(output), '--help'])
+    namespace = {}
+    exec(acceptance._pm_observed_cli_code().split('# HFC_PM_OBSERVER_ENTRY')[0], namespace)
+    command = ['python', '-I', '-B', '-c', pm._CHILD, '/private-test-root']
+    return pm, command, calls
+
+
+def test_pm_observer_returns_same_object_once_without_changing_arguments(tmp_path, monkeypatch):
+    output = tmp_path / 'observations.jsonl'
+    result = subprocess.CompletedProcess([], 1, stdout='secret-output', stderr=(
+        'Traceback (most recent call last):\n'
+        '  File "/private/secret/install.py", line 42, in sync_venv\n'
+        '  File "https://secret.invalid/token/secret.py", line 99, in secret_function\n'
+        'SecretException: password=secret-password https://secret.invalid/key\n'))
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    environment = {'PRIVATE_SECRET': 'never-record-this'}
+    kwargs = {'input': json.dumps({'operation': 'add', 'secret': 'private-request'}),
+              'env': environment, 'capture_output': True, 'timeout': 600}
+    assert pm._call(command, kwargs) is result
+    assert len(calls) == 1 and calls[0][0][0] is command
+    assert calls[0][1] == kwargs and calls[0][1]['env'] is environment
+    record = json.loads(output.read_text())
+    assert record['operation'] == 'add' and record['returncode'] == 1
+    assert record['frames'] == [
+        {'file': 'install.py', 'line': 42, 'function': 'sync_venv'},
+        {'file': 'unknown', 'line': 0, 'function': 'unknown'}]
+    assert record['exception'] == 'unknown'
+    text = output.read_text()
+    for private in ('secret', 'password', 'https://', 'private-request', 'never-record-this'):
+        assert private not in text
+
+
+def test_pm_observer_preserves_exception_identity_and_does_not_replay(tmp_path, monkeypatch):
+    error = RuntimeError('secret message must not be stored')
+    output = tmp_path / 'observations.jsonl'
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, error=error)
+    with pytest.raises(RuntimeError) as caught:
+        pm._call(command, {'input': '{"operation":"remove"}'})
+    assert caught.value is error and len(calls) == 1
+    assert json.loads(output.read_text()) == {'operation': 'remove', 'exception': 'RuntimeError'}
+
+
+def test_pm_observer_ignores_other_commands_and_callers(tmp_path, monkeypatch):
+    output = tmp_path / 'observations.jsonl'
+    result = subprocess.CompletedProcess([], 0, stdout='', stderr='')
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(['python', '-c', 'other'], {}) is result
+    assert pm.subprocess.run(command, input='{}') is result
+    assert len(calls) == 2 and not output.exists()
+
+
+def test_pm_observer_io_failure_does_not_replace_result(tmp_path, monkeypatch):
+    output = tmp_path / 'missing-parent' / 'observations.jsonl'
+    result = subprocess.CompletedProcess([], 0, stdout='{}', stderr='')
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(command, {'input': '{}'}) is result
+    assert len(calls) == 1 and not output.exists()
+
+
+def test_pm_only_cli_is_explicit_and_keeps_enable_capture_separate(tmp_path, monkeypatch):
+    monkeypatch.setattr(acceptance, '_base_python', lambda: Path('/private/python'))
+    monkeypatch.delenv('HFC_CAPTURE_PM', raising=False)
+    assert acceptance._cli_command(tmp_path, 'probe', ['doctor'])[3:] == [
+        '-m', 'hermes_feishu_card.cli', 'doctor']
+    monkeypatch.setenv('HFC_CAPTURE_PM', '1')
+    command = acceptance._cli_command(tmp_path, 'probe', ['doctor'])
+    assert command[:4] == ['/private/python', '-B', '-I', '-c']
+    assert command[-1] == 'doctor' and command[-2].endswith('probe-pm-observations.jsonl')
+    assert 'plan_enabled_bytes' not in command[4]
+    compile(command[4], '<pm-observer>', 'exec')

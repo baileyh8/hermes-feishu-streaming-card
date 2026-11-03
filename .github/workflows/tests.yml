@@ -1045,7 +1045,7 @@ jobs:
         run: |
           set -euo pipefail
           wheel="$(find "$RUNNER_TEMP/hfc-wheel" -maxdepth 1 -name '*.whl' -print -quit)"
-          args=(--wheel "$wheel" --image "$HFC_IMAGE" --pyc-mode "$HFC_PYC_MODE"
+          args=(--wheel "$wheel" --image "$HFC_IMAGE" --capture-pm --pyc-mode "$HFC_PYC_MODE"
                 --evidence-dir "$RUNNER_TEMP/hfc-image-evidence/$HFC_IMAGE-$HFC_PYC_MODE")
           if [ "${{ matrix.legacy }}" = true ]; then
             legacy="$(find "$RUNNER_TEMP/hfc-legacy-wheel" -maxdepth 1 -name '*.whl' -print -quit)"
