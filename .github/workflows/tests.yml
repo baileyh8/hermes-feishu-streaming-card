@@ -249,7 +249,7 @@ jobs:
         with:
           repository: NousResearch/hermes-agent
           ref: f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab # v0.22.6
-          path: .upstream/stable_0226
+          path: .upstream/0226
       - name: Checkout Hermes issue 471 reported revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -291,7 +291,7 @@ jobs:
           printf 'HFC_LEGACY_PLUGIN_PYTHON=%s\n' "$RUNNER_TEMP/hfc-official-runtime/bin/python" >> "$GITHUB_ENV"
       - name: Verify pinned upstream install, plugin, rate and PM contracts
         env:
-          HFC_UPSTREAM_0226_ROOT: "${{ github.workspace }}/.upstream/stable_0226"
+          HFC_UPSTREAM_0226_ROOT: "${{ github.workspace }}/.upstream/0226"
           HFC_REQUIRE_0226_PIN: "1"
           HFC_UPSTREAM_LATEST_STABLE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_UPSTREAM_LATEST_MAIN_ROOT: "${{ github.workspace }}/.upstream/latest_main"
@@ -325,7 +325,7 @@ jobs:
           HFC_CONFIG_WRITER_0221_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
           HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
-          HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/stable_0226"
+          HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/0226"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -403,7 +403,7 @@ jobs:
         with:
           repository: NousResearch/hermes-agent
           ref: f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab # v0.22.6
-          path: .upstream/stable_0226
+          path: .upstream/0226
       - name: Checkout Hermes reviewed main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -434,7 +434,7 @@ jobs:
           HFC_CONFIG_WRITER_0221_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
           HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
-          HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/stable_0226"
+          HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/0226"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
