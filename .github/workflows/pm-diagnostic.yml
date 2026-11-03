@@ -1,0 +1,49 @@
+name: pinned-pm-diagnostic
+on:
+  push:
+    branches: [codex/pm-diagnostic-20261103]
+permissions:
+  contents: read
+concurrency:
+  group: pinned-pm-diagnostic
+  cancel-in-progress: true
+jobs:
+  official225:
+    name: pinned225 (${{ matrix.pyc_mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        pyc_mode: [preserved, cleared]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Build exact same product candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check setuptools wheel
+          mkdir -p "$RUNNER_TEMP/hfc-wheel"
+          python -m pip wheel --no-deps --no-build-isolation --wheel-dir "$RUNNER_TEMP/hfc-wheel" .
+          test "$(find "$RUNNER_TEMP/hfc-wheel" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')" = 1
+      - name: Diagnose fixed official225 baseline without retries
+        shell: bash
+        env:
+          HFC_PYC_MODE: ${{ matrix.pyc_mode }}
+        run: |
+          set -euo pipefail
+          wheel="$(find "$RUNNER_TEMP/hfc-wheel" -maxdepth 1 -name '*.whl' -print -quit)"
+          python tools/official_image_acceptance.py --wheel "$wheel" --image v0.22.5 --capture-pm --pyc-mode "$HFC_PYC_MODE" --evidence-dir "$RUNNER_TEMP/pm-diagnostic/$HFC_PYC_MODE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: pinned225-${{ matrix.pyc_mode }}
+          path: ${{ runner.temp }}/pm-diagnostic
+          if-no-files-found: error
+          retention-days: 7

@@ -815,3 +815,37 @@ def test_pm_only_cli_is_explicit_and_keeps_enable_capture_separate(tmp_path, mon
     assert command[-1] == 'doctor' and command[-2].endswith('probe-pm-observations.jsonl')
     assert 'plan_enabled_bytes' not in command[4]
     compile(command[4], '<pm-observer>', 'exec')
+
+
+def test_pm_observer_preserves_bounded_head_frames_of_long_errors(tmp_path, monkeypatch):
+    output = tmp_path / 'observations.jsonl'
+    stderr = ('\x1b[31mTraceback (most recent call last):\x1b[0m\n'
+              '  File "/private/secret/install.py", line 42, in sync_venv\n'
+              '│ /private/secret/plugins_admission.py:81 in admit_plugin_set_change │\n'
+              'RuntimeError: secret-password https://secret.invalid/key\n'
+              + ('never-log-private-message\n' * 10000)
+              + 'SecretException: secret-tail\n')
+    result = subprocess.CompletedProcess([], 1, stdout='', stderr=stderr)
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(command, {'input': '{"operation":"add"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert record['frames'] == [
+        {'file': 'install.py', 'line': 42, 'function': 'sync_venv'},
+        {'file': 'plugins_admission.py', 'line': 81, 'function': 'admit_plugin_set_change'}]
+    assert record['exception_headers'] == ['RuntimeError']
+    assert record['stderr']['bytes'] == len(stderr.encode())
+    for private in ('secret', 'never-log', 'https://', '\x1b'):
+        assert private not in output.read_text()
+
+
+@pytest.mark.parametrize('header', ['SecretRuntimeError', 'RuntimeErrorSecret', 'SecretAdmissionRefused'])
+def test_pm_observer_does_not_match_private_class_prefixes(tmp_path, monkeypatch, header):
+    output = tmp_path / 'observations.jsonl'
+    result = subprocess.CompletedProcess([], 1, stdout='', stderr=header + ': secret\n')
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(command, {'input': '{"operation":"add"}'}) is result
+    record = json.loads(output.read_text())
+    assert len(calls) == 1 and record['exception_headers'] == []
+    assert record['exception'] == 'unknown'
+    assert header not in output.read_text() and 'secret' not in output.read_text()

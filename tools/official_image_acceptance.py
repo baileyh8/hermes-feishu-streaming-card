@@ -613,14 +613,18 @@ child_code=p._CHILD
 operations={'probe','current','add','remove','disable-hfc'}
 files={'<string>','plugins_admission.py','install.py','environments.py','filesystem.py',
        'plugins_state.py','_uv.py','config.py','subprocess.py','client.py','paths.py',
-       'plugins.py','plugins_config.py','plugins_manager.py','__init__.py'}
+       'plugins.py','plugins_config.py','plugins_manager.py','workspace.py',
+       'publication.py','plugin_inputs.py','__init__.py'}
 functions={'<module>','admit_plugin_set_change','sync_venv','committed_venv',
            'read_home_selection','file_digest','verified_bytes','verify_sources',
            'config_snapshot','run','check_call','check_output','__init__',
            'resolve','install','ensure','_call','_run','sync','_sync_venv'}
 exceptions={'RuntimeError','ValueError','PermissionError','FileNotFoundError','OSError',
             'CalledProcessError','TimeoutExpired','InstallError','SyncError',
-            'PMError','AdmissionError','LockError','ModuleNotFoundError','ImportError'}
+            'PMError','AdmissionError','LockError','ModuleNotFoundError','ImportError',
+            'AdmissionRefused','DependencyConflict','ResolutionConflict','NoCommittedEnvironment',
+            'AssertionError','RecursionError','MemoryError','TypeError','NameError',
+            'SyntaxError','KeyError','AttributeError','NotADirectoryError','IsADirectoryError'}
 def metadata(output):
     raw=output if isinstance(output,bytes) else (output or '').encode('utf-8',errors='replace')
     return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
@@ -634,13 +638,26 @@ def record(command,kwargs,result=None,error=None):
             item['stdout']=metadata(result.stdout);item['stderr']=metadata(result.stderr)
             text=(result.stderr.decode('utf-8',errors='replace') if isinstance(result.stderr,bytes)
                   else result.stderr or '')
+            sample=(text if len(text)<=32768 else text[:16384]+'\n[omitted]\n'+text[-16384:])
+            sample=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]','',sample)
             frames=[]
-            for path,line,name in re.findall(r'File "([^"\n]+)", line (\d+), in ([^\n]+)',text[-16384:]):
+            matches=[]
+            patterns=(r'File "([^"\n]+)", line (\d+), in ([^\n]+)',
+                      r'(?m)^[\s│┃]*((?:[A-Za-z]:[\\/]|/)[^\n:]+|<string>):(\d+)\s+in\s+([^\n]+)')
+            for pattern in patterns:
+                matches.extend((m.start(),m.groups()) for m in re.finditer(pattern,sample))
+            for _,(path,line,name) in sorted(matches):
                 base=path.replace('\\','/').rsplit('/',1)[-1]
+                name=name.strip().rstrip('│┃ ').strip()
                 frames.append({'file':base if base in files else 'unknown',
                                'line':int(line) if base in files and 0<int(line)<=10000 else 0,
                                'function':name if name in functions else 'unknown'})
             item['frames']=frames[-12:]
+            # These are observed literal headers, not a guessed root cause.
+            headers=re.findall(r'(?m)^\s*(?:[A-Za-z_]\w*\.)*('
+                               +'|'.join(re.escape(n) for n in sorted(exceptions))
+                               +r'):',sample)
+            item['exception_headers']=sorted(set(headers))
             tail=text.strip().splitlines()[-1] if text.strip() else ''
             kind=tail.split(':',1)[0]
         else:
