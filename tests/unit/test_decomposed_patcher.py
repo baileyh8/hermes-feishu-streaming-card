@@ -44,6 +44,355 @@ def sources(root):
             if (root / name).exists()}
 
 
+_MIXIN_STATUS_RUNNER_SOURCE = '''class TurnRunner:
+    def __init__(self, runner, ctx):
+        self._runner, self._ctx = runner, ctx
+
+    def _notice_callback_sync(self, event_type, message):
+        return None
+
+    def _wire_turn_agent_callbacks(self, agent, turn_route, reasoning_config,
+                                   stream_delta_cb, interim_assistant_cb, want_interim_messages):
+        ctx = self._ctx
+        agent.status_callback, agent.notice_callback = ctx._status_callback_sync, (
+            self._local_notice_callback_sync if local_viewer_turn(self) else self._notice_callback_sync)
+
+    def run_sync(self):
+        agent = self._runner.agent
+        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)
+'''
+
+
+def _use_mixin_status_handoff(root):
+    path = root / "gateway/run_turn_runner.py"
+    text = path.read_text()
+    text = text.replace(
+        "    def _status_callback_sync(self, event_type, message):\n"
+        "        ctx = self._ctx\n"
+        "        ctx.status_queue.put((event_type, message))\n\n",
+        "",
+    )
+    text = text.replace(
+        "        ctx = self._ctx\n"
+        "        agent.tool_progress_callback = ctx.progress_callback\n",
+        "        ctx = self._ctx\n"
+        "        agent.status_callback, agent.notice_callback = "
+        "ctx._status_callback_sync, ctx._status_callback_sync\n"
+        "        agent.tool_progress_callback = ctx.progress_callback\n",
+    )
+    text = text.replace(
+        "    def _clarify_callback_sync(self, question, choices, multi_select=False):\n",
+        "    def run_sync(self):\n"
+        "        agent = self._runner.agent\n"
+        "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n\n"
+        "    def _clarify_callback_sync(self, question, choices, multi_select=False):\n",
+    )
+    path.write_text(text)
+
+
+def test_mixin_status_handoff_is_detected_patched_and_restored(hermes):
+    _use_mixin_status_handoff(hermes)
+    before = sources(hermes)
+
+    detection = detect_hermes(hermes)
+
+    assert detection.supported and detection.compatibility == "full"
+    assert detection.capabilities["status_callback"] is True
+    assert detection.capability_locations["status_callback"] == (
+        "gateway/run_turn_runner.py",
+    )
+    decomposed.install(detection)
+    installed = sources(hermes)
+    target = installed["gateway/run_turn_runner.py"].decode()
+    assert patcher.STATUS_PATCH_BEGIN in target
+    assert "agent.status_callback = _hfc_status_callback_wrapper" in target
+    assert "agent.notice_callback = _hfc_status_callback_wrapper" not in target
+    assert patcher.remove_patch(target) == before[
+        "gateway/run_turn_runner.py"
+    ].decode()
+
+    decomposed.restore(detection)
+    assert sources(hermes) == before
+
+
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+def test_status_binding_upgrades_existing_owned_target_without_target_expansion(
+    hermes, newline,
+):
+    _use_mixin_status_handoff(hermes)
+    decomposed.install(detect_hermes(hermes))
+    target = hermes / "gateway/run_turn_runner.py"
+    installed = target.read_text()
+    installed_bytes = target.read_bytes().replace(b"\r\n", b"\n")
+    previous = installed_bytes.replace(b"\n", newline)
+    lines = previous.splitlines(keepends=True)
+    begin_marker = patcher.STATUS_PATCH_BEGIN.encode()
+    end_marker = patcher.STATUS_PATCH_END.encode()
+    begin = next(i for i, line in enumerate(lines) if begin_marker in line)
+    end = next(i for i, line in enumerate(lines) if end_marker in line)
+    previous = b"".join(lines[:begin] + lines[end + 1 :])
+    target.write_bytes(previous)
+    manifest_path = hermes / decomposed.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    target_name = "gateway/run_turn_runner.py"
+    previous_hash = sha256(target.read_bytes()).hexdigest()
+    manifest["targets"][target_name]["patched_sha256"] = previous_hash
+    manifest["integrity"]["targets"][target_name]["patched_sha256"] = previous_hash
+    targets_before = set(manifest["targets"])
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    detection = detect_hermes(hermes)
+    plan = recovery.plan_recovery(detection)
+
+    assert plan.state == "owned_incomplete" and plan.executable
+    assert decomposed.install(detection) is True
+    assert target.read_text() == installed
+    assert set(json.loads(manifest_path.read_text())["targets"]) == targets_before
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("ctx = self._ctx", "ctx = other._ctx"),
+        (
+            "agent.status_callback, agent.notice_callback",
+            "agent.other_callback, agent.notice_callback",
+        ),
+        (
+            "agent.status_callback, agent.notice_callback",
+            "agent.status_callback, agent.other_callback",
+        ),
+        (
+            "self._wire_turn_agent_callbacks(agent, None, None, None, None, True)",
+            "other._wire_turn_agent_callbacks(agent, None, None, None, None, True)",
+        ),
+        (
+            "self._wire_turn_agent_callbacks(agent, None, None, None, None, True)",
+            "self._wire_turn_agent_callbacks(other_agent, None, None, None, None, True)",
+        ),
+        (
+            "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n",
+            "",
+        ),
+    ],
+)
+def test_mixin_status_handoff_requires_exact_turn_and_agent_owner(old, new):
+    source = _MIXIN_STATUS_RUNNER_SOURCE.replace(old, new, 1)
+
+    patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
+
+    assert patcher.STATUS_PATCH_BEGIN not in patched
+
+
+def test_mixin_status_dead_wiring_method_is_not_patched():
+    source = _MIXIN_STATUS_RUNNER_SOURCE.replace(
+        "def _wire_turn_agent_callbacks", "def _dead_status_wiring", 1
+    ).replace(
+        "    def run_sync(self):\n",
+        "    def _wire_turn_agent_callbacks(\n"
+        "        self, agent, turn_route, reasoning_config, stream_delta_cb,\n"
+        "        interim_assistant_cb, want_interim_messages,\n"
+        "    ):\n"
+        "        return None\n\n"
+        "    def run_sync(self):\n",
+        1,
+    )
+
+    patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
+
+    assert patcher.STATUS_PATCH_BEGIN not in patched
+
+
+def test_mixin_status_accepts_known_run_sync_scoped_seam():
+    source = _MIXIN_STATUS_RUNNER_SOURCE.replace(
+        "    def run_sync(self):\n"
+        "        agent = self._runner.agent\n"
+        "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n",
+        "    def run_sync(self):\n"
+        "        return self._run_sync_scoped()\n\n"
+        "    def _run_sync_scoped(self):\n"
+        "        ctx = self._ctx\n"
+        "        agent = self._runner.agent\n"
+        "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n",
+        1,
+    )
+
+    patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
+
+    assert patcher.STATUS_PATCH_BEGIN in patched
+    assert patcher.remove_patch(patched) == source
+
+
+@pytest.mark.parametrize(
+    ("platform", "mute", "guard_mode", "message", "handler_calls"),
+    [
+        ("feishu", False, "live", "Compacting context", 1),
+        ("feishu", False, "live", "正在压缩上下文", 1),
+        ("feishu", True, "live", "Compacting context", 0),
+        ("feishu", False, "stale", "Compacting context", 0),
+        ("feishu", False, "missing", "Compacting context", 0),
+        ("feishu", False, "noncallable", "Compacting context", 0),
+        ("feishu", False, "raises", "Compacting context", 0),
+        ("telegram", False, "live", "Compacting context", 0),
+    ],
+)
+def test_mixin_status_wrapper_preserves_native_fallback(
+    monkeypatch, platform, mute, guard_mode, message, handler_calls,
+):
+    namespace = {"local_viewer_turn": lambda _runner: False}
+    patched = patcher.apply_gateway_fragment(
+        _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
+    )
+    exec(compile(patched, "run_turn_runner.py", "exec"), namespace)
+    handled, native = [], []
+
+    def handle(values, *, event_type, message):
+        handled.append((values, event_type, message))
+        return event_type == "context" and message == "Compacting context"
+
+    monkeypatch.setattr(hook_runtime, "handle_status_from_hermes_locals", handle)
+    source = SimpleNamespace(
+        platform=platform, chat_id="chat-a", thread_id="omt-a", _hfc_turn_id="turn-a"
+    )
+    def run_guard():
+        if guard_mode == "raises":
+            raise RuntimeError("turn ownership unavailable")
+        return guard_mode == "live"
+
+    values = dict(
+        source=source,
+        _status_adapter=object(),
+        mute_notification_reply=mute,
+        _status_chat_id="chat-a",
+        session_key="session-a",
+        event_message_id="message-a",
+        _loop_for_step=None,
+        _status_callback_sync=lambda event_type, text: native.append((event_type, text)),
+        _notice_callback_sync=lambda *args: None,
+    )
+    if guard_mode != "missing":
+        values["_run_still_current"] = None if guard_mode == "noncallable" else run_guard
+    ctx = SimpleNamespace(**values)
+    agent = SimpleNamespace(_current_turn_id="turn-a")
+    runner = namespace["TurnRunner"](SimpleNamespace(), ctx)
+    runner._wire_turn_agent_callbacks(agent, None, None, None, None, True)
+
+    agent.status_callback("context", message)
+
+    assert len(handled) == handler_calls
+    assert bool(native) is (message != "Compacting context" or handler_calls == 0)
+    if handled:
+        values = handled[0][0]
+        assert values["source"] is source
+        assert values["chat_id"] == "chat-a"
+        assert values["message_id"] == "message-a"
+        assert values["turn_id"] == "turn-a"
+        assert values["agent"] is agent
+    assert agent.notice_callback.__self__ is runner
+    assert agent.notice_callback.__func__ is namespace["TurnRunner"]._notice_callback_sync
+
+
+def test_mixin_status_wrapper_rebinds_cached_agent_per_turn(monkeypatch):
+    namespace = {"local_viewer_turn": lambda _runner: False}
+    patched = patcher.apply_gateway_fragment(
+        _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
+    )
+    exec(compile(patched, "run_turn_runner.py", "exec"), namespace)
+    handled = []
+    monkeypatch.setattr(
+        hook_runtime,
+        "handle_status_from_hermes_locals",
+        lambda values, **kwargs: handled.append((values["turn_id"], values["source"])) or True,
+    )
+    agent = SimpleNamespace(_current_turn_id="turn-a")
+
+    def wire(turn_id):
+        source = SimpleNamespace(
+            platform="feishu", chat_id="chat-" + turn_id, thread_id="omt-a",
+            _hfc_turn_id=turn_id,
+        )
+        ctx = SimpleNamespace(
+            source=source,
+            _status_adapter=object(),
+            mute_notification_reply=False,
+            _run_still_current=lambda: True,
+            _status_chat_id=source.chat_id,
+            session_key="session-" + turn_id,
+            event_message_id="message-" + turn_id,
+            _loop_for_step=None,
+            _status_callback_sync=lambda *args: None,
+            _notice_callback_sync=lambda *args: None,
+        )
+        agent._current_turn_id = turn_id
+        namespace["TurnRunner"](SimpleNamespace(), ctx)._wire_turn_agent_callbacks(
+            agent, None, None, None, None, True
+        )
+        return source
+
+    source_a = wire("turn-a")
+    source_b = wire("turn-b")
+    agent.status_callback("context", "Compacting context")
+    agent.status_callback("context", "Compacting context")
+
+    assert handled == [("turn-b", source_b), ("turn-b", source_b)]
+    assert source_a is not source_b
+
+
+@pytest.mark.parametrize("original_raises", [False, True])
+def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(
+    monkeypatch, original_raises,
+):
+    namespace = {"local_viewer_turn": lambda _runner: False}
+    patched = patcher.apply_gateway_fragment(
+        _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
+    )
+    exec(compile(patched, "run_turn_runner.py", "exec"), namespace)
+    handled, native = [], []
+    monkeypatch.setattr(
+        hook_runtime,
+        "handle_status_from_hermes_locals",
+        lambda values, **kwargs: handled.append(values) or True,
+    )
+
+    def make_ctx(turn_id):
+        source = SimpleNamespace(
+            platform="feishu", chat_id="chat-" + turn_id, thread_id="omt-a",
+            _hfc_turn_id=turn_id,
+        )
+        def original(event_type, message):
+            native.append(turn_id)
+            if original_raises:
+                raise RuntimeError("native status failed")
+
+        return SimpleNamespace(
+            source=source,
+            _status_adapter=object(),
+            mute_notification_reply=False,
+            _run_still_current=lambda: True,
+            _status_chat_id=source.chat_id,
+            session_key="session-" + turn_id,
+            event_message_id="message-" + turn_id,
+            _loop_for_step=None,
+            _status_callback_sync=original,
+            _notice_callback_sync=lambda *args: None,
+        )
+
+    runner = namespace["TurnRunner"](SimpleNamespace(), make_ctx("turn-a"))
+    agent = SimpleNamespace(_current_turn_id="turn-a")
+    runner._wire_turn_agent_callbacks(agent, None, None, None, None, True)
+    old_callback = agent.status_callback
+    runner._ctx = make_ctx("turn-b")
+
+    if original_raises:
+        with pytest.raises(RuntimeError, match="native status failed"):
+            old_callback("context", "Compacting context")
+    else:
+        old_callback("context", "Compacting context")
+
+    assert handled == []
+    assert native == ["turn-a"]
+
+
 def test_decomposed_cli_install_doctor_repeat_remove_roundtrip(hermes, monkeypatch):
     # Runtime installation and SDK setup belong to deployment. This fixture
     # has no venv or adapter SDK; all patch/ownership/doctor calls remain real.
@@ -1188,6 +1537,104 @@ def test_inherited_persistence_earlier_mro_shadow_refused(persistence_hermes):
     assert detect_hermes(root).supported
     prepare.write_text('class GatewayTurnPrepareMixin:\n    async def _hmwa_deliver_turn_response(self):\n        pass\n')
     assert not detect_hermes(root).supported
+
+
+def add_background_mixins(root):
+    path = root / 'gateway/run_turn.py'
+    bases = ('GatewayBackgroundMixin', 'GatewayTurnPrepareMixin',
+             'GatewayTurnHygieneMixin', 'GatewayTurnPersistenceMixin')
+    modules = ('run_background', 'run_turn_prepare', 'run_turn_hygiene')
+    imports = ''
+    for name, module in zip(bases, modules):
+        imports += f'from gateway.{module} import {name}\n'
+        (root / f'gateway/{module}.py').write_text(f'class {name}:\n    pass\n')
+    path.write_text(imports + path.read_text().replace(
+        'GatewayTurnMixin(GatewayTurnPersistenceMixin)',
+        f"GatewayTurnMixin({', '.join(bases)})"))
+    return root
+
+
+@pytest.fixture
+def background_hermes(persistence_hermes):
+    return add_background_mixins(persistence_hermes)
+
+
+def test_background_owned_target_extension_requires_upgrade(persistence_hermes):
+    root = persistence_hermes
+    decomposed.install(detect_hermes(root))
+    path = root / 'gateway/run_turn.py'
+    path.write_text(patcher.remove_patch(path.read_text()))
+    add_background_mixins(root)
+    expected = {name: decomposed_ownership._remove_target(name, raw)
+                for name, raw in sources(root).items()}
+    assert recovery.plan_recovery(detect_hermes(root)).state == 'stale_unpatched'
+    with pytest.raises(ValueError, match='accept-hermes-upgrade'):
+        decomposed.install(detect_hermes(root))
+    decomposed.install(detect_hermes(root), accept_hermes_upgrade=True)
+    assert recovery.plan_recovery(detect_hermes(root)).state == 'installed'
+    decomposed.restore(detect_hermes(root))
+    assert sources(root) == expected
+
+
+def test_background_mixin_source_ownership_and_roundtrip(background_hermes):
+    root = background_hermes
+    detection = detect_hermes(root)
+    assert detection.supported, detection.reason
+    assert 'gateway/run_background.py' in detection.gateway_files
+    assert detection.capability_locations['completion_return'] == ('gateway/run_turn_persistence.py',)
+    before = sources(root)
+    rendered = decomposed_ownership.render(before)
+    assert rendered['gateway/run_background.py'] == before['gateway/run_background.py']
+    assert {name: decomposed_ownership._remove_target(name, raw)
+            for name, raw in rendered.items()} == before
+    decomposed.install(detection)
+    manifest = json.loads((root / '.hermes_feishu_card_manifest').read_text())
+    assert manifest['targets']['gateway/run_background.py']['original_sha256'] == sha256(
+        before['gateway/run_background.py']).hexdigest()
+    decomposed.install(detect_hermes(root))
+    assert sources(root) == rendered
+    fingerprint = decomposed_ownership._fingerprint(decomposed_ownership._snapshot(root))
+    path = root / 'gateway/run_background.py'
+    path.write_bytes(path.read_bytes() + b'\n# changed background source\n')
+    assert decomposed_ownership._fingerprint(decomposed_ownership._snapshot(root)) != fingerprint
+    changed = sources(root)
+    assert recovery.plan_recovery(detect_hermes(root)).state == 'stale_unpatched'
+    with pytest.raises(ValueError, match='accept-hermes-upgrade'):
+        decomposed.install(detect_hermes(root))
+    with pytest.raises(ValueError, match='source drift'):
+        decomposed.restore(detect_hermes(root))
+    assert sources(root) == changed
+    backup = root / 'gateway/run_background.py.hermes_feishu_card.bak'
+    assert backup.read_bytes() == before['gateway/run_background.py']
+    backup.write_bytes(backup.read_bytes() + b'\n# tampered backup\n')
+    with pytest.raises(ValueError, match='backup missing or changed'):
+        decomposed_ownership._inspect(root)
+
+
+@pytest.mark.parametrize('method', sorted(patcher._COMPLETION_METHODS))
+@pytest.mark.parametrize('binding', ['async def {method}(self):\n        pass', '{method} = other'])
+def test_background_completion_shadow_refused(background_hermes, method, binding):
+    path = background_hermes / 'gateway/run_background.py'
+    path.write_text('class GatewayBackgroundMixin:\n    ' + binding.format(method=method) + '\n')
+    detection = detect_hermes(background_hermes)
+    assert detection.compatibility == 'unsupported'
+    assert 'earlier base shadow or rebinding' in detection.reason
+
+
+@pytest.mark.parametrize('old,new', [
+    ('GatewayBackgroundMixin, GatewayTurnPrepareMixin', 'UnknownMixin, GatewayTurnPrepareMixin'),
+    ('GatewayBackgroundMixin, GatewayTurnPrepareMixin', 'GatewayTurnPrepareMixin, GatewayBackgroundMixin'),
+    ('from gateway.run_background import', 'from gateway.other import'),
+])
+def test_background_unknown_shape_refused(background_hermes, old, new):
+    path = background_hermes / 'gateway/run_turn.py'
+    path.write_text(path.read_text().replace(old, new))
+    assert detect_hermes(background_hermes).compatibility == 'unsupported'
+
+
+def test_background_missing_source_refused(background_hermes):
+    (background_hermes / 'gateway/run_background.py').unlink()
+    assert detect_hermes(background_hermes).compatibility == 'unsupported'
 
 
 def test_v4_owned_target_extension_requires_explicit_upgrade_and_restores(hermes):

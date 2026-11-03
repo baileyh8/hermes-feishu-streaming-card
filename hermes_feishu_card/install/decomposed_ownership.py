@@ -225,7 +225,7 @@ def _inspect(root: Path, *, render_hooks: bool = True) -> tuple[dict[str, bytes 
     validate_manifest(manifest)
     owned_targets = set(manifest["targets"])
     added = set(sources) - owned_targets
-    extension_targets = {"gateway/run_turn_persistence.py", "gateway/run_turn_prepare.py",
+    extension_targets = {"gateway/run_background.py", "gateway/run_turn_persistence.py", "gateway/run_turn_prepare.py",
                          "gateway/run_turn_hygiene.py"}
     if owned_targets - set(sources) or not added.issubset(extension_targets):
         raise ValueError("decomposed source target set changed")

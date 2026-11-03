@@ -438,6 +438,43 @@ print(json.dumps({
     return result
 
 
+def _manager_evidence_diagnostic(result: dict[str, object]) -> dict[str, object]:
+    reason = result.get("reason_code")
+    source_commit = result.get("source_commit")
+    failures = result.get("source_probe_failures")
+    valid_failures = (
+        failures if type(failures) is list and all(
+            type(item) is tuple
+            and len(item) == 2
+            and item[0] in {"git_head", "git_status", "snapshot", "unknown"}
+            and item[1] in {
+                "timeout", "command_failed", "unavailable", "io_error",
+                "invalid_archive", "invalid_evidence",
+            }
+            for item in failures
+        ) else []
+    )
+    hooks = {}
+    for key in ("observed_registered_hooks", "reported_registered_hooks"):
+        value = result.get(key)
+        hooks[key] = sorted({
+            name for name in value
+            if type(name) is str and name in HFC_REGISTERED_HOOKS
+        }) if type(value) is list else []
+    return {
+        "reason_code": (
+            reason if type(reason) is str and reason in native_hooks._REASON_CODES
+            else "unavailable"
+        ),
+        "source_commit": (
+            source_commit if type(source_commit) is str
+            and re.fullmatch(r"[0-9a-f]{40}", source_commit) else "unavailable"
+        ),
+        "source_probe_failures": valid_failures,
+        **hooks,
+    }
+
+
 def test_fixed_tag_provenance_is_one_canonical_manifest_with_24_slices():
     raw = FIXED_TAG_PROVENANCE_PATH.read_bytes()
     provenance = load_fixed_tag_native_hook_provenance(FIXED_TAG_PROVENANCE_PATH)
@@ -1208,6 +1245,11 @@ def test_real_manager_evidence_missing_api_observer_remains_rejected(installed_f
     result = _run_installed_probe(
         installed_fixed_runtime, FIXED_SOURCE_ROOT, omit_post_api_evidence=True,
     )
+    if "post_api_request" not in result["observed_registered_hooks"]:
+        # The probe can reject the source or plugin runtime before payload
+        # validation. Keep the original empty observation while identifying
+        # which closed gate ran, using only allowlisted diagnostic values.
+        raise AssertionError(_manager_evidence_diagnostic(result))
     assert "post_api_request" in result["observed_registered_hooks"]
     assert "post_api_request" not in result["reported_registered_hooks"]
     assert result["reason_code"] == "registration_incomplete"

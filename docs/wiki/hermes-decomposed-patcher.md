@@ -22,6 +22,15 @@
 该文件，重复定义拒绝安装。doctor 的 `anchor_locations` 显示实际命中文件。
 `status_callback` 仍是 optional，缺失时支持安装并显示 partial。
 
+Hermes v0.22.5 把 `_status_callback_sync` 移到 `gateway/run_turn_progress.py` 的
+`GatewayTurnProgressMixin`，但仍在 `TurnRunner._wire_turn_agent_callbacks` 每轮最后
+把 `ctx._status_callback_sync` 绑定到 `agent.status_callback`。patcher 校验该
+TurnRunner 方法、`ctx = self._ctx` 和 `agent.status_callback, agent.notice_callback`
+的精确交接后，在绑定之后只包装 status callback；`notice_callback` 保持原对象。
+包装器仅在 Feishu、未静默且本轮仍有效时尝试精确的压缩/provider-failure 状态，
+sidecar 不接受时仍调用原回调。该修复复用既有 `run_turn_runner.py` 目标，不扩展
+manifest 目标集合。
+
 TurnRunner 的 `stream_delta_cb` / `interim_assistant_cb` 使用 `ctx` 传递本轮 source、
 message ID、Gateway loop 和 session；approval 未被 sidecar 接管时保留原生回退，
 已经接管但失败/超时则返回拒绝，避免在原话题外再次开启原生审批。

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Restore the verified per-turn status callback handoff for decomposed Hermes without wrapping notice delivery (#482); keep unknown or stale ownership on the native path.
+- Require both exact background extraction cohorts in CI rather than silently skipping them; improve redacted native-probe failure diagnostics and update development quality tools (#483, #484, #486).
+- Recognize the exact Hermes `GatewayBackgroundMixin` extraction without relaxing completion ownership checks (#485). Reject missing, rebound or completion-shadowing background mixins and unknown base orders; include `gateway/run_background.py` in source hashes, ownership and explicit-upgrade evidence.
+
 ## v5.0.13 — 2026-10-31
 
 - Limit completion-hook handling to Feishu so native streamed replies on Telegram and other platforms retain Hermes suppression, media and footer handling (#479).

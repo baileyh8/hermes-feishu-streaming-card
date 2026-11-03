@@ -184,6 +184,22 @@ def test_issue471_checkout_is_separate_and_required_in_pinned_upstream_matrix():
     assert "latest_main" in run["env"]["HFC_CONFIG_WRITER_MAIN_4E58_ROOT"]
 
 
+def test_background_cohorts_have_exact_inputs_and_cannot_silently_skip():
+    from tools.ci_run import FORWARD
+
+    steps = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]["upstream-shards"]["steps"]
+    cohort = json.loads((ROOT / "tests/fixtures/hermes_background_sources.json").read_text())
+    run = next(step for step in steps if "--profile upstream" in step.get("run", ""))
+    assert run["env"]["HFC_REQUIRE_BACKGROUND_COHORTS"] == "1"
+    assert "HFC_REQUIRE_BACKGROUND_COHORTS" in FORWARD
+    for name, expected in cohort.items():
+        checkout = next(step["with"] for step in steps
+                        if step.get("with", {}).get("path") == f".upstream/background_{name}")
+        assert checkout["ref"] == expected["commit"]
+        assert run["env"][f"HFC_UPSTREAM_BACKGROUND_{name.upper()}_ROOT"].endswith(
+            f"/.upstream/background_{name}")
+
+
 def test_macos_slice_offsets_cover_ten_workers_once_and_keep_the_gate():
     jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
     producer = jobs["macos-shards"]

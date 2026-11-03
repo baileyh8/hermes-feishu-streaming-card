@@ -120,8 +120,10 @@ Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py
 - 新 hook block 必须有 patcher 单测和 remove/restore 覆盖。
 - completion hook 只允许飞书进入 HFC 的 admission、queued-final 和卡片交接分支；Telegram 等其他平台必须继续 Hermes 原有 `already_sent`、媒体及最终回复逻辑。平台隔离须覆盖普通、reply-anchor 与拆分 handler，并保留旧版受管 block 的精确识别和可逆升级（#479）。
 - Hermes 0.20 将同步 delivery-ledger 写入包装为 `await asyncio.to_thread(...)`；只可在已验证的 ledger anchor 内解包这一精确结构，未 `await`、其他 wrapper 或全局 call 解包必须继续拒绝。
-- `_status_callback_sync` 是 optional `status_callback` capability；缺失时保持其他安装路径可用并由 doctor 报 partial compatibility。
+- `_status_callback_sync` 是 optional `status_callback` capability；缺失时保持其他安装路径可用并由 doctor 报 partial compatibility。Hermes v0.22.5 的 `GatewayTurnProgressMixin` 方法不在 TurnRunner 内，安装器只接受 `_wire_turn_agent_callbacks` 中 `ctx = self._ctx` 与 `agent.status_callback, agent.notice_callback = ctx._status_callback_sync, ...` 的精确每轮交接，并在交接后包装 status；静默、失效轮次、非 Feishu 或 sidecar 未接受时继续调用原回调，`notice_callback` 不得被第二个 producer 替换。
 - Hermes `79445a496c` facade 拆分的路由、Base helper 契约与 V4 ownership 边界见 [拆分适配说明](hermes-decomposed-patcher.md)。源码布局不得被用作 native hook 能力证明。
+- Hermes `6cfdb53323` 的后台任务拆分只接受 `GatewayBackgroundMixin` 位于 prepare/hygiene/persistence 前的已知完整基类顺序；验证其原始 import、唯一 class、无继承/重绑定且不覆盖完成方法。`gateway/run_background.py` 纳入源码摘要、manifest 与升级 fingerprint；新增文件仍需显式接受源码升级。该兼容不放行未知 admission-completion cohort，也不证明真实 Gateway/飞书已验收。
+  源码回归 cohort 记录在 `tests/fixtures/hermes_background_sources.json`，绑定 rc `30ee54ee013da43a907661567b48f1481c45fd5f` 和 main `4d26e0cceaed0a08ede833caec0ec6d6ca77a4b8`。隔离测试入口仅转发 `HFC_UPSTREAM_BACKGROUND_RC_ROOT` / `HFC_UPSTREAM_BACKGROUND_MAIN_ROOT` 至 `tests/integration/test_upstream_hermes_compat.py`；测试核对完整摘要后复制到临时目录，验证检测、重复安装、逐字恢复和完成方法遮蔽拒绝。未提供源码时明确 skip，不算通过。
 
 ### `hermes_feishu_card/install/recovery.py` and operations execution
 

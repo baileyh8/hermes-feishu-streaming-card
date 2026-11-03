@@ -781,6 +781,8 @@ def _turn_runner_assigns_agent_callback(
 
 
 def _has_patchable_status_callback(module: ast.Module) -> bool:
+    if patcher._find_turn_runner_status_binding_node(module) is not None:
+        return True
     run_agent = _find_function(module, "_run_agent_inner") or _find_function(
         module, "_run_agent"
     )

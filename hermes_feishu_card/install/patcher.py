@@ -312,6 +312,7 @@ def _apply_turn_callbacks(content: str, *, strategy: str) -> str:
             ),
             required_callback_args=("event_type", "message"),
             allow_turn_context=True,
+            binding_renderer=_render_status_binding_hook_block,
         )
     return content
 
@@ -1419,6 +1420,7 @@ def _apply_callback_patch(
     required_callback_args=(),
     required_callback_calls=(),
     allow_turn_context=False,
+    binding_renderer=None,
 ) -> str:
     owned_block = _find_simple_marker_block(
         content,
@@ -1456,16 +1458,23 @@ def _apply_callback_patch(
             required_callback_calls=required_callback_calls,
         )
         use_turn_context = callback_body is not None
+    use_turn_binding = False
+    if callback_body is None and binding_renderer is not None:
+        callback_body = _find_turn_runner_status_binding_location(tree, lines)
+        use_turn_binding = callback_body is not None
     if callback_body is None:
         return content
 
     newline = _detect_newline(content)
     insert_at, body_indent = callback_body
-    hook = (
-        _render_turn_context_hook_block(renderer, body_indent, newline)
-        if use_turn_context
-        else renderer(body_indent, newline)
-    )
+    if use_turn_binding:
+        hook = binding_renderer(body_indent, newline)
+    else:
+        hook = (
+            _render_turn_context_hook_block(renderer, body_indent, newline)
+            if use_turn_context
+            else renderer(body_indent, newline)
+        )
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
 
 
@@ -1742,6 +1751,131 @@ def _find_turn_runner_callback_body_location(
     if direct_context:
         return _turn_context_binding_location(candidate, lines)
     return _body_location(candidate, lines)
+
+
+def _is_ctx_status_callback(node) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "_status_callback_sync"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "ctx"
+    )
+
+
+def _is_status_callback_binding(node) -> bool:
+    if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+        return False
+    target = node.targets[0]
+    value = node.value
+    if (
+        _is_agent_callback_target(target, "status_callback")
+        and _is_ctx_status_callback(value)
+    ):
+        return True
+    return (
+        isinstance(target, ast.Tuple)
+        and len(target.elts) == 2
+        and _is_agent_callback_target(target.elts[0], "status_callback")
+        and _is_agent_callback_target(target.elts[1], "notice_callback")
+        and isinstance(value, ast.Tuple)
+        and len(value.elts) == 2
+        and _is_ctx_status_callback(value.elts[0])
+    )
+
+
+def _iter_calls_without_nested_scopes(node):
+    for child in ast.iter_child_nodes(node):
+        if isinstance(
+            child,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+        ):
+            continue
+        if isinstance(child, ast.Call):
+            yield child
+        yield from _iter_calls_without_nested_scopes(child)
+
+
+def _find_turn_runner_status_binding_method(tree):
+    """Locate the live per-turn callback handoff in ``TurnRunner``.
+
+    Hermes 0.22.5 moved ``_status_callback_sync`` to a mixin, but retained the
+    final ``agent.status_callback = ctx._status_callback_sync`` handoff. Bind
+    to that ownership transfer only when ``run_sync`` directly invokes the
+    containing method with its local ``agent``. A dead method or same-named
+    call on another receiver is not a live hook anchor.
+    """
+    turn_runner = _find_turn_runner_node(tree)
+    if turn_runner is None:
+        return None
+    run_sync = _find_direct_class_function_node(turn_runner, "run_sync")
+    if run_sync is None:
+        return None
+    matches = []
+    for method in turn_runner.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if "agent" not in _function_argument_names(method):
+            continue
+        if not _binds_turn_context(method):
+            continue
+        for node in method.body:
+            if _is_status_callback_binding(node):
+                matches.append((method, node))
+    if len(matches) != 1:
+        return None
+    method, binding = matches[0]
+    callsites = [
+        call for call in _iter_calls_without_nested_scopes(run_sync)
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == method.name
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "agent"
+    ]
+    if len(callsites) == 1:
+        return method, binding
+    if callsites:
+        return None
+    scoped_calls = [
+        call for call in _iter_calls_without_nested_scopes(run_sync)
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_run_sync_scoped"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and not call.args
+        and not call.keywords
+    ]
+    if len(scoped_calls) != 1:
+        return None
+    scoped = _find_direct_class_function_node(turn_runner, "_run_sync_scoped")
+    if scoped is None or not _binds_turn_context(scoped):
+        return None
+    callsites = [
+        call for call in _iter_calls_without_nested_scopes(scoped)
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == method.name
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "agent"
+    ]
+    return (method, binding) if len(callsites) == 1 else None
+
+
+def _find_turn_runner_status_binding_node(tree):
+    match = _find_turn_runner_status_binding_method(tree)
+    return match[1] if match is not None else None
+
+
+def _find_turn_runner_status_binding_location(tree, lines):
+    node = _find_turn_runner_status_binding_node(tree)
+    if node is None:
+        return None
+    end_lineno = getattr(node, "end_lineno", None) or node.lineno
+    return end_lineno, _line_indent(lines, node.lineno - 1)
 
 
 def _find_stable_tool_lifecycle_location(tree, lines):
@@ -2451,6 +2585,7 @@ def _find_simple_owned_patch(
         ])
     if renderer is _render_status_hook_block:
         expected_blocks.extend([
+            _render_status_binding_hook_block(indent, newline),
             _render_v464_status_hook_block(indent, newline),
             _render_turn_context_hook_block(_render_v464_status_hook_block, indent, newline),
         ])
@@ -3858,6 +3993,90 @@ def _render_status_hook_block(indent: str, newline: str, *, suppress_owned: bool
     ]
 
 
+def _render_status_binding_hook_block(indent: str, newline: str):
+    """Wrap one turn's final status callback without taking over notice delivery."""
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    handler_indent = _child_indent(deeper_indent)
+    payload_indent = _child_indent(handler_indent)
+    return [
+        f"{indent}{STATUS_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import handle_status_from_hermes_locals as _hfc_handle_status{newline}"
+        ),
+        f"{inner_indent}_hfc_status_callback = agent.status_callback{newline}",
+        f"{inner_indent}_hfc_bound_status_ctx = ctx{newline}",
+        f"{inner_indent}def _hfc_status_callback_wrapper(event_type, message):{newline}",
+        f"{deeper_indent}try:{newline}",
+        f"{handler_indent}_hfc_ctx = getattr(self, \"_ctx\", None){newline}",
+        (
+            f"{handler_indent}_hfc_platform = "
+            f"getattr(getattr(_hfc_ctx, \"source\", None), \"platform\", None){newline}"
+        ),
+        (
+            f"{handler_indent}_hfc_platform = "
+            f"getattr(_hfc_platform, \"value\", _hfc_platform){newline}"
+        ),
+        (
+            f"{handler_indent}_hfc_status_live = "
+            f"_hfc_ctx is _hfc_bound_status_ctx "
+            f"and str(_hfc_platform).lower() == \"feishu\" "
+            f"and not bool(getattr(_hfc_ctx, \"mute_notification_reply\", True)) "
+            f"and bool(getattr(_hfc_ctx, \"_status_adapter\", None)){newline}"
+        ),
+        f"{handler_indent}_hfc_status_guard = getattr(_hfc_ctx, \"_run_still_current\", None){newline}",
+        (
+            f"{handler_indent}_hfc_status_live = "
+            f"_hfc_status_live and callable(_hfc_status_guard){newline}"
+        ),
+        f"{handler_indent}if _hfc_status_live:{newline}",
+        (
+            f"{payload_indent}_hfc_status_live = "
+            f"bool(_hfc_status_guard()){newline}"
+        ),
+        f"{handler_indent}if _hfc_status_live and _hfc_handle_status({{{newline}",
+        f"{payload_indent}    \"source\": _hfc_ctx.source,{newline}",
+        (
+            f"{payload_indent}    \"chat_id\": getattr("
+            f"_hfc_ctx, \"_status_chat_id\", None),{newline}"
+        ),
+        (
+            f"{payload_indent}    \"conversation_id\": getattr("
+            f"_hfc_ctx, \"session_key\", None),{newline}"
+        ),
+        (
+            f"{payload_indent}    \"message_id\": getattr("
+            f"_hfc_ctx, \"event_message_id\", None),{newline}"
+        ),
+        (
+            f"{payload_indent}    \"_hfc_loop\": getattr("
+            f"_hfc_ctx, \"_loop_for_step\", None),{newline}"
+        ),
+        (
+            f"{payload_indent}    \"_run_still_current\": getattr("
+            f"_hfc_ctx, \"_run_still_current\", None),{newline}"
+        ),
+        (
+            f"{payload_indent}    \"turn_id\": str(getattr("
+            f"_hfc_ctx.source, \"_hfc_turn_id\", \"\") or \"\"),{newline}"
+        ),
+        f"{payload_indent}    \"agent\": agent,{newline}",
+        (
+            f"{payload_indent}}}, event_type=event_type, "
+            f"message=message):{newline}"
+        ),
+        f"{handler_indent}    return{newline}",
+        f"{deeper_indent}except Exception:{newline}",
+        f"{handler_indent}pass{newline}",
+        f"{deeper_indent}return _hfc_status_callback(event_type, message){newline}",
+        f"{inner_indent}agent.status_callback = _hfc_status_callback_wrapper{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{STATUS_PATCH_END}{newline}",
+    ]
+
+
 def _render_v464_status_hook_block(indent: str, newline: str):
     return _render_status_hook_block(indent, newline, suppress_owned=False)
 
@@ -4298,7 +4517,9 @@ def _split_completion_node(sources, target):
     if (len(owners) != 1 or len(peers) != 1 or len(imports) != 1
             or tuple(ast.unparse(base) for base in owners[0].bases) not in {
                 ("GatewayTurnPersistenceMixin",),
-                ("GatewayTurnPrepareMixin", "GatewayTurnHygieneMixin", "GatewayTurnPersistenceMixin")}
+                ("GatewayTurnPrepareMixin", "GatewayTurnHygieneMixin", "GatewayTurnPersistenceMixin"),
+                ("GatewayBackgroundMixin", "GatewayTurnPrepareMixin", "GatewayTurnHygieneMixin",
+                 "GatewayTurnPersistenceMixin")}
             or any(getattr(node, "name", None) in methods for node in owners[0].body)):
         raise ValueError("inherited completion ownership contract changed")
     # Earlier bases must be proven not to shadow persistence. Bind their
@@ -4307,7 +4528,8 @@ def _split_completion_node(sources, target):
         if not isinstance(base, ast.Name):
             raise ValueError("inherited completion base is not a direct name")
         name = base.id
-        module = {"GatewayTurnPrepareMixin": "gateway.run_turn_prepare",
+        module = {"GatewayBackgroundMixin": "gateway.run_background",
+                  "GatewayTurnPrepareMixin": "gateway.run_turn_prepare",
                   "GatewayTurnHygieneMixin": "gateway.run_turn_hygiene",
                   "GatewayTurnPersistenceMixin": "gateway.run_turn_persistence"}[name]
         bindings = [node for node in handler_tree.body if isinstance(node, ast.ImportFrom)
