@@ -155,17 +155,20 @@ def test_mixin_status_handoff_requires_exact_turn_and_agent_owner(old, new):
 
 
 @pytest.mark.parametrize(
-    ("platform", "mute", "live", "message", "handler_calls"),
+    ("platform", "mute", "guard_mode", "message", "handler_calls"),
     [
-        ("feishu", False, True, "Compacting context", 1),
-        ("feishu", False, True, "正在压缩上下文", 1),
-        ("feishu", True, True, "Compacting context", 0),
-        ("feishu", False, False, "Compacting context", 0),
-        ("telegram", False, True, "Compacting context", 0),
+        ("feishu", False, "live", "Compacting context", 1),
+        ("feishu", False, "live", "正在压缩上下文", 1),
+        ("feishu", True, "live", "Compacting context", 0),
+        ("feishu", False, "stale", "Compacting context", 0),
+        ("feishu", False, "missing", "Compacting context", 0),
+        ("feishu", False, "noncallable", "Compacting context", 0),
+        ("feishu", False, "raises", "Compacting context", 0),
+        ("telegram", False, "live", "Compacting context", 0),
     ],
 )
 def test_mixin_status_wrapper_preserves_native_fallback(
-    monkeypatch, platform, mute, live, message, handler_calls,
+    monkeypatch, platform, mute, guard_mode, message, handler_calls,
 ):
     namespace = {"local_viewer_turn": lambda _runner: False}
     patched = patcher.apply_gateway_fragment(
@@ -182,11 +185,15 @@ def test_mixin_status_wrapper_preserves_native_fallback(
     source = SimpleNamespace(
         platform=platform, chat_id="chat-a", thread_id="omt-a", _hfc_turn_id="turn-a"
     )
-    ctx = SimpleNamespace(
+    def run_guard():
+        if guard_mode == "raises":
+            raise RuntimeError("turn ownership unavailable")
+        return guard_mode == "live"
+
+    values = dict(
         source=source,
         _status_adapter=object(),
         mute_notification_reply=mute,
-        _run_still_current=lambda: live,
         _status_chat_id="chat-a",
         session_key="session-a",
         event_message_id="message-a",
@@ -194,6 +201,9 @@ def test_mixin_status_wrapper_preserves_native_fallback(
         _status_callback_sync=lambda event_type, text: native.append((event_type, text)),
         _notice_callback_sync=lambda *args: None,
     )
+    if guard_mode != "missing":
+        values["_run_still_current"] = None if guard_mode == "noncallable" else run_guard
+    ctx = SimpleNamespace(**values)
     agent = SimpleNamespace(_current_turn_id="turn-a")
     runner = namespace["TurnRunner"](SimpleNamespace(), ctx)
     runner._wire_turn_agent_callbacks(agent, None, None, None, None, True)
@@ -257,6 +267,49 @@ def test_mixin_status_wrapper_rebinds_cached_agent_per_turn(monkeypatch):
 
     assert handled == [("turn-b", source_b), ("turn-b", source_b)]
     assert source_a is not source_b
+
+
+def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(monkeypatch):
+    namespace = {"local_viewer_turn": lambda _runner: False}
+    patched = patcher.apply_gateway_fragment(
+        _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
+    )
+    exec(compile(patched, "run_turn_runner.py", "exec"), namespace)
+    handled, native = [], []
+    monkeypatch.setattr(
+        hook_runtime,
+        "handle_status_from_hermes_locals",
+        lambda values, **kwargs: handled.append(values) or True,
+    )
+
+    def make_ctx(turn_id):
+        source = SimpleNamespace(
+            platform="feishu", chat_id="chat-" + turn_id, thread_id="omt-a",
+            _hfc_turn_id=turn_id,
+        )
+        return SimpleNamespace(
+            source=source,
+            _status_adapter=object(),
+            mute_notification_reply=False,
+            _run_still_current=lambda: True,
+            _status_chat_id=source.chat_id,
+            session_key="session-" + turn_id,
+            event_message_id="message-" + turn_id,
+            _loop_for_step=None,
+            _status_callback_sync=lambda event_type, message: native.append(turn_id),
+            _notice_callback_sync=lambda *args: None,
+        )
+
+    runner = namespace["TurnRunner"](SimpleNamespace(), make_ctx("turn-a"))
+    agent = SimpleNamespace(_current_turn_id="turn-a")
+    runner._wire_turn_agent_callbacks(agent, None, None, None, None, True)
+    old_callback = agent.status_callback
+    runner._ctx = make_ctx("turn-b")
+
+    old_callback("context", "Compacting context")
+
+    assert handled == []
+    assert native == ["turn-a"]
 
 
 def test_decomposed_cli_install_doctor_repeat_remove_roundtrip(hermes, monkeypatch):

@@ -3945,9 +3945,12 @@ def _render_status_binding_hook_block(indent: str, newline: str):
             f"import handle_status_from_hermes_locals as _hfc_handle_status{newline}"
         ),
         f"{inner_indent}_hfc_status_callback = agent.status_callback{newline}",
+        f"{inner_indent}_hfc_bound_status_ctx = ctx{newline}",
         f"{inner_indent}def _hfc_status_callback_wrapper(event_type, message):{newline}",
         f"{deeper_indent}try:{newline}",
-        f"{handler_indent}_hfc_ctx = self._ctx{newline}",
+        f"{handler_indent}_hfc_ctx = getattr(self, \"_ctx\", None){newline}",
+        f"{handler_indent}if _hfc_ctx is not _hfc_bound_status_ctx:{newline}",
+        f"{payload_indent}return _hfc_status_callback(event_type, message){newline}",
         (
             f"{handler_indent}_hfc_platform = "
             f"getattr(getattr(_hfc_ctx, \"source\", None), \"platform\", None){newline}"
@@ -3962,14 +3965,15 @@ def _render_status_binding_hook_block(indent: str, newline: str):
             f"and not bool(getattr(_hfc_ctx, \"mute_notification_reply\", True)) "
             f"and bool(getattr(_hfc_ctx, \"_status_adapter\", None)){newline}"
         ),
+        f"{handler_indent}_hfc_status_guard = getattr(_hfc_ctx, \"_run_still_current\", None){newline}",
         (
-            f"{handler_indent}if _hfc_status_live and callable("
-            f"getattr(_hfc_ctx, \"_run_still_current\", None)):"
-            f"{newline}"
+            f"{handler_indent}_hfc_status_live = "
+            f"_hfc_status_live and callable(_hfc_status_guard){newline}"
         ),
+        f"{handler_indent}if _hfc_status_live:{newline}",
         (
             f"{payload_indent}_hfc_status_live = "
-            f"bool(_hfc_ctx._run_still_current()){newline}"
+            f"bool(_hfc_status_guard()){newline}"
         ),
         f"{handler_indent}if _hfc_status_live and _hfc_handle_status({{{newline}",
         f"{payload_indent}    \"source\": _hfc_ctx.source,{newline}",
