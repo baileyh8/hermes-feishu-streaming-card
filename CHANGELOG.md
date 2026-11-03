@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v5.0.14 — 2026-11-03
+
+- Bind observed output rate to the exact native session/turn pair (#441). Preserve that pair across verified Gateway result projection, consume only its terminal slot, and retain unknown-rate omission. The reporter's missing-rate environment is not independently reproduced.
+- Add an exact Hermes v0.22.6 source cohort, including producer lifecycle, post-delivery callbacks and native rate projection. Preserve native return values, single execution and fallback on unknown source or ownership.
+- Verify v0.22.6 file-backend selection before PM admission and again before plugin enable. Unknown/remote backends and update-disabled plugin records are refused rather than silently rewritten; ordinary installation and recovery gates remain required.
+
 - Restore the verified per-turn status callback handoff for decomposed Hermes without wrapping notice delivery (#482); keep unknown or stale ownership on the native path.
 - Require both exact background extraction cohorts in CI rather than silently skipping them; improve redacted native-probe failure diagnostics and update development quality tools (#483, #484, #486).
 - Recognize the exact Hermes `GatewayBackgroundMixin` extraction without relaxing completion ownership checks (#485). Reject missing, rebound or completion-shadowing background mixins and unknown base orders; include `gateway/run_background.py` in source hashes, ownership and explicit-upgrade evidence.

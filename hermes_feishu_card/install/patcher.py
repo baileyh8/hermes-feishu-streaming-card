@@ -6,7 +6,7 @@ from .source_layout import (
     DECOMPOSED_GATEWAY_TARGETS as DECOMPOSED_GATEWAY_TARGETS,
     DECOMPOSED_TARGETS as DECOMPOSED_TARGETS,
 )
-from . import admission_extraction, stop_cancellation
+from . import admission_extraction, stop_cancellation, rate_scope
 from .gateway_contracts import find_stale_interrupted_location
 from .cron_contracts import (
     find_cron_deliver_body_location as _find_cron_deliver_body_location,
@@ -1184,6 +1184,7 @@ def _apply_hfc_command_patch(content: str) -> str:
 
 def remove_patch(content: str) -> str:
     """Remove the owned Feishu card hook block from patched Hermes content."""
+    content = rate_scope.remove(content)
     content = _remove_busy_recall_patch(content)
     content = _remove_long_running_recall_patch(content)
     content = _remove_simple_owned_patch(content, TASK_HEARTBEAT_PATCH_BEGIN,
@@ -1354,6 +1355,7 @@ def remove_cron_patch_lenient(content: str) -> str:
 
 def remove_patch_lenient(content: str) -> str:
     """Remove owned patch markers, accepting older generated block bodies."""
+    content = rate_scope.remove(content)
     content = _remove_busy_recall_patch(content)
     content = _remove_long_running_recall_patch(content)
     owned_complete_block = _find_simple_marker_block(
@@ -4428,6 +4430,8 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
     """Render one routed legacy fragment; never infer an integration mode."""
     if target not in ("gateway/run.py", *DECOMPOSED_GATEWAY_TARGETS):
         raise ValueError("unknown Gateway patch target")
+    if target == "gateway/run_turn_runner.py":
+        content = rate_scope.apply(remove_patch(content))
     tree = _parse_content(content)
     split_node = (_split_completion_node({**completion_sources, target: content}, target)
                   if completion_sources is not None else None)

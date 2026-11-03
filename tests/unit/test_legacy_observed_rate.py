@@ -58,7 +58,8 @@ def runtime(monkeypatch):
 
 def complete(runtime, **changes):
     values = {"response": "A synthetic answer long enough for measured tokens. " * 8,
-              "agent_result": {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": 80}}
+              "agent_result": {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": 80,
+                               "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "synthetic-turn"}}}
     values.update(changes)
     return hook_runtime._event_data("message.completed", values, None, None)
 
@@ -103,6 +104,7 @@ def test_unknown_rate_is_hidden_without_blocking_completion(runtime, monkeypatch
         changes["agent_result"] = {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": 160}
     elif case in ("estimate", "clipped", "mismatch", "session"):
         changes["agent_result"] = {"api_calls": 1, "session_id": "other" if case == "session" else "synthetic-session",
+                                   "_hfc_observed_rate_scope": {"session_id": "other" if case == "session" else "synthetic-session", "turn_id": "synthetic-turn"},
                                    "output_tokens": {"estimate": 0, "clipped": 99999, "mismatch": 81, "session": 80}[case]}
     elif case == "absent":
         monkeypatch.setattr(hook_runtime, "_plugin_runtime", lambda: None)
@@ -124,16 +126,25 @@ def test_ttl_capacity_ambiguity_and_late_observations():
         cache.start(values)
         cache.observe(values)
     assert cache.take("overflow") is None
-    assert cache.take("second")[1] == 80
+    assert cache.take("overflow", "synthetic-turn") is None
+    assert cache.take("second") is None
+    assert cache.take("second", "synthetic-turn")[1] == 80
     clock[0] = 10
     cache.observe(first)
     assert cache.take("synthetic-session") is None
+    assert cache.take("synthetic-session", "synthetic-turn") is None
+    cache.start(first)
+    cache.observe(first)
+    assert cache.take("synthetic-session", "synthetic-turn") is None  # late after terminal
+    first = {**first, "turn_id": "fresh-turn"}
     cache.start(first)
     cache.observe(first)
     overlap = {**first, "turn_id": "overlap"}
     cache.start(overlap)
     cache.observe(overlap)
     assert cache.take("synthetic-session") is None
+    assert cache.take("synthetic-session", "fresh-turn")[1] == 80
+    assert cache.take("synthetic-session", "overlap")[1] == 80
 
 
 def test_capacity_rejection_cannot_borrow_same_session_previous_rate():
@@ -143,13 +154,15 @@ def test_capacity_rejection_cannot_borrow_same_session_previous_rate():
     cache.observe(values)
     cache.start({**values, "turn_id": "new-turn"})
     assert cache.take("synthetic-session") is None
+    assert cache.take("synthetic-session", "new-turn") is None
 
 
 def test_footer_estimate_does_not_disqualify_exact_observations(runtime):
     rt, _ = runtime
     rt.handle_pre_llm_call(**observation())
     rt.handle_post_api_request(**observation())
-    data = complete(rt, response="x" * 320, agent_result={"api_calls": 1, "session_id": "synthetic-session"})
+    data = complete(rt, response="x" * 320, agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                                          "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "synthetic-turn"}})
     assert data["tokens"]["output_tokens"] == 80
     assert data["rate"]["output_tps"] == 40.0
 
@@ -346,7 +359,7 @@ def test_real_marker_bootstrap_never_starts_control_or_listener(installed, monke
             assert rt.observe_only
             hooks["pre_llm_call"](**observation())
             hooks["post_api_request"](**observation())
-            assert rt.take_observed_rate("synthetic-session")[1] == 80
+            assert rt.take_observed_rate("synthetic-session", "synthetic-turn")[1] == 80
     finally:
         runtime_module.reset_production_plugin_runtime_for_tests()
 
@@ -386,7 +399,7 @@ values = dict(session_id="synthetic-session", turn_id="synthetic-turn", platform
 for name in ("pre_llm_call", "post_api_request"):
     for callback in manager._hooks[name]:
         callback(**values)
-assert runtime.active_plugin_runtime().take_observed_rate("synthetic-session")[1] == 80
+assert runtime.active_plugin_runtime().take_observed_rate("synthetic-session", "synthetic-turn")[1] == 80
 runtime.reset_production_plugin_runtime_for_tests()
 '''
     home = tmp_path / "home"
@@ -407,7 +420,8 @@ def test_cached_agent_consecutive_turns_use_own_observations(runtime, legacy_cou
                   "usage": {"input_tokens": 10, "output_tokens": 80 + index * 40}}
         rt.handle_pre_llm_call(**values)
         rt.handle_post_api_request(**values)
-        result = {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": legacy_count}
+        result = {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": legacy_count,
+                  "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": f"turn-{index}"}}
         data = complete(rt, response="x" * 1000, agent_result=result)
         expected = hook_runtime._completion_tokens({"agent_result": result}, "x" * 1000)
         assert data["tokens"] == expected  # Footer semantics are unchanged.
@@ -426,7 +440,7 @@ def test_consumed_turns_do_not_exhaust_capacity():
         values = {**observation(), "turn_id": f"turn-{index}"}
         cache.start(values)
         cache.observe(values)
-        assert cache.take("synthetic-session")[0]["output_tps"] == 40
+        assert cache.take("synthetic-session", f"turn-{index}")[0]["output_tps"] == 40
         assert len(cache.entries) <= 256
 
 
@@ -554,7 +568,8 @@ def completion_locals(**changes):
     return {"platform": "feishu", "chat_id": "synthetic-chat",
             "conversation_id": "synthetic-conversation", "message_id": "synthetic-message",
             "created_at": 1777017600.0, "response": "Full answer MEDIA:/tmp/synthetic.png",
-            "agent_result": {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": 80}, **changes}
+            "agent_result": {"api_calls": 1, "session_id": "synthetic-session", "output_tokens": 80,
+                             "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "synthetic-turn"}}, **changes}
 
 
 @pytest.mark.parametrize("internal", [False, True])
@@ -745,7 +760,7 @@ async def test_actual_completion_entrypoints_freeze_rate_and_retry_payload(runti
         assert posted[0]["data"][field] == preview["data"][field]
     assert posted[0]["data"]["attachments"]
     assert posted[0]["data"]["native_delivery"] == "required"
-    assert rt.take_observed_rate("synthetic-session") is None
+    assert rt.take_observed_rate("synthetic-session", "synthetic-turn") is None
 
 
 @pytest.mark.parametrize("shape", ["python39", "python312", "generic"])
@@ -820,25 +835,124 @@ result = _partial_turn_result(
     assert "rate" not in posted[-1]["data"]
     assert posted[-1]["data"]["answer"] == result["final_response"]
     assert result["api_calls"] == 0 and result["failed"] is True
-    # Purge the stale sample so its late callbacks cannot survive the no-API
-    # terminal or starve the next legitimate observed turn as an overlap.
+    # Unknown scope cannot purge another turn. A stale same-session sample
+    # cannot block or supply the next explicitly identified turn.
     rt.handle_post_api_request(**observation())
     next_values = {**observation(), "turn_id": "synthetic-next-turn", "api_request_id": "next-request"}
     rt.handle_pre_llm_call(**next_values)
     rt.handle_post_api_request(**next_values)
-    actual = hook_runtime.build_event("message.completed", completion_locals(
-        message_id="synthetic-next-message", agent_result={"api_calls": 1, "session_id": "synthetic-session"}))
+    next_locals = completion_locals(
+        message_id="synthetic-next-message", agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                                          "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "synthetic-next-turn"}})
+    actual = hook_runtime.build_event("message.completed", next_locals)
     assert actual["data"]["rate"] == {"output_tps": 40.0, "basis": "request"}
-    assert "rate" not in hook_runtime.build_event("message.completed", completion_locals())["data"]
+    assert "rate" not in hook_runtime.build_event("message.completed", next_locals)["data"]
 
 
-@pytest.mark.parametrize("api_calls", [None, False, -1, "1", "absent"])
+@pytest.mark.parametrize("api_calls", [0, None, False, -1, "1", "absent"])
 def test_unknown_invocation_api_count_discards_unowned_rate(runtime, api_calls):
     rt, _ = runtime
     rt.handle_pre_llm_call(**observation())
     rt.handle_post_api_request(**observation())
-    result = {"session_id": "synthetic-session"}
+    result = {"session_id": "synthetic-session", "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "synthetic-turn"}}
     if api_calls != "absent":
         result["api_calls"] = api_calls
     assert "rate" not in complete(rt, agent_result=result)
-    assert rt.take_observed_rate("synthetic-session") is None
+    # Exact terminal identity is enough to retire its sample, not display it.
+    rt.handle_post_api_request(**observation())
+    assert rt.take_observed_rate("synthetic-session", "synthetic-turn") is None
+
+
+
+def test_missing_or_invalid_scope_hides_rate_and_preserves_sample(runtime):
+    rt, _ = runtime
+    rt.handle_pre_llm_call(**observation())
+    rt.handle_post_api_request(**observation())
+
+    # 1. missing scope
+    data1 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session"})
+    assert "rate" not in data1
+
+    # 2. non-dict scope
+    data2 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session", "_hfc_observed_rate_scope": "invalid"})
+    assert "rate" not in data2
+
+    # 3. scope with extra keys
+    data3 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                       "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "synthetic-turn", "extra": 1}})
+    assert "rate" not in data3
+
+    # 4. scope with wrong turn_id
+    data4 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                       "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "wrong-turn"}})
+    assert "rate" not in data4
+
+    # 5. scope with empty / non-string session_id or turn_id
+    data5 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                       "_hfc_observed_rate_scope": {"session_id": "", "turn_id": "synthetic-turn"}})
+    assert "rate" not in data5
+
+    # Sample was preserved without consumption across all invalid attempts:
+    data_valid = complete(rt)
+    assert data_valid["rate"] == {"output_tps": 40.0, "basis": "request"}
+    # Consumed once:
+    assert "rate" not in complete(rt)
+
+
+def test_rotated_projection_session_preserves_raw_rate_scope(runtime):
+    rt, _ = runtime
+    rt.handle_pre_llm_call(**observation())
+    rt.handle_post_api_request(**observation())
+
+    # Projected session_id changed (e.g. effective_session_id after rotation),
+    # but raw scope still identifies the original session and turn:
+    result = {
+        "api_calls": 1,
+        "session_id": "rotated-session-999",
+        "_hfc_observed_rate_scope": {
+            "session_id": "synthetic-session",
+            "turn_id": "synthetic-turn",
+        },
+    }
+    data = complete(rt, agent_result=result)
+    assert data["rate"] == {"output_tps": 40.0, "basis": "request"}
+
+
+def test_multiple_turns_in_same_session_consume_own_raw_pair(runtime):
+    rt, _ = runtime
+    v1 = {**observation(), "turn_id": "turn-1"}
+    rt.handle_pre_llm_call(**v1)
+    rt.handle_post_api_request(**v1)
+
+    v2 = {**observation(), "turn_id": "turn-2", "usage": {"input_tokens": 10, "output_tokens": 120}}
+    rt.handle_pre_llm_call(**v2)
+    rt.handle_post_api_request(**v2)
+
+    # Consuming turn-2 first
+    data2 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                       "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "turn-2"}})
+    assert data2["rate"] == {"output_tps": 60.0, "basis": "request"}
+
+    # Consuming turn-1 afterwards
+    data1 = complete(rt, agent_result={"api_calls": 1, "session_id": "synthetic-session",
+                                       "_hfc_observed_rate_scope": {"session_id": "synthetic-session", "turn_id": "turn-1"}})
+    assert data1["rate"] == {"output_tps": 40.0, "basis": "request"}
+
+
+def test_preview_does_not_consume_and_terminal_retry_reuses_payload(runtime):
+    rt, _ = runtime
+    rt.handle_pre_llm_call(**observation())
+    rt.handle_post_api_request(**observation())
+
+    values = completion_locals()
+    # Preview must NOT consume observations and leaves rate None:
+    preview = hook_runtime.build_event("message.completed", values, preview=True)
+    assert "rate" not in preview["data"]
+
+    # First actual terminal build consumes the rate:
+    actual = hook_runtime.build_event("message.completed", values)
+    assert actual["data"]["rate"] == {"output_tps": 40.0, "basis": "request"}
+
+    # Second terminal build (e.g. retry) does not consume new rate:
+    second = hook_runtime.build_event("message.completed", values)
+    assert "rate" not in second["data"]

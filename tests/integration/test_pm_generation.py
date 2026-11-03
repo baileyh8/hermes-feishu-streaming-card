@@ -29,6 +29,7 @@ PM_ROOTS = {
     "previous": ("HFC_UPSTREAM_PM_ROOT", "7bda2a3368024f7ae1c70cef16583e7c2c891674"),
     "0224": ("HFC_CONFIG_WRITER_0224_ROOT", "4d04303818b61bf3aa09278af48356315515965b"),
     "0225": ("HFC_CONFIG_WRITER_0225_ROOT", "bf0203a794a07aac3ff764972ab9087baa4e4f4e"),
+    "0226": ("HFC_CONFIG_WRITER_0226_ROOT", "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"),
     "main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
 
@@ -296,7 +297,7 @@ print('ordinary-installed PM branch crossed generations')
     assert not member.exists()
 
 
-@pytest.mark.parametrize("snapshot,metadata_member", [("0224", True), ("0225", False)])
+@pytest.mark.parametrize("snapshot,metadata_member", [("0224", True), ("0225", False), ("0226", False)])
 def test_pinned_pm_metadata_only_and_installable_member_predicates(
     tmp_path, snapshot, metadata_member
 ):

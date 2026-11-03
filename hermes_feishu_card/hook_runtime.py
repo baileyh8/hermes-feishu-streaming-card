@@ -11716,15 +11716,25 @@ def _completion_observed_rate(local_vars):
         result = local_vars.get("agent_result")
         if type(result) is not dict:
             return None
+        scope = result.get("_hfc_observed_rate_scope")
+        if type(scope) is not dict or set(scope.keys()) != {"session_id", "turn_id"}:
+            return None
+        session_id, turn_id = scope.get("session_id"), scope.get("turn_id")
+        if (
+            type(session_id) is not str
+            or type(turn_id) is not str
+            or not session_id
+            or not turn_id
+        ):
+            return None
         runtime = _plugin_runtime()
         if runtime is None:
             return None
-        observed = runtime.take_observed_rate(result.get("session_id"))
-        # A preflight/early return can reuse the session without ever calling
-        # pre_llm_call. Consume and discard unowned old observations unless the
-        # actual result proves this invocation made at least one API request.
+        observed = runtime.take_observed_rate(session_id, turn_id)
+        # A proven terminal retires only its exact turn, even when no usable
+        # API count exists. Late callbacks must not revive a completed turn.
         api_calls = metric_count(result.get("api_calls"))
-        if observed is None or api_calls is None or api_calls == 0:
+        if observed is None or api_calls is None or api_calls <= 0:
             return None
         rate, count = observed
         # Legacy footer counts can be session-cumulative on cached agents.

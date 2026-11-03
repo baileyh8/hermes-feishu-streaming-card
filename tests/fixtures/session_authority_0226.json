@@ -1,0 +1,32 @@
+{
+  "commit": "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab",
+  "archive_sha256": "d5ef7cc133f7c5b4aca2dd6d79025f9570f2125579d169f924d3b18d222cc1f5",
+  "files": {
+    "cron/scheduler.py": "b5956a54f05a8d360b9652149cae0f603e92bc52bb4a5af2b911fbd457f98470",
+    "cron/scheduler_delivery.py": "00ef74f57cddb3d3efd273fc1708be80d525941f2d6ec1b5ef3d57480c7fd9c7",
+    "gateway/platforms/base.py": "ad064118a29bbe6d0d33424fbcde01484305a501aef4aa2584f5808c9b399a3d",
+    "gateway/run.py": "27d7ae38199c34f0638f87d087fd1e992ef391425292c01062e31f43e9e3a999",
+    "gateway/run_background.py": "d8560e78e99f851a98c5e5dd1b80a84affb4ae0dcf70219b70f266a6aa7bb1df",
+    "gateway/run_busy.py": "bd4e044976c467968a5263fe03241b3d2729548cd0317d5cef9bedb013b1fe20",
+    "gateway/run_inbound.py": "fba27a0ad5317c8e86831fd0b99e58ad17ea1bea30a7e4242f5fc50e78bb5204",
+    "gateway/run_notifications.py": "31eba2b09a301ef5294a72bc5c12974648a3e9ec21ebefdb400ff3ed97776a87",
+    "gateway/run_startup.py": "652a2aa52ced4a549e65958b4718d7912f5a1337c9fa73b0ccd66fe83f0f4e20",
+    "gateway/run_turn.py": "b046097f02b3e963da884557d679906444c47047812dbdead9fdf8b404750a0d",
+    "gateway/run_turn_hygiene.py": "de22242a30fd948693b0b09170e25530f7bc3cbd70ef4ded1621a860e3aa01ed",
+    "gateway/run_turn_persistence.py": "e8994e7fcd400e2908fa4d6997d21bfdbb31a9ba06057ff1d84b6117c5204aae",
+    "gateway/run_turn_prepare.py": "a25a4ea24ff44ea77cd7331421b046b252c157ca4c67df9293bb075b41edea9f",
+    "gateway/run_turn_runner.py": "1fbbca238907f365896256ce2c73a68e24b3c70559de6f8034ddca45fa219e9a",
+    "gateway/session.py": "ea2e48b1313fcb24054dccbbdc631321c7cad5526097588b65d20ab86346a870",
+    "gateway/session_authority.py": "207708e4aeb0bf2d8e577f145110a414d80c12da1c4e69570f0402f7d7f6d1a6",
+    "gateway/session_ingress.py": "12466f9c31f57877c6ae8ea6189d76123a278bdc99e5242c13c5c4ecff0f8ae9",
+    "gateway/session_producer_lifecycle.py": "8c95c5c96bc0634c22cd698068194155dc932125a6cbefaea0039a1dfb8653a8",
+    "gateway/platforms/base_post_delivery.py": "89471cd5ff6daf8001cab6d95321b1284a81b5db4943ca3e866fe21361d79206",
+    "gateway/run_turn_followup_ack.py": "f45f7b93d091ecb57f30d80e18d08bca0aa7aae92a7bb796ae9ce4b499852283"
+  },
+  "source_url": "https://github.com/NousResearch/hermes-agent/tree/f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab",
+  "license": "session_authority_5fc490e.LICENSE",
+  "description": "Unmodified pinned v0.22.6 sources. Source-coupled isolated tests are not live Gateway/model acceptance.",
+  "admission_cohort_commits": {
+    "stable-0226": "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"
+  }
+}

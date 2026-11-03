@@ -34,6 +34,7 @@ ROOTS = {
     "pm-0221": ("HFC_CONFIG_WRITER_0221_ROOT", "7bda2a3368024f7ae1c70cef16583e7c2c891674"),
     "pm-0224": ("HFC_CONFIG_WRITER_0224_ROOT", "4d04303818b61bf3aa09278af48356315515965b"),
     "pm-0225": ("HFC_CONFIG_WRITER_0225_ROOT", "bf0203a794a07aac3ff764972ab9087baa4e4f4e"),
+    "pm-0226": ("HFC_CONFIG_WRITER_0226_ROOT", "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"),
     "pm-main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
 EXPECTED_FAMILIES = {"reported-cf4": "pm-0223", "rc2": "pm-0223"}
@@ -503,6 +504,15 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
 
 @pytest.fixture
 def official_enable_diagnostics(monkeypatch):
+    from hermes_feishu_card.install import config_backend_0226 as backend
+    original_probe = backend._run_child_probe
+    def without_pm_toolchain_port(root, python, home, env, layers):
+        # The readonly native selector needs no PM toolchain. Keep the fixture's
+        # startup injection out of this child; production source guards remain
+        # untouched, and actual official enable still uses the real PM port.
+        return original_probe(root, python, home,
+                              {**env, "HFC_TEST_NO_PM_TOOLCHAIN_PORT": "1"}, layers)
+    monkeypatch.setattr(backend, "_run_child_probe", without_pm_toolchain_port)
     original = subprocess.run
 
     def recorded(*args, **kwargs):
@@ -573,7 +583,7 @@ def test_official_failure_diagnostic_redacts_real_child_output(capsys, missing):
     for selection in ("fresh", "already", "disabled-canonical", "explicit-values")
 ] + [
     (family, "fresh", outcome)
-    for family in ("pm-0221", "pm-0224", "pm-0225")
+    for family in ("pm-0221", "pm-0224", "pm-0225", "pm-0226")
     for outcome in ("nonzero", "exception", "journal")
 ])
 def test_private_plan_equals_real_official_writer_and_exact_restore(
@@ -619,7 +629,7 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     disabled = "[keep-disabled, hermes_feishu_card]"
     if selection == "disabled-canonical":
         disabled = "[keep-disabled, hermes_feishu_card, hermes-feishu-card]"
-    version = 50 if family in {"fixed", "pm"} else 51
+    version = 52 if family == "pm-0226" else (50 if family in {"fixed", "pm"} else 51)
     original = (
         f"# preserve exact original bytes\r\nplugins:\r\n  enabled: {enabled}\r\n"
         f"  disabled: {disabled}\r\n  isolation: in_process\r\n"
@@ -1088,7 +1098,7 @@ def test_pm_0225_each_changed_source_drift_refuses_before_child(
     assert not list(state.iterdir())
 
 
-@pytest.mark.parametrize("family", ["pm-0221", "pm-0224", "pm-0225"])
+@pytest.mark.parametrize("family", ["pm-0221", "pm-0224", "pm-0225", "pm-0226"])
 @pytest.mark.parametrize("changed", ["hermes_cli/main.py", "hermes_cli/__init__.py"])
 def test_launch_source_drift_refuses_before_official_child(tmp_path, monkeypatch, family, changed):
     variable, _ = ROOTS[family]
@@ -1314,7 +1324,7 @@ def test_local_source_guard_is_private_child_and_new_family_only(
     assert subprocess.run([sys.executable, "-I", "-c", "pass"], timeout=10).returncode == 0
 
 
-@pytest.mark.parametrize("family", ["pm-0224", "pm-0225"])
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226"])
 def test_private_new_family_compiles_verified_source_instead_of_cached_code(tmp_path, family):
     import py_compile
 

@@ -1,0 +1,117 @@
+{
+  "archive_sha256": "1b8a31903c78cb3b238b95e959de23a171b9cf2f14f9d250b5d3816adca76bc4",
+  "license": "session_authority_5fc490e.LICENSE",
+  "commits": {
+    "0222": "d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "0225": "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+    "0226": "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab",
+    "0224": "4d04303818b61bf3aa09278af48356315515965b",
+    "9b904": "9b904dcc22c23fe8b82834339bbdd96495072e59",
+    "background_main": "4d26e0cceaed0a08ede833caec0ec6d6ca77a4b8",
+    "background_rc": "30ee54ee013da43a907661567b48f1481c45fd5f",
+    "cf4": "cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe",
+    "main0ab": "0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3",
+    "main4e58": "4e58c721c8cf9b51c46636ea84ea6a5cb540880a",
+    "rc2": "f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68"
+  },
+  "files": {
+    "0222": {
+      "agent/conversation_loop.py": "926435d563ef1b7de1049f5c36897f1cda7376508b98164a68a0cb5192656270",
+      "agent/turn_context.py": "1fdc08f930d6f76825c5b06f14377768c31f2178e9d893dc0bed10911be33991",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_finalizer.py": "9000e17a4a0dba03b1d97cc10fe4184addcca685520ca0c9e6c6ef2cb97d1f25",
+      "gateway/run_turn_runner.py": "6ec879a91aa09765515a69368c886d1ce4d3174b159868c966e8740e9cf1b347",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "0225": {
+      "agent/conversation_loop.py": "36dd6f02b169a544a95598dee74cb775914420dc700cc88cc946effd103b72bc",
+      "agent/turn_context.py": "09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_finalizer.py": "4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e",
+      "gateway/run_turn_runner.py": "04f76f4857a8ba251b014d615b814f3920fef8212ad24e69b28fbbc4fdf2df39",
+      "gateway/session_cli_turn.py": "86e16dbefe035b07474465f5c8854cac227c723205ab46559a686391a3cd3032",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "0226": {
+      "agent/conversation_loop.py": "bc1a44a42e254c9500cee099aa0d81590534aecb0ae6986f0f5bce6f24849d49",
+      "agent/turn_context.py": "6dd3b458d8368c9ff98359db77d448592a45dfdbaef199b93a0b312608f48641",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_finalizer.py": "44d5b86f2f76c8668cf28ac853b3a29347223ece9e1b3d4ce3abf2fddd1ae49c",
+      "gateway/run_turn_runner.py": "1fbbca238907f365896256ce2c73a68e24b3c70559de6f8034ddca45fa219e9a",
+      "gateway/session_cli_turn.py": "0aa362fdebed89074dd2b091c3286938360bdf3cb3a5dc5c7b0b21433a96d1ac",
+      "agent/turn_response_intake.py": "8bfa6a82305879370469b6029131988b7048f4c2e940b35c7f390442dce91a74"
+    },
+    "0224": {
+      "gateway/run_turn_runner.py": "6cf9f1acdd64d69f5c613be214695b33dafe215eeced68cebe53f5d0c5e4cbc9",
+      "gateway/session_cli_turn.py": "86e16dbefe035b07474465f5c8854cac227c723205ab46559a686391a3cd3032",
+      "agent/turn_context.py": "09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e",
+      "agent/conversation_loop.py": "5a2b1973189300f0f07a990e39c6f5ddf200288aaec1032205685bef3437e4bf",
+      "agent/turn_finalizer.py": "4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "9b904": {
+      "gateway/run_turn_runner.py": "23fee696d5090fbef9d1841c4eccaea9cb93b4204cc9dcf4c2a49ac198a50aaf",
+      "gateway/session_cli_turn.py": "0aa362fdebed89074dd2b091c3286938360bdf3cb3a5dc5c7b0b21433a96d1ac",
+      "agent/turn_context.py": "4f620a921573d1b28b9bf5704f49500ef1046b3e259a2281404fda53ee939753",
+      "agent/conversation_loop.py": "04e078c88a02499f9b871e0e72b3d20f4415916a46537b2f38d1d694e2c667e5",
+      "agent/turn_finalizer.py": "c9a2dc3a56050172af35fd71dfec43a12071df016daa970d0da42631a5b0a4ab",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "background_main": {
+      "gateway/run_turn_runner.py": "1fbbca238907f365896256ce2c73a68e24b3c70559de6f8034ddca45fa219e9a",
+      "gateway/session_cli_turn.py": "0aa362fdebed89074dd2b091c3286938360bdf3cb3a5dc5c7b0b21433a96d1ac",
+      "agent/turn_context.py": "6dd3b458d8368c9ff98359db77d448592a45dfdbaef199b93a0b312608f48641",
+      "agent/conversation_loop.py": "bc1a44a42e254c9500cee099aa0d81590534aecb0ae6986f0f5bce6f24849d49",
+      "agent/turn_finalizer.py": "44d5b86f2f76c8668cf28ac853b3a29347223ece9e1b3d4ce3abf2fddd1ae49c",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "8bfa6a82305879370469b6029131988b7048f4c2e940b35c7f390442dce91a74"
+    },
+    "background_rc": {
+      "gateway/run_turn_runner.py": "1fbbca238907f365896256ce2c73a68e24b3c70559de6f8034ddca45fa219e9a",
+      "gateway/session_cli_turn.py": "0aa362fdebed89074dd2b091c3286938360bdf3cb3a5dc5c7b0b21433a96d1ac",
+      "agent/turn_context.py": "6dd3b458d8368c9ff98359db77d448592a45dfdbaef199b93a0b312608f48641",
+      "agent/conversation_loop.py": "bc1a44a42e254c9500cee099aa0d81590534aecb0ae6986f0f5bce6f24849d49",
+      "agent/turn_finalizer.py": "44d5b86f2f76c8668cf28ac853b3a29347223ece9e1b3d4ce3abf2fddd1ae49c",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "8bfa6a82305879370469b6029131988b7048f4c2e940b35c7f390442dce91a74"
+    },
+    "cf4": {
+      "gateway/run_turn_runner.py": "6cf9f1acdd64d69f5c613be214695b33dafe215eeced68cebe53f5d0c5e4cbc9",
+      "gateway/session_cli_turn.py": "86e16dbefe035b07474465f5c8854cac227c723205ab46559a686391a3cd3032",
+      "agent/turn_context.py": "09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e",
+      "agent/conversation_loop.py": "5a2b1973189300f0f07a990e39c6f5ddf200288aaec1032205685bef3437e4bf",
+      "agent/turn_finalizer.py": "4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "main0ab": {
+      "gateway/run_turn_runner.py": "66f4e768959343e4dd52a0b9d7f5937f9b8a5ef292fd78659cc8aae79e44fcc1",
+      "gateway/session_cli_turn.py": "1e7a48eb3b64d786907f5230453da7156ace3743f16b3a3724a6f0f5c4df87a6",
+      "agent/turn_context.py": "800fdfe776113120cdd0f0d454f5e7f1c68c4573fcf985980b5e6a873ec22a04",
+      "agent/conversation_loop.py": "5a2b1973189300f0f07a990e39c6f5ddf200288aaec1032205685bef3437e4bf",
+      "agent/turn_finalizer.py": "9000e17a4a0dba03b1d97cc10fe4184addcca685520ca0c9e6c6ef2cb97d1f25",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "main4e58": {
+      "gateway/run_turn_runner.py": "6cf9f1acdd64d69f5c613be214695b33dafe215eeced68cebe53f5d0c5e4cbc9",
+      "gateway/session_cli_turn.py": "86e16dbefe035b07474465f5c8854cac227c723205ab46559a686391a3cd3032",
+      "agent/turn_context.py": "09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e",
+      "agent/conversation_loop.py": "5a2b1973189300f0f07a990e39c6f5ddf200288aaec1032205685bef3437e4bf",
+      "agent/turn_finalizer.py": "4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    },
+    "rc2": {
+      "gateway/run_turn_runner.py": "6cf9f1acdd64d69f5c613be214695b33dafe215eeced68cebe53f5d0c5e4cbc9",
+      "gateway/session_cli_turn.py": "86e16dbefe035b07474465f5c8854cac227c723205ab46559a686391a3cd3032",
+      "agent/turn_context.py": "09a6159b0301da271f1a6bdcf15d924a05dee8d7d6b9e2f4ed46e406aac0aa4e",
+      "agent/conversation_loop.py": "5a2b1973189300f0f07a990e39c6f5ddf200288aaec1032205685bef3437e4bf",
+      "agent/turn_finalizer.py": "4c1e83c6a23bcb7fc10f942306459b54b130975fdce3d76d8fd7f2432698632e",
+      "agent/turn_facade.py": "e9176a8ae1d7822fa45c75b680d5ae4be7c949e49c877673aea867cc146856a0",
+      "agent/turn_response_intake.py": "e0cf381f7c9fc9a5bad5e6c955643a86c575707194924f1d680e16170c1e821f"
+    }
+  }
+}

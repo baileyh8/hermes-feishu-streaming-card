@@ -7,6 +7,8 @@
 | Feishu/CardKit 传输错误、重试与不确定结果字段 | `delivery.FeishuAPIError` | client 与 CardKit 引用同一个错误 class；client 旧公开入口直接重导出，CardKit 不反向导入 client。重试顺序与发送逻辑仍由原 owner 持有 |
 | 终态 PATCH、有限重试、一次补发的顺序 | `terminal_delivery`；结果类型在 `delivery` | server 冻结目标，注入 I/O，核对 generation 后提交回执/通知/检查点 |
 | 事件路由、reply alias、独立通知归属及交互回复位置 | `event_rules` | server 在原锁域读取状态并写入 alias；交互状态、runtime reservation 与直接发卡复用一次 thread/anchor 决策，纯规则不发送消息 |
+| 原生模型结果到 Gateway 的可选速率归属 | `native_rate_scope` / `install.rate_scope` | 冻结并借用原 bound callable，核验源码与实际加载入口；只透传同一 raw result 的 session/turn，未知时隐藏，无执行 registry |
+| 固定 v0.22.6 原生处理与投递后回调来源校验 | `admission_topology_0226` | 只读检查同一源码组及已加载函数、decorator closure 与 aliases；不加载未知模块，不接管原生 lifecycle |
 | Session Authority 跨 Task terminal display carrier | `admission_completion` | 仅借原 event/marker maps；完整源与 loaded code 绑定、单用 TTL、原 row/epoch 与 route 校验；Base ledger/执行 claim 不迁移 |
 | native terminal admission、重复终态与持久 fence 衔接 | `native_admission` | 只依赖原始事件、owner 快照与四方法 store port；server 保留 policy、cache 提交、HTTP/指标与 repair 调度 |
 | 原 Hermes resolver 的单次认证 HTTP 请求 | `interaction_resolver` | server 在原锁内验证 owner、锁外请求、重新入锁校验对象/token/descriptor，再应用结果；指标与 HTTP 回执仍由 server 管理 |
@@ -115,3 +117,9 @@ server 只适配本轮真实 owner message、session 与配置。实时卡和标
 ## Canonical turn carrier
 
 `canonical_turn.py` owns the existing thread/task ContextVar, bounded registry, opaque tokens and weak Agent metrics reference. `hook_runtime` keeps direct compatibility exports for installed hook call sites; the plugin reads the same carrier directly, without importing the hook adapter. Publication, copied-context restrictions, reset revocation and clear order are unchanged. There is no second registry or authorization path. The private registry-limit fault injection belongs to this implementation module.
+
+### Hermes v0.22.6 配置写入来源
+
+`install/_writer_0226.py` 保存精确上游 commit 的写入与启动来源摘要；`install/config_backend_0226.py` 只读核验原生 env-loader 的两阶段后端选择及环境层证据。`plugin_config_bytes.py` 保留私有字节计划，`pm_dependency.py` 在 PM 准入前复用同一后端与更新记录门禁；这些模块不接管远程配置或插件更新保护记录的恢复。
+
+Hermes v0.22.6 安装前须先由 Hermes 自己完成配置迁移（`_config_version: 52`）。旧、缺失、畸形或未知版本标记在 PM 修改前拒绝；请通过正常 Hermes 升级或 `hermes config migrate` 完成，不要手改版本标记。HFC 不接管浏览器配置或 left-core 迁移。

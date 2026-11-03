@@ -244,6 +244,12 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e # v0.22.5
           path: .upstream/issue456_0225
+      - name: Checkout Hermes v0.22.6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab # v0.22.6
+          path: .upstream/stable_0226
       - name: Checkout Hermes issue 471 reported revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -285,6 +291,8 @@ jobs:
           printf 'HFC_LEGACY_PLUGIN_PYTHON=%s\n' "$RUNNER_TEMP/hfc-official-runtime/bin/python" >> "$GITHUB_ENV"
       - name: Verify pinned upstream install, plugin, rate and PM contracts
         env:
+          HFC_UPSTREAM_0226_ROOT: "${{ github.workspace }}/.upstream/stable_0226"
+          HFC_REQUIRE_0226_PIN: "1"
           HFC_UPSTREAM_LATEST_STABLE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_UPSTREAM_LATEST_MAIN_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_UPSTREAM_STABLE_ROOT: "${{ github.workspace }}/.upstream/stable"
@@ -317,6 +325,7 @@ jobs:
           HFC_CONFIG_WRITER_0221_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
           HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
+          HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/stable_0226"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -325,12 +334,15 @@ jobs:
           --shards 12 --workers 4 --offset $(( ${{ matrix.slice }} * 4 ))
           --results "$RUNNER_TEMP/results" --scratch "$RUNNER_TEMP/ci-workers" --
           tests/integration/test_official_plugin_config_bytes.py
+          tests/unit/test_config_backend_0226.py
           tests/integration/test_official_enable_root.py
           tests/integration/test_legacy_observer_install.py
           tests/unit/test_legacy_observed_rate.py::test_real_v0222_plugin_manager_load
           tests/integration/test_upstream_hermes_compat.py
           tests/integration/test_session_authority_completion.py::test_issue471_snapshot_matches_pinned_checkout
           tests/integration/test_session_authority_completion.py::test_issue471_writer_contract_rejects_before_child
+          tests/integration/test_session_authority_completion.py::test_v0226_snapshot_matches_pinned_checkout
+          tests/integration/test_session_authority_completion.py::test_native_rate_identity_snapshot_matches_existing_pin
           tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
           tests/unit/test_plugin_turn_metrics.py::test_upstream_rate_timestamps_include_lifecycle_and_reasoning
@@ -386,6 +398,12 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: bf0203a794a07aac3ff764972ab9087baa4e4f4e
           path: .upstream/issue456_0225
+      - name: Checkout Hermes v0.22.6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab # v0.22.6
+          path: .upstream/stable_0226
       - name: Checkout Hermes reviewed main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -416,6 +434,7 @@ jobs:
           HFC_CONFIG_WRITER_0221_ROOT: "${{ github.workspace }}/.upstream/issue428_7bda2a"
           HFC_CONFIG_WRITER_0224_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
+          HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/stable_0226"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -800,7 +819,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.13
+          HFC_VERSION: v5.0.14
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-

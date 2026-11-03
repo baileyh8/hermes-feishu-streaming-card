@@ -2101,3 +2101,53 @@ def test_actual_windows_pm_junction_never_writes_outside_home(pm_env, tmp_path, 
         assert set(outside.iterdir()) == {sentinel}
     finally:
         os.rmdir(junction)
+
+
+@pytest.mark.parametrize("records", ["{}", "[]", "null", "{other: true}"])
+def test_0226_update_records_refuse_before_pm_probe(pm_env, monkeypatch, records):
+    from hermes_feishu_card.install import legacy_observer, plugin_config_bytes
+    monkeypatch.setattr(legacy_observer, "available", lambda root: True)
+    monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", lambda root, **kw: "pm-0226")
+    config = pm_env.home / "config.yaml"
+    before = ("_config_version: 52\nplugins:\n  disabled_by_update: " + records + "\n").encode()
+    config.write_bytes(before)
+    with pytest.raises(ValueError, match="PM admission refused"):
+        register(pm_env)
+    assert pm_env.calls == []
+    assert config.read_bytes() == before
+    assert not (pm_env.home / "plugins").exists()
+
+
+def test_0226_backend_refusal_precedes_pm_probe(pm_env, monkeypatch):
+    from hermes_feishu_card.install import config_backend_0226, legacy_observer, plugin_config_bytes
+    monkeypatch.setattr(legacy_observer, "available", lambda root: True)
+    monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", lambda root, **kw: "pm-0226")
+    before = b"_config_version: 52\nplugins: {enabled: []}\n"
+    config = pm_env.home / "config.yaml"
+    config.write_bytes(before)
+    def refuse(*args):
+        raise config_backend_0226.BackendRefused("backend refusal")
+    monkeypatch.setattr(config_backend_0226, "verify_file_backend", refuse)
+    with pytest.raises(ValueError, match="PM admission refused"):
+        register(pm_env)
+    assert pm_env.calls == []
+    assert config.read_bytes() == before
+    assert not (pm_env.home / "plugins").exists()
+
+
+@pytest.mark.parametrize('stamp', [None, 'true', '51', '53', '"52"'])
+def test_0226_pending_or_unknown_schema_refuses_before_pm(pm_env, monkeypatch, stamp):
+    from hermes_feishu_card.install import legacy_observer, plugin_config_bytes
+    monkeypatch.setattr(legacy_observer, 'available', lambda root: True)
+    monkeypatch.setattr(plugin_config_bytes, 'verify_launch_sources', lambda root, **kw: 'pm-0226')
+    before = b'plugins: {enabled: []}\n'
+    if stamp is not None:
+        before += ('_config_version: ' + stamp + '\n').encode()
+    config = pm_env.home / 'config.yaml'
+    config.write_bytes(before)
+    with pytest.raises(ValueError, match='PM admission refused') as error:
+        register(pm_env)
+    assert error.value.__cause__.code == 'upstream-migration-required'
+    assert pm_env.calls == []
+    assert config.read_bytes() == before
+    assert not (pm_env.home / 'plugins').exists()

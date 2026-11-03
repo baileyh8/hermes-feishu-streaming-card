@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable
 import weakref
 
 from . import completion_diagnostics
+from .admission_topology_0226 import CORE_HASHES as _V0226_CORE_HASHES
 
 
 _ATTR = "_hfc_admission_display_completion"
@@ -56,6 +57,9 @@ SOURCE_COHORTS: tuple[dict[str, str], ...] = (
         "gateway.session_authority": "c8bd11dbdda29b04a8ebf54e6471be197602615c9549e9dd5cea7e01c6df4f59",
     },
 )
+# v0.22.6 also requires its producer/callback dependency closure at runtime.
+SOURCE_COHORTS += (_V0226_CORE_HASHES,)
+
 Finish = Callable[[Any, bool], Awaitable[None]]
 
 
@@ -192,6 +196,10 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
         ):
             return None
         modules.append(module)
+    if _V0226_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(root, modules[0], modules[1]):
+            return None
     return modules[0], modules[1]
 
 
@@ -1084,6 +1092,8 @@ def _install(ingress: Any, finish: Finish) -> None:
         ok = False
         try:
             result = await original_deliver(adapter, event, session_key, response)
+            # This only permits display finalization after normal return.
+            # It is not a native-send ACK: preserve even an explicit False.
             ok = True
             return result
         finally:

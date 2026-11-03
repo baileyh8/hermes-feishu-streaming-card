@@ -383,6 +383,9 @@ def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | No
             return False, "missing-or-unverified-extraction-seam"
     except (SyntaxError, ValueError):
         return False, "missing-or-unverified-extraction-seam"
+    from ..admission_topology_0226 import CORE_HASHES, source_bytes
+    if hashes == CORE_HASHES and source_bytes(root) is None:
+        return False, "unsupported-source"
     return True, "verified-source-cohort"
 
 

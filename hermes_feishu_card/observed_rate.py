@@ -35,19 +35,23 @@ class ObservedRates:
             return None
         return session, turn
 
+    def _make_room(self) -> None:
+        """Called under lock; reclaim one retired slot, never an active turn."""
+        if len(self.entries) < self.capacity:
+            return
+        for old_key, (_, metrics) in self.entries.items():
+            if metrics is None:
+                del self.entries[old_key]
+                break
+
     def start(self, values: dict[str, object]) -> None:
         key = self._key(values)
         if key is None:
             return
         with self.lock:
             self._prune()
-            if key not in self.entries and len(self.entries) >= self.capacity:
-                # Retain replay suppression while space permits, but consumed
-                # turns must not starve fresh observations for the whole TTL.
-                for old_key, (_, metrics) in list(self.entries.items()):
-                    if metrics is None:
-                        del self.entries[old_key]
-                        break
+            if key not in self.entries:
+                self._make_room()
             if key not in self.entries and len(self.entries) < self.capacity:
                 self.entries[key] = (self.now(), TurnMetrics(self.now()))
             elif key not in self.entries:
@@ -67,21 +71,27 @@ class ObservedRates:
             if entry is not None and entry[1] is not None:
                 entry[1].observe_api(values)
 
-    def take(self, session_id: object) -> tuple[dict[str, object], int] | None:
-        if type(session_id) is not str:
+    def take(self, session_id: object, turn_id: object = None) -> tuple[dict[str, object], int] | None:
+        if (type(session_id) is not str or type(turn_id) is not str
+                or not all(0 < len(v) <= 256 and v.strip() for v in (session_id, turn_id))):
             return None
         with self.lock:
             self._prune()
-            matches = [(k, v) for k, v in self.entries.items()
-                       if k[0] == session_id and v[1] is not None]
-            # No guessing between overlapping or unconsumed turns in a session.
-            for key, (created, _) in matches:
-                self.entries[key] = (created, None)
-            if len(matches) != 1:
+            key = (session_id, turn_id)
+            entry = self.entries.get(key)
+            if entry is None:
+                # A terminal may precede a timed-out observer callback. Keep
+                # the same bounded replay tombstone even without a pre event.
+                self._make_room()
+                if len(self.entries) < self.capacity:
+                    self.entries[key] = (self.now(), None)
                 return None
-            metrics = matches[0][1][1]
+            if entry[1] is None:
+                return None
+            created, metrics = entry
             if metrics is None:
                 return None
+            self.entries[key] = (created, None)
             rate = metrics.output_rate()
             return (rate, metrics.output_tokens) if rate is not None else None
 

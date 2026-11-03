@@ -47,7 +47,7 @@ sys.addaudithook(audit)
 # Supply tools/project only; execute pinned upstream admission, resolver and
 # configuration publication unchanged, as the PM-generation integration does.
 provision = home / "hfc-pm-tools.json"
-if provision.exists():
+if provision.exists() and os.environ.get("HFC_TEST_NO_PM_TOOLCHAIN_PORT") != "1":
     tools = json.loads(provision.read_text())
     import pm.paths, pm._uv, pm.client, pm.install
     pm.paths.repo_root = lambda: Path(tools["project"])

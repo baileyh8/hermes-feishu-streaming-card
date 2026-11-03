@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.13"
+version = "5.0.14"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -73,11 +73,16 @@ include = [
   "hermes_feishu_card/transient_notices.py",
   "hermes_feishu_card/native_admission.py",
   "hermes_feishu_card/admission_completion.py",
+  "hermes_feishu_card/admission_topology_0226.py",
   "hermes_feishu_card/completion_diagnostics.py",
   "hermes_feishu_card/install/admission_extraction.py",
   "hermes_feishu_card/turn_events.py",
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
+  "hermes_feishu_card/native_rate_scope.py",
+  "hermes_feishu_card/install/rate_scope.py",
+  "hermes_feishu_card/install/config_backend_0226.py",
+  "hermes_feishu_card/install/_writer_0226.py",
   "hermes_feishu_card/install/legacy_observer.py",
   "hermes_feishu_card/install/legacy_9b904.py",
   "hermes_feishu_card/install/legacy_9b904_contract.py",
@@ -135,11 +140,16 @@ files = [
   "hermes_feishu_card/transient_notices.py",
   "hermes_feishu_card/native_admission.py",
   "hermes_feishu_card/admission_completion.py",
+  "hermes_feishu_card/admission_topology_0226.py",
   "hermes_feishu_card/completion_diagnostics.py",
   "hermes_feishu_card/install/admission_extraction.py",
   "hermes_feishu_card/turn_events.py",
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
+  "hermes_feishu_card/native_rate_scope.py",
+  "hermes_feishu_card/install/rate_scope.py",
+  "hermes_feishu_card/install/config_backend_0226.py",
+  "hermes_feishu_card/install/_writer_0226.py",
   "hermes_feishu_card/install/legacy_observer.py",
   "hermes_feishu_card/install/legacy_9b904.py",
   "hermes_feishu_card/install/legacy_9b904_contract.py",
