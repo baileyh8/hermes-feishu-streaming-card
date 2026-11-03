@@ -56,6 +56,10 @@ _MIXIN_STATUS_RUNNER_SOURCE = '''class TurnRunner:
         ctx = self._ctx
         agent.status_callback, agent.notice_callback = ctx._status_callback_sync, (
             self._local_notice_callback_sync if local_viewer_turn(self) else self._notice_callback_sync)
+
+    def run_sync(self):
+        agent = self._runner.agent
+        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)
 '''
 
 
@@ -75,6 +79,13 @@ def _use_mixin_status_handoff(root):
         "        agent.status_callback, agent.notice_callback = "
         "ctx._status_callback_sync, ctx._status_callback_sync\n"
         "        agent.tool_progress_callback = ctx.progress_callback\n",
+    )
+    text = text.replace(
+        "    def _clarify_callback_sync(self, question, choices, multi_select=False):\n",
+        "    def run_sync(self):\n"
+        "        agent = self._runner.agent\n"
+        "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n\n"
+        "    def _clarify_callback_sync(self, question, choices, multi_select=False):\n",
     )
     path.write_text(text)
 
@@ -144,6 +155,18 @@ def test_status_binding_upgrades_existing_owned_target_without_target_expansion(
             "agent.status_callback, agent.notice_callback",
             "agent.status_callback, agent.other_callback",
         ),
+        (
+            "self._wire_turn_agent_callbacks(agent, None, None, None, None, True)",
+            "other._wire_turn_agent_callbacks(agent, None, None, None, None, True)",
+        ),
+        (
+            "self._wire_turn_agent_callbacks(agent, None, None, None, None, True)",
+            "self._wire_turn_agent_callbacks(other_agent, None, None, None, None, True)",
+        ),
+        (
+            "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n",
+            "",
+        ),
     ],
 )
 def test_mixin_status_handoff_requires_exact_turn_and_agent_owner(old, new):
@@ -152,6 +175,45 @@ def test_mixin_status_handoff_requires_exact_turn_and_agent_owner(old, new):
     patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
 
     assert patcher.STATUS_PATCH_BEGIN not in patched
+
+
+def test_mixin_status_dead_wiring_method_is_not_patched():
+    source = _MIXIN_STATUS_RUNNER_SOURCE.replace(
+        "def _wire_turn_agent_callbacks", "def _dead_status_wiring", 1
+    ).replace(
+        "    def run_sync(self):\n",
+        "    def _wire_turn_agent_callbacks(\n"
+        "        self, agent, turn_route, reasoning_config, stream_delta_cb,\n"
+        "        interim_assistant_cb, want_interim_messages,\n"
+        "    ):\n"
+        "        return None\n\n"
+        "    def run_sync(self):\n",
+        1,
+    )
+
+    patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
+
+    assert patcher.STATUS_PATCH_BEGIN not in patched
+
+
+def test_mixin_status_accepts_known_run_sync_scoped_seam():
+    source = _MIXIN_STATUS_RUNNER_SOURCE.replace(
+        "    def run_sync(self):\n"
+        "        agent = self._runner.agent\n"
+        "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n",
+        "    def run_sync(self):\n"
+        "        return self._run_sync_scoped()\n\n"
+        "    def _run_sync_scoped(self):\n"
+        "        ctx = self._ctx\n"
+        "        agent = self._runner.agent\n"
+        "        self._wire_turn_agent_callbacks(agent, None, None, None, None, True)\n",
+        1,
+    )
+
+    patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
+
+    assert patcher.STATUS_PATCH_BEGIN in patched
+    assert patcher.remove_patch(patched) == source
 
 
 @pytest.mark.parametrize(

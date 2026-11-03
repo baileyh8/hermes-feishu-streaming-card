@@ -1783,16 +1783,32 @@ def _is_status_callback_binding(node) -> bool:
     )
 
 
-def _find_turn_runner_status_binding_node(tree):
-    """Locate the exact per-turn callback handoff in ``TurnRunner``.
+def _iter_calls_without_nested_scopes(node):
+    for child in ast.iter_child_nodes(node):
+        if isinstance(
+            child,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+        ):
+            continue
+        if isinstance(child, ast.Call):
+            yield child
+        yield from _iter_calls_without_nested_scopes(child)
+
+
+def _find_turn_runner_status_binding_method(tree):
+    """Locate the live per-turn callback handoff in ``TurnRunner``.
 
     Hermes 0.22.5 moved ``_status_callback_sync`` to a mixin, but retained the
     final ``agent.status_callback = ctx._status_callback_sync`` handoff. Bind
-    to that ownership transfer instead of trusting a same-named method in an
-    arbitrary class or module.
+    to that ownership transfer only when ``run_sync`` directly invokes the
+    containing method with its local ``agent``. A dead method or same-named
+    call on another receiver is not a live hook anchor.
     """
     turn_runner = _find_turn_runner_node(tree)
     if turn_runner is None:
+        return None
+    run_sync = _find_direct_class_function_node(turn_runner, "run_sync")
+    if run_sync is None:
         return None
     matches = []
     for method in turn_runner.body:
@@ -1805,7 +1821,53 @@ def _find_turn_runner_status_binding_node(tree):
         for node in method.body:
             if _is_status_callback_binding(node):
                 matches.append((method, node))
-    return matches[0][1] if len(matches) == 1 else None
+    if len(matches) != 1:
+        return None
+    method, binding = matches[0]
+    callsites = [
+        call for call in _iter_calls_without_nested_scopes(run_sync)
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == method.name
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "agent"
+    ]
+    if len(callsites) == 1:
+        return method, binding
+    if callsites:
+        return None
+    scoped_calls = [
+        call for call in _iter_calls_without_nested_scopes(run_sync)
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == "_run_sync_scoped"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and not call.args
+        and not call.keywords
+    ]
+    if len(scoped_calls) != 1:
+        return None
+    scoped = _find_direct_class_function_node(turn_runner, "_run_sync_scoped")
+    if scoped is None or not _binds_turn_context(scoped):
+        return None
+    callsites = [
+        call for call in _iter_calls_without_nested_scopes(scoped)
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr == method.name
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "self"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "agent"
+    ]
+    return (method, binding) if len(callsites) == 1 else None
+
+
+def _find_turn_runner_status_binding_node(tree):
+    match = _find_turn_runner_status_binding_method(tree)
+    return match[1] if match is not None else None
 
 
 def _find_turn_runner_status_binding_location(tree, lines):
