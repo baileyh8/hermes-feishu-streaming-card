@@ -44,6 +44,221 @@ def sources(root):
             if (root / name).exists()}
 
 
+_MIXIN_STATUS_RUNNER_SOURCE = '''class TurnRunner:
+    def __init__(self, runner, ctx):
+        self._runner, self._ctx = runner, ctx
+
+    def _notice_callback_sync(self, event_type, message):
+        return None
+
+    def _wire_turn_agent_callbacks(self, agent, turn_route, reasoning_config,
+                                   stream_delta_cb, interim_assistant_cb, want_interim_messages):
+        ctx = self._ctx
+        agent.status_callback, agent.notice_callback = ctx._status_callback_sync, (
+            self._local_notice_callback_sync if local_viewer_turn(self) else self._notice_callback_sync)
+'''
+
+
+def _use_mixin_status_handoff(root):
+    path = root / "gateway/run_turn_runner.py"
+    text = path.read_text()
+    text = text.replace(
+        "    def _status_callback_sync(self, event_type, message):\n"
+        "        ctx = self._ctx\n"
+        "        ctx.status_queue.put((event_type, message))\n\n",
+        "",
+    )
+    text = text.replace(
+        "        ctx = self._ctx\n"
+        "        agent.tool_progress_callback = ctx.progress_callback\n",
+        "        ctx = self._ctx\n"
+        "        agent.status_callback, agent.notice_callback = "
+        "ctx._status_callback_sync, ctx._status_callback_sync\n"
+        "        agent.tool_progress_callback = ctx.progress_callback\n",
+    )
+    path.write_text(text)
+
+
+def test_mixin_status_handoff_is_detected_patched_and_restored(hermes):
+    _use_mixin_status_handoff(hermes)
+    before = sources(hermes)
+
+    detection = detect_hermes(hermes)
+
+    assert detection.supported and detection.compatibility == "full"
+    assert detection.capabilities["status_callback"] is True
+    assert detection.capability_locations["status_callback"] == (
+        "gateway/run_turn_runner.py",
+    )
+    decomposed.install(detection)
+    installed = sources(hermes)
+    target = installed["gateway/run_turn_runner.py"].decode()
+    assert patcher.STATUS_PATCH_BEGIN in target
+    assert "agent.status_callback = _hfc_status_callback_wrapper" in target
+    assert "agent.notice_callback = _hfc_status_callback_wrapper" not in target
+    assert patcher.remove_patch(target) == before[
+        "gateway/run_turn_runner.py"
+    ].decode()
+
+    decomposed.restore(detection)
+    assert sources(hermes) == before
+
+
+def test_status_binding_upgrades_existing_owned_target_without_target_expansion(hermes):
+    _use_mixin_status_handoff(hermes)
+    decomposed.install(detect_hermes(hermes))
+    target = hermes / "gateway/run_turn_runner.py"
+    installed = target.read_text()
+    lines = installed.splitlines(keepends=True)
+    begin = next(i for i, line in enumerate(lines) if patcher.STATUS_PATCH_BEGIN in line)
+    end = next(i for i, line in enumerate(lines) if patcher.STATUS_PATCH_END in line)
+    previous = "".join(lines[:begin] + lines[end + 1 :])
+    target.write_text(previous)
+    manifest_path = hermes / decomposed.MANIFEST_NAME
+    manifest = json.loads(manifest_path.read_text())
+    target_name = "gateway/run_turn_runner.py"
+    previous_hash = sha256(previous.encode()).hexdigest()
+    manifest["targets"][target_name]["patched_sha256"] = previous_hash
+    manifest["integrity"]["targets"][target_name]["patched_sha256"] = previous_hash
+    targets_before = set(manifest["targets"])
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    detection = detect_hermes(hermes)
+    plan = recovery.plan_recovery(detection)
+
+    assert plan.state == "owned_incomplete" and plan.executable
+    assert decomposed.install(detection) is True
+    assert target.read_text() == installed
+    assert set(json.loads(manifest_path.read_text())["targets"]) == targets_before
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("ctx = self._ctx", "ctx = other._ctx"),
+        (
+            "agent.status_callback, agent.notice_callback",
+            "agent.other_callback, agent.notice_callback",
+        ),
+        (
+            "agent.status_callback, agent.notice_callback",
+            "agent.status_callback, agent.other_callback",
+        ),
+    ],
+)
+def test_mixin_status_handoff_requires_exact_turn_and_agent_owner(old, new):
+    source = _MIXIN_STATUS_RUNNER_SOURCE.replace(old, new, 1)
+
+    patched = patcher.apply_gateway_fragment(source, "gateway/run_turn_runner.py")
+
+    assert patcher.STATUS_PATCH_BEGIN not in patched
+
+
+@pytest.mark.parametrize(
+    ("platform", "mute", "live", "message", "handler_calls"),
+    [
+        ("feishu", False, True, "Compacting context", 1),
+        ("feishu", False, True, "正在压缩上下文", 1),
+        ("feishu", True, True, "Compacting context", 0),
+        ("feishu", False, False, "Compacting context", 0),
+        ("telegram", False, True, "Compacting context", 0),
+    ],
+)
+def test_mixin_status_wrapper_preserves_native_fallback(
+    monkeypatch, platform, mute, live, message, handler_calls,
+):
+    namespace = {"local_viewer_turn": lambda _runner: False}
+    patched = patcher.apply_gateway_fragment(
+        _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
+    )
+    exec(compile(patched, "run_turn_runner.py", "exec"), namespace)
+    handled, native = [], []
+
+    def handle(values, *, event_type, message):
+        handled.append((values, event_type, message))
+        return event_type == "context" and message == "Compacting context"
+
+    monkeypatch.setattr(hook_runtime, "handle_status_from_hermes_locals", handle)
+    source = SimpleNamespace(
+        platform=platform, chat_id="chat-a", thread_id="omt-a", _hfc_turn_id="turn-a"
+    )
+    ctx = SimpleNamespace(
+        source=source,
+        _status_adapter=object(),
+        mute_notification_reply=mute,
+        _run_still_current=lambda: live,
+        _status_chat_id="chat-a",
+        session_key="session-a",
+        event_message_id="message-a",
+        _loop_for_step=None,
+        _status_callback_sync=lambda event_type, text: native.append((event_type, text)),
+        _notice_callback_sync=lambda *args: None,
+    )
+    agent = SimpleNamespace(_current_turn_id="turn-a")
+    runner = namespace["TurnRunner"](SimpleNamespace(), ctx)
+    runner._wire_turn_agent_callbacks(agent, None, None, None, None, True)
+
+    agent.status_callback("context", message)
+
+    assert len(handled) == handler_calls
+    assert bool(native) is (message != "Compacting context" or handler_calls == 0)
+    if handled:
+        values = handled[0][0]
+        assert values["source"] is source
+        assert values["chat_id"] == "chat-a"
+        assert values["message_id"] == "message-a"
+        assert values["turn_id"] == "turn-a"
+        assert values["agent"] is agent
+    assert agent.notice_callback.__self__ is runner
+    assert agent.notice_callback.__func__ is namespace["TurnRunner"]._notice_callback_sync
+
+
+def test_mixin_status_wrapper_rebinds_cached_agent_per_turn(monkeypatch):
+    namespace = {"local_viewer_turn": lambda _runner: False}
+    patched = patcher.apply_gateway_fragment(
+        _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
+    )
+    exec(compile(patched, "run_turn_runner.py", "exec"), namespace)
+    handled = []
+    monkeypatch.setattr(
+        hook_runtime,
+        "handle_status_from_hermes_locals",
+        lambda values, **kwargs: handled.append((values["turn_id"], values["source"])) or True,
+    )
+    agent = SimpleNamespace(_current_turn_id="turn-a")
+
+    def wire(turn_id):
+        source = SimpleNamespace(
+            platform="feishu", chat_id="chat-" + turn_id, thread_id="omt-a",
+            _hfc_turn_id=turn_id,
+        )
+        ctx = SimpleNamespace(
+            source=source,
+            _status_adapter=object(),
+            mute_notification_reply=False,
+            _run_still_current=lambda: True,
+            _status_chat_id=source.chat_id,
+            session_key="session-" + turn_id,
+            event_message_id="message-" + turn_id,
+            _loop_for_step=None,
+            _status_callback_sync=lambda *args: None,
+            _notice_callback_sync=lambda *args: None,
+        )
+        agent._current_turn_id = turn_id
+        namespace["TurnRunner"](SimpleNamespace(), ctx)._wire_turn_agent_callbacks(
+            agent, None, None, None, None, True
+        )
+        return source
+
+    source_a = wire("turn-a")
+    source_b = wire("turn-b")
+    agent.status_callback("context", "Compacting context")
+    agent.status_callback("context", "Compacting context")
+
+    assert handled == [("turn-b", source_b), ("turn-b", source_b)]
+    assert source_a is not source_b
+
+
 def test_decomposed_cli_install_doctor_repeat_remove_roundtrip(hermes, monkeypatch):
     # Runtime installation and SDK setup belong to deployment. This fixture
     # has no venv or adapter SDK; all patch/ownership/doctor calls remain real.

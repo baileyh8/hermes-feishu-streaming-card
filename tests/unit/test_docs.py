@@ -1206,6 +1206,8 @@ def test_maintainer_docs_define_compaction_visibility_contract():
 
     for marker in (
         "_status_callback_sync",
+        "GatewayTurnProgressMixin",
+        "agent.status_callback",
         "Compacting context",
         "context-compaction",
         "create_session",
