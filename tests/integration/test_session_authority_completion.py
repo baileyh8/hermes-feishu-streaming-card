@@ -6,7 +6,7 @@ A real Session Authority SQLite test is separate from this call-chain harness.
 import ast
 import asyncio
 import builtins
-from contextlib import asynccontextmanager, contextmanager, nullcontext, suppress
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -831,18 +831,7 @@ def test_render_template_fault_injection_is_not_cached(monkeypatch):
 async def test_native_admission_waiter_and_drain_owned_finish_exact_card(
     harness, waiter
 ):
-    event = Event()
-    authority = harness.Authority(event)
-    if waiter:
-        harness.adapter._message_handler = lambda e: harness.ingress.admit_message(
-            authority, e
-        )
-        await asyncio.wait_for(
-            harness.adapter._process_message_background(event, "route-key"), 3
-        )
-        await authority.sessions["authority-session"].task
-    else:
-        await authority._port_drain(authority.ref)
+    await deliver(harness, waiter=waiter)
     assert harness.staged == [True]
     assert len(harness.posts) == 1
     assert harness.posts[0]["event"] == "message.completed"
@@ -854,20 +843,137 @@ async def test_native_admission_waiter_and_drain_owned_finish_exact_card(
     ]
 
 
-async def deliver(harness, *, waiter=False, event=None, timeout=3):
+async def deliver(harness, *, waiter=False, event=None, timeout=30):
     event = event or Event()
     authority = harness.Authority(event)
     if waiter:
         harness.adapter._message_handler = lambda e: harness.ingress.admit_message(
             authority, e
         )
-        await asyncio.wait_for(
-            harness.adapter._process_message_background(event, "route-key"), timeout
-        )
-        await authority.sessions["authority-session"].task
+        async def finish_waiter():
+            await harness.adapter._process_message_background(event, "route-key")
+            await authority.sessions["authority-session"].task
+
+        try:
+            # This is a harness hang guard, not a production latency assertion.
+            # Repeated real source compilation can exceed three seconds on CI.
+            # One budget covers both adapter completion and its owned drain.
+            await asyncio.wait_for(finish_waiter(), timeout)
+        finally:
+            task = authority.sessions["authority-session"].task
+            if task is not None and task is not asyncio.current_task():
+                if not task.done():
+                    task.cancel()
+                # Normal drain exceptions already propagate via finish_waiter;
+                # cleanup must preserve an adapter error or cancellation too.
+                await asyncio.gather(task, return_exceptions=True)
     else:
         await authority._port_drain(authority.ref)
     return event, authority
+
+
+def _waiter_delivery_probe(drain, *, adapter_waits=True):
+    owners = []
+
+    class Authority:
+        def __init__(self, event):
+            self.sessions = {"authority-session": SimpleNamespace(task=None)}
+            owners.append(self)
+
+    async def background(event, route):
+        task = asyncio.create_task(drain())
+        owners[-1].sessions["authority-session"].task = task
+        if adapter_waits:
+            await asyncio.shield(task)
+
+    return SimpleNamespace(
+        Authority=Authority, owners=owners,
+        adapter=SimpleNamespace(_process_message_background=background),
+    )
+
+
+async def test_waiter_helper_allows_valid_delivery_beyond_old_three_second_budget():
+    finished = []
+
+    async def drain():
+        await asyncio.sleep(3.05)
+        finished.append(True)
+
+    probe = _waiter_delivery_probe(drain)
+    try:
+        await deliver(probe, waiter=True)
+        assert finished == [True]
+    finally:
+        task = probe.owners[-1].sessions["authority-session"].task
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("adapter_waits", [True, False])
+async def test_waiter_helper_deadline_reclaims_its_unfinished_drain(adapter_waits):
+    stopped = []
+
+    async def drain():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.append(True)
+
+    probe = _waiter_delivery_probe(drain, adapter_waits=adapter_waits)
+    operation = asyncio.create_task(deliver(probe, waiter=True, timeout=0.02))
+    try:
+        done, _ = await asyncio.wait({operation}, timeout=5)
+        assert done, "waiter helper did not enforce its deadline"
+        with pytest.raises(asyncio.TimeoutError):
+            await operation
+        task = probe.owners[-1].sessions["authority-session"].task
+        assert task.done() and task.cancelled()
+        assert stopped == [True]
+    finally:
+        operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+        task = probe.owners[-1].sessions["authority-session"].task
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_waiter_helper_preserves_drain_failure_identity():
+    failure = RuntimeError("synthetic drain failure")
+
+    async def drain():
+        raise failure
+
+    probe = _waiter_delivery_probe(drain, adapter_waits=False)
+    with pytest.raises(RuntimeError) as caught:
+        await deliver(probe, waiter=True)
+    assert caught.value is failure
+
+
+async def test_waiter_helper_caller_cancellation_reclaims_owned_drain():
+    started, stopped = asyncio.Event(), asyncio.Event()
+
+    async def drain():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    probe = _waiter_delivery_probe(drain)
+    operation = asyncio.create_task(deliver(probe, waiter=True))
+    try:
+        await started.wait()
+        operation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        task = probe.owners[-1].sessions["authority-session"].task
+        assert task.done() and task.cancelled() and stopped.is_set()
+    finally:
+        operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+        task = probe.owners[-1].sessions["authority-session"].task
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize(
