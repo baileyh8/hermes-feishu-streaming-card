@@ -263,7 +263,8 @@
       "tests/unit/test_ci_workflow.py",
       "tests/unit/test_ci_regression.py",
       "tests/unit/test_official_image_tools.py",
-      "tests/unit/test_preflight.py"
+      "tests/unit/test_preflight.py",
+      "tests/unit/test_ci_prepare_upstream.py"
     ],
     "archives": [
       "tests/unit/test_release_archives.py"
@@ -781,6 +782,15 @@
     "hermes_feishu_card/install/_writer_0226.py": [
       "install",
       "install_transactions"
+    ],
+    "tools/ci_prepare_upstream.py": [
+      "ci"
+    ],
+    "tools/upstream_fixtures.json": [
+      "ci"
+    ],
+    "tests/unit/test_ci_prepare_upstream.py": [
+      "ci"
     ]
   }
 }

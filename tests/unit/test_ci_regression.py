@@ -170,9 +170,9 @@ def test_issue471_checkout_is_separate_and_required_in_pinned_upstream_matrix():
 
     jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
     steps = jobs["upstream-shards"]["steps"]
-    checkouts = {step.get("name"): step.get("with", {}) for step in steps}
-    assert checkouts["Checkout pinned Hermes latest_main"]["ref"].startswith("4e58c721")
-    pinned = checkouts["Checkout Hermes issue 471 reported revision"]
+    fixtures = {f["name"]: f for f in json.loads((ROOT / "tools/upstream_fixtures.json").read_text(encoding="utf-8"))}
+    assert fixtures["Checkout pinned Hermes latest_main"]["ref"].startswith("4e58c721")
+    pinned = fixtures["Checkout Hermes issue 471 reported revision"]
     assert pinned["ref"] == "9b904dcc22c23fe8b82834339bbdd96495072e59"
     assert pinned["path"] == ".upstream/issue471_9b904"
     run = next(step for step in steps if "--profile upstream" in step.get("run", ""))
@@ -192,10 +192,11 @@ def test_background_cohorts_have_exact_inputs_and_cannot_silently_skip():
     run = next(step for step in steps if "--profile upstream" in step.get("run", ""))
     assert run["env"]["HFC_REQUIRE_BACKGROUND_COHORTS"] == "1"
     assert "HFC_REQUIRE_BACKGROUND_COHORTS" in FORWARD
+    fixtures = {f["path"]: f for f in json.loads((ROOT / "tools/upstream_fixtures.json").read_text(encoding="utf-8"))}
     for name, expected in cohort.items():
-        checkout = next(step["with"] for step in steps
-                        if step.get("with", {}).get("path") == f".upstream/background_{name}")
-        assert checkout["ref"] == expected["commit"]
+        fixture = fixtures.get(f".upstream/background_{name}")
+        assert fixture is not None
+        assert fixture["ref"] == expected["commit"]
         assert run["env"][f"HFC_UPSTREAM_BACKGROUND_{name.upper()}_ROOT"].endswith(
             f"/.upstream/background_{name}")
 

@@ -1,0 +1,97 @@
+[
+  {
+    "name": "Checkout earlier supported Hermes release fixture",
+    "path": ".upstream/stable",
+    "ref": "29112bef099274229cadff79cdff7bf7b99c4b77"
+  },
+  {
+    "name": "Checkout earlier supported Hermes main fixture",
+    "path": ".upstream/main",
+    "ref": "2179a279ae04bfadf8efbc49a01ca0abfb738000"
+  },
+  {
+    "name": "Checkout recorded production Hermes source fixture",
+    "path": ".upstream/production",
+    "ref": "180291162ff4df0d42b5dc4fecd08005cf7cebf9"
+  },
+  {
+    "name": "Checkout reported Hermes 0.17 release",
+    "path": ".upstream/historical",
+    "ref": "2bd1977d8fad185c9b4be47884f7e87f1add0ce3"
+  },
+  {
+    "name": "Checkout reported Docker image source revision",
+    "path": ".upstream/image",
+    "ref": "63279301bcbdc185c1b07b98a9312eb0c862f26d"
+  },
+  {
+    "name": "Checkout extracted clarify Hermes snapshot",
+    "path": ".upstream/extracted",
+    "ref": "6005aa1fd9aac8b1024ace50fec8cd1c85a04bae"
+  },
+  {
+    "name": "Checkout pinned Hermes latest_stable",
+    "path": ".upstream/latest_stable",
+    "ref": "4d04303818b61bf3aa09278af48356315515965b"
+  },
+  {
+    "name": "Checkout pinned Hermes latest_main",
+    "path": ".upstream/latest_main",
+    "ref": "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"
+  },
+  {
+    "name": "Checkout reported Hermes issue 428 revision 297552",
+    "path": ".upstream/issue428_297552",
+    "ref": "297552a9d646119871391d202509822cd86330df"
+  },
+  {
+    "name": "Checkout reported Hermes issue 428 revision 7bda2a",
+    "path": ".upstream/issue428_7bda2a",
+    "ref": "7bda2a3368024f7ae1c70cef16583e7c2c891674"
+  },
+  {
+    "name": "Checkout Hermes retained v0.22.2 baseline",
+    "path": ".upstream/baseline_0222",
+    "ref": "d923a5eb487a17c0a68801bba9ef0f56c81040a8"
+  },
+  {
+    "name": "Checkout Hermes retained main baseline",
+    "path": ".upstream/baseline_main_0ab",
+    "ref": "0ab43d4f67e41be75f4f6c0fa14a86dbcfd3e5b3"
+  },
+  {
+    "name": "Checkout Hermes issue 451 reported revision",
+    "path": ".upstream/issue451_cf4",
+    "ref": "cf4f3a7396814ffcaef69d9af09f7cfdade3ddbe"
+  },
+  {
+    "name": "Checkout Hermes rc.2-v0.22.3",
+    "path": ".upstream/issue451_rc2",
+    "ref": "f83b4df3ce1ab2ec62f1e0e90f22e0a1db21cb68"
+  },
+  {
+    "name": "Checkout Hermes issue 456 v0.22.5",
+    "path": ".upstream/issue456_0225",
+    "ref": "bf0203a794a07aac3ff764972ab9087baa4e4f4e"
+  },
+  {
+    "name": "Checkout Hermes v0.22.6",
+    "path": ".upstream/0226",
+    "ref": "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"
+  },
+  {
+    "name": "Checkout Hermes issue 471 reported revision",
+    "path": ".upstream/issue471_9b904",
+    "ref": "9b904dcc22c23fe8b82834339bbdd96495072e59"
+  },
+  {
+    "name": "Checkout Hermes background extraction rc",
+    "path": ".upstream/background_rc",
+    "ref": "30ee54ee013da43a907661567b48f1481c45fd5f"
+  },
+  {
+    "name": "Checkout Hermes background extraction main",
+    "path": ".upstream/background_main",
+    "ref": "4d26e0cceaed0a08ede833caec0ec6d6ca77a4b8"
+  }
+]

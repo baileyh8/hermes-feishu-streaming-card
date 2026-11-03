@@ -182,6 +182,20 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         else:
             assert inputs["repository"] == "NousResearch/hermes-agent"
             upstream_checkouts[inputs.get("path")] = inputs.get("ref")
+    manifest_fixtures = json.loads((ROOT / "tools/upstream_fixtures.json").read_text(encoding="utf-8"))
+    upstream_job = workflow["jobs"]["upstream-shards"]
+    preparation = [step for step in upstream_job["steps"]
+                   if "tools/ci_prepare_upstream.py" in step.get("run", "")]
+    assert len(preparation) == 1
+    assert "--manifest tools/upstream_fixtures.json" in preparation[0]["run"]
+    assert '--target-root "${{ github.workspace }}"' in preparation[0]["run"]
+    assert "--remote-url" not in preparation[0]["run"]
+    assert "--cache-dir" not in preparation[0]["run"]
+    assert upstream_job["timeout-minutes"] == 25
+    for fixture in manifest_fixtures:
+        if fixture["path"] in upstream_checkouts:
+            assert upstream_checkouts[fixture["path"]] == fixture["ref"]
+        upstream_checkouts[fixture["path"]] = fixture["ref"]
     assert upstream_checkouts == {
         **{
             f".upstream/{baseline}": evidence["commit"]
