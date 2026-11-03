@@ -250,6 +250,18 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: 9b904dcc22c23fe8b82834339bbdd96495072e59
           path: .upstream/issue471_9b904
+      - name: Checkout Hermes background extraction rc
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 30ee54ee013da43a907661567b48f1481c45fd5f
+          path: .upstream/background_rc
+      - name: Checkout Hermes background extraction main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 4d26e0cceaed0a08ede833caec0ec6d6ca77a4b8
+          path: .upstream/background_main
       - name: Install test dependencies
         run: python -m pip install -e ".[test]" "uv==0.11.7" ruamel.yaml tomli-w packaging wheel rich python-dotenv requests prompt_toolkit "cryptography==48.0.0"
       - name: Prepare ordinary wheel
@@ -296,6 +308,9 @@ jobs:
           HFC_UPSTREAM_ISSUE456_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_UPSTREAM_ISSUE471_9B904_ROOT: "${{ github.workspace }}/.upstream/issue471_9b904"
           HFC_REQUIRE_ISSUE471_PIN: "1"
+          HFC_UPSTREAM_BACKGROUND_RC_ROOT: "${{ github.workspace }}/.upstream/background_rc"
+          HFC_UPSTREAM_BACKGROUND_MAIN_ROOT: "${{ github.workspace }}/.upstream/background_main"
+          HFC_REQUIRE_BACKGROUND_COHORTS: "1"
           HFC_CONFIG_WRITER_PM_MAIN_ROOT: "${{ github.workspace }}/.upstream/baseline_main_0ab"
           HFC_CONFIG_WRITER_CF4_ROOT: "${{ github.workspace }}/.upstream/issue451_cf4"
           HFC_CONFIG_WRITER_RC2_ROOT: "${{ github.workspace }}/.upstream/issue451_rc2"

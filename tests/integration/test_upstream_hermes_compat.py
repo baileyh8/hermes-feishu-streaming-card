@@ -31,6 +31,8 @@ def test_background_upstream_source_cohort(baseline, tmp_path):
     from hermes_feishu_card.install import decomposed, decomposed_ownership, patcher
     configured = os.environ.get(f'HFC_UPSTREAM_BACKGROUND_{baseline.upper()}_ROOT')
     if not configured:
+        if os.environ.get('HFC_REQUIRE_BACKGROUND_COHORTS') == '1':
+            pytest.fail(f'exact background {baseline} source required by CI')
         pytest.skip(f'exact background {baseline} source not supplied')
     root = tmp_path / 'hermes'
     expected = BACKGROUND_SOURCES[baseline]
