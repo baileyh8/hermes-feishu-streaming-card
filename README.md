@@ -317,6 +317,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 ## 贡献者
 
+- 未发布：感谢 [Lite-G](https://github.com/Lite-G) 提供 #485 的兼容性报告及 [PR #486](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/486) 的原始实现；原提交作者与历史贡献记录保留。
+
 - V5.0.13：感谢 [Lite-G](https://github.com/Lite-G) 的 #479 报告与分析，以及 [Kevinzz224](https://github.com/Kevinzz224) 的 #478 报告。#479 初始补丁由 Bailey 提供的 ChatGPT 修复会话交付；问题证据与代码署名分开记录。
 
 - V5.0.12：感谢 [Alex-HJY](https://github.com/Alex-HJY) 的 #474 报告、分析和现场补丁证据，以及 [leavrcn](https://github.com/leavrcn) 的 #469 复测与差异定位。问题证据与代码作者分别记录，既有署名保留。

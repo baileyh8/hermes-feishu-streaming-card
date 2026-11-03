@@ -323,6 +323,8 @@ See [release history](docs/release-history.en.md) for earlier versions, and [CHA
 
 ## Contributors
 
+- Unreleased: thanks to [Lite-G](https://github.com/Lite-G) for the #485 compatibility report and original implementation in [PR #486](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/486). Original commit authors and historical credits are preserved.
+
 - V5.0.13: thanks to [Lite-G](https://github.com/Lite-G) for #479 and [Kevinzz224](https://github.com/Kevinzz224) for #478. The initial #479 patch came from the ChatGPT repair session supplied by Bailey; issue evidence is separate from code authorship.
 
 - V5.0.12: thanks to [Alex-HJY](https://github.com/Alex-HJY) for the #474 report, analysis and field-patch evidence, and [leavrcn](https://github.com/leavrcn) for the #469 retest and mismatch evidence. Issue evidence is separate from code authorship; earlier credits remain.
