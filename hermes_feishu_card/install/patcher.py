@@ -3949,8 +3949,6 @@ def _render_status_binding_hook_block(indent: str, newline: str):
         f"{inner_indent}def _hfc_status_callback_wrapper(event_type, message):{newline}",
         f"{deeper_indent}try:{newline}",
         f"{handler_indent}_hfc_ctx = getattr(self, \"_ctx\", None){newline}",
-        f"{handler_indent}if _hfc_ctx is not _hfc_bound_status_ctx:{newline}",
-        f"{payload_indent}return _hfc_status_callback(event_type, message){newline}",
         (
             f"{handler_indent}_hfc_platform = "
             f"getattr(getattr(_hfc_ctx, \"source\", None), \"platform\", None){newline}"
@@ -3961,7 +3959,8 @@ def _render_status_binding_hook_block(indent: str, newline: str):
         ),
         (
             f"{handler_indent}_hfc_status_live = "
-            f"str(_hfc_platform).lower() == \"feishu\" "
+            f"_hfc_ctx is _hfc_bound_status_ctx "
+            f"and str(_hfc_platform).lower() == \"feishu\" "
             f"and not bool(getattr(_hfc_ctx, \"mute_notification_reply\", True)) "
             f"and bool(getattr(_hfc_ctx, \"_status_adapter\", None)){newline}"
         ),

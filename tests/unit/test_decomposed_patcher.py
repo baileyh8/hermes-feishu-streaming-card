@@ -269,7 +269,10 @@ def test_mixin_status_wrapper_rebinds_cached_agent_per_turn(monkeypatch):
     assert source_a is not source_b
 
 
-def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(monkeypatch):
+@pytest.mark.parametrize("original_raises", [False, True])
+def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(
+    monkeypatch, original_raises,
+):
     namespace = {"local_viewer_turn": lambda _runner: False}
     patched = patcher.apply_gateway_fragment(
         _MIXIN_STATUS_RUNNER_SOURCE, "gateway/run_turn_runner.py"
@@ -287,6 +290,11 @@ def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(monkey
             platform="feishu", chat_id="chat-" + turn_id, thread_id="omt-a",
             _hfc_turn_id=turn_id,
         )
+        def original(event_type, message):
+            native.append(turn_id)
+            if original_raises:
+                raise RuntimeError("native status failed")
+
         return SimpleNamespace(
             source=source,
             _status_adapter=object(),
@@ -296,7 +304,7 @@ def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(monkey
             session_key="session-" + turn_id,
             event_message_id="message-" + turn_id,
             _loop_for_step=None,
-            _status_callback_sync=lambda event_type, message: native.append(turn_id),
+            _status_callback_sync=original,
             _notice_callback_sync=lambda *args: None,
         )
 
@@ -306,7 +314,11 @@ def test_mixin_status_wrapper_does_not_follow_rebound_turn_runner_context(monkey
     old_callback = agent.status_callback
     runner._ctx = make_ctx("turn-b")
 
-    old_callback("context", "Compacting context")
+    if original_raises:
+        with pytest.raises(RuntimeError, match="native status failed"):
+            old_callback("context", "Compacting context")
+    else:
+        old_callback("context", "Compacting context")
 
     assert handled == []
     assert native == ["turn-a"]
