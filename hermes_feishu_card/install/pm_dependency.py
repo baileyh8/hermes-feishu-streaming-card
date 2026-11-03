@@ -552,7 +552,8 @@ class Registration:
                     or legacy_observer._config_state(evidence, self.root) != "installed"):
                 raise PMAdmissionOutcomeUncertain("legacy adoption final binding is unverified; backup retained")
         if self.source_family is not None:
-            _verify_observer_writer_before_admission(self.root, family=self.source_family)
+            _verify_observer_writer_before_admission(self.root, family=self.source_family,
+                                                       python=self.python, home=self.home)
         self._assert_current()
         if self.backup is not None:
             if self.adoption is not None:
@@ -753,7 +754,9 @@ def ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         return _ensure(root, python, home=home, spec=spec, version=version)
 
 
-def _verify_observer_writer_before_admission(root: Path, *, family: str | None = None) -> str | None:
+def _verify_observer_writer_before_admission(root: Path, *, family: str | None = None,
+                                              python: Path | None = None,
+                                              home: Path | None = None) -> str | None:
     """Refuse an unknown legacy writer before PM can publish a generation.
 
     Official plugin enable happens after PM admission. A later writer refusal
@@ -761,22 +764,33 @@ def _verify_observer_writer_before_admission(root: Path, *, family: str | None =
     Older installs that do not use the legacy observer retain their path.
     """
     from . import legacy_9b904, legacy_observer
-    from .plugin_config_bytes import ConfigBytesRefused, verify_launch_sources
+    from .plugin_config_bytes import ConfigBytesRefused, verify_launch_sources, verify_0226_admission
 
     try:
         if family is None:
             if not legacy_observer.available(root):
                 return None
             try:
-                return verify_launch_sources(root)
+                selected = verify_launch_sources(root)
             except ConfigBytesRefused:
                 legacy_9b904.verify_source(root)
                 return legacy_9b904.ADAPTER_ID
+            if selected == "pm-0226":
+                verify_0226_admission(root, python, home)
+            return selected
         if family == legacy_9b904.ADAPTER_ID:
             legacy_9b904.verify_source(root)
             return family
-        return verify_launch_sources(root, family=family)
+        selected = verify_launch_sources(root, family=family)
+        if selected == "pm-0226":
+            verify_0226_admission(root, python, home)
+        return selected
     except (ConfigBytesRefused, legacy_9b904.LegacyAdoptionRefused, OSError) as exc:
+        if isinstance(exc, ConfigBytesRefused) and exc.code == "upstream-migration-required":
+            raise ValueError(
+                "PM admission refused: complete Hermes v0.22.6 config migration first "
+                "using Hermes upgrade/config migrate; do not edit _config_version manually"
+            ) from exc
         raise ValueError("official config writer is unknown; PM admission refused") from exc
 
 
@@ -786,7 +800,7 @@ def _verified_call(root: Path, python: Path, home: Path | None,
         from . import legacy_9b904
         from .legacy_9b904_contract import SOURCE_SHA256
         from .plugin_config_bytes import FAMILIES, LAUNCH_SOURCES
-        _verify_observer_writer_before_admission(root, family=family)
+        _verify_observer_writer_before_admission(root, family=family, python=python, home=home)
         sources = (SOURCE_SHA256 if family == legacy_9b904.ADAPTER_ID
                    else {**FAMILIES[family], **LAUNCH_SOURCES[family]})
         request = {**request, "source_digests": sources}
@@ -828,7 +842,10 @@ def _complete_adoption(registration: Registration, evidence: Any) -> Registratio
 
 def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
             version: str) -> Registration | None:
-    family = _verify_observer_writer_before_admission(root)
+    family = _verify_observer_writer_before_admission(root, python=python, home=home)
+    if family == "pm-0226" and home is None:
+        from .plugin_config_bytes import resolve_0226_home
+        home = resolve_0226_home(root, python)
     from . import legacy_9b904
     if family == legacy_9b904.ADAPTER_ID and not _ADOPTION_ENABLED:
         raise ValueError("legacy adoption transaction is not yet supported; PM admission refused")
@@ -836,9 +853,11 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         legacy_9b904.verify_unmanaged_scope()
     probe = _verified_call(root, python, home, {"operation": "probe"}, family)
     selected_home = Path(probe["home"])
+    if family == "pm-0226" and (home is None or selected_home.resolve() != home.resolve()):
+        raise ValueError("PM home differs from verified backend scope")
     member = selected_home / "plugins" / NAME
     if family is not None:
-        _verify_observer_writer_before_admission(root, family=family)
+        _verify_observer_writer_before_admission(root, family=family, python=python, home=home)
     _safe_directory(selected_home)
     old = _owned(member)
     try:
@@ -920,7 +939,7 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         # part of a workspace member), and point the source at that absolute
         # path so the requirement stays an ordinary index-style pin.
         if family is not None:
-            _verify_observer_writer_before_admission(root, family=family)
+            _verify_observer_writer_before_admission(root, family=family, python=python, home=home)
         if adoption is not None:
             legacy_9b904.verify_before(root, selected_home, adoption, backup=staging,
                                        backup_identity=staging_identity)
@@ -948,7 +967,7 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
             planned_owner = owner
             (staging / OWNER).write_text(json.dumps(owner))
             if family is not None:
-                _verify_observer_writer_before_admission(root, family=family)
+                _verify_observer_writer_before_admission(root, family=family, python=python, home=home)
             backup = _publish_member(member, staging, old, parent_identity, old_identity)
             registration = Registration(root, python, selected_home, member, backup, added, old is None, family)
             try:

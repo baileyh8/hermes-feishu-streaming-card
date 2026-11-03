@@ -599,6 +599,104 @@ def _base_cli() -> list[str]:
     return [str(_base_python()), "-B", "-I", "-m", "hermes_feishu_card.cli"]
 
 
+def _pm_observed_cli_code() -> str:
+    """Observe PM subprocess metadata once; never publish resolver messages."""
+    return r'''
+import collections,hashlib,io,json,re,runpy,sys
+from pathlib import Path
+from hermes_feishu_card.install import pm_dependency as p
+capture=Path(sys.argv[1])
+cli_args=sys.argv[2:]
+original_run=p.subprocess.run
+call_code=p._call.__code__
+child_code=p._CHILD
+operations={'probe','current','add','remove','disable-hfc'}
+files={'<string>','plugins_admission.py','install.py','environments.py','filesystem.py',
+       'plugins_state.py','_uv.py','config.py','subprocess.py','client.py','paths.py',
+       'plugins.py','plugins_config.py','plugins_manager.py','workspace.py',
+       'publication.py','plugin_inputs.py','__init__.py'}
+functions={'<module>','admit_plugin_set_change','sync_venv','committed_venv',
+           'read_home_selection','file_digest','verified_bytes','verify_sources',
+           'config_snapshot','run','check_call','check_output','__init__',
+           'resolve','install','ensure','_call','_run','sync','_sync_venv'}
+exceptions={'RuntimeError','ValueError','PermissionError','FileNotFoundError','OSError',
+            'CalledProcessError','TimeoutExpired','InstallError','SyncError',
+            'PMError','AdmissionError','LockError','ModuleNotFoundError','ImportError',
+            'AdmissionRefused','DependencyConflict','ResolutionConflict','NoCommittedEnvironment',
+            'AssertionError','RecursionError','MemoryError','TypeError','NameError',
+            'SyntaxError','KeyError','AttributeError','NotADirectoryError','IsADirectoryError'}
+def metadata(output):
+    raw=output if isinstance(output,bytes) else (output or '').encode('utf-8',errors='replace')
+    return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
+def record(command,kwargs,result=None,error=None):
+    try:
+        request=json.loads(kwargs.get('input','{}'))
+        operation=request.get('operation') if isinstance(request,dict) else None
+        item={'operation':operation if operation in operations else 'unknown'}
+        if result is not None:
+            item['returncode']=result.returncode
+            item['stdout']=metadata(result.stdout);item['stderr']=metadata(result.stderr)
+            text=(result.stderr.decode('utf-8',errors='replace') if isinstance(result.stderr,bytes)
+                  else result.stderr or '')
+            f_pat=re.compile(r'File "([^"\n]+)", line (\d+), in ([^\n]+)')
+            r_pat=re.compile(r'^[\s│┃]*((?:[A-Za-z]:[\\/]|/)[^\n:]+|<string>):(\d+)\s+in\s+([^\n]+)')
+            h_pat=re.compile(r'^[\s│┃]*(?:[A-Za-z_]\w*\.)*('+'|'.join(re.escape(n) for n in sorted(exceptions))+r'):')
+            a_pat=re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+            frames_deque=collections.deque(maxlen=12)
+            headers_set=set()
+            tail=''
+            for raw in io.StringIO(text):
+                line=a_pat.sub('',raw).strip()
+                if not line:continue
+                tail=line
+                m=f_pat.search(line)
+                if not m:m=r_pat.match(line)
+                if m:
+                    p_str,l_str,f_str=m.groups()
+                    base=p_str.replace('\\','/').rsplit('/',1)[-1]
+                    f_str=f_str.strip().rstrip('│┃ ').strip()
+                    frames_deque.append({'file':base if base in files else 'unknown',
+                                         'line':int(l_str) if base in files and 0<int(l_str)<=10000 else 0,
+                                         'function':f_str if f_str in functions else 'unknown'})
+                m_h=h_pat.match(line)
+                if m_h:headers_set.add(m_h.group(1))
+            item['frames']=list(frames_deque)
+            item['exception_headers']=sorted(headers_set)
+            kind=tail.split(':',1)[0]
+        else:
+            kind=type(error).__name__
+        item['exception']=(None if result is not None and result.returncode==0 and not result.stderr
+                           else kind if kind in exceptions else 'unknown')
+        with capture.open('a',encoding='utf-8') as stream:
+            stream.write(json.dumps(item,sort_keys=True)+'\n')
+    except Exception:
+        pass  # Diagnostics must never replace the original result/exception.
+def observed_run(*args,**kwargs):
+    command=args[0] if args else kwargs.get('args')
+    match=(sys._getframe(1).f_code is call_code and type(command) in (list,tuple)
+           and len(command)==6 and command[1:4]==['-I','-B','-c']
+           and command[4]==child_code)
+    try:
+        result=original_run(*args,**kwargs)
+    except BaseException as error:
+        if match:record(command,kwargs,error=error)
+        raise
+    if match:record(command,kwargs,result=result)
+    return result
+p.subprocess.run=observed_run
+# HFC_PM_OBSERVER_ENTRY
+sys.argv=['hermes-feishu-card',*cli_args]
+runpy.run_module('hermes_feishu_card.cli',run_name='__main__')
+'''
+
+
+def _cli_command(evidence: Path, name: str, arguments: Sequence[str]) -> list[str]:
+    if os.environ.get('HFC_CAPTURE_PM') == '1':
+        return [str(_base_python()), '-B', '-I', '-c', _pm_observed_cli_code(),
+                str(evidence / f'{name}-pm-observations.jsonl'), *arguments]
+    return [*_base_cli(), *arguments]
+
+
 def _observed_cli_code() -> str:
     return r'''
 import hashlib
@@ -1490,7 +1588,7 @@ def _install(
             *arguments,
         ]
         if os.environ.get("HFC_CAPTURE_ENABLE") == "1"
-        else [*_base_cli(), *arguments]
+        else _cli_command(evidence, name, arguments)
     )
     return _run_logged(
         name,
@@ -1513,7 +1611,7 @@ def _cli(
     extra = {"HFC_INSTALL_SPEC": install_spec} if install_spec else None
     return _run_logged(
         name,
-        [*_base_cli(), *arguments],
+        _cli_command(evidence, name, arguments),
         evidence=evidence,
         env=_clean_container_env(extra),
         timeout=1200,
@@ -2588,6 +2686,7 @@ def _container_main(argv: Sequence[str]) -> int:
             evidence / "capture-mode.json",
             {
                 "diagnostic_wrapper": os.environ.get("HFC_CAPTURE_ENABLE") == "1",
+                "pm_diagnostic_wrapper": os.environ.get("HFC_CAPTURE_PM") == "1",
             },
         )
     phase = "diagnose" if args.container_diagnose else args.container_phase
@@ -2660,6 +2759,7 @@ def _docker_run_command(
     uid: int,
     gid: int,
     tool: Path,
+    capture_pm: bool = False,
 ) -> list[str]:
     command = [
         docker,
@@ -2702,6 +2802,8 @@ def _docker_run_command(
     ]
     if legacy_name is not None:
         command.extend(["--env", f"HFC_LEGACY_WHEEL_FILENAME={legacy_name}"])
+    if capture_pm:
+        command.extend(['--env', 'HFC_CAPTURE_PM=1'])
     if capture_enable:
         command.extend(["--env", "HFC_CAPTURE_ENABLE=1"])
     phase_flag = "--container-diagnose" if phase == "diagnose" else "--container-phase"
@@ -2801,6 +2903,7 @@ def _run_host_phase(
     pyc_mode: str,
     capture_enable: bool,
     tool: Path,
+    capture_pm: bool = False,
 ) -> int:
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -2830,6 +2933,7 @@ def _run_host_phase(
         phase=phase,
         pyc_mode=pyc_mode,
         capture_enable=capture_enable,
+        capture_pm=capture_pm,
         uid=uid,
         gid=gid,
         tool=tool,
@@ -2857,6 +2961,7 @@ def _host_main(argv: Sequence[str]) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--capture-enable", action="store_true")
+    parser.add_argument("--capture-pm", action="store_true")
     parser.add_argument(
         "--pyc-mode",
         choices=("preserved", "cleared"),
@@ -2869,6 +2974,8 @@ def _host_main(argv: Sequence[str]) -> int:
         or Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
     ).expanduser().resolve()
     try:
+        if args.capture_pm and args.capture_enable:
+            raise AcceptanceFailure("capture modes are mutually exclusive")
         wheel_info = inspect_wheel(args.wheel)
         legacy_info = inspect_wheel(args.legacy_wheel) if args.legacy_wheel else None
         images = args.image or list(IMAGE_SPECS)
@@ -2878,6 +2985,7 @@ def _host_main(argv: Sequence[str]) -> int:
             "schema": 1,
             "mode": "diagnose" if args.diagnose else "acceptance",
             "diagnostic_wrapper": args.capture_enable,
+            "pm_diagnostic_wrapper": args.capture_pm,
             "pyc_mode": args.pyc_mode,
             "wheel": wheel_info.as_dict(),
             "legacy_wheel": legacy_info.as_dict() if legacy_info else None,
@@ -2924,6 +3032,7 @@ def _host_main(argv: Sequence[str]) -> int:
                             phase=phase,
                             pyc_mode=args.pyc_mode,
                             capture_enable=args.capture_enable,
+                            capture_pm=args.capture_pm,
                             tool=Path(__file__).resolve(),
                         )
                         if code:

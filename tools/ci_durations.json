@@ -915,7 +915,8 @@
     "tests/integration/test_upstream_hermes_compat.py::test_current_upstream_generated_ledger_executes_in_order[fixture-obligation-True-issue456_0225]": 0.421,
     "tests/integration/test_upstream_hermes_compat.py::test_pinned_upstream_install_repeat_doctor_restore[issue456_0225]": 350.925,
     "tests/integration/test_pm_rebind.py::test_real_pm_generation_explicit_rebind_reinstall_restore[0224]": 559.298,
-    "tests/integration/test_pm_rebind.py::test_real_pm_generation_explicit_rebind_reinstall_restore[0225]": 550.754
+    "tests/integration/test_pm_rebind.py::test_real_pm_generation_explicit_rebind_reinstall_restore[0225]": 550.754,
+    "tests/integration/test_upstream_hermes_compat.py::test_pinned_upstream_install_repeat_doctor_restore[0226]": 71.12
   },
   "upstream_evidence": {
     "source_run": "https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/39729191204",
@@ -1081,5 +1082,13 @@
       "timeout-regression-upstream-3.12-0.zip/upstream-3.12-3.xml": "de2030cddc79503fdecd06d6a70621048c1f6cb8f9be22cfc52495f04e66b9de"
     },
     "note": "Measured testcase times for the two new upstream rebind cases; the main Python 3.12 collection passed, but the appended uv0.13.5 step exceeded its remaining job budget. Timing evidence is not a whole-run pass."
+  },
+  "v0226_source_install_evidence": {
+    "candidate_commit": "38c9059a7dfaa5255baaf49db35b43a74075d672",
+    "python": "3.12.13",
+    "platform": "darwin",
+    "seconds": 71.12,
+    "method": "Elapsed local single-case pytest run, including setup; scheduling estimate, not CI evidence",
+    "log_sha256": "757901d3012efc7020bbe90595f33f048e4ad320c99502396bcd68325eb1292d"
   }
 }

@@ -72,6 +72,8 @@ def test_background_upstream_source_cohort(baseline, tmp_path):
 def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monkeypatch):
     configured = os.environ.get(f"HFC_UPSTREAM_{baseline.upper()}_ROOT")
     if not configured:
+        if baseline == "0226" and os.environ.get("HFC_REQUIRE_0226_PIN") == "1":
+            pytest.fail("required Hermes v0.22.6 checkout missing")
         pytest.skip(f"exact {baseline} Hermes source checkout not supplied")
     source = Path(configured)
     target = tmp_path / "hermes"
@@ -99,13 +101,29 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
         assert detection.capabilities["admission_completion"], detection.reason
     assert detection.version == expected.get("version", "0.21.0")
     assert detection.decomposed == expected.get("decomposed", baseline in {"main", "extracted"})
-    assert cli.main(["install", "--hermes-dir", str(target), "--yes"]) == 0
+    # 0226 also supplies Agent sources required by the native rate proof. That
+    # makes the CLI correctly require a real observer/runtime binding. This
+    # source-only case exercises the same managed filesystem owner directly;
+    # ordinary official-writer/PM tests cover the package side separately.
+    def install_source():
+        if baseline == "0226":
+            from hermes_feishu_card.install import decomposed
+            decomposed.install(detect_hermes(target))
+            return 0
+        return cli.main(["install", "--hermes-dir", str(target), "--yes"])
+    def restore_source():
+        if baseline == "0226":
+            from hermes_feishu_card.install import decomposed
+            decomposed.restore(detect_hermes(target))
+            return 0
+        return cli.main(["uninstall", "--hermes-dir", str(target), "--yes"])
+    assert install_source() == 0
     installed = {name: (target / name).read_bytes() for name in originals}
     assert installed != originals
     for name, raw in installed.items():
         if name.endswith(".py"):
             compile(raw, name, "exec")
-    assert cli.main(["install", "--hermes-dir", str(target), "--yes"]) == 0
+    assert install_source() == 0
     assert installed == {name: (target / name).read_bytes() for name in originals}
     detection = detect_hermes(target)
     assert detection.supported, detection.reason
@@ -127,7 +145,7 @@ def test_pinned_upstream_install_repeat_doctor_restore(baseline, tmp_path, monke
     migrate_integrity_manifest(detection)
     assert installed == {name: (target / name).read_bytes() for name in originals}
     assert integrity_acknowledgement_eligible(detection, plan_recovery(detection), plan_integrity_repair(detection))
-    assert cli.main(["uninstall", "--hermes-dir", str(target), "--yes"]) == 0
+    assert restore_source() == 0
     assert originals == {name: (target / name).read_bytes() for name in originals}
     assert not list(target.rglob("*.hermes_feishu_card.bak"))
     assert not (target / ".hermes_feishu_card_manifest").exists()

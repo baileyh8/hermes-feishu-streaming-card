@@ -9,7 +9,10 @@
       "tests/integration/test_session_authority_completion.py",
       "tests/unit/test_admission_completion_state.py",
       "tests/unit/test_admission_completion_detection.py",
-      "tests/unit/test_issue451_stage_diagnostics.py"
+      "tests/unit/test_issue451_stage_diagnostics.py",
+      "tests/unit/test_admission_delivery_verdict.py",
+      "tests/unit/test_observed_rate_identity.py",
+      "tests/unit/test_native_rate_scope.py"
     ],
     "render": [
       "tests/unit/test_render.py",
@@ -58,9 +61,12 @@
       "tests/unit/test_cli_setup_order.py",
       "tests/unit/test_issue470_config_ownership.py",
       "tests/integration/test_legacy_observer_install.py",
+      "tests/integration/test_install_sensor.py",
       "tests/integration/test_pm_rebind.py",
       "tests/integration/test_official_enable_root.py",
-      "tests/unit/test_launch_source_paths.py"
+      "tests/unit/test_launch_source_paths.py",
+      "tests/unit/test_native_rate_scope.py",
+      "tests/unit/test_config_backend_0226.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -128,7 +134,9 @@
       "tests/unit/test_native_admission.py",
       "tests/unit/test_existing_owner_projection.py",
       "tests/integration/test_session_authority_completion.py",
-      "tests/unit/test_admission_completion_state.py"
+      "tests/unit/test_admission_completion_state.py",
+      "tests/unit/test_admission_delivery_verdict.py",
+      "tests/unit/test_observed_rate_identity.py"
     ],
     "interaction": [
       "tests/unit/test_card_action_admission.py",
@@ -255,7 +263,8 @@
       "tests/unit/test_ci_workflow.py",
       "tests/unit/test_ci_regression.py",
       "tests/unit/test_official_image_tools.py",
-      "tests/unit/test_preflight.py"
+      "tests/unit/test_preflight.py",
+      "tests/unit/test_ci_prepare_upstream.py"
     ],
     "archives": [
       "tests/unit/test_release_archives.py"
@@ -753,6 +762,35 @@
     "hermes_feishu_card/install/legacy_handoff.py": [
       "install",
       "install_transactions"
+    ],
+    "hermes_feishu_card/admission_topology_0226.py": [
+      "runtime",
+      "delivery"
+    ],
+    "hermes_feishu_card/native_rate_scope.py": [
+      "runtime",
+      "render"
+    ],
+    "hermes_feishu_card/install/rate_scope.py": [
+      "install",
+      "upstream"
+    ],
+    "hermes_feishu_card/install/config_backend_0226.py": [
+      "install",
+      "install_transactions"
+    ],
+    "hermes_feishu_card/install/_writer_0226.py": [
+      "install",
+      "install_transactions"
+    ],
+    "tools/ci_prepare_upstream.py": [
+      "ci"
+    ],
+    "tools/upstream_fixtures.json": [
+      "ci"
+    ],
+    "tests/unit/test_ci_prepare_upstream.py": [
+      "ci"
     ]
   }
 }

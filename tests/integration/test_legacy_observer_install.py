@@ -28,16 +28,52 @@ home = Path(os.environ.get("HERMES_HOME", os.environ.get("HOME", ".")))
 def profile(frame, event, arg):
     if event != "call":
         return
-    module = frame.f_globals.get("__name__", "") or ""
     name = frame.f_code.co_name
-    if module.startswith("hermes_feishu_card") and name in {
+    if name not in {
         "acquire_runtime_control", "start_runtime_interaction_listener",
         "read_transport_root_secret", "post_event", "_post_event", "_post_json",
     }:
+        return
+    module = frame.f_globals.get("__name__", "") or ""
+    if module.startswith("hermes_feishu_card"):
         with (home / "hfc-forbidden.jsonl").open("a") as out:
             out.write(json.dumps([module, name]) + "\n")
         raise RuntimeError("isolated test forbids HFC ownership/transport")
-sys.setprofile(profile)
+# Python 3.12+ avoids callbacks for every C call and Python return. Global
+# entry/resume/throw events retain coverage of dynamically replaced code.
+import threading
+_monitoring = getattr(sys, 'monitoring', None)
+_tool = None
+if _monitoring is not None and os.environ.get('HFC_TEST_FORCE_PROFILE') != '1':
+    for candidate in (5, 4, 3, 2, 1, 0):
+        try:
+            _monitoring.use_tool_id(candidate, 'hfc-install-isolation')
+        except ValueError:
+            continue
+        _tool = candidate
+        break
+if _tool is None:
+    sys.setprofile(profile)
+else:
+    _sensor_thread = threading.get_ident()
+    def _entry(code, offset, *unused):
+        if code.co_name not in {
+            'acquire_runtime_control', 'start_runtime_interaction_listener',
+            'read_transport_root_secret', 'post_event', '_post_event', '_post_json',
+        } or threading.get_ident() != _sensor_thread:
+            return
+        frame = sys._getframe(1)
+        if frame.f_code is not code:
+            with (home / 'hfc-forbidden.jsonl').open('a') as out:
+                out.write(json.dumps(['sensor_binding_error', code.co_name]) + '\n')
+            raise RuntimeError('isolated sensor cannot bind Python entry')
+        profile(frame, 'call', None)
+    _entry_events = (_monitoring.events.PY_START | _monitoring.events.PY_RESUME
+                     | _monitoring.events.PY_THROW)
+    for _event in (_monitoring.events.PY_START, _monitoring.events.PY_RESUME,
+                   _monitoring.events.PY_THROW):
+        _monitoring.register_callback(_tool, _event, _entry)
+    _monitoring.set_events(_tool, _entry_events)
 def audit(event, args):
     if event in {"socket.connect", "socket.bind"}:
         # Official CLI can probe its private HOME control socket. All probes are
@@ -47,13 +83,67 @@ sys.addaudithook(audit)
 # Supply tools/project only; execute pinned upstream admission, resolver and
 # configuration publication unchanged, as the PM-generation integration does.
 provision = home / "hfc-pm-tools.json"
-if provision.exists():
+if provision.exists() and os.environ.get("HFC_TEST_NO_PM_TOOLCHAIN_PORT") != "1":
     tools = json.loads(provision.read_text())
     import pm.paths, pm._uv, pm.client, pm.install
     pm.paths.repo_root = lambda: Path(tools["project"])
     pm._uv._toolchain = lambda **kwargs: (Path(tools["uv"]), Path(tools["python"]))
     pm.client.sync_venv = lambda *args, **kwargs: pm.install.sync_venv(*args, **kwargs)
 '''
+
+
+@pytest.mark.parametrize("name", [
+    "acquire_runtime_control", "start_runtime_interaction_listener",
+    "read_transport_root_secret", "post_event", "_post_event", "_post_json",
+])
+def test_sensor_blocks_each_transport_entry_before_side_effects(tmp_path, name):
+    # A profile callback exception disables that fallback monitor. Give every
+    # entry a fresh child so one failure cannot affect another target's check.
+    import sys
+    code = r'''
+name=sys.argv[1]
+namespace={"__name__":"hermes_feishu_card.sensor_contract", "effects":[]}
+exec("def " + name + "(): effects.append('executed')", namespace)
+try:
+    namespace[name]()
+except RuntimeError as error:
+    assert str(error)=="isolated test forbids HFC ownership/transport"
+else:
+    raise AssertionError("transport entry was not blocked")
+assert namespace['effects']==[]
+assert (home/'hfc-forbidden.jsonl').read_text().splitlines()==[
+    json.dumps(['hermes_feishu_card.sensor_contract',name])]
+'''
+    result = subprocess.run([sys.executable, "-I", "-c", SENSOR + code, name],
+                            env={"HOME": str(tmp_path), "HERMES_HOME": str(tmp_path)},
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sensor_preserves_non_targets_and_offline_socket_guard(tmp_path):
+    import sys
+    code = r'''
+for module,name in [('unrelated_module','post_event'),
+                    ('hermes_feishu_card.sensor_contract','ordinary_operation')]:
+    namespace={'__name__':module,'effects':[]}
+    exec('def ' + name + '(): effects.append("executed")',namespace)
+    namespace[name]()
+    assert namespace['effects']==['executed']
+for event in ('return','c_call','c_return','c_exception'):
+    profile(None,event,None)
+assert not (home/'hfc-forbidden.jsonl').exists()
+import socket
+for operation in ('connect','bind'):
+    with socket.socket() as sock:
+        try: getattr(sock,operation)(('127.0.0.1',9))
+        except PermissionError as error:
+            assert str(error)=='offline official CLI integration'
+        else: raise AssertionError('network operation was not blocked')
+'''
+    result = subprocess.run([sys.executable, "-I", "-c", SENSOR + code],
+                            env={"HOME": str(tmp_path), "HERMES_HOME": str(tmp_path)},
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.fixture(scope="module")
@@ -135,6 +225,8 @@ def _stop_stage_group(child):
 
 def _run(python, root, home, code, *args, expected=0, stage, timeout=180):
     assert os.name == "posix", "official CLI harness requires POSIX process-group isolation"
+    import resource
+    usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     log = home / (stage + ".log")
     started = time.monotonic()
     print(f"HFC stage={stage} BEGIN budget={timeout}s log={log}", flush=True)
@@ -158,7 +250,10 @@ def _run(python, root, home, code, *args, expected=0, stage, timeout=180):
     text = log.read_text(encoding="utf-8")
     elapsed = time.monotonic() - started
     print(text, end="", flush=True)
-    print(f"HFC stage={stage} END elapsed={elapsed:.2f}s rc={child.returncode} timeout={timed_out}", flush=True)
+    usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    print(f"HFC stage={stage} END elapsed={elapsed:.2f}s rc={child.returncode} timeout={timed_out} "
+          f"reaped_child_user={usage_after.ru_utime - usage_before.ru_utime:.2f}s "
+          f"reaped_child_system={usage_after.ru_stime - usage_before.ru_stime:.2f}s", flush=True)
     assert not timed_out, f"HFC stage={stage} timed out after {timeout}s; process group terminated; log={log}\n{text}"
     assert child.returncode == expected, text
     assert not (home / "hfc-forbidden.jsonl").exists(), (
@@ -263,7 +358,8 @@ values=dict(session_id="synthetic-session",turn_id="synthetic-turn",platform="fe
     usage={"input_tokens":10,"output_tokens":80},api_duration=2.0)
 plugins.invoke_hook("pre_llm_call",**values)
 plugins.invoke_hook("post_api_request",**values)
-assert rt.take_observed_rate("synthetic-session")[1] == 80
+assert rt.take_observed_rate("synthetic-session") is None
+assert rt.take_observed_rate("synthetic-session", "synthetic-turn")[1] == 80
 assert rt.runtime_activity_snapshot() == (0,True)
 assert rt.runtime_interaction_listener_snapshot()["accepting"] is False
 runtime.reset_production_plugin_runtime_for_tests()

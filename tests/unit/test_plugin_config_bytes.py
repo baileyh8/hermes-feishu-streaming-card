@@ -89,21 +89,22 @@ def test_shadow_acl_refuses_source_or_callable_drift(shadow_acl, drift):
     assert acl._grant is before
 
 
+@pytest.mark.parametrize("family", ["pm-0225", "pm-0226"])
 @pytest.mark.parametrize("name", ["_grant_with_pywin32", "_grant_with_icacls", "_whoami_sid"])
-def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, name):
+def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, name, family):
     from hermes_feishu_card.install import plugin_config_bytes as planner
 
     shadow = tmp_path / "shadow"
     shadow.mkdir()
     (shadow / "request.json").write_text(json.dumps({
-        "real_home": str(tmp_path / "real"), "family": "pm-0225",
-        "sources": planner.FAMILIES["pm-0225"],
+        "real_home": str(tmp_path / "real"), "family": family,
+        "sources": planner.FAMILIES[family],
     }))
     guard = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
     # Exercise the Windows branch on every host, in a fresh real child only.
     guard = guard.replace(
-        "sys.platform=='win32' and request['family']=='pm-0225'",
-        "request['family']=='pm-0225'",
+        "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226')",
+        "request['family'] in ('pm-0225', 'pm-0226')",
     )
     probe = guard + (
         "\nscope={'__name__':'hermes_dir_acl','sentinel':home/'entered'}\n"
@@ -434,7 +435,7 @@ def test_git_audit_accepts_only_the_exact_bound_windows_argv(tmp_path):
     assert not (home / "continued").exists()
 
 
-@pytest.mark.parametrize("family", ["pm-0224", "pm-0225"])
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226"])
 def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path, family):
     """A real child must not resume after an upstream catch disables profiling."""
     import subprocess
@@ -518,3 +519,35 @@ def test_source_binding_failure_after_enable_preserves_unowned_bytes(
         b"# concurrent source change\r\n"
     )
     assert preimage.backup_path.is_file()
+
+
+def test_0226_home_uses_existing_runtime_binding(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from hermes_feishu_card.install import plugin, plugin_config_bytes as writer
+    root, home = tmp_path / 'root', tmp_path / 'home'
+    runtime = tmp_path / 'runtime'
+    python = runtime / 'bin' / 'python'
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b'fixture')
+    home.mkdir()
+    calls = []
+    def binding(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(runtime_python=python, hermes_home=home)
+    monkeypatch.setattr(plugin, 'resolve_runtime_binding', binding)
+    assert writer.resolve_0226_home(root, python) == home
+    assert calls == [dict(checkout_root=root, hermes_home=None, profile_id=None)]
+
+
+def test_0226_home_rejects_a_different_runtime(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from hermes_feishu_card.install import plugin, plugin_config_bytes as writer
+    first, second = tmp_path / 'first/bin/python', tmp_path / 'second/bin/python'
+    for python in (first, second):
+        python.parent.mkdir(parents=True)
+        python.write_bytes(b'fixture')
+    monkeypatch.setattr(plugin, 'resolve_runtime_binding', lambda **kwargs:
+                        SimpleNamespace(runtime_python=first, hermes_home=tmp_path))
+    with pytest.raises(writer.ConfigBytesRefused) as error:
+        writer.resolve_0226_home(tmp_path, second)
+    assert error.value.code == 'backend-runtime-mismatch'

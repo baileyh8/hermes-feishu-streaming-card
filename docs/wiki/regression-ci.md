@@ -24,6 +24,10 @@
 
 Hermes 3.12/3.13 兼容矩阵各拆十二片，由三个 runner 各运行四个进程。公开仓库的 Ubuntu runner 有 4 核、macOS arm64 有 3 核，硬件基准见[官方资源规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)；macOS 每台限制两个测试进程，为重复源码解析和安装测试留出 CPU 余量，不增加付费 runner。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
 
+上游源码清单由 `tools/upstream_fixtures.json` 保留原有十九个路径与完整 commit。每个 runner 通过 `tools/ci_prepare_upstream.py` 一次批量 fetch 到新建的私有 bare Git store，再创建原路径的 detached worktree；逐项核对 HEAD、工作区、共同 Git 目录及干净状态。固定标签 fixture 仍单独核验。整个步骤要求独占 workspace，未知既有目标或缓存、链接及无法检查的元数据会在写入前拒绝；失败保留本次现场，不删除未知目录。
+
+[CI 41696713164](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/41696713164) 的原串行十九次 checkout 曾消耗 15–24 分钟，导致 25 分钟 job 预算不足；单次恢复仍出现相同准备开销，因此改准备流程。所有源码 pin、环境变量、测试集合、用例超时、job 上限与结果完整性检查保留。批量准备的真实耗时和完整通过状态须以采用该流程的新 CI 为准，不由本地 Git 小样本推断。
+
 `tools/ci_shard.py` 按收集到的完整 node ID 集合分配用例，使用 `tools/ci_durations.json` 中的历史耗时做均衡。耗时文件仅影响调度，不是测试白名单。新增和参数化用例自动进入集合，未登记耗时的用例也会运行。慢用例拆到不同进程，保留每个用例内部的完整安装、故障注入与恢复断言。
 
 `full` 与 `upstream` 使用独立耗时数据。普通 full 中缺少上游 fixture 而跳过的用例，在 upstream 中会执行真实安装，不能沿用它的跳过耗时。upstream 已按 [CI 39729191204](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/39729191204) 的 Linux Python 3.12 JUnit 校准；缺失的 33 例使用同集合已完成的 Python 3.13 耗时乘 1.7 估计，并在耗时文件中单列来源、node ID 和摘要。这些估计只影响调度，不能视为测试通过。

@@ -1728,9 +1728,9 @@ class PluginRuntime:
             turn.metrics.observe_api(kwargs)
         return None
 
-    def take_observed_rate(self, session_id: object):
+    def take_observed_rate(self, session_id: object, turn_id: object = None):
         if self.observe_only and not self._closed:
-            return self._observed_rates.take(session_id)
+            return self._observed_rates.take(session_id, turn_id)
         return None
 
     def handle_post_llm_call(self, **kwargs: object) -> None:

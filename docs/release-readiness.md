@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.13`；本轮针对 #479/#478 修复非飞书终局投递隔离与模型选择卡。候选须通过独立复现、QA/review、普通 wheel 旧补丁升级/恢复、精确完整 CI 和公开安装/资产验收。真实 Gateway/model 和客户端证据分别记录，不将模拟结果写作现场验收。见[发行说明](release-notes-v5.0.13.md)。
+本分支目标版本为 `5.0.14`；核验 #441 逐轮速率关联，并合并 #482/#485/#486 与质量工具维护。独立 QA/review、普通 wheel 升级/恢复、精确完整 CI、平台 API、公开安装及资产门禁分别记录。报告者现场、真实 Gateway/model 和客户端点击未验证。见[发行说明](release-notes-v5.0.14.md)。
 
 ## v5.0.11 历史记录
 

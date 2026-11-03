@@ -20,6 +20,8 @@ from typing import Any, Mapping
 
 import yaml  # type: ignore[import-untyped]
 
+from ._writer_0226 import FAMILY_SOURCES as _PM_0226_SOURCES, LAUNCH_SOURCES as _PM_0226_LAUNCH
+
 from .file_transaction import BINARY_FLAG
 
 
@@ -313,7 +315,7 @@ FAMILIES["pm-main-4e58"] = {
 # The CLI migrates configuration only once per install identity. Bind the
 # read-only decision helpers as well as the writer; a restored older preimage
 # must not be migrated merely because its schema is below the latest one.
-BOOT_GATE_FAMILIES = frozenset(('pm-main', 'pm-0223', 'pm-0221', 'pm-0224', 'pm-0225', 'pm-main-4e58'))
+BOOT_GATE_FAMILIES = frozenset(('pm-main', 'pm-0223', 'pm-0221', 'pm-0224', 'pm-0225', 'pm-0226', 'pm-main-4e58'))
 FAMILIES['pm-main'] = {**FAMILIES['pm-main'],
     'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
     'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
@@ -393,6 +395,8 @@ FAMILIES['pm-main-4e58'] = {**FAMILIES['pm-main-4e58'],
     'pm/paths.py': '8f15860b82f443a424186317dc361ea6063e0e7c3113af9b56a76f6b89e97737',
 }
 
+FAMILIES["pm-0226"] = dict(_PM_0226_SOURCES)
+
 # The official launch bootstrap executes these files before the writer plan.
 # They are intentionally separate from FAMILIES: the writer contract and the
 # launcher contract have different consumers and must not imply one another.
@@ -431,6 +435,9 @@ LAUNCH_SOURCES: dict[str, dict[str, str]] = {
         "hermes_cli/__init__.py": _PM_INIT,
     },
 }
+
+
+LAUNCH_SOURCES["pm-0226"] = dict(_PM_0226_LAUNCH)
 
 
 def _digest(path: Path) -> str:
@@ -678,9 +685,17 @@ class ConfigBytesPlan:
     root: Path
     family: str
     config_version: int | None = None
+    backend_proof: Any = None
 
     def verify_source(self) -> None:
         verify_family(self.root, self.family)
+        if self.family == "pm-0226":
+            if self.backend_proof is None:
+                raise ConfigBytesRefused("file backend proof missing", code="backend-unverified", stage="backend")
+            try:
+                self.backend_proof.verify()
+            except Exception as exc:
+                raise ConfigBytesRefused("file backend proof changed", code="backend-unverified", stage="backend") from exc
 
     def verify_launch_sources(self) -> None:
         verify_launch_sources(self.root, family=self.family)
@@ -797,7 +812,7 @@ def library_alias(raw,path):
                and raw.relative_to(alias)==path.relative_to(base)
                for alias,base in library_aliases)
 def audit(event,args):
-    if request['family']=='pm-0225' and event=='exec':
+    if request['family'] in ('pm-0225', 'pm-0226') and event=='exec':
         filename=args[0].co_filename
         if not filename.startswith('<'):
             raw=Path(os.path.abspath(os.fspath(filename)))
@@ -838,7 +853,7 @@ def audit(event,args):
         if under(raw,root) and has_symlink(raw) and not library_alias(raw,path):
             deny('local-source-symlink','open',raw.relative_to(root).as_posix())
         # Ignore checkout bytecode caches: verified source must be compiled.
-        if request['family']=='pm-0225' and under(path,root) and path.suffix=='.pyc' and not library_path(path):
+        if request['family'] in ('pm-0225', 'pm-0226') and under(path,root) and path.suffix=='.pyc' and not library_path(path):
             raise OSError('private planner requires verified source')
         mode=args[1];flags=args[2]
         writing=(isinstance(mode,str) and any(x in mode for x in 'wax+')) or bool(flags & (os.O_WRONLY|os.O_RDWR|os.O_CREAT|os.O_TRUNC))
@@ -861,7 +876,7 @@ def profile(frame,event,arg):
     if event!='call': return
     module=frame.f_globals.get('__name__','') or ''
     name=frame.f_code.co_name
-    if (sys.platform=='win32' and request['family']=='pm-0225'
+    if (sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226')
             and module=='hermes_dir_acl'
             and name in {'_grant_with_pywin32','_grant_with_icacls','_whoami_sid'}):
         deny('acl-grant-attempt','profile','hermes_dir_acl.py')
@@ -914,7 +929,7 @@ def _restrict_shadow_acl(acl):
     except (OSError,AttributeError,TypeError,ValueError,SyntaxError):
         deny('acl-helper-drift','plan','hermes_dir_acl.py')
     acl._grant=_refuse_shadow_acl_grant
-if sys.platform=='win32' and request['family']=='pm-0225':
+if sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226'):
     # Load and bind before any upstream HOME helper can perform a Windows grant.
     _restrict_shadow_acl(module('hermes_dir_acl','hermes_dir_acl.py'))
 migrate_on_boot=request.get('historical_migration')
@@ -1074,6 +1089,55 @@ def _child_refusal(stderr: bytes | str | None, returncode: int) -> ConfigBytesRe
     )
 
 
+def resolve_0226_home(root: Path, python: Path) -> Path:
+    """Use the existing unique-home/runtime binding for ordinary setup."""
+    from .plugin import resolve_runtime_binding
+    binding = resolve_runtime_binding(checkout_root=root, hermes_home=None, profile_id=None)
+    if (binding.runtime_python.resolve(strict=True) != python.resolve(strict=True)
+            or binding.runtime_python.parent.parent.resolve(strict=True)
+            != python.parent.parent.resolve(strict=True)):
+        raise ConfigBytesRefused("backend runtime differs from selected Hermes runtime",
+                                 code="backend-runtime-mismatch", stage="backend")
+    return binding.hermes_home
+
+
+def verify_0226_admission(root: Path, python: Path | None, home: Path | None,
+                          *, before: bytes | None = None) -> Any:
+    """Prove file-backend ownership before PM admission and again before enable."""
+    from . import posix_transaction as io
+    from .config_backend_0226 import verify_file_backend
+
+    if python is None:
+        raise ConfigBytesRefused("runtime required for backend proof",
+                                 code="backend-scope-missing", stage="backend")
+    if home is None:
+        home = resolve_0226_home(root, python)
+
+    if before is None:
+        _, before, _ = io.read_file_state(
+            home / "config.yaml", parent_fd=None, missing_allowed=False,
+            refused=ConfigBytesRefused, non_regular_refusal="config is nonregular",
+            changed_refusal="config changed", wrap_read_error=True)
+    if before is None:
+        raise ConfigBytesRefused("config is unavailable", code="config-missing", stage="backend")
+    config = _mapping(before)
+    version = config.get("_config_version")
+    if type(version) is not int or version != 52:
+        raise ConfigBytesRefused(
+            "Hermes v0.22.6 config migration must complete before HFC installation; "
+            "run the normal Hermes upgrade/config migrate flow, do not edit the version stamp",
+            code="upstream-migration-required", stage="migration")
+    section = config.get("plugins", {})
+    if isinstance(section, dict) and "disabled_by_update" in section:
+        raise ConfigBytesRefused("update-disabled plugin records require separate recovery",
+                                 code="update-record-unsupported", stage="backend")
+    try:
+        return verify_file_backend(root, python, home)
+    except Exception as exc:
+        raise ConfigBytesRefused("file backend selection is unverified",
+                                 code="backend-unverified", stage="backend") from exc
+
+
 def _plan_enabled_bytes(
     *,
     root: Path,
@@ -1095,6 +1159,8 @@ def _plan_enabled_bytes(
         break
     if family is None:
         raise ConfigBytesRefused("official config writer contract is unknown")
+    backend_proof = (verify_0226_admission(root, python, home, before=before)
+                     if family == "pm-0226" else None)
     try:
         with tempfile.TemporaryDirectory(
             prefix="hfc-config-plan-", dir=state_dir
@@ -1160,7 +1226,9 @@ def _plan_enabled_bytes(
         ) from exc
     verify_family(root, family)
     mapping = _mapping(postimage)
-    return ConfigBytesPlan(postimage, root, family, _schema_version(mapping))
+    plan = ConfigBytesPlan(postimage, root, family, _schema_version(mapping), backend_proof)
+    plan.verify_source()
+    return plan
 
 
 def plan_enabled_bytes(

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.13`, repairing non-Feishu completion isolation (#479) and model selection (#478). Candidate acceptance requires independent reproduction, QA/review, ordinary-wheel upgrade/restore, exact-commit full CI and public installation/archive verification. Real Gateway/model and client evidence are recorded separately. See the [release notes](release-notes-v5.0.13.en.md).
+This branch targets `5.0.14`, addressing per-turn rate correlation (#441) alongside #482/#485/#486 and quality-tool maintenance. Independent QA/review, ordinary-wheel upgrade/restore, exact-commit full CI, platform API, public installation and assets remain separate gates. Reporter-environment, real Gateway/model and client-click acceptance are unverified. See the [release notes](release-notes-v5.0.14.en.md).
 
 ## v5.0.11 historical record
 

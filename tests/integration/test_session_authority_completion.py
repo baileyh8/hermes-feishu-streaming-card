@@ -6,7 +6,7 @@ A real Session Authority SQLite test is separate from this call-chain harness.
 import ast
 import asyncio
 import builtins
-from contextlib import contextmanager, nullcontext, suppress
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -32,6 +32,7 @@ from hermes_feishu_card.install.decomposed_ownership import render
 FIXTURE = Path(__file__).parents[1] / "fixtures/session_authority_5fc490e.json"
 NEW_FIXTURE = FIXTURE.with_name("session_authority_0224.json")
 V0225_FIXTURE = FIXTURE.with_name("session_authority_0225.json")
+V0226_FIXTURE = FIXTURE.with_name("session_authority_0226.json")
 ISSUE471_FIXTURE = FIXTURE.with_name("session_authority_9b904.json")
 
 
@@ -61,6 +62,26 @@ def _issue471_pinned_root():
             pytest.fail("required issue 471 pinned checkout is missing")
         pytest.skip("exact issue 471 checkout not supplied")
     return Path(root)
+
+
+def test_v0226_snapshot_matches_pinned_checkout():
+    value = os.environ.get("HFC_UPSTREAM_0226_ROOT")
+    if not value:
+        if os.environ.get("HFC_REQUIRE_0226_PIN") == "1":
+            pytest.fail("required v0.22.6 pinned checkout is missing")
+        pytest.skip("exact v0.22.6 checkout not supplied")
+    root = Path(value)
+    assert subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"],
+                                   text=True).strip() == "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"
+    for name, raw in load_sources(V0226_FIXTURE).items():
+        assert (root / name).read_bytes() == raw.encode("utf-8"), name
+
+
+def test_v0226_required_checkout_cannot_silently_skip(monkeypatch):
+    monkeypatch.delenv("HFC_UPSTREAM_0226_ROOT", raising=False)
+    monkeypatch.setenv("HFC_REQUIRE_0226_PIN", "1")
+    with pytest.raises(pytest.fail.Exception, match="required v0.22.6 pinned checkout is missing"):
+        test_v0226_snapshot_matches_pinned_checkout()
 
 
 def test_issue471_snapshot_matches_pinned_checkout():
@@ -174,8 +195,8 @@ async def noop(*args, **kwargs):
 
 
 @pytest.fixture(
-    params=[FIXTURE, NEW_FIXTURE, V0225_FIXTURE, ISSUE471_FIXTURE],
-    ids=["5fc", "0224", "0225", "9b904"],
+    params=[FIXTURE, NEW_FIXTURE, V0225_FIXTURE, ISSUE471_FIXTURE, V0226_FIXTURE],
+    ids=["5fc", "0224", "0225", "9b904", "0226"],
 )
 def harness(tmp_path, monkeypatch, request):
     from hermes_feishu_card import admission_completion as ac
@@ -274,6 +295,7 @@ def harness(tmp_path, monkeypatch, request):
         str(tmp_path / "gateway/platforms/base.py"),
     )
     base_module = ModuleType("gateway.platforms.base")
+    base_module.__file__ = str(tmp_path / "gateway/platforms/base.py")
     base_module.BasePlatformAdapter = type(
         "BasePlatformAdapter", (), {n: globs[n] for n in base_names}
     )
@@ -399,6 +421,8 @@ def harness(tmp_path, monkeypatch, request):
                     "completed": True,
                     "api_calls": result.api_calls,
                     "session_id": "physical-session",
+                    "_hfc_observed_rate_scope": {
+                        "session_id": "physical-session", "turn_id": "observed-turn"},
                 },
                 [],
                 reply_text,
@@ -412,7 +436,7 @@ def harness(tmp_path, monkeypatch, request):
 
     runner = Runner()
     adapter.gateway_runner = runner
-    real_owner_gate = fixture_path == ISSUE471_FIXTURE or isinstance(request.param, tuple)
+    real_owner_gate = fixture_path in (ISSUE471_FIXTURE, V0226_FIXTURE) or isinstance(request.param, tuple)
     if not real_owner_gate:
         monkeypatch.setattr(
             ac,
@@ -533,6 +557,60 @@ def harness(tmp_path, monkeypatch, request):
         },
     )
     monkeypatch.setitem(sys.modules, "gateway.session_authority", auth_module)
+
+    if fixture_path == V0226_FIXTURE:
+        from hermes_feishu_card.admission_topology_0226 import _FUNCTIONS
+        lifecycle_modules = {}
+        for module_name in ("gateway.session_producer_lifecycle",
+                            "gateway.platforms.base_post_delivery",
+                            "gateway.run_turn_followup_ack"):
+            module = ModuleType(module_name)
+            module.__file__ = str(tmp_path / (module_name.replace(".", "/") + ".py"))
+            module.__dict__.update(asyncio=asyncio, contextlib=__import__("contextlib"),
+                                   inspect=__import__("inspect"),
+                                   ProcessingOutcome=globs["ProcessingOutcome"])
+            functions(files[module_name.replace(".", "/") + ".py"],
+                      {name.rsplit(".", 1)[-1] for name in _FUNCTIONS[module_name]},
+                      module.__dict__, module.__file__)
+            monkeypatch.setitem(sys.modules, module_name, module)
+            lifecycle_modules[module_name] = module
+        event_module = ModuleType("gateway.platforms.event")
+        event_module.ProcessingOutcome = globs["ProcessingOutcome"]
+        monkeypatch.setitem(sys.modules, "gateway.platforms.event", event_module)
+        lifecycle_modules["gateway.run_turn_followup_ack"].BasePlatformAdapter = base_module.BasePlatformAdapter
+        producer = lifecycle_modules["gateway.session_producer_lifecycle"]
+        producer._Bracket = type("_Bracket", (), {name: getattr(producer, name)
+                                                 for name in ("__init__", "stop_typing", "close")})
+        producer.producer_turn = asynccontextmanager(producer.producer_turn)
+        functions(files["gateway/session_ingress.py"],
+                  set(_FUNCTIONS["gateway.session_ingress"]), ingress.__dict__, ingress.__file__)
+        ingress._admission_scope = asynccontextmanager(ingress._admission_scope)
+        ingress.producer_turn = producer.producer_turn
+        ingress.close_producer_turn = producer.close_producer_turn
+        ingress.ProcessingOutcome = globs["ProcessingOutcome"]
+        ingress.nullcontext = nullcontext
+        ingress.busy_turn_started = lambda *a: None  # DB/busy-arrival port
+        ingress.note_busy_admitted = lambda *a: None
+        ingress.settle_busy_arrival = lambda *a: None
+        functions(files["gateway/session_authority.py"], {"_admitted", "_settle_cancelled"},
+                  auth_module.__dict__, auth_module.__file__)
+        for name in ("_admitted", "_settle_cancelled"):
+            setattr(auth_module.SessionAuthority, name, getattr(auth_module, name))
+        auth_module.mark_producer_admission = producer.mark_producer_admission
+        auth_module.drop_producer_turn = producer.drop_producer_turn
+        base_module.run_post_delivery_callback = lifecycle_modules[
+            "gateway.platforms.base_post_delivery"].run_post_delivery_callback
+        base_module._POST_DELIVERY_CALLBACK_TIMEOUT_SECONDS = 30.0
+        functions(files["gateway/platforms/base.py"],
+                  {"_split_post_delivery_entry", "send_typing", "on_processing_start"},
+                  base_module.__dict__, base_module.__file__)
+        for name in ("send_typing", "on_processing_start"):
+            setattr(base_module.BasePlatformAdapter, name, getattr(base_module, name))
+        secret_scope = ModuleType("agent.secret_scope")
+        secret_scope._is_process_home = lambda *a: False  # private symbolic profile port
+        monkeypatch.setitem(sys.modules, "agent.secret_scope", secret_scope)
+        result.producer = producer
+        result.post_delivery = lifecycle_modules["gateway.platforms.base_post_delivery"]
 
     class Authority:
         _schedule = auth_module._schedule
@@ -753,18 +831,7 @@ def test_render_template_fault_injection_is_not_cached(monkeypatch):
 async def test_native_admission_waiter_and_drain_owned_finish_exact_card(
     harness, waiter
 ):
-    event = Event()
-    authority = harness.Authority(event)
-    if waiter:
-        harness.adapter._message_handler = lambda e: harness.ingress.admit_message(
-            authority, e
-        )
-        await asyncio.wait_for(
-            harness.adapter._process_message_background(event, "route-key"), 3
-        )
-        await authority.sessions["authority-session"].task
-    else:
-        await authority._port_drain(authority.ref)
+    await deliver(harness, waiter=waiter)
     assert harness.staged == [True]
     assert len(harness.posts) == 1
     assert harness.posts[0]["event"] == "message.completed"
@@ -776,29 +843,146 @@ async def test_native_admission_waiter_and_drain_owned_finish_exact_card(
     ]
 
 
-async def deliver(harness, *, waiter=False, event=None):
+async def deliver(harness, *, waiter=False, event=None, timeout=30):
     event = event or Event()
     authority = harness.Authority(event)
     if waiter:
         harness.adapter._message_handler = lambda e: harness.ingress.admit_message(
             authority, e
         )
-        await asyncio.wait_for(
-            harness.adapter._process_message_background(event, "route-key"), 3
-        )
-        await authority.sessions["authority-session"].task
+        async def finish_waiter():
+            await harness.adapter._process_message_background(event, "route-key")
+            await authority.sessions["authority-session"].task
+
+        try:
+            # This is a harness hang guard, not a production latency assertion.
+            # Repeated real source compilation can exceed three seconds on CI.
+            # One budget covers both adapter completion and its owned drain.
+            await asyncio.wait_for(finish_waiter(), timeout)
+        finally:
+            task = authority.sessions["authority-session"].task
+            if task is not None and task is not asyncio.current_task():
+                if not task.done():
+                    task.cancel()
+                # Normal drain exceptions already propagate via finish_waiter;
+                # cleanup must preserve an adapter error or cancellation too.
+                await asyncio.gather(task, return_exceptions=True)
     else:
         await authority._port_drain(authority.ref)
     return event, authority
 
 
+def _waiter_delivery_probe(drain, *, adapter_waits=True):
+    owners = []
+
+    class Authority:
+        def __init__(self, event):
+            self.sessions = {"authority-session": SimpleNamespace(task=None)}
+            owners.append(self)
+
+    async def background(event, route):
+        task = asyncio.create_task(drain())
+        owners[-1].sessions["authority-session"].task = task
+        if adapter_waits:
+            await asyncio.shield(task)
+
+    return SimpleNamespace(
+        Authority=Authority, owners=owners,
+        adapter=SimpleNamespace(_process_message_background=background),
+    )
+
+
+async def test_waiter_helper_allows_valid_delivery_beyond_old_three_second_budget():
+    finished = []
+
+    async def drain():
+        await asyncio.sleep(3.05)
+        finished.append(True)
+
+    probe = _waiter_delivery_probe(drain)
+    try:
+        await deliver(probe, waiter=True)
+        assert finished == [True]
+    finally:
+        task = probe.owners[-1].sessions["authority-session"].task
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("adapter_waits", [True, False])
+async def test_waiter_helper_deadline_reclaims_its_unfinished_drain(adapter_waits):
+    stopped = []
+
+    async def drain():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.append(True)
+
+    probe = _waiter_delivery_probe(drain, adapter_waits=adapter_waits)
+    operation = asyncio.create_task(deliver(probe, waiter=True, timeout=0.02))
+    try:
+        done, _ = await asyncio.wait({operation}, timeout=5)
+        assert done, "waiter helper did not enforce its deadline"
+        with pytest.raises(asyncio.TimeoutError):
+            await operation
+        task = probe.owners[-1].sessions["authority-session"].task
+        assert task.done() and task.cancelled()
+        assert stopped == [True]
+    finally:
+        operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+        task = probe.owners[-1].sessions["authority-session"].task
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_waiter_helper_preserves_drain_failure_identity():
+    failure = RuntimeError("synthetic drain failure")
+
+    async def drain():
+        raise failure
+
+    probe = _waiter_delivery_probe(drain, adapter_waits=False)
+    with pytest.raises(RuntimeError) as caught:
+        await deliver(probe, waiter=True)
+    assert caught.value is failure
+
+
+async def test_waiter_helper_caller_cancellation_reclaims_owned_drain():
+    started, stopped = asyncio.Event(), asyncio.Event()
+
+    async def drain():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    probe = _waiter_delivery_probe(drain)
+    operation = asyncio.create_task(deliver(probe, waiter=True))
+    try:
+        await started.wait()
+        operation.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await operation
+        task = probe.owners[-1].sessions["authority-session"].task
+        assert task.done() and task.cancelled() and stopped.is_set()
+    finally:
+        operation.cancel()
+        await asyncio.gather(operation, return_exceptions=True)
+        task = probe.owners[-1].sessions["authority-session"].task
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 @pytest.mark.parametrize(
-    "harness", [(V0225_FIXTURE, True), (ISSUE471_FIXTURE, True)],
-    ids=["0225-real-owner", "9b904-real-owner"], indirect=True,
+    "harness", [(V0225_FIXTURE, True), (ISSUE471_FIXTURE, True), (V0226_FIXTURE, True)],
+    ids=["0225-real-owner", "9b904-real-owner", "0226-real-owner"], indirect=True,
 )
 @pytest.mark.parametrize("kind", ["sync", "async"])
 @pytest.mark.parametrize("change", [
-    "none", "first-sender", "profile", "chat", "thread", "superseded", "row-user", "row-generation",
+    "none", "first-sender", "profile", "chat", "thread", "superseded", "row-user", "row-generation", "detached-route",
 ])
 async def test_first_card_checks_native_owner_before_policy(
     harness, monkeypatch, kind, change
@@ -818,6 +1002,9 @@ async def test_first_card_checks_native_owner_before_policy(
                               "thread": "thread_id"}[change], "different")
     elif change == "superseded":
         live.superseded = True
+    elif change == "detached-route":
+        live.route = "agent:synthetic:detached:old"
+        live.source = replace(live.source, chat_id="detached", thread_id="")
     monkeypatch.setattr(h, "_policy_gate_async", harness.real_gate)
     monkeypatch.setattr(h, "_fetch_delivery_policy_sync", lambda *a: {
         "ok": True, "disposition": "card", "ttl_ms": 0,
@@ -1789,11 +1976,14 @@ async def test_carrier_final_crosses_real_loopback_http_without_broadening_ack(
             lambda: SimpleNamespace(
                 enabled=True,
                 event_url=f"http://127.0.0.1:{port}/events",
-                timeout_seconds=1,
+                timeout_seconds=5,
             ),
         )
         monkeypatch.setattr(h, "_post_json_response", harness.real_post)
-        await deliver(harness, waiter=waiter)
+        # This checks ACK semantics, not a three-second latency contract.
+        # Source verification and real loopback run concurrently with CI shards;
+        # retain a finite deadlock guard without cancelling a valid delivery.
+        await deliver(harness, waiter=waiter, timeout=30)
         assert len(seen) == 1
         assert seen[0]["data"]["answer"] == "complete answer"
         assert seen[0]["data"]["native_handoff"]["obligation_key"]
@@ -1835,7 +2025,7 @@ async def test_real_sidecar_events_handler_terminalizes_existing_owner(
         monkeypatch.setattr(
             h,
             "load_runtime_config",
-            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=1),
+            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=5),
         )
         monkeypatch.setattr(h, "_post_json_response", harness.real_post)
         event = Event()
@@ -1850,7 +2040,7 @@ async def test_real_sidecar_events_handler_terminalizes_existing_owner(
         )
         response = await client.post("/events", json=started)
         assert response.status == 200 and (await response.json())["applied"] is True
-        await deliver(harness, waiter=waiter, event=event)
+        await deliver(harness, waiter=waiter, event=event, timeout=30)
         sessions = list(app[SESSIONS_KEY].values())
         assert len(sessions) == 1
         assert sessions[0].status == "completed"
@@ -1885,10 +2075,10 @@ async def test_real_sidecar_authenticated_admission_rejection_keeps_native(
         monkeypatch.setattr(
             h,
             "load_runtime_config",
-            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=1),
+            lambda: SimpleNamespace(enabled=True, event_url=url, timeout_seconds=5),
         )
         monkeypatch.setattr(h, "_post_json_response", harness.real_post)
-        await deliver(harness, waiter=waiter)
+        await deliver(harness, waiter=waiter, timeout=30)
         assert not app[SESSIONS_KEY]
         assert harness.native == ["complete answer"]
         assert harness.ledger[-1] == ("final", "ingress-a", True)
@@ -2056,9 +2246,9 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
     takes = []
     original_take = runtime.take_observed_rate
 
-    def take(session_id):
-        takes.append(session_id)
-        return original_take(session_id)
+    def take(session_id, turn_id):
+        takes.append((session_id, turn_id))
+        return original_take(session_id, turn_id)
 
     monkeypatch.setattr(runtime, "take_observed_rate", take)
     original_build = h.build_event
@@ -2099,7 +2289,7 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
         await deliver(harness, waiter=waiter)
         assert harness.staged == [True]
         assert len(previews) == 1 and "rate" not in previews[0]["data"]
-        assert takes == ["physical-session"]
+        assert takes == [("physical-session", "observed-turn")]
         assert len(attempts) == 1
         assert attempts[0]["event"] == "message.completed"
         assert [url for url, _ in requests] == (
@@ -2128,10 +2318,137 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
             }
         else:
             assert "rate" not in attempts[0]["data"]
-        assert original_take("physical-session") is None
+        remaining = original_take("physical-session", "observed-turn")
+        assert remaining is None
         assert harness.native == (["complete answer"] if post_failure else [])
         assert harness.ledger[-1] == ("final", "ingress-a", True)
         assert plugin_posts == []
         assert runtime.runtime_activity_snapshot() == (0, True)
     finally:
         runtime.close()
+
+
+@pytest.mark.parametrize('harness', [V0226_FIXTURE], ids=['0226-lifecycle'], indirect=True)
+@pytest.mark.parametrize('attachment_success', [None, False, True])
+async def test_v0226_real_producer_scope_and_post_delivery_order(harness, monkeypatch, attachment_success):
+    """Original scope/bracket/send/slot helpers; processing/transport are explicit ports."""
+    events = []
+    adapter = harness.adapter
+    event = Event()
+    authority = harness.Authority(event)
+    admission_id = authority.row['admission_id']
+    authority.producer_turns = {admission_id: None}
+    adapter._background_tasks = set()
+
+    async def typing(*a, **k):
+        pass
+    async def processing_start(*a, **k):
+        pass
+    async def processing_hook(name, *args):
+        events.append((name, args[-1] if name == 'on_processing_complete' else None))
+    def start_typing(event, stop, metadata):
+        events.append(('typing-start', None))
+        return asyncio.create_task(stop.wait())
+    async def stop_typing(chat_id, task, **kwargs):
+        await task
+        events.append(('typing-stop', None))
+    monkeypatch.setattr(type(adapter), 'send_typing', typing)
+    monkeypatch.setattr(type(adapter), 'on_processing_start', processing_start)
+    adapter._run_processing_hook = processing_hook
+    adapter._start_typing_refresh = start_typing
+    adapter._stop_typing_refresh = stop_typing
+    if attachment_success is not None:
+        harness.media = ['/tmp/synthetic-attachment.png']
+        async def attachments(event, extracted, metadata, **kwargs):
+            events.append(('attachment-send', attachment_success))
+            kwargs['record_delivery'](SimpleNamespace(success=attachment_success))
+        adapter._deliver_attachments = attachments
+
+    async def callback():
+        assert not authority.pending_deliveries
+        assert len(harness.posts) == 1
+        events.append(('post-delivery', None))
+    adapter._post_delivery_callbacks = {'route-key': (101, callback)}
+    await authority._port_drain(authority.ref)
+    assert not authority.producer_turns
+    assert 'route-key' not in adapter._post_delivery_callbacks
+    await harness.ingress.fire_post_delivery(authority, admission_id)
+    await harness.ingress.fire_post_delivery(authority, admission_id)
+    names = [name for name, _ in events]
+    assert names.count('typing-start') == names.count('typing-stop') == 1
+    assert names.count('on_processing_start') == names.count('on_processing_complete') == 1
+    assert names.index('typing-stop') < names.index('on_processing_complete') < names.index('post-delivery')
+    assert names.count('post-delivery') == 1
+    completed = next(value for name, value in events if name == 'on_processing_complete')
+    assert completed == ('failure' if attachment_success is False else 'success')
+    assert harness.posts[0]['event'] == 'message.completed'
+    if attachment_success is not None:
+        data = harness.posts[0]['data']
+        assert data['native_delivery'] == 'required'
+        assert 'obligation_key' not in data['native_handoff']
+
+
+@pytest.mark.parametrize('harness', [V0226_FIXTURE], ids=['0226-slots'], indirect=True)
+async def test_v0226_late_waiter_never_overwrites_new_callback(harness):
+    event = Event()
+    authority = harness.Authority(event)
+    admission_id = authority.row['admission_id']
+    old, new = lambda: None, lambda: None
+    slots = harness.adapter._post_delivery_callbacks = {'route-key': (101, old)}
+    harness.ingress._take_post_delivery(authority, admission_id, event.source, 'route-key')
+    assert slots == {}
+    slots['route-key'] = (102, new)
+    authority.native_waiters.add(admission_id)
+    await harness.ingress.fire_post_delivery(authority, admission_id)
+    assert slots == {'route-key': (102, new)}
+    assert not harness.ingress._registry(authority, 'post_delivery')
+
+
+@pytest.mark.parametrize('harness', [V0226_FIXTURE], ids=['0226-callback'], indirect=True)
+async def test_v0226_native_callback_failure_and_timeout_release_next_callback(harness):
+    calls = []
+    async def fail():
+        calls.append('failed')
+        raise RuntimeError('synthetic callback')
+    async def wait():
+        calls.append('waiting')
+        try:
+            await asyncio.Event().wait()
+        finally:
+            calls.append('cancelled')
+    async def following():
+        calls.append('next')
+    run = harness.post_delivery.run_post_delivery_callback
+    await run(fail, 0.01)
+    await run(wait, 0.01)
+    await run(following, 0.01)
+    assert calls == ['failed', 'waiting', 'cancelled', 'next']
+
+
+_RATE_PIN_ENVS = {
+    '0222': 'HFC_UPSTREAM_BASELINE_0222_ROOT',
+    '0224': 'HFC_UPSTREAM_LATEST_STABLE_ROOT',
+    '0225': 'HFC_UPSTREAM_ISSUE456_0225_ROOT',
+    '0226': 'HFC_UPSTREAM_0226_ROOT',
+    'main4e58': 'HFC_UPSTREAM_LATEST_MAIN_ROOT',
+    'main0ab': 'HFC_UPSTREAM_BASELINE_MAIN_0AB_ROOT',
+    'cf4': 'HFC_UPSTREAM_ISSUE451_CF4_ROOT',
+    'rc2': 'HFC_UPSTREAM_ISSUE451_RC2_ROOT',
+    '9b904': 'HFC_UPSTREAM_ISSUE471_9B904_ROOT',
+    'background_rc': 'HFC_UPSTREAM_BACKGROUND_RC_ROOT',
+    'background_main': 'HFC_UPSTREAM_BACKGROUND_MAIN_ROOT',
+}
+
+
+@pytest.mark.parametrize('version', sorted(_RATE_PIN_ENVS))
+def test_native_rate_identity_snapshot_matches_existing_pin(version):
+    value = os.environ.get(_RATE_PIN_ENVS[version])
+    if not value:
+        if os.environ.get('HFC_REQUIRE_UPSTREAM_RATE_CONTRACT') == '1':
+            pytest.fail('required rate identity pin missing: ' + version)
+        pytest.skip('rate identity pin not supplied: ' + version)
+    root = Path(value)
+    manifest = json.loads((Path(__file__).parents[1] / 'fixtures/native_rate_scope.json').read_text())
+    assert subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip() == manifest['commits'][version]
+    for name, digest in manifest['files'][version].items():
+        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, name
