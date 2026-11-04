@@ -414,25 +414,36 @@ class _NoControlRedirect(urllib.request.HTTPRedirectHandler):
 def fetch_loaded_card_config(
     config_path: Path, config: dict[str, dict[str, Any]], *,
     profile_id: str, bot_id: str,
+    chat_type: str | None = None, chat_id: str | None = None,
 ) -> dict[str, Any]:
     """Read only the matching managed process; unavailable is not loaded proof."""
     from .config_snapshot import CONTROL_CARD_CONFIG_PATH, SNAPSHOT_SCHEMA, config_path_identity, scope_identity, validated_reading_values
+    from .config_rules import normalize_native_chats
 
     def unavailable(reason: str) -> dict[str, Any]:
         return {"status": "unavailable", "reason": reason}
 
+    if chat_type is not None and chat_type not in ("group", "p2p"):
+        return unavailable("invalid_selector")
+    if chat_id is not None:
+        try:
+            chat_id = normalize_native_chats([chat_id], path="chat selector")[0]
+        except ValueError:
+            return unavailable("invalid_selector")
     if _state_dir_security_error(allow_missing=False, require_private_mode=True):
         return unavailable("private_state_unavailable")
     record = read_pid_record()
     if record is None or not _record_identity_valid(record) or _record_boot_is_stale(record):
         return unavailable("owner_unverified")
-    path_hash, scope_hash = config_path_identity(config_path), scope_identity(profile_id, bot_id)
+    chat_selectors = {key: value for key, value in (("chat_type", chat_type), ("chat_id", chat_id)) if value is not None}
+    path_hash = config_path_identity(config_path)
+    scope_hash = scope_identity(profile_id, bot_id, **chat_selectors)
     server = config["server"]
     host = local_control_host(str(server["host"]))
     url_host = f"[{host}]" if ":" in host else host
     request = urllib.request.Request(
         f"http://{url_host}:{server['port']}{CONTROL_CARD_CONFIG_PATH}",
-        data=json.dumps({"profile_id": profile_id, "bot_id": bot_id, "config_path_hash": path_hash}).encode("utf-8"),
+        data=json.dumps({"profile_id": profile_id, "bot_id": bot_id, "config_path_hash": path_hash, **chat_selectors}).encode("utf-8"),
         headers={CONTROL_TOKEN_HEADER: str(record["token"]), "Content-Type": "application/json"},
         method="POST",
     )

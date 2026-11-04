@@ -2695,7 +2695,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "profile.card.reading_preset (detailed)",
@@ -2718,7 +2719,8 @@
             "interaction_mode": "default",
             "streaming_mode": "default",
             "terminal_tool_activity": "profile.card.reading_preset (detailed)",
-            "presentation": "profile.card.reading_preset (detailed)"
+            "presentation": "profile.card.reading_preset (detailed)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -2935,7 +2937,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "profile.card.reading_preset (detailed)",
@@ -2958,7 +2961,8 @@
             "interaction_mode": "default",
             "streaming_mode": "default",
             "terminal_tool_activity": "profile.card.reading_preset (detailed)",
-            "presentation": "profile.card.reading_preset (detailed)"
+            "presentation": "profile.card.reading_preset (detailed)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -3178,7 +3182,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "failed_only",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "bot.card.reading_preset (focused)",
@@ -3201,7 +3206,8 @@
             "interaction_mode": "default",
             "streaming_mode": "bot.card.streaming_mode (explicit)",
             "terminal_tool_activity": "bot.card.reading_preset (focused)",
-            "presentation": "bot.card.reading_preset (focused)"
+            "presentation": "bot.card.reading_preset (focused)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -3500,7 +3506,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "profile.card.reading_preset (detailed)",
@@ -3523,7 +3530,8 @@
             "interaction_mode": "default",
             "streaming_mode": "default",
             "terminal_tool_activity": "profile.card.reading_preset (detailed)",
-            "presentation": "profile.card.reading_preset (detailed)"
+            "presentation": "profile.card.reading_preset (detailed)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -3744,7 +3752,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "profile.card.reading_preset (detailed)",
@@ -3767,7 +3776,8 @@
             "interaction_mode": "default",
             "streaming_mode": "default",
             "terminal_tool_activity": "profile.card.reading_preset (detailed)",
-            "presentation": "profile.card.reading_preset (detailed)"
+            "presentation": "profile.card.reading_preset (detailed)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -3991,7 +4001,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "bot.card.reading_preset (focused)",
@@ -4014,7 +4025,8 @@
             "interaction_mode": "default",
             "streaming_mode": "bot.card.streaming_mode (explicit)",
             "terminal_tool_activity": "bot.card.hide_completed_tool_activity (explicit)",
-            "presentation": "bot.card.reading_preset (focused)"
+            "presentation": "bot.card.reading_preset (focused)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -4317,7 +4329,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "profile.card.reading_preset (detailed)",
@@ -4340,7 +4353,8 @@
             "interaction_mode": "default",
             "streaming_mode": "default",
             "terminal_tool_activity": "profile.card.reading_preset (detailed)",
-            "presentation": "profile.card.reading_preset (detailed)"
+            "presentation": "profile.card.reading_preset (detailed)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -4561,7 +4575,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "visible",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "profile.card.reading_preset (detailed)",
@@ -4584,7 +4599,8 @@
             "interaction_mode": "default",
             "streaming_mode": "default",
             "terminal_tool_activity": "profile.card.reading_preset (detailed)",
-            "presentation": "profile.card.reading_preset (detailed)"
+            "presentation": "profile.card.reading_preset (detailed)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",
@@ -4808,7 +4824,8 @@
             "interaction_mode": "auto",
             "streaming_mode": false,
             "terminal_tool_activity": "unsuccessful_only",
-            "presentation": "classic"
+            "presentation": "classic",
+            "live_tool_activity": "full"
           },
           "sources": {
             "reading_preset": "bot.card.reading_preset (focused)",
@@ -4831,7 +4848,8 @@
             "interaction_mode": "default",
             "streaming_mode": "bot.card.streaming_mode (explicit)",
             "terminal_tool_activity": "bot.card.hide_completed_tool_activity (explicit)",
-            "presentation": "bot.card.reading_preset (focused)"
+            "presentation": "bot.card.reading_preset (focused)",
+            "live_tool_activity": "default"
           },
           "text_size_sources": {
             "body": "profile.card.text_sizes.body (explicit)",

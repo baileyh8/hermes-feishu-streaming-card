@@ -72,6 +72,17 @@ card:
   thinking_body_tail_chars: 0
   # Hide content-area tool rows after completed/failed; timeline and counts stay visible.
   hide_completed_tool_activity: false
+  # Live tool details: full (unchanged), summary (step/status/time), hidden (also hides counts).
+  # Terminal evidence and approval scope remain unchanged. Restart after editing.
+  live_tool_activity: full
+  # Optional at global/profile/bot card scopes. Type first, then exact chat ID.
+  # Only live_tool_activity, show_reasoning, stream_thinking_to_body and
+  # hide_completed_tool_activity are allowed inside each overlay.
+  # chat_overrides:
+  #   group: {live_tool_activity: hidden}
+  #   p2p: {live_tool_activity: full}
+  #   chats:
+  #     oc_example: {live_tool_activity: summary}
   timeline_expanded: false
   # Opt-in chronological panel order; card-body reasoning remains chronological.
   timeline_order: newest_first

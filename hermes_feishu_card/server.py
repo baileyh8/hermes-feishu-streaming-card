@@ -28,6 +28,7 @@ from .config import load_config, resolve_operations_hermes_root
 from .config_rules import (
     card_width_config, card_completion_mention_enabled,
     card_interaction_mention_enabled, merge_card_config,
+    apply_chat_card_overrides, normalize_native_chats,
 )
 from .delivery import CardDeliveryResult
 from .config_snapshot import (
@@ -1011,8 +1012,16 @@ async def _control_card_config(request: web.Request) -> web.Response:
         if len(raw) > 4096:
             raise ValueError("request too large")
         selectors = json.loads(raw)
-        if not isinstance(selectors, dict) or set(selectors) != {"profile_id", "bot_id", "config_path_hash"}:
+        required = {"profile_id", "bot_id", "config_path_hash"}
+        if not isinstance(selectors, dict) or not required <= set(selectors) <= required | {"chat_type", "chat_id"}:
             raise ValueError("invalid selector")
+        chat_selectors = {}
+        if "chat_type" in selectors:
+            if selectors["chat_type"] not in ("group", "p2p"):
+                raise ValueError("invalid chat type")
+            chat_selectors["chat_type"] = selectors["chat_type"]
+        if "chat_id" in selectors:
+            chat_selectors["chat_id"] = normalize_native_chats([selectors["chat_id"]], path="chat selector")[0]
         profile_id, bot_id = selectors["profile_id"], selectors["bot_id"]
         if any(not isinstance(value, str) or not value or len(value) > 256 for value in (profile_id, bot_id)):
             raise ValueError("invalid scope")
@@ -1021,6 +1030,7 @@ async def _control_card_config(request: web.Request) -> web.Response:
         values = loaded_reading_values(
             request.app[BASE_CARD_CONFIG_KEY], request.app[FEISHU_CLIENT_KEY],
             profile_id=profile_id, bot_id=bot_id,
+            **chat_selectors,
         )
     except ConfigSnapshotUnavailable:
         return web.json_response({"ok": False, "error": "scope_unavailable"}, status=404)
@@ -1029,7 +1039,7 @@ async def _control_card_config(request: web.Request) -> web.Response:
     return web.json_response({
         "ok": True, "schema_version": SNAPSHOT_SCHEMA,
         "config_path_hash": request.app[LOADED_CONFIG_PATH_IDENTITY_KEY],
-        "scope_hash": scope_identity(profile_id, bot_id),
+        "scope_hash": scope_identity(profile_id, bot_id, **chat_selectors),
         "process_pid": os.getpid(),
         "process_token_hash": hashlib.sha256(expected.encode("utf-8")).hexdigest(),
         "package_version": request.app[PACKAGE_VERSION_KEY],
@@ -7055,9 +7065,16 @@ def _resolve_session_card_config(
             profile_id, actual_bot_id = bot_id.split(":", 1)
         factory = feishu_client.get(profile_id) or feishu_client.get("default")
         if factory is not None:
-            return _card_config_for_client(factory, actual_bot_id, base_card, profile_card)
-        return dict(base_card)
-    return _card_config_for_client(feishu_client, actual_bot_id, base_card, profile_card)
+            resolved = _card_config_for_client(factory, actual_bot_id, base_card, profile_card)
+        else:
+            resolved = dict(base_card)
+    else:
+        resolved = _card_config_for_client(feishu_client, actual_bot_id, base_card, profile_card)
+    return apply_chat_card_overrides(
+        resolved,
+        chat_type=event.data.get("chat_type") if isinstance(event.data, dict) else None,
+        chat_id=event.chat_id,
+    )
 
 
 def _card_config_for_client(

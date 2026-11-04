@@ -57,6 +57,71 @@ def assert_private(text, path):
         assert secret not in text
 
 
+@pytest.mark.parametrize('chat_type,chat_id,expected', [
+    ('group', None, 'hidden'), ('p2p', None, 'summary'),
+    ('group', 'oc_example', 'full'), (None, 'oc_example', 'full'),
+])
+async def test_running_chat_selectors_apply_loaded_overlays(private_state, tmp_path, capsys, chat_type, chat_id, expected):
+    path = tmp_path / 'config.yaml'
+    raw = {'feishu': CREDENTIALS, 'card': {'chat_overrides': {
+        'group': {'live_tool_activity': 'summary'}, 'p2p': {'live_tool_activity': 'summary'},
+        'chats': {'oc_example': {'live_tool_activity': 'full'}}}}}
+    raw['profiles'] = {'default': {'feishu': CREDENTIALS,
+        'card': {'chat_overrides': {'group': {'live_tool_activity': 'full', 'show_reasoning': False}}},
+        'bots': {'items': {'default': {**CREDENTIALS,
+            'card': {'chat_overrides': {'group': {'live_tool_activity': 'hidden'}}}}}}}}
+    write_config(path, raw)
+    _, _, app = build_app(path)
+    args = []
+    selectors = {}
+    for key, value in (('chat_type', chat_type), ('chat_id', chat_id)):
+        if value is not None:
+            args += ['--' + key.replace('_', '-'), value]
+            selectors[key] = value
+    async with TestClient(TestServer(app)) as http:
+        raw['server'] = {'host': '127.0.0.1', 'port': http.server.port}
+        write_config(path, raw)
+        assert await asyncio.to_thread(cli.main, ['card-config', '--config', str(path), '--running', '--json', *args]) == 0
+        output = capsys.readouterr()
+        report = json.loads(output.out)
+        assert report['running_config'] == 'verified'
+        assert report['values']['live_tool_activity'] == expected
+        assert report['running']['values']['live_tool_activity'] == expected
+        assert report['running']['values']['show_reasoning'] is (chat_type != 'group')
+        assert not report['differences']
+        assert 'oc_example' not in output.out + output.err
+        response = await http.post(CONTROL_CARD_CONFIG_PATH, json={
+            'profile_id': 'default', 'bot_id': 'default', 'config_path_hash': config_path_identity(path), **selectors,
+        }, headers={process.CONTROL_TOKEN_HEADER: TOKEN})
+        assert response.status == 200
+        payload = await response.json()
+        assert payload['scope_hash'] == scope_identity('default', 'default', **selectors)
+        assert 'oc_example' not in json.dumps(payload)
+
+
+def test_scope_identity_without_chat_selectors_is_byte_compatible():
+    material = json.dumps(['default', 'default'], separators=(',', ':'))
+    assert scope_identity('default', 'default') == sha256(material.encode()).hexdigest()
+    assert scope_identity('default', 'default', chat_type='group') != scope_identity('default', 'default')
+
+
+@pytest.mark.parametrize('selector', [
+    {'chat_type': 'dm'}, {'chat_type': None}, {'chat_type': []}, {'chat_id': '*'},
+    {'chat_id': 're:.*'}, {'chat_id': 1}, {'chat_id': None}, {'chat_id': 'x' * 513},
+    {'chat_id': 'oc_\x01example'}, {'extra': True},
+])
+async def test_control_rejects_invalid_chat_selectors(private_state, tmp_path, selector):
+    path = tmp_path / 'config.yaml'
+    write_config(path, {'feishu': CREDENTIALS})
+    _, _, app = build_app(path)
+    async with TestClient(TestServer(app)) as http:
+        response = await http.post(CONTROL_CARD_CONFIG_PATH, json={
+            'profile_id': 'default', 'bot_id': 'default', 'config_path_hash': config_path_identity(path), **selector,
+        }, headers={process.CONTROL_TOKEN_HEADER: TOKEN})
+        assert response.status == 400
+        assert await response.json() == {'ok': False, 'error': 'invalid_request'}
+
+
 @pytest.mark.parametrize("scope", ["global", "profile", "bot", "alternate_bot", "alternate_profile", "profile_separate_bots"])
 async def test_running_cli_matches_real_runner_scope_merge(private_state, tmp_path, capsys, scope):
     path = tmp_path / "private-config-fixture.yaml"
@@ -193,7 +258,7 @@ async def test_control_endpoint_requires_loopback_even_with_correct_token(privat
     assert_private(response.text, path)
 
 
-@pytest.mark.parametrize("failure", ["pid", "token_hash", "path_hash", "scope_hash", "schema", "values", "oversize", "redirect", "old_endpoint", "pidfile_changed"])
+@pytest.mark.parametrize("failure", ["pid", "token_hash", "path_hash", "scope_hash", "schema", "values", "old_values", "oversize", "redirect", "old_endpoint", "pidfile_changed"])
 async def test_fetch_refuses_unverified_local_control_response(private_state, tmp_path, failure):
     path = tmp_path / "config.yaml"
     selectors = {"profile_id": "default", "bot_id": "default"}
@@ -211,6 +276,8 @@ async def test_fetch_refuses_unverified_local_control_response(private_state, tm
         response["schema_version"] = "unknown"
     elif failure == "values":
         response["values"]["token"] = TOKEN
+    elif failure == "old_values":
+        del response["values"]["live_tool_activity"]
     elif failure == "oversize":
         response["padding"] = "x" * 65536
     requests, leaks = [], []

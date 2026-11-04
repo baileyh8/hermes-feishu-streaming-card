@@ -33,6 +33,7 @@ Edit `card:` in the actual file selected with `--config` during installation. St
 | Answer | `text_sizes.body` | Hermes supplies content; appearance settings do not rewrite answers |
 | Thinking before an answer | `stream_thinking_to_body`, `thinking_body_tail_chars` | Tail window applies only to live body thinking before an answer; `0` adds no clipping |
 | Body tool activity | `hide_completed_tool_activity` | Hides terminal body tool rows, not timeline or counts; task retains failure/interruption explanations |
+| Live tool activity | `live_tool_activity`, `chat_overrides` | `full` preserves behavior; `summary` shows step/status/time; `hidden` also hides live counts; configurable per chat |
 | Reasoning / tool panel | `show_reasoning`, `reasoning_format`, `timeline_expanded`, `timeline_order` | Disabling show_reasoning hides the whole reasoning/tool area; panel title is fixed |
 | Process density | `max_reasoning_chars`, `max_timeline_items`, `timeline_tools_per_reasoning` | Whole-card budgets still apply; final answers are not clipped by these controls |
 | Approval / clarification | `interaction_mode`, `mentions_in_cards`, `interaction_mentions` | Hermes owns questions and permissions; expired authorization stays expired |
@@ -1037,6 +1038,26 @@ Windows non-loopback startup is rejected when state-directory ACL privacy cannot
 ## Terminal tool rows
 
 Set `card.hide_completed_tool_activity: true` to hide successful content-area tool rows after completed/failed turns; failed, cancelled and interrupted work remains visible. The default is `false`, preserving existing cards. Live progress, approval layout, timeline and footer counts are unchanged. Restart the sidecar after editing configuration.
+
+### Live tool activity and chat overrides
+
+`card.live_tool_activity` defaults to `full`. `summary` shows only running tools' status, step number and measured elapsed time, removing names, commands, arguments, predecessor rows and timeline tool entries. `hidden` also removes tool rows and live tool counts from the title/footer. This applies before completed/failed, including clarify waits. Terminal cards, pending approval scope/layout and stored tool history remain unchanged.
+
+```yaml
+card:
+  live_tool_activity: full
+  chat_overrides:
+    group: {live_tool_activity: hidden}
+    p2p: {live_tool_activity: full}
+    chats:
+      oc_example: {live_tool_activity: summary}
+```
+
+Global, profile and bot `card` blocks accept `chat_overrides`. Each overlay allows only `live_tool_activity`, `show_reasoning`, `stream_thinking_to_body` and `hide_completed_tool_activity`; invalid fields or values reject loading. Nested fields merge across scopes, including fields of the same chat. Each scope applies its preset before explicit fields: Baseline precedence is unchanged: defaults/global base → profile/event card → bot, followed by chat type → exact chat ID. A non-empty event `data.card` replaces the profile layer; bot values still override it. Presets do not set `live_tool_activity`. `group` selects the group overlay; `p2p/dm/private` select p2p. Missing/unknown types skip the type overlay but still match exact chat IDs. Thread/sender matching, wildcards and `re:` are unsupported; IDs must be at most 512 characters without control characters.
+
+Settings are fixed when a session is created. Restart after YAML edits to change defaults for new turns; existing cards keep their settings. Remove the new settings or restore `full` and restart to roll back; no checkpoint migration is needed. Inspect with `card-config --config config.yaml --chat-type group --chat-id oc_example --running`. Output never echoes chat IDs. `verified` covers loaded defaults for new turns in that chat scope, excluding existing cards and event overrides; old sidecar responses remain unavailable when unverified. Without chat selectors, the command reports configured types and chat count. `--minimal-yaml` rejects chat selectors.
+
+This does not redact commands written by the model in reasoning/answers or control Hermes native tool progress messages. To also reduce terminal activity, combine `show_reasoning: false` with `hide_completed_tool_activity: true`; failure/interruption evidence still follows existing rules. Real Feishu desktop, Android and iOS visual/interaction acceptance is pending user verification.
 
 ## V4.6.3: Live thinking body switch
 

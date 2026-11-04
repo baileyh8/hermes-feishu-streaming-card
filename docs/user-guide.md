@@ -33,6 +33,7 @@ V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文
 | 答案正文 | `text_sizes.body` | 内容来自 Hermes，不通过外观配置改写答案 |
 | 回答前的正文思考 | `stream_thinking_to_body`；`thinking_body_tail_chars` 保留尾部 | 尾窗只作用于运行中且尚无答案的正文思考；`0` 不额外截取 |
 | 正文工具行 | `hide_completed_tool_activity` | 隐藏结束轮次的正文工具行，不删除时间线或次数；task 另保留失败/中断说明 |
+| 运行中工具活动 | `live_tool_activity`、`chat_overrides` | `full` 保持旧行为；`summary` 仅步骤/状态/用时；`hidden` 同时隐藏运行中工具计数，可按聊天覆盖 |
 | 思考与工具面板 | `show_reasoning`、`reasoning_format`、`timeline_expanded`、`timeline_order` | 关闭 show_reasoning 会隐藏整个思考/工具区域；面板标题不能自定义 |
 | 过程信息密度 | `max_reasoning_chars`、`max_timeline_items`、`timeline_tools_per_reasoning` | 受整卡容量约束，不是无限历史；不裁剪最终答案 |
 | 审批与澄清 | `interaction_mode`、`mentions_in_cards`、`interaction_mentions` | 问题和权限由 Hermes 决定；显示设置不会恢复过期授权 |
@@ -1114,6 +1115,26 @@ MIT License，详见 [LICENSE](../LICENSE)。
 ## 完成后的正文工具区
 
 设置 `card.hide_completed_tool_activity: true`，在 completed/failed 后隐藏成功的正文工具行及工具摘要回退；失败、取消和中断工具仍保留。默认 `false` 保持已有显示；运行进度、审批布局、折叠过程和 footer 工具计数不变。修改配置后重启 sidecar 生效。
+
+### 运行中工具活动与聊天覆盖
+
+`card.live_tool_activity` 默认 `full`。`summary` 只显示运行工具的状态、`第 N 步` 和实际用时，不显示名称、命令、参数、前驱行或 timeline 工具条目；`hidden` 再隐藏工具行及标题/页脚中的“工具 #N”。仅影响 completed/failed 之前的展示（含等待 clarify），不删除工具状态或历史。终态与原模式完全相同，pending approval 的完整命令和审批布局保持不变。
+
+```yaml
+card:
+  live_tool_activity: full
+  chat_overrides:
+    group: {live_tool_activity: hidden}
+    p2p: {live_tool_activity: full}
+    chats:
+      oc_example: {live_tool_activity: summary}
+```
+
+global、profile、bot 的 `card` 都可配置 `chat_overrides`。子项仅允许 `live_tool_activity`、`show_reasoning`、`stream_thinking_to_body`、`hide_completed_tool_activity`；未知键或非法值拒绝加载。层间按字段合并，同 chat 也保留未覆盖字段。每层先预设后显式字段，保持基线顺序：默认/global base → profile/event card → bot，再叠加聊天类型 → 精确 chat ID；非空 event `data.card` 替代 profile 层，bot 仍在其后覆盖；预设不设置 `live_tool_activity`。类型 `group` 命中群聊，`p2p/dm/private` 命中私聊，缺失或未知类型不叠加类型项，但仍检查精确 chat ID。不支持 thread/sender、通配符或 `re:`；ID 最长 512 字符且不得含控制字符。
+
+配置在会话创建时固定，修改 YAML 后重启 sidecar，仅影响新回合；已有卡片不切换。回退时删除新增配置或设回 `full` 后重启，无检查点迁移。只读检查使用 `card-config --config config.yaml --chat-type group --chat-id oc_example --running`：输出不回显 chat ID，`verified` 仅表示该聊天范围的新回合已加载默认值，排除已有卡和 event 覆盖；旧侧车响应无法验证时显示 unavailable。未选聊天时提示已配置的类型和 chat 数量；`--minimal-yaml` 不接受聊天选择器。
+
+这不是内容脱敏开关：模型自己写入思考/答案的命令和 Hermes 原生工具进度消息不受影响。若还要精简终态，可组合 `show_reasoning: false` 与 `hide_completed_tool_activity: true`，但失败/中断工具证据仍按原规则保留。真实飞书桌面、Android、iOS 视觉和交互验收待用户验证。
 
 ## V4.6.3：进行中思考正文开关
 

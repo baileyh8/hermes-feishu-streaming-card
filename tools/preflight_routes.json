@@ -15,6 +15,7 @@
       "tests/unit/test_native_rate_scope.py"
     ],
     "render": [
+      "tests/unit/test_live_tool_activity.py",
       "tests/unit/test_render.py",
       "tests/unit/test_session.py",
       "tests/unit/test_native_tables.py",
@@ -89,6 +90,7 @@
       "tests/unit/test_installer_family_boundaries.py"
     ],
     "appearance": [
+      "tests/unit/test_live_tool_activity.py",
       "tests/unit/test_presentation.py",
       "tests/unit/test_card_preview.py",
       "tests/unit/test_reading_presets.py",

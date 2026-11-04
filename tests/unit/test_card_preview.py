@@ -11,6 +11,23 @@ from hermes_feishu_card.preview import build_preview, write_preview
 from hermes_feishu_card.reading import explain_reading_config
 
 
+@pytest.mark.parametrize('mode', ['summary', 'hidden'])
+def test_cli_preview_honors_chat_live_activity(tmp_path, capsys, mode):
+    config = tmp_path / 'config.yaml'
+    config.write_text(yaml.safe_dump({'card': {'chat_overrides': {'group': {'live_tool_activity': mode}}}}), encoding='utf-8')
+    preview = tmp_path / 'preview'
+    assert main(['card-config', '--config', str(config), '--chat-type', 'group', '--preview-dir', str(preview)]) == 0
+    data = json.loads((preview / 'cards.json').read_text(encoding='utf-8'))
+    running = next(s for s in data['scenarios'] if s['id'] == 'running')
+    serialized = json.dumps(running, ensure_ascii=False)
+    for detail in ('terminal', 'python -m pytest', '检查项目测试', '读取项目说明'):
+        assert detail not in serialized
+    if mode == 'hidden':
+        assert '工具 #' not in serialized
+    else:
+        assert '第 2 步' in serialized
+
+
 def test_task_configuration_reports_per_role_overrides_and_next_load():
     report = explain_reading_config({
         "card": {"reading_preset": "task", "text_sizes": {"body": "large"}},

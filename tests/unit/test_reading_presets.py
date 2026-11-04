@@ -7,12 +7,59 @@ import yaml
 from hermes_feishu_card.bots import resolve_card_config
 from hermes_feishu_card.cli import main
 from hermes_feishu_card.config import load_config
+from hermes_feishu_card.reading import explain_reading_config
 
 
 def load_yaml(tmp_path, data):
     path = tmp_path / "card.yaml"
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
     return path, load_config(path)
+
+
+@pytest.mark.parametrize('chat_type,chat_id,mode,source', [
+    ('group', None, 'hidden', 'bot.chat_overrides.group (explicit)'),
+    ('p2p', None, 'summary', 'global.chat_overrides.p2p (explicit)'),
+    ('group', 'oc_example', 'full', 'global.chat_overrides.chats[selected] (explicit)'),
+    (None, 'oc_example', 'full', 'global.chat_overrides.chats[selected] (explicit)'),
+])
+def test_explain_chat_sources_after_all_base_scopes(chat_type, chat_id, mode, source):
+    raw = {'card': {'chat_overrides': {'group': {'live_tool_activity': 'summary'},
+        'p2p': {'live_tool_activity': 'summary'}, 'chats': {'oc_example': {'live_tool_activity': 'full'}}}},
+        'profiles': {'default': {'card': {'live_tool_activity': 'summary'},
+            'bots': {'items': {'default': {'card': {'live_tool_activity': 'full',
+                'chat_overrides': {'group': {'live_tool_activity': 'hidden'}}}}}}}}}
+    report = explain_reading_config(raw, chat_type=chat_type, chat_id=chat_id)
+    assert report['values']['live_tool_activity'] == mode
+    assert report['sources']['live_tool_activity'] == source
+    assert 'oc_example' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('flag', ['--chat-id', '--chat-type'])
+def test_minimal_yaml_rejects_chat_selectors(tmp_path, capsys, flag):
+    path, _ = load_yaml(tmp_path, {})
+    assert main(['card-config', '--config', str(path), '--minimal-yaml', flag,
+                 'oc_example' if flag == '--chat-id' else 'group']) == 2
+    assert 'oc_example' not in str(capsys.readouterr())
+
+
+def test_no_selector_reports_only_overlay_kinds_and_count(tmp_path, capsys):
+    path, _ = load_yaml(tmp_path, {'card': {'chat_overrides': {'group': {'live_tool_activity': 'hidden'},
+        'chats': {'oc_example': {'show_reasoning': False}, 'oc_other': {}}}}})
+    assert main(['card-config', '--config', str(path)]) == 0
+    output = capsys.readouterr().out
+    assert 'chat overrides configured: group, chats=2; use --chat-type/--chat-id' in output
+    assert 'oc_example' not in output and 'oc_other' not in output
+
+
+def test_raw_explanation_normalizes_chat_keys_without_mutation():
+    import copy
+    raw = {'card': {'chat_overrides': {'chats': {' oc_example ': {'live_tool_activity': ' Hidden '}}}}}
+    before = copy.deepcopy(raw)
+    report = explain_reading_config(raw, chat_id=' oc_example ')
+    assert report['values']['live_tool_activity'] == 'hidden'
+    assert report['sources']['live_tool_activity'] == 'global.chat_overrides.chats[selected] (explicit)'
+    assert raw == before
+    assert 'oc_example' not in json.dumps(report)
 
 
 def test_focused_preset_does_not_inherit_injected_classic_defaults(tmp_path):

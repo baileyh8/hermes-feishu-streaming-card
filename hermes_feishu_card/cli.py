@@ -237,6 +237,8 @@ def _build_parser() -> argparse.ArgumentParser:
     card_config.add_argument("--config", required=True)
     card_config.add_argument("--profile-id")
     card_config.add_argument("--bot-id")
+    card_config.add_argument("--chat-type", choices=("group", "p2p"))
+    card_config.add_argument("--chat-id")
     card_config_output = card_config.add_mutually_exclusive_group()
     card_config_output.add_argument("--json", action="store_true", dest="json_output")
     card_config_output.add_argument("--minimal-yaml", action="store_true", help="print minimal reading settings for the selected scope; no file changes")
@@ -907,6 +909,9 @@ card:
 def _run_card_config(args: argparse.Namespace) -> int:
     from .reading import explain_reading_config
 
+    if getattr(args, "minimal_yaml", False) and (getattr(args, "chat_type", None) is not None or getattr(args, "chat_id", None) is not None):
+        print("Use chat selectors separately; --minimal-yaml describes the selected YAML scope.", file=sys.stderr)
+        return 2
     if getattr(args, "minimal_yaml", False) and getattr(args, "running", False):
         print("Use --running separately; --minimal-yaml describes the selected YAML scope.", file=sys.stderr)
         return 2
@@ -922,6 +927,7 @@ def _run_card_config(args: argparse.Namespace) -> int:
     try:
         report = explain_reading_config(
             raw, profile_id=args.profile_id, bot_id=args.bot_id, include_scope=True,
+            chat_type=getattr(args, "chat_type", None), chat_id=getattr(args, "chat_id", None),
         )
     except ValueError as exc:
         # Selection errors contain fixed messages, never YAML values.
@@ -937,7 +943,7 @@ def _run_card_config(args: argparse.Namespace) -> int:
         report["running"] = running
         if running["status"] == "verified":
             report["differences"] = compare_reading_values(report["values"], running["values"])
-            report["note"] = "Read-only. Running values are verified loaded defaults for new turns. Existing cards and per-event overrides are excluded. Restart the sidecar to apply YAML changes."
+            report["note"] = "Read-only. Running values are verified loaded defaults for new turns in the selected chat scope. Existing cards and per-event overrides are excluded. Restart the sidecar to apply YAML changes."
         else:
             report["note"] = "Read-only. The running configuration could not be verified; only next-load values are shown. No restart or configuration change was performed."
     if args.preview_dir:
@@ -969,6 +975,8 @@ def _run_card_config(args: argparse.Namespace) -> int:
         for key, value in report["values"].items():
             print(f"{key}: {json.dumps(value, ensure_ascii=False)}  [{report['sources'][key]}]")
         print(report["note"])
+        if "chat_overrides_note" in report:
+            print(report["chat_overrides_note"])
         if "running" in report:
             print(f"running_config: {report['running_config']}")
             if report["running_config"] == "verified":

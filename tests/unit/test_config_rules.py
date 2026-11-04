@@ -111,6 +111,56 @@ def test_merge_copies_nested_inputs_and_preserves_explicit_false_and_none():
     assert rules.merge_card_config(base, {'text_sizes': None})['text_sizes'] is None
 
 
+@pytest.mark.parametrize('value', ['none', 'off', True, 1, None])
+def test_live_activity_rejects_invalid_enum(value):
+    with pytest.raises(ValueError, match='live_tool_activity'):
+        rules.normalize_card_config({'live_tool_activity': value}, path='card')
+
+
+@pytest.mark.parametrize('overlays', [
+    [], None, {'groups': {}}, {'dm': {}}, {'chats': []}, {'group': None},
+    *[{'group': {key: 'value'}} for key in ('reading_preset', 'title', 'footer_fields')],
+    *[{'chats': {key: {}}} for key in ('*', 're:.*', 'oc_*', 'x' * 513, 'oc_\x01test', 1)],
+    {'p2p': {'show_reasoning': 'maybe'}}, {'group': {'live_tool_activity': 'off'}},
+])
+def test_chat_overrides_reject_invalid_structure_and_selectors(overlays):
+    with pytest.raises(ValueError):
+        rules.normalize_card_config({'chat_overrides': overlays}, path='card')
+
+
+@pytest.mark.parametrize('chat_type,mode', [
+    ('group', 'hidden'), ('p2p', 'summary'), ('dm', 'summary'), ('private', 'summary'),
+    ('group_chat', 'full'), ('thread', 'full'), ('', 'full'), (None, 'full'),
+])
+def test_chat_overlays_exact_selection_copy_and_precedence(chat_type, mode):
+    card = {'live_tool_activity': 'full', 'chat_overrides': {
+        'group': {'live_tool_activity': ' Hidden ', 'show_reasoning': 'false'},
+        'p2p': {'live_tool_activity': 'summary'},
+        'chats': {'oc_example': {'live_tool_activity': 'full'}},
+    }}
+    rules.normalize_card_config(card, path='card')
+    before = copy.deepcopy(card)
+    actual = rules.apply_chat_card_overrides(card, chat_type=chat_type, chat_id='oc_examplf')
+    assert actual['live_tool_activity'] == mode
+    assert 'chat_overrides' not in actual
+    assert rules.apply_chat_card_overrides(card, chat_type=chat_type, chat_id='oc_example')['live_tool_activity'] == 'full'
+    assert card == before
+
+
+def test_nested_chat_merge_retains_other_types_chats_and_fields():
+    base = {'chat_overrides': {'group': {'show_reasoning': False}, 'p2p': {'live_tool_activity': 'full'},
+                             'chats': {'oc_example': {'show_reasoning': False}, 'oc_other': {'live_tool_activity': 'summary'}}}}
+    override = {'chat_overrides': {'group': {'live_tool_activity': 'hidden'}, 'chats': {'oc_example': {'live_tool_activity': 'hidden'}}}}
+    before = copy.deepcopy([base, override])
+    merged = rules.merge_card_config(base, override)['chat_overrides']
+    assert merged['group'] == {'show_reasoning': False, 'live_tool_activity': 'hidden'}
+    assert merged['p2p'] == base['chat_overrides']['p2p']
+    assert merged['chats']['oc_example'] == {'show_reasoning': False, 'live_tool_activity': 'hidden'}
+    assert merged['chats']['oc_other'] == base['chat_overrides']['chats']['oc_other']
+    merged['chats']['oc_example']['show_reasoning'] = True
+    assert [base, override] == before
+
+
 def test_rules_import_only_the_standard_library():
     tree = ast.parse(Path(rules.__file__).read_text())
     for node in ast.walk(tree):

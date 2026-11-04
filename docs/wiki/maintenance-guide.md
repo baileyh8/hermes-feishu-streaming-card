@@ -274,6 +274,8 @@ native plugin 的 runtime-control lease 明确标记 `gateway_admission_dependen
 
 终态工具区使用 `card.hide_completed_tool_activity`，默认 false 保持旧行为；true 仅在 completed/failed 隐藏正文工具行及旧摘要回退，不改变折叠记录、计数、正文或审批布局。
 
+运行中工具区使用 `card.live_tool_activity`，默认 `full` 保持旧行为。`summary` 只保留运行工具的状态/步骤/用时，`hidden` 再隐藏工具行及 live 标题/页脚计数；两者都关闭工具摘要回退和 timeline 工具条目。终态逐字节不变，pending approval、实际计数与检查点不变。`chat_overrides` 只允许四个显示字段，按 global/profile/bot 嵌套合并，保留 base → profile/event card → bot 基线顺序（非空 event `data.card` 替代 profile 层），再按 chat_type、精确 chat_id 解析一次并存入既有 session config；未知类型不叠加类型项。配置解释/控制端点不回显 chat_id，无选择器时 scope_hash 兼容旧算法。测试覆盖所有渲染区域、终态、会话固定配置及旧侧车未核验响应；真实客户端验收单独记录。
+
 ## V4.6.3 正文思考与测量边界
 
 `stream_thinking_to_body` 默认 true。false 仅关闭运行态正文对原始 thinking 的回退，render-only 预览遵循 show_reasoning/max_reasoning_chars 且始终进入面板，不改持久timeline、终态内容保留与审批。容量检查与实际渲染必须使用同一配置；大面板与大答案仍走共享serializer门禁。

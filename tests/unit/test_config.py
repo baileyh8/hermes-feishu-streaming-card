@@ -24,6 +24,44 @@ CONFIG_ENV_VARS = (
 )
 
 
+@pytest.mark.parametrize('scope', ['global', 'profile', 'bot', 'profile_bot'])
+def test_chat_overrides_normalize_at_every_card_scope(tmp_path, scope):
+    card = {'live_tool_activity': ' FULL ', 'chat_overrides': {'group': {
+        'live_tool_activity': ' Hidden ', 'show_reasoning': 'false',
+        'stream_thinking_to_body': 'off', 'hide_completed_tool_activity': 'true'}}}
+    leaf = {'card': card}
+    raw = leaf
+    if scope in {'bot', 'profile_bot'}:
+        raw = {'bots': {'items': {'default': leaf}}}
+    if scope in {'profile', 'profile_bot'}:
+        raw = {'profiles': {'default': raw}}
+    path = tmp_path / 'config.yaml'
+    path.write_text(yaml.safe_dump(raw), encoding='utf-8')
+    loaded = load_config(path)
+    if scope in {'profile', 'profile_bot'}:
+        loaded = loaded['profiles']['default']
+    if scope in {'bot', 'profile_bot'}:
+        loaded = loaded['bots']['items']['default']
+    assert loaded['card']['live_tool_activity'] == 'full'
+    assert loaded['card']['chat_overrides']['group'] == {
+        'live_tool_activity': 'hidden', 'show_reasoning': False,
+        'stream_thinking_to_body': False, 'hide_completed_tool_activity': True}
+
+
+@pytest.mark.parametrize('overlays', [None, [], {'chats': []}, {'group': None},
+    {'chats': {'oc_example': None}}, {'group': {'title': 'invalid'}}, {'groups': {}},
+    {'chats': {'*': {}}}])
+@pytest.mark.parametrize('profile', [False, True])
+def test_load_rejects_invalid_chat_structure_before_nested_merge(tmp_path, overlays, profile):
+    raw = {'card': {'chat_overrides': overlays}}
+    if profile:
+        raw = {'profiles': {'default': raw}}
+    path = tmp_path / 'config.yaml'
+    path.write_text(yaml.safe_dump(raw), encoding='utf-8')
+    with pytest.raises(ValueError):
+        load_config(path)
+
+
 @pytest.fixture(autouse=True)
 def clear_config_env(monkeypatch):
     for name in CONFIG_ENV_VARS:
@@ -102,6 +140,7 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
         "hide_completed_tool_activity": False,
             "stream_thinking_to_body": True,
             "thinking_body_tail_chars": 0,
+            "live_tool_activity": "full",
             "reasoning_format": "panel",
             "timeline_expanded": False,
             "timeline_order": "newest_first",
@@ -347,6 +386,7 @@ card:
         "hide_completed_tool_activity": False,
         "stream_thinking_to_body": True,
         "thinking_body_tail_chars": 0,
+        "live_tool_activity": "full",
         "reasoning_format": "panel",
         "timeline_expanded": False,
         "timeline_order": "newest_first",

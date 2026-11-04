@@ -45,7 +45,10 @@ def card_render_options(config: Mapping[str, Any]) -> dict[str, Any]:
             ("max_timeline_items", 12), ("max_reasoning_chars", 1200), ("max_tool_result_chars", 600),
         )
     })
+    live = config.get("live_tool_activity", "full")
+    live = live.strip().lower() if isinstance(live, str) else "full"
     result.update(
+        live_tool_activity=live if live in {"full", "summary", "hidden"} else "full",
         hide_successful_tool_activity=_boolean(config.get("_hide_successful_tool_activity"), False),
         reasoning_format=config.get("reasoning_format", "panel"),
         timeline_order=config.get("timeline_order", "newest_first"),

@@ -50,6 +50,12 @@ profiles:
 
 ## 只读检查
 
+`live_tool_activity: full|summary|hidden` 独立于阅读预设，所有预设均不设置它，默认 `full`。它控制运行中的工具展示；`hide_completed_tool_activity` 控制终态，两者可组合。`summary` 仅显示运行工具的状态、步骤和用时；`hidden` 连同 live 标题/页脚工具计数一起隐藏。终态和 pending approval 不变，模型正文不做过滤。
+
+`card.chat_overrides` 可在 global/profile/bot 层配置，嵌套按字段合并；保留 base → profile/event card → bot 的基线顺序（非空 event `data.card` 替代 profile 层）；类型 `group`/`p2p` 覆盖在该结果之上，`chats.<exact chat ID>` 最后生效。内层只允许上述两个工具开关、`show_reasoning` 和 `stream_thinking_to_body`。缺失/未知 chat_type 不应用类型项，仍检查精确 chat；会话创建时固定。重启后仅新回合使用 YAML 修改。例子见[用户指南](../user-guide.md#运行中工具活动与聊天覆盖)。
+
+`card-config --config config.yaml --chat-type group --chat-id oc_example --running` 核对叠加后的新回合默认值，来源标签使用 `chats[selected]`，不回显 chat ID；未选聊天时仅提示类型和 chat 数量。`--minimal-yaml` 与聊天选择器互斥。旧侧车缺少新字段时保持未核验，不猜测已生效。
+
 ```bash
 hermes-feishu-card card-config --config ~/.hermes_feishu_card/config.yaml
 hermes-feishu-card card-config --config /path/to/config.yaml --profile-id work --bot-id support --json

@@ -57,7 +57,7 @@ READING_FIELDS = (
     "hide_completed_tool_activity", "reasoning_format", "timeline_expanded",
     "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
     "table_overflow_mode",
-    "native_tables",
+    "native_tables", "live_tool_activity",
     "timeline_order", "timeline_tools_per_reasoning", "thinking_body_tail_chars",
     "width_mode", "text_sizes", "footer_fields", "interaction_mode", "streaming_mode",
 )
@@ -117,6 +117,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "show_reasoning": True,
         "stream_thinking_to_body": True,
         "thinking_body_tail_chars": 0,
+        "live_tool_activity": "full",
         "hide_completed_tool_activity": False,
         "reasoning_format": "panel",
         "timeline_expanded": False,
@@ -243,6 +244,21 @@ def merge_card_config(
     incoming = expand_reading_preset(override)
     has_incoming_sizes = "text_sizes" in incoming
     incoming_sizes = incoming.pop("text_sizes", None)
+    if "chat_overrides" in incoming:
+        # The loader merges scopes before its final normalization pass. Validate
+        # this nested structure before indexing it, retaining ValueError failures.
+        overlay_config = {"chat_overrides": incoming["chat_overrides"]}
+        normalize_card_config(overlay_config, path="card")
+        incoming.update(overlay_config)
+        overlays = copy.deepcopy(resolved.get("chat_overrides", {}))
+        for kind, overlay in incoming.pop("chat_overrides").items():
+            if kind == "chats":
+                chats = overlays.setdefault("chats", {})
+                for chat_id, fields in overlay.items():
+                    chats[chat_id] = {**chats.get(chat_id, {}), **copy.deepcopy(fields)}
+            else:
+                overlays[kind] = {**overlays.get(kind, {}), **copy.deepcopy(overlay)}
+        resolved["chat_overrides"] = overlays
     resolved.update(incoming)
     if has_incoming_sizes:
         if isinstance(incoming_sizes, Mapping):
@@ -390,9 +406,62 @@ def _normalize_bot_card_configs(value: object, *, path: str) -> None:
         )
 
 
+CHAT_CARD_FIELDS = frozenset({
+    "live_tool_activity", "show_reasoning", "stream_thinking_to_body",
+    "hide_completed_tool_activity",
+})
+
+
+def card_chat_kind(chat_type: object) -> str:
+    if chat_type == "group":
+        return "group"
+    return "p2p" if isinstance(chat_type, str) and chat_type in {"p2p", "dm", "private"} else ""
+
+
+def apply_chat_card_overrides(
+    card: Mapping[str, Any], *, chat_type: object = None, chat_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolve display overlays once for a turn, without retaining selectors."""
+    resolved = copy.deepcopy(dict(card))
+    overlays = resolved.pop("chat_overrides", {})
+    for overlay in (overlays.get(card_chat_kind(chat_type), {}),
+                    overlays.get("chats", {}).get(chat_id, {})):
+        resolved = merge_card_config(resolved, overlay)
+    return resolved
+
+
 def normalize_card_config(value: object, *, path: str) -> None:
     if not isinstance(value, dict):
         return
+    if "live_tool_activity" in value:
+        mode = value["live_tool_activity"]
+        if not isinstance(mode, str) or mode.strip().lower() not in {"full", "summary", "hidden"}:
+            raise ValueError(f"{path}.live_tool_activity must be full, summary or hidden")
+        value["live_tool_activity"] = mode.strip().lower()
+    if "chat_overrides" in value:
+        overlays = value["chat_overrides"]
+        if not isinstance(overlays, Mapping) or set(overlays) - {"group", "p2p", "chats"}:
+            raise ValueError(f"{path}.chat_overrides must contain only group, p2p and chats")
+        normalized_overlays: dict[str, Any] = {}
+        for kind, entries in overlays.items():
+            overlay_path = f"{path}.chat_overrides.{kind}"
+            if not isinstance(entries, Mapping):
+                raise ValueError(f"{overlay_path} must be a mapping")
+            scopes = entries if kind == "chats" else {kind: entries}
+            normalized_scopes = {}
+            for selector, fields in scopes.items():
+                if kind == "chats":
+                    selector = normalize_native_chats([selector], path=overlay_path)[0]
+                if not isinstance(fields, Mapping) or set(fields) - CHAT_CARD_FIELDS:
+                    raise ValueError(f"{overlay_path} contains unsupported display fields")
+                fields = copy.deepcopy(dict(fields))
+                normalize_card_config(fields, path=overlay_path)
+                for key in CHAT_CARD_FIELDS - {"live_tool_activity"}:
+                    if key in fields:
+                        fields[key] = normalize_boolean(fields[key], f"{overlay_path}.{key}")
+                normalized_scopes[selector] = fields
+            normalized_overlays[kind] = normalized_scopes if kind == "chats" else normalized_scopes[kind]
+        value["chat_overrides"] = normalized_overlays
     if "reading_preset" in value:
         value["reading_preset"] = normalize_reading_preset(
             value["reading_preset"], path=f"{path}.reading_preset"

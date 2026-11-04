@@ -110,6 +110,7 @@ def render_card(
     width_mode: str = "default",
     presentation: str = "classic",
     native_tables: bool = False,
+    live_tool_activity: str = "full",
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -128,6 +129,7 @@ def render_card(
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
+        live_tool_activity=live_tool_activity,
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
         hide_successful_tool_activity=hide_successful_tool_activity,
@@ -166,6 +168,7 @@ def render_card_result(
     width_mode: str = "default",
     presentation: str = "classic",
     native_tables: bool = False,
+    live_tool_activity: str = "full",
 ) -> CardRenderResult:
     if presentation == "task" and session.status == "failed" and session.terminal_reasoning_notice:
         # This source marker comes from the terminal event, never a text match.
@@ -202,6 +205,7 @@ def render_card_result(
         mentions_enabled=mentions_enabled,
         reasoning_format=reasoning_format,
         completion_mention=completion_mention,
+        live_tool_activity=live_tool_activity,
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
         hide_successful_tool_activity=hide_successful_tool_activity,
@@ -302,7 +306,15 @@ def _render_card_unchecked(
     width_mode: str = "default",
     presentation: str = "classic",
     native_tables: bool = False,
+    live_tool_activity: str = "full",
 ) -> Dict[str, Any]:
+    # Approval scope and terminal evidence retain their existing presentation.
+    interaction = session.active_interaction
+    if (session.status in {"completed", "failed"}
+            or interaction is not None and interaction.status == "pending" and interaction.kind == "approval"
+            or not isinstance(live_tool_activity, str)
+            or live_tool_activity not in {"full", "summary", "hidden"}):
+        live_tool_activity = "full"
     if presentation == "task":
         text_sizes = {**TASK_TEXT_SIZE_DEFAULTS, **dict(text_sizes or {})}
     used_text_size_roles: set[str] = set()
@@ -325,6 +337,7 @@ def _render_card_unchecked(
         session,
         footer_fields,
         display_status=display_status,
+        live_tool_activity=live_tool_activity,
         compact=presentation == "task",
         include_status=presentation != "task" or native_reply_completed,
         # Maintainer note (contract change): the footer no longer repeats "本轮回复结束" at all.
@@ -343,11 +356,12 @@ def _render_card_unchecked(
             title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
         )
     runtime_summary = _runtime_header_summary(session)
-    header_action = _header_action_text(session, display_status=display_status)
+    header_action = _header_action_text(session, display_status=display_status, live_tool_activity=live_tool_activity)
     header_title = _header_title_with_state(
         session,
         configured_title,
         display_status=display_status,
+        live_tool_activity=live_tool_activity,
     )
     pending_interaction = session.active_interaction
     pending_approval = (
@@ -401,6 +415,7 @@ def _render_card_unchecked(
     if show_reasoning and not pending_approval:
         timeline_elements = _render_timeline_elements(
             session,
+            live_tool_activity=live_tool_activity,
             expanded=timeline_expanded,
             max_items=max_timeline_items,
             max_reasoning_chars=max_reasoning_chars,
@@ -428,6 +443,7 @@ def _render_card_unchecked(
             used_text_size_roles=used_text_size_roles,
             display_status=display_status,
             max_chars=max_tool_result_chars,
+            live_tool_activity=live_tool_activity,
             hide_successful=hide_terminal_tools,
             task_layout=presentation == "task",
             details_in_timeline=rendered_tool_ids,
@@ -459,6 +475,7 @@ def _render_card_unchecked(
         and not tool_activity_elements
         and not pending_approval
         and session.tool_count
+        and live_tool_activity == "full"
     ):
         tool_summary = {
             "tag": "markdown",
@@ -1015,7 +1032,7 @@ def _last_tool_action_text(session: CardSession) -> str:
     ) or _tool_action_phrase(latest)
 
 
-def _header_action_text(session: CardSession, *, display_status: str) -> str:
+def _header_action_text(session: CardSession, *, display_status: str, live_tool_activity: str = "full") -> str:
     """The ACTION line for the header's SUB-TITLE — the concrete work, target included.
 
     Maintainer note (contract change): this row has moved twice. It began as the title's LAST
@@ -1042,10 +1059,19 @@ def _header_action_text(session: CardSession, *, display_status: str) -> str:
     interaction = session.active_interaction
     if interaction is not None and interaction.status == "pending":
         return ""
+    if live_tool_activity != "full" and display_status in {"completed", "failed"}:
+        # A display override is not a terminal execution event. The caller
+        # restores full mode only when the session itself is terminal.
+        return ""
     if display_status == "completed" or session.status == "completed":
         return ""
     if display_status == "failed" or session.status == "failed":
         return _last_tool_action_text(session)
+    if live_tool_activity == "hidden":
+        return ""
+    if live_tool_activity == "summary":
+        running = [tool for tool in session.tools.values() if _tool_is_running(tool)]
+        return f"正在执行第 {max(running, key=lambda tool: tool.ordinal).ordinal} 步" if running else ""
     return _latest_running_action_text(session)
 
 
@@ -1054,6 +1080,7 @@ def _header_title_with_state(
     configured_title: str,
     *,
     display_status: str,
+    live_tool_activity: str = "full",
 ) -> str:
     """Answer "is it still working, and at what?" in the header — the card's most-read line.
 
@@ -1069,7 +1096,7 @@ def _header_title_with_state(
     interaction = session.active_interaction
     if interaction is not None and interaction.status == "pending":
         return _sanitize_runtime_header(interaction.prompt) or configured_title
-    metrics = _runtime_header_metrics(session, display_status=display_status)
+    metrics = _runtime_header_metrics(session, display_status=display_status, live_tool_activity=live_tool_activity)
     if display_status == "completed":
         return f"✅ {configured_title}" + (f" · {metrics}" if metrics else "")
     if display_status == "failed":
@@ -1095,7 +1122,7 @@ def _header_title_with_state(
     return f"⏳ {configured_title} · {metrics}"
 
 
-def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str:
+def _runtime_header_metrics(session: CardSession, *, display_status: str, live_tool_activity: str = "full") -> str:
     """``"工具 3 · 1m12s"`` for the header — the numbers the user asked to see up there.
 
     Maintainer note (contract change): the order used to be elapsed then tool count. The user
@@ -1105,7 +1132,7 @@ def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str
     otherwise open with "0s", which reads as a broken clock rather than "just started".
     """
     parts: list[str] = []
-    if session.tool_count:
+    if session.tool_count and live_tool_activity != "hidden":
         # Maintainer note (contract change): the user asked for a hash before the count
         # ("工具 #3"), so it reads as a numbered tally rather than prose.
         parts.append(f"工具 #{session.tool_count}")
@@ -1747,10 +1774,12 @@ def _tool_is_running(tool: ToolState) -> bool:
     return str(tool.status or "").strip().lower() not in TERMINAL_TOOL_STATUSES | {"display_handoff", "display_receipt"}
 
 
-def _selected_tool_activity(session: CardSession, *, turn_is_live: bool) -> list[ToolState]:
+def _selected_tool_activity(session: CardSession, *, turn_is_live: bool, live_tool_activity: str = "full") -> list[ToolState]:
     running = [
         tool for tool in session.tools.values() if turn_is_live and _tool_is_running(tool)
     ]
+    if session.status not in {"completed", "failed"} and live_tool_activity != "full":
+        return sorted(running, key=lambda tool: tool.ordinal) if live_tool_activity == "summary" else []
     # Terminal-only events have no start timestamp. Call ordinals keep their
     # actual position and let each running tool retain its immediate predecessor.
     ordered = sorted(session.tools.values(), key=lambda tool: tool.ordinal or 0)
@@ -1784,6 +1813,7 @@ def _render_tool_activity_elements(
     task_layout: bool = False,
     details_in_timeline: set[str] | None = None,
     observation_only: bool = False,
+    live_tool_activity: str = "full",
 ) -> list[Dict[str, Any]]:
     """Show what the agent is doing RIGHT NOW, right under the answer.
 
@@ -1802,7 +1832,7 @@ def _render_tool_activity_elements(
         "completed",
         "failed",
     }
-    selected = _selected_tool_activity(session, turn_is_live=turn_is_live)
+    selected = _selected_tool_activity(session, turn_is_live=turn_is_live, live_tool_activity=live_tool_activity)
     if hide_successful and not turn_is_live:
         selected = sorted((tool for tool in session.tools.values()
                            if str(tool.status).strip().lower() not in _SUCCESS_TOOL_STATUSES),
@@ -1832,6 +1862,7 @@ def _render_tool_activity_elements(
             task_layout=task_layout,
             include_params=not (task_layout and tool.tool_id in (details_in_timeline or set())),
             observation_only=observation_only,
+            live_tool_activity=live_tool_activity if turn_is_live else "full",
         )
         for index, tool in enumerate(selected)
     ]
@@ -2010,6 +2041,7 @@ def _tool_activity_row(
     task_layout: bool = False,
     include_params: bool = True,
     observation_only: bool = False,
+    live_tool_activity: str = "full",
 ) -> Dict[str, Any]:
     if running is None:
         running = _tool_is_running(tool)
@@ -2023,11 +2055,11 @@ def _tool_activity_row(
         label, color = _tool_terminal_pill(tool)
     # The task header owns the turn state. A live tool row names the action;
     # terminal tool outcomes remain visible because they describe that call.
-    if task_layout and running:
+    if task_layout and running and live_tool_activity != "summary":
         parts = ["上次动作"] if observation_only else []
     else:
         parts = [_status_tag(label, color)]
-    if tool.name:
+    if tool.name and live_tool_activity != "summary":
         parts.append(_name_tag(tool.name))
     # Maintainer note (contract change): the numbers now precede the phrase. The row used to end
     # with the elapsed time ("… #4 · 正在执行终端：pytest -q · 12s"), which put the one thing that
@@ -2038,10 +2070,10 @@ def _tool_activity_row(
     # the header ("工具 #N · 1m12s") — the count identifies the tool, the duration qualifies it, and
     # keeping both in the same order across surfaces avoids re-reading the same pair twice.
     if tool.ordinal:
-        parts.append(f"#{tool.ordinal}")
+        parts.append(f"第 {tool.ordinal} 步" if live_tool_activity == "summary" else f"#{tool.ordinal}")
     # Running rows count up; terminal rows retain their measured duration.
     elapsed: float | None = None
-    if running and tool.started_at and not observation_only:
+    if running and tool.started_at and (not observation_only or live_tool_activity == "summary"):
         elapsed = max(0.0, now - float(tool.started_at))
     elif tool.duration_ms is not None:
         try:
@@ -2058,10 +2090,10 @@ def _tool_activity_row(
     lines = [" · ".join(parts)]
     action = _task_clarify_summary(tool, max_chars=max_chars) if task_layout and not include_params else ""
     action = action or _tool_activity_text(tool, max_chars=max_chars, prefer_full_target=task_layout)
-    if action:
+    if action and live_tool_activity != "summary":
         lines.append(action)
     params = _tool_activity_params(tool, max_chars=max_chars)
-    if params and include_params:
+    if params and include_params and live_tool_activity != "summary":
         lines.append(params)
     element: Dict[str, Any] = {
         "tag": "markdown",
@@ -2104,10 +2136,13 @@ def _render_timeline_elements(
     timeline_order: str = "newest_first",
     tools_per_reasoning: int = 0,
     rendered_tool_ids: set[str] | None = None,
+    live_tool_activity: str = "full",
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
     all_entries = session.timeline.snapshot()
+    if session.status not in {"completed", "failed"} and live_tool_activity != "full":
+        all_entries = [entry for entry in all_entries if entry.kind != "tool"]
     latest_tool_entries = {
         entry.tool_id: entry for entry in all_entries
         if entry.kind == "tool" and entry.tool_id
@@ -2642,6 +2677,7 @@ def _render_footer(
     display_status: str = "",
     compact: bool = False,
     include_status: bool = True,
+    live_tool_activity: str = "full",
 ) -> str:
     # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
     # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
@@ -2664,7 +2700,7 @@ def _render_footer(
         # mid-turn: the core only sends tokens with turn.completed, so an approval that fires
         # during the run legitimately shows no counts rather than a fake ↑0 ↓0).
         waiting: list[str] = []
-        if session.tool_count and not compact:
+        if session.tool_count and not compact and live_tool_activity != "hidden":
             waiting.append(f"工具 #{session.tool_count}")
         if session.created_at:
             # Only once there is a second to show: a freshly-armed approval would otherwise read
@@ -2690,7 +2726,7 @@ def _render_footer(
         # the title — the user asked for "工具 N · <time>" order in both places (it used to be
         # time then count here).
         running = [f"{_spinner_frame()} {_status_tag('执行中', 'blue')}"] if include_status else []
-        if session.tool_count and not compact:
+        if session.tool_count and not compact and live_tool_activity != "hidden":
             # Maintainer note (contract change): hash before the count, matching the title.
             running.append(f"工具 #{session.tool_count}")
         running.append(_format_duration(max(0.0, _time.time() - float(session.created_at))))
@@ -2698,7 +2734,7 @@ def _render_footer(
         # ("正在读取文件") so the state line reads the same wherever the eye lands — the user
         # asked for it explicitly.
         phrase = _latest_running_action_phrase(session)
-        if phrase and not compact:
+        if phrase and not compact and live_tool_activity == "full":
             running.append(phrase)
         return " · ".join(running)
     tokens = session.tokens if isinstance(session.tokens, dict) else {}
@@ -2759,7 +2795,7 @@ def _render_footer(
         "output_rate": _format_output_rate(tokens),
     }
     selected = []
-    if session.tool_count and not compact:
+    if session.tool_count and not compact and live_tool_activity != "hidden":
         # Maintainer note (contract change): the count leads the other metrics, matching the title
         # (it used to be appended last, after ctx); it carries a hash, per the user's request.
         selected.append(f"工具 #{session.tool_count}")

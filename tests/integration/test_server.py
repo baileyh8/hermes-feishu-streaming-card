@@ -100,6 +100,69 @@ def create_app(*args, **kwargs):
     return _create_app(*args, **kwargs)
 
 
+async def test_chat_live_activity_is_fixed_per_session_and_new_turn(tmp_path):
+    client = FakeFeishuClient()
+    app = create_app(client, card_config={'flush_interval_ms': 0, 'chat_overrides': {
+        'group': {'live_tool_activity': 'hidden'}, 'p2p': {'live_tool_activity': 'summary'}}},
+        session_store_directory=tmp_path / 'sessions')
+    async with TestClient(TestServer(app)) as http:
+        for index, chat_type in enumerate(('group', 'p2p', None)):
+            data = {'chat_type': chat_type} if chat_type else {}
+            route = dict(message_id=f'fixture-{index}', chat_id=f'oc_example_{index}')
+            response = await http.post('/events', json=event_payload('message.started', 0, data, **route))
+            assert response.status == 200
+            response = await http.post('/events', json=event_payload('tool.updated', 1, {
+                **data, 'tool_id': 'fixture-tool', 'name': 'synthetic_terminal', 'status': 'running',
+                'detail': 'synthetic-command /tmp/synthetic-path'}, **route))
+            assert response.status == 200
+        configs = app[SESSION_CARD_CONFIGS_KEY]
+        sessions = app[SESSIONS_KEY]
+        by_message = {session.message_id: key for key, session in sessions.items()}
+        assert [configs[by_message[f'fixture-{i}']].get('live_tool_activity', 'full') for i in range(3)] == ['hidden', 'summary', 'full']
+        from hermes_feishu_card.render import render_card
+        from hermes_feishu_card.render_options import card_render_options
+        rendered = [json.dumps(render_card(sessions[by_message[f'fixture-{i}']], **card_render_options(configs[by_message[f'fixture-{i}']])), ensure_ascii=False) for i in range(3)]
+        assert 'synthetic_terminal' not in rendered[0] + rendered[1]
+        assert '第 1 步' in rendered[1] and 'synthetic_terminal' in rendered[2]
+        app[sidecar_server.BASE_CARD_CONFIG_KEY]['chat_overrides']['group']['live_tool_activity'] = 'full'
+        route = dict(message_id='fixture-0', chat_id='oc_example_0')
+        # Duplicate, changed type and late display configuration cannot replace a turn's choice.
+        for sequence in (1, 2):
+            await http.post('/events', json=event_payload('tool.updated', sequence, {
+                'chat_type': 'p2p', 'card': {'live_tool_activity': 'full'},
+                'tool_id': 'fixture-tool', 'name': 'synthetic_terminal', 'status': 'completed'}, **route))
+        assert configs[by_message['fixture-0']]['live_tool_activity'] == 'hidden'
+        await http.post('/events', json=event_payload('message.started', 0, {'chat_type': 'group'},
+            message_id='fixture-next', chat_id='oc_example_0'))
+        next_key = next(key for key, value in sessions.items() if value.message_id == 'fixture-next')
+        assert configs[next_key]['live_tool_activity'] == 'full'
+
+
+@pytest.mark.parametrize('boundary_kind', ['client', 'profiles', 'missing_profile'])
+def test_session_chat_overlays_preserve_baseline_card_config_precedence(boundary_kind):
+    factory = FakeFeishuClientFactory(cards={'default': {'live_tool_activity': 'hidden'}},
+        profile_card={'show_reasoning': False})
+    boundary = factory if boundary_kind == 'client' else {'default': factory} if boundary_kind == 'profiles' else {}
+    app = create_app(boundary, card_config={'live_tool_activity': 'full', 'chat_overrides': {
+        'group': {'live_tool_activity': 'summary'}, 'chats': {'oc_example': {'live_tool_activity': 'full'}}}})
+    event = SidecarEvent.from_dict(event_payload('message.started', 0,
+        {'card': {'live_tool_activity': 'summary'}, 'chat_type': 'unknown'}, chat_id='oc_other'))
+    resolved = sidecar_server._resolve_session_card_config(app, 'default', event)
+    # Baseline: event card replaces the profile layer; bot values still win.
+    assert resolved['live_tool_activity'] == ('full' if boundary_kind == 'missing_profile' else 'hidden')
+    assert resolved.get('show_reasoning', True) is True
+    event.data['chat_type'] = 'group'
+    assert sidecar_server._resolve_session_card_config(app, 'default', event)['live_tool_activity'] == 'summary'
+    from dataclasses import replace
+    event = replace(event, chat_id='oc_example')
+    assert sidecar_server._resolve_session_card_config(app, 'default', event)['live_tool_activity'] == 'full'
+    event = replace(event, chat_id='oc_other', data=None)
+    assert sidecar_server._resolve_session_card_config(app, 'default', event)['live_tool_activity'] == (
+        'full' if boundary_kind == 'missing_profile' else 'hidden')
+    if boundary_kind != 'missing_profile':
+        assert sidecar_server._resolve_session_card_config(app, 'default', event)['show_reasoning'] is False
+
+
 def signed_policy_request(payload):
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return body, sign_policy_request(TRANSPORT_ROOT_SECRET, body)
