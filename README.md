@@ -43,7 +43,7 @@ card:
 
 这组设置让执行过程默认收起，完成后仍可展开。`task` 预设本身默认展开；第二行明确选择收起。升级不会自动把 `classic`、`focused` 或 `detailed` 改成 `task`。
 
-V5.0.15 增加进行中工具信息三态（#489）、按群聊/私聊与单 chat 的投递及显示覆盖（#492），并将 Hermes v0.22.7 精确源码纳入 admission 完成契约（#491）；同版本同 spec 的受管 PM 重复安装不再新建环境代际（#494）。旧安装需通过正常安装器刷新受管 hook，再由原服务管理方重启 Gateway。具体兼容范围、验收进度和未验证项见[发行说明](docs/release-notes-v5.0.15.md)。
+V5.0.15 增加进行中工具信息三态（#489）、按群聊/私聊与单 chat 的投递及显示覆盖（#492），并将 Hermes v0.22.7 的检测 cohort（#491）与安装 writer family（#495）纳入精确源码契约；同版本同 spec 的受管 PM 重复安装不再新建环境代际（#494）。旧安装需通过正常安装器刷新受管 hook，再由原服务管理方重启 Gateway。具体兼容范围、验收进度和未验证项见[发行说明](docs/release-notes-v5.0.15.md)。
 
 V5.0.11 为固定 Hermes `9b904dcc22` 增加 admission 完成交接与首个展示策略的归属核验（#471）。安装适配限定为已有官方 PM generation、HFC 已启用且 `allow_tool_override: false`、schema2 member 无 observer marker 的前态；SDK 须不存在或为官方 PM 管理的 1.7.5。全新安装、旧 v1 receipt、缺失或 true 的 flag、手装 SDK 1.6.8 等前态仍提前拒绝。候选验收和恢复/卸载范围见[发行说明](docs/release-notes-v5.0.11.md)，以正式 Release 为准。不要删除保护记录或手改 Hermes 源码绕过检查。
 
@@ -319,7 +319,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 ## 贡献者
 
-- V5.0.15：感谢 [Lite-G](https://github.com/Lite-G) 提供 #489、#491、#492 定位与 [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) 的参考实现，[WenhuaXia](https://github.com/WenhuaXia) 提供 #494 受管部署复现记录。问题证据与代码作者分开记录，历史贡献记录保留。
+- V5.0.15：感谢 [Lite-G](https://github.com/Lite-G) 提供 #489、#491、#492 定位与 [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) 的参考实现，[ywarmy](https://github.com/ywarmy) 提供 #495 字节级 writer 数据，[WenhuaXia](https://github.com/WenhuaXia) 提供 #494 受管部署复现记录。问题证据与代码作者分开记录，历史贡献记录保留。
 - V5.0.14：感谢 [coder-zhw](https://github.com/coder-zhw) 提供 #441 复测证据、[leavrcn](https://github.com/leavrcn) 提供 #482 报告，以及 Dependabot 提交 #483/#484 工具维护。问题证据与代码作者分开记录。感谢 [Lite-G](https://github.com/Lite-G) 提供 #485 的兼容性报告及 [PR #486](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/486) 的原始实现；原提交作者与历史贡献记录保留。
 
 - V5.0.13：感谢 [Lite-G](https://github.com/Lite-G) 的 #479 报告与分析，以及 [Kevinzz224](https://github.com/Kevinzz224) 的 #478 报告。#479 初始补丁由 Bailey 提供的 ChatGPT 修复会话交付；问题证据与代码署名分开记录。

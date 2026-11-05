@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+from typing import Mapping
 
 from ._writer_0226 import FAMILY_SOURCES
 
@@ -238,6 +239,7 @@ class BackendProof:
     python: Path
     home: Path
     scope_layers: dict[str, dict[str, tuple[str, str, str | None, tuple[int, int, int, int, int] | None]]]
+    sources: Mapping[str, str] | None = None
 
     def verify(self) -> None:
         """Recheck each exact scope both before and after its native probe."""
@@ -249,7 +251,8 @@ class BackendProof:
             if _layer_snapshot(self.root, self.home, env) != expected:
                 raise BackendRefused("backend layers changed", code="backend-drift")
             _run_child_probe(self.root, self.python, self.home, env,
-                             _resolve_candidate_layers(self.root, self.home, env))
+                             _resolve_candidate_layers(self.root, self.home, env),
+                             self.sources or FAMILY_SOURCES)
             if _layer_snapshot(self.root, self.home, env) != expected:
                 raise BackendRefused("backend layers changed during probe", code="backend-drift")
 
@@ -278,10 +281,11 @@ def _run_child_probe(
     home: Path,
     env: dict[str, str],
     candidate_layers: dict[str, Path],
+    sources: Mapping[str, str],
 ) -> dict[str, str]:
     """Execute the child probe with isolated read-only arguments."""
     payload_input = json.dumps({
-        "sources": FAMILY_SOURCES,
+        "sources": dict(sources),
         "layer_paths": [str(p.resolve()) for p in candidate_layers.values()],
     })
     python_cmd = str(python)
@@ -329,7 +333,10 @@ def _run_child_probe(
     return {"verdict": "file", "reason": "file_confirmed"}
 
 
-def verify_file_backend(root: Path, python: Path, home: Path) -> BackendProof:
+def verify_file_backend(
+    root: Path, python: Path, home: Path,
+    *, sources: Mapping[str, str] | None = None,
+) -> BackendProof:
     """Audit env layers and execute child probe across both PM and enable scopes."""
     root = Path(os.path.abspath(os.fspath(root)))
     python = Path(os.path.abspath(os.fspath(python)))
@@ -342,6 +349,6 @@ def verify_file_backend(root: Path, python: Path, home: Path) -> BackendProof:
 
     snapshots = {name: _layer_snapshot(root, home, env)
                  for name, env in _build_scopes(root, home).items()}
-    proof = BackendProof(root, python, home, snapshots)
+    proof = BackendProof(root, python, home, snapshots, sources or FAMILY_SOURCES)
     proof.verify()
     return proof

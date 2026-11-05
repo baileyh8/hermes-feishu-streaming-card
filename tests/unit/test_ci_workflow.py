@@ -228,7 +228,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
     assert source_step["env"]["HFC_LEGACY_PLUGIN_SOURCE_ROOT"] == "${{ github.workspace }}/.upstream/baseline_0222"
     for family, baseline in {
         "PM_MAIN": "baseline_main_0ab", "CF4": "issue451_cf4", "RC2": "issue451_rc2",
-        "0224": "latest_stable", "0225": "issue456_0225", "MAIN_4E58": "latest_main",
+        "0224": "latest_stable", "0225": "issue456_0225", "0227": "0227", "MAIN_4E58": "latest_main",
     }.items():
         assert source_step["env"][f"HFC_CONFIG_WRITER_{family}_ROOT"] == (
             "${{ github.workspace }}/.upstream/" + baseline

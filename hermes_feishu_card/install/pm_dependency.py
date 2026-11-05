@@ -764,7 +764,7 @@ def _verify_observer_writer_before_admission(root: Path, *, family: str | None =
     Older installs that do not use the legacy observer retain their path.
     """
     from . import legacy_9b904, legacy_observer
-    from .plugin_config_bytes import ConfigBytesRefused, verify_launch_sources, verify_0226_admission
+    from .plugin_config_bytes import ConfigBytesRefused, FAMILIES, verify_launch_sources, verify_0226_admission
 
     try:
         if family is None:
@@ -775,15 +775,15 @@ def _verify_observer_writer_before_admission(root: Path, *, family: str | None =
             except ConfigBytesRefused:
                 legacy_9b904.verify_source(root)
                 return legacy_9b904.ADAPTER_ID
-            if selected == "pm-0226":
-                verify_0226_admission(root, python, home)
+            if selected in ("pm-0226", "pm-0227"):
+                verify_0226_admission(root, python, home, sources=FAMILIES[selected])
             return selected
         if family == legacy_9b904.ADAPTER_ID:
             legacy_9b904.verify_source(root)
             return family
         selected = verify_launch_sources(root, family=family)
-        if selected == "pm-0226":
-            verify_0226_admission(root, python, home)
+        if selected in ("pm-0226", "pm-0227"):
+            verify_0226_admission(root, python, home, sources=FAMILIES[selected])
         return selected
     except (ConfigBytesRefused, legacy_9b904.LegacyAdoptionRefused, OSError) as exc:
         if isinstance(exc, ConfigBytesRefused) and exc.code == "upstream-migration-required":
@@ -843,7 +843,7 @@ def _complete_adoption(registration: Registration, evidence: Any) -> Registratio
 def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
             version: str) -> Registration | None:
     family = _verify_observer_writer_before_admission(root, python=python, home=home)
-    if family == "pm-0226" and home is None:
+    if family in ("pm-0226", "pm-0227") and home is None:
         from .plugin_config_bytes import resolve_0226_home
         home = resolve_0226_home(root, python)
     from . import legacy_9b904
@@ -853,7 +853,7 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
         legacy_9b904.verify_unmanaged_scope()
     probe = _verified_call(root, python, home, {"operation": "probe"}, family)
     selected_home = Path(probe["home"])
-    if family == "pm-0226" and (home is None or selected_home.resolve() != home.resolve()):
+    if family in ("pm-0226", "pm-0227") and (home is None or selected_home.resolve() != home.resolve()):
         raise ValueError("PM home differs from verified backend scope")
     member = selected_home / "plugins" / NAME
     if family is not None:

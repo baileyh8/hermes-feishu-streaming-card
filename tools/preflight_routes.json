@@ -248,7 +248,8 @@
     ],
     "upstream": [
       "tests/integration/test_upstream_hermes_compat.py",
-      "tests/integration/test_v0227_admission_sources.py"
+      "tests/integration/test_v0227_admission_sources.py",
+      "tests/integration/test_v0227_writer_family.py"
     ],
     "install_transactions": [
       "tests/integration/test_cli_install.py",
