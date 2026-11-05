@@ -320,7 +320,6 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.9](docs/release-notes-v5.0.9.en.md) | Native admission identity, Windows installation and historical PM recovery |
 | [v5.0.8](docs/release-notes-v5.0.8.en.md) | Owned PM wheels, safe migration rebinding and official-image installation compatibility |
 | [v5.0.7](docs/release-notes-v5.0.7.en.md) | Hermes v0.22.5 compatibility, per-turn callbacks and terminal diagnostics (candidate) |
-| [v5.0.6](docs/release-notes-v5.0.6.en.md) | Versioned archive roots, normalized metadata and extraction safety checks |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 

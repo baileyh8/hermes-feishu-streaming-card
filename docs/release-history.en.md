@@ -96,3 +96,4 @@
 | [v3.8.8](release-notes-v3.8.8.md) | Cardifies native Hermes notices: Working, context compression, skill loading, and self-improvement review |
 | [v3.8.7](release-notes-v3.8.7.md) | Newer Hermes streams can create cards even when `message.started` is missing |
 | [v3.8.5](release-notes-v3.8.5.md) | Direct slash-command results delivered as interactive cards |
+| [v5.0.6](release-notes-v5.0.6.en.md) | Versioned archive roots, normalized metadata and extraction safety checks |

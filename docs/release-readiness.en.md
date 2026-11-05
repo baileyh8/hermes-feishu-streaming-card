@@ -2,7 +2,11 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.15`, delivering three live tool-activity modes (#489), chat-scoped delivery and display controls (#492), an exact Hermes v0.22.7 admission cohort (#491) and convergent managed PM upgrades (#494). Independent QA/review, ordinary-wheel upgrade/restore, exact-commit full CI, platform API, public installation and assets remain separate gates. Reporter-environment, real Gateway/model and client-click acceptance are unverified. See the [release notes](release-notes-v5.0.15.en.md).
+This branch targets `5.0.16`, delivering #462 install diagnostics: sanitized stdout/stderr tails on official-enable failures, a preflight plugin-visibility probe with fail-closed refusals for PM layouts, bounded install-refusal forwarding, and stronger diagnostic redaction. Independent QA/review (three rounds, final merge recommendation), the PR #496 full matrix, the focused-install regression and real enable-to-install refusal-chain probes are recorded. Reporter-environment, real Gateway/model and client-click acceptance are unverified; PM's sys.path rewrite is not fixed in this release. See the [release notes](release-notes-v5.0.16.en.md).
+
+## v5.0.15 historical record (published 2026-11-05)
+
+This branch targeted `5.0.15`, delivering three live tool-activity modes (#489), chat-scoped delivery and display controls (#492), an exact Hermes v0.22.7 admission cohort (#491) and convergent managed PM upgrades (#494). Independent QA/review, ordinary-wheel upgrade/restore, exact-commit full CI, platform API, public installation and assets remain separate gates. Reporter-environment, real Gateway/model and client-click acceptance are unverified. See the [release notes](release-notes-v5.0.15.en.md).
 
 ## v5.0.11 historical record
 

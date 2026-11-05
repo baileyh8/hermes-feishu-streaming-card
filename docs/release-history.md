@@ -96,3 +96,4 @@
 | [v3.8.7](release-notes-v3.8.7.md) | 新版 Hermes 缺少 `message.started` 时也能从首个 delta/completed 事件创建卡片 |
 | [v3.8.6](release-notes-v3.8.6.md) | Docker/source-stripped Hermes 缺 `VERSION` 时用 Gateway anchors 兜底，兼容 Hermes v0.18.0 |
 | [v3.8.5](release-notes-v3.8.5.md) | 直通 slash command 的执行结果以交互卡片反馈 |
+| [v5.0.6](release-notes-v5.0.6.md) | 版本化归档顶层目录、规范元数据与实际解压安全门禁 |

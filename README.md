@@ -314,7 +314,6 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.9](docs/release-notes-v5.0.9.md) | 原生 admission 身份、Windows 安装与历史 PM 恢复 |
 | [v5.0.8](docs/release-notes-v5.0.8.md) | PM 外部 wheel、迁移安全重绑与官方镜像安装兼容 |
 | [v5.0.7](docs/release-notes-v5.0.7.md) | Hermes v0.22.5 兼容、每轮回调与终局诊断（候选） |
-| [v5.0.6](docs/release-notes-v5.0.6.md) | 版本化归档顶层目录、规范元数据与实际解压安全门禁 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 

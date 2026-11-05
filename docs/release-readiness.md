@@ -2,6 +2,10 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
+本分支目标版本为 `5.0.16`；交付 #462 安装诊断增强：官方 enable 失败带脱敏 stdout/stderr 摘要、PM 布局写配置前的插件可见性探针与 fail-closed 拒绝、install 层有界诊断放行、诊断脱敏增强。独立 QA/review（三轮，最终建议合并）、PR #496 完整矩阵、focused install 全量回归、真实 enable→install 拒绝链反例已记录。报告者现场、真实 Gateway/model 和客户端点击未验证；本版不修复 PM sys.path 重写。见[发行说明](release-notes-v5.0.16.md)。
+
+## v5.0.15 历史记录（2026-11-05 已发布）
+
 本分支目标版本为 `5.0.15`；交付 #489 进行中工具信息三态、#492 按会话控制、#491 的 Hermes v0.22.7 精确源码 cohort 与 #494 受管 PM 升级收敛。独立 QA/review、普通 wheel 升级/恢复、精确完整 CI、平台 API、公开安装及资产门禁分别记录。报告者现场、真实 Gateway/model 和客户端点击未验证。见[发行说明](release-notes-v5.0.15.md)。
 
 ## v5.0.11 历史记录
