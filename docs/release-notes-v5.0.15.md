@@ -17,9 +17,9 @@
 
 `card-config` 新增 `--chat-type` 与 `--chat-id`；`--running` 可带选择器核对已加载值，无选择器的 scope hash 不变。`--minimal-yaml` 与 chat 选择器互斥。`chats use-native/use-card` 仍只管理 `native_chats`；`card_chats` 需直接编辑对应 profile 的 `bindings`。
 
-自动化证据：三态 × 各渲染表面、终态不变、非法值拒绝、`card-config` 有效值与来源；v0.22.7 精确检出上的 detect 与逐文件漂移负向对照；投递策略的类型/单 chat/未知类型/冲突与 profile 边界；显示覆盖的分层合并与 selector 不回显；PM spec 推导的正负向对照；完整 focused 回归、ruff、mypy 与 `git diff --check`。完整 CI、tag 门禁、资产校验和、公开匿名下载与普通包安装验收结果见本版 GitHub Release。
+自动化证据：main 精确提交 8a7baa6 的 tests（41990972513）与 CodeQL（41990972466）已通过；三态 × 各渲染表面、终态不变、非法值拒绝、`card-config` 有效值与来源；v0.22.7 精确检出上的 detect 与逐文件漂移负向对照；投递策略的类型/单 chat/未知类型/冲突与 profile 边界；显示覆盖的分层合并与 selector 不回显；PM spec 推导的正负向对照；完整 focused 回归、ruff、mypy 与 `git diff --check`。完整 CI、tag 门禁、资产校验和、公开匿名下载与普通包安装验收结果见本版 GitHub Release。
 
-限制：报告者现场、真实 Hermes Gateway/model 执行、真实飞书群聊/私聊的视觉与实际点击、以及受管 macOS launchd + PM + legacy observer 现场升级仍未由本次自动化覆盖；#495 的 v0.22.7 安装由固定源码 family 与负向对照覆盖，真实 macOS 现场升级仍需报告者复测。#489 报告者将在发布后按 `summary` 与 `hidden` 各复测一次；#494 报告者需在隔离环境复测升级收敛；#493 待补信息后再定位。归档仍保持单一顶层目录，解压前后目标目录属主与权限不变，Linux root/非 root 与 macOS 实际解压由 CI 覆盖。
+已知未验证项：v0.22.6 上 #462 新回复报告的 official plugin enable failed 尚未修复；本版不把该安装路径记为已解决。限制：报告者现场、真实 Hermes Gateway/model 执行、真实飞书群聊/私聊的视觉与实际点击、以及受管 macOS launchd + PM + legacy observer 现场升级仍未由本次自动化覆盖；#495 的 v0.22.7 安装由固定源码 family 与负向对照覆盖，真实 macOS 现场升级仍需报告者复测。#489 报告者将在发布后按 `summary` 与 `hidden` 各复测一次；#494 报告者需在隔离环境复测升级收敛；#493 待补信息后再定位。归档仍保持单一顶层目录，解压前后目标目录属主与权限不变，Linux root/非 root 与 macOS 实际解压由 CI 覆盖。
 
 ## 贡献
 
