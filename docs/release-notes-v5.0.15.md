@@ -24,3 +24,13 @@
 ## 贡献
 
 感谢 [Lite-G](https://github.com/Lite-G) 提供 #489、#491、#492 的定位与 [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) 的参考实现，[ywarmy](https://github.com/ywarmy) 提供 #495 的 writer family 字节级数据，[WenhuaXia](https://github.com/WenhuaXia) 提供 #494 的受管部署复现记录，[mouyong](https://github.com/mouyong) 提供 #493 截图。问题证据与代码作者分开记录，#486 原始提交作者与历史贡献全部保留。
+
+## 发布验收记录
+
+- main 精确提交 `111bdde`：tests 41990972513 success，CodeQL 41990972466 success。
+- tag 门禁 `release-assets` 41995990625：49/49 job success；v0.22.1/v0.22.2/v0.22.3/v0.22.4/v0.22.5 preserved 与 cleared 全部通过。
+- annotated tag object `8b10492a893cfc515d0c51804d1b5c3b124ccb0c`，指向 `111bddec82da7a1582483356789028ac85fb4596`；release ID 434979969，draft=false、prerelease=false。
+- 四个资产匿名 GET 均 200，大小与 SHA-256 与发行 proof 一致：linux `225fe46615e678883e6a56950b6c792936d08a4f4b56944d75b92b7a6cf6cec9`，macos `7149c506bb837aaef7c3a73bb66b2282d8873b498791fa47393f3a9d22d717a4`，windows `0d875488a17c851daad3a8e2ab8ea9adddcccbf78cb6308ba330a2abcd456b3a`，checksums `a09f537e286518317e68b26725ce90c0f968a7a372987543322e921f0b0a50f5`。
+- 普通包公开安装：非 editable `git+https://github.com/baileyh8/hermes-feishu-streaming-card.git@v5.0.15`，module 与 console `--help` 通过，direct_url commit 111bdde、requested_revision v5.0.15。
+- 资产校验和、9 文件清单、隔离解压和 Linux/macOS 目标目录元数据通过；Windows ZIP 仅做成员与字节复核，未在 Windows 本机另行解压。
+- 未验证：真实 Gateway/model、真实飞书群聊/私聊视觉与点击、报告者本机环境；v0.22.6 `official plugin enable failed`（#462 新回复）未修复，已列为已知未验证项。

@@ -24,3 +24,13 @@ Known unverified item: the official plugin enable failed path on v0.22.6 reporte
 ## Credits
 
 Thanks to [Lite-G](https://github.com/Lite-G) for #489, #491, #492 and the [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) reference implementation, [ywarmy](https://github.com/ywarmy) for the #495 byte-level writer data, [WenhuaXia](https://github.com/WenhuaXia) for the #494 managed-deployment reproduction, and [mouyong](https://github.com/mouyong) for the #493 screenshot. Issue evidence is separate from code authorship; original #486 commit authors and historical credits are preserved.
+
+## Release acceptance record
+
+- Main exact commit `111bdde`: tests 41990972513 success; CodeQL 41990972466 success.
+- Tag gate `release-assets` 41995990625: 49/49 jobs success, including all v0.22.1/v0.22.2/v0.22.3/v0.22.4/v0.22.5 preserved and cleared scenes.
+- Annotated tag object `8b10492a893cfc515d0c51804d1b5c3b124ccb0c` points to `111bddec82da7a1582483356789028ac85fb4596`; release ID 434979969, draft=false and prerelease=false.
+- All four assets returned anonymous HTTP 200 with exact sizes and SHA-256: linux `225fe46615e678883e6a56950b6c792936d08a4f4b56944d75b92b7a6cf6cec9`, macos `7149c506bb837aaef7c3a73bb66b2282d8873b498791fa47393f3a9d22d717a4`, windows `0d875488a17c851daad3a8e2ab8ea9adddcccbf78cb6308ba330a2abcd456b3a`, checksums `a09f537e286518317e68b26725ce90c0f968a7a372987543322e921f0b0a50f5`.
+- Public ordinary install: non-editable `git+https://github.com/baileyh8/hermes-feishu-streaming-card.git@v5.0.15`; module and console `--help` passed; direct_url commit 111bdde and requested_revision v5.0.15.
+- Checksums, nine-file manifests, isolated extraction and Linux/macOS target-directory metadata passed; the Windows ZIP was checked for members and bytes but not separately extracted on a Windows host.
+- Unverified: real Gateway/model, real Feishu group/private visual and click acceptance, reporter environments; the v0.22.6 `official plugin enable failed` path from the latest #462 reply is not fixed and is recorded as a known unverified item.
