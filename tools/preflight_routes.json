@@ -800,6 +800,10 @@
     ],
     "tests/fixtures/hermes_v0227_sources.json": [
       "upstream"
+    ],
+    "hermes_feishu_card/install/_writer_0227.py": [
+      "install",
+      "install_transactions"
     ]
   }
 }
