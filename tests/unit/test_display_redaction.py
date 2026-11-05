@@ -92,3 +92,27 @@ def test_diagnostic_redaction_covers_credential_shapes(text, canary):
 
     assert canary not in redacted
     assert "[REDACTED]" in redacted
+
+
+@pytest.mark.parametrize(
+    "text, canary",
+    [
+        ('--password "first SYNTHETIC_FLAG_CANARY"', "SYNTHETIC_FLAG_CANARY"),
+        ('--api-key "first SYNTHETIC_API_FLAG_CANARY"', "SYNTHETIC_API_FLAG_CANARY"),
+        ("--password='first SYNTHETIC_SINGLE_FLAG_CANARY'", "SYNTHETIC_SINGLE_FLAG_CANARY"),
+        ("--api-key='first SYNTHETIC_API_SINGLE_FLAG_CANARY'", "SYNTHETIC_API_SINGLE_FLAG_CANARY"),
+        (
+            'failure: password=' + json.dumps('first " SYNTHETIC_ESCAPED_CANARY'),
+            "SYNTHETIC_ESCAPED_CANARY",
+        ),
+        (
+            'failure: api_key=' + json.dumps('first " SYNTHETIC_API_ESCAPED_CANARY'),
+            "SYNTHETIC_API_ESCAPED_CANARY",
+        ),
+    ],
+)
+def test_diagnostic_redaction_quoted_flags_and_escaped_quotes(text, canary):
+    redacted = redact_diagnostic_text(text)
+
+    assert canary not in redacted
+    assert "[REDACTED]" in redacted

@@ -49,7 +49,11 @@ _DIAGNOSTIC_KEY_PATTERN = (
 _DIAGNOSTIC_QUOTED_REDACTION_RE = re.compile(
     r"(?is)([\"']?"
     + _DIAGNOSTIC_KEY_PATTERN
-    + r"[\"']?\s*[:=]\s*)([\"'])(.*?)(\2)"
+    + r"[\"']?\s*[:=]\s*)([\"'])((?:\\.|(?!\2).)*)(\2)"
+)
+_DIAGNOSTIC_QUOTED_FLAG_REDACTION_RE = re.compile(
+    r"(?is)(--[A-Za-z0-9_-]*(?:api[_-]?key|token|password|secret|authorization|credential)"
+    + r"[A-Za-z0-9_-]*(?:=|\s+))([\"'])((?:\\.|(?!\2).)*)(\2)"
 )
 _DIAGNOSTIC_KEY_VALUE_SECRET_RE = re.compile(
     r"(?i)([\"']?"
@@ -92,8 +96,9 @@ def _redact_quoted_diagnostic(match: re.Match[str]) -> str:
 def redact_diagnostic_text(text: str) -> str:
     if not text:
         return text
-    redacted = redact_tool_detail(text)
+    redacted = _DIAGNOSTIC_QUOTED_FLAG_REDACTION_RE.sub(_redact_quoted_diagnostic, text)
     redacted = _DIAGNOSTIC_QUOTED_REDACTION_RE.sub(_redact_quoted_diagnostic, redacted)
+    redacted = redact_tool_detail(redacted)
     redacted = AUTH_HEADER_SECRET_RE.sub(r"\1[REDACTED]", redacted)
     redacted = AUTH_SCHEME_SECRET_RE.sub(r"\1[REDACTED]", redacted)
     redacted = URL_USERINFO_SECRET_RE.sub(r"\1[REDACTED]@", redacted)

@@ -932,6 +932,16 @@ def test_official_child_output_note_redacts_credential_shapes(raw, canary):
         ("api_key=SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
         ("Authorization: Bearer SYNTHETIC_AUTH_CANARY", "SYNTHETIC_AUTH_CANARY"),
         ('password: "first SYNTHETIC_QUOTED_CANARY"', "SYNTHETIC_QUOTED_CANARY"),
+        ('--password "first SYNTHETIC_FLAG_CANARY"', "SYNTHETIC_FLAG_CANARY"),
+        ('--api-key "first SYNTHETIC_API_FLAG_CANARY"', "SYNTHETIC_API_FLAG_CANARY"),
+        (
+            "failure: password=" + json.dumps('first " SYNTHETIC_ESCAPED_CANARY'),
+            "SYNTHETIC_ESCAPED_CANARY",
+        ),
+        (
+            "failure: api_key=" + json.dumps('first " SYNTHETIC_API_ESCAPED_CANARY'),
+            "SYNTHETIC_API_ESCAPED_CANARY",
+        ),
     ],
 )
 def test_official_enable_failure_redacts_review_canaries_in_v3_refusal(
