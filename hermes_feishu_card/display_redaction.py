@@ -42,6 +42,29 @@ SECRET_FLAG_RE = re.compile(
 URL_SECRET_RE = re.compile(
     r"(?i)([?&](?:token|password|secret|api_key|api-key|app_secret)=)([^&#\s]+)"
 )
+_DIAGNOSTIC_KEY_PATTERN = (
+    r"[A-Za-z0-9_-]*(?:api[_-]?key|token|password|secret|authorization|credential)"
+    r"[A-Za-z0-9_-]*"
+)
+_DIAGNOSTIC_QUOTED_REDACTION_RE = re.compile(
+    r"(?is)([\"']?"
+    + _DIAGNOSTIC_KEY_PATTERN
+    + r"[\"']?\s*[:=]\s*)([\"'])(.*?)(\2)"
+)
+_DIAGNOSTIC_KEY_VALUE_SECRET_RE = re.compile(
+    r"(?i)([\"']?"
+    + _DIAGNOSTIC_KEY_PATTERN
+    + r"[\"']?\s*[:=]\s*)([^\s,;&}]+)"
+)
+AUTH_HEADER_SECRET_RE = re.compile(
+    r"(?i)(authorization\s*[:=]\s*(?:(?:bearer|negotiate|basic)\s+)?)([^\s,;&}]+)"
+)
+AUTH_SCHEME_SECRET_RE = re.compile(
+    r"(?i)\b((?:bearer|negotiate|basic)\s+)([^\s,;&}]+)"
+)
+URL_USERINFO_SECRET_RE = re.compile(
+    r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/@]+)@"
+)
 
 
 def redact_tool_detail(text: str) -> str:
@@ -58,6 +81,23 @@ def redact_tool_detail(text: str) -> str:
     # CLI-flag and query-string shapes (--password secret, ?token=abc) slip past the
     # key/value scanners above. The header sanitizer already sweeps them; tool detail is
     # rendered in the timeline and in the tool-activity rows too, so sweep here as well.
+    redacted = SECRET_FLAG_RE.sub(r"\1[REDACTED]", redacted)
+    return URL_SECRET_RE.sub(r"\1[REDACTED]", redacted)
+
+
+def _redact_quoted_diagnostic(match: re.Match[str]) -> str:
+    return f"{match.group(1)}{match.group(2)}{_TOOL_DETAIL_REDACTED}{match.group(4)}"
+
+
+def redact_diagnostic_text(text: str) -> str:
+    if not text:
+        return text
+    redacted = redact_tool_detail(text)
+    redacted = _DIAGNOSTIC_QUOTED_REDACTION_RE.sub(_redact_quoted_diagnostic, redacted)
+    redacted = AUTH_HEADER_SECRET_RE.sub(r"\1[REDACTED]", redacted)
+    redacted = AUTH_SCHEME_SECRET_RE.sub(r"\1[REDACTED]", redacted)
+    redacted = URL_USERINFO_SECRET_RE.sub(r"\1[REDACTED]@", redacted)
+    redacted = _DIAGNOSTIC_KEY_VALUE_SECRET_RE.sub(r"\1[REDACTED]", redacted)
     redacted = SECRET_FLAG_RE.sub(r"\1[REDACTED]", redacted)
     return URL_SECRET_RE.sub(r"\1[REDACTED]", redacted)
 

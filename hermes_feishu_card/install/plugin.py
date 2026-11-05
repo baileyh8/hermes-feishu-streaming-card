@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 import yaml
 
-from ..display_redaction import KEY_VALUE_SECRET_RE, SECRET_FLAG_RE, URL_SECRET_RE
+from ..display_redaction import redact_diagnostic_text
 from .file_transaction import BINARY_FLAG
 from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
 
@@ -693,7 +693,8 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             env=isolated_child_env(
                 binding.hermes_home,
@@ -731,8 +732,7 @@ def _child_output_text(text: str | bytes | None) -> str:
 
 def _official_child_output_note(text: str | bytes | None, *, limit: int = 240) -> str:
     note = _child_output_text(text)
-    for pattern in (KEY_VALUE_SECRET_RE, SECRET_FLAG_RE, URL_SECRET_RE):
-        note = pattern.sub(r"\1[REDACTED]", note)
+    note = redact_diagnostic_text(note)
     flattened = "".join(
         character if character.isprintable() else " " for character in note
     ).split()
@@ -843,7 +843,8 @@ def _official_enable_visibility_note(binding: HermesRuntimeBinding) -> str | Non
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             env=isolated_child_env(
                 binding.hermes_home,

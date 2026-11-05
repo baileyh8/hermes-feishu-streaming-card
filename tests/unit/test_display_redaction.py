@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from hermes_feishu_card.display_redaction import redact_tool_detail
+from hermes_feishu_card.display_redaction import redact_diagnostic_text, redact_tool_detail
 from hermes_feishu_card.process_activity import process_activity
 from hermes_feishu_card.render import _sanitize_runtime_header, mask_approval_scope
 
@@ -70,3 +70,25 @@ print('renderer/session absent; shared redaction and text loaded')
                             env=env, text=True, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr
     assert "renderer/session absent" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "text, canary",
+    [
+        ("api_key=SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("API_KEY: SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("Authorization: Bearer SYNTHETIC_AUTH_CANARY", "SYNTHETIC_AUTH_CANARY"),
+        ("Authorization: Negotiate SYNTHETIC_NEGOTIATE_CANARY", "SYNTHETIC_NEGOTIATE_CANARY"),
+        ("Authorization=Basic SYNTHETIC_BASIC_CANARY", "SYNTHETIC_BASIC_CANARY"),
+        ('password: "first SYNTHETIC_QUOTED_CANARY"', "SYNTHETIC_QUOTED_CANARY"),
+        ("token: 'first SYNTHETIC_SINGLE_CANARY'", "SYNTHETIC_SINGLE_CANARY"),
+        ("https://user:SYNTHETIC_URL_CANARY@api.example.test/path", "SYNTHETIC_URL_CANARY"),
+        ("Bearer SYNTHETIC_STANDALONE_CANARY", "SYNTHETIC_STANDALONE_CANARY"),
+        ('{"api_key": "SYNTHETIC_JSON_CANARY"}', "SYNTHETIC_JSON_CANARY"),
+    ],
+)
+def test_diagnostic_redaction_covers_credential_shapes(text, canary):
+    redacted = redact_diagnostic_text(text)
+
+    assert canary not in redacted
+    assert "[REDACTED]" in redacted

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from hermes_feishu_card.install import plugin, plugin_config_bytes
+from hermes_feishu_card.install import plugin, plugin_config_bytes, v3
 
 
 _POSIX_MODES = os.name != "nt"
@@ -28,6 +29,23 @@ def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
 
 def _write_utf8(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
+
+
+_REVIEW_FIXED_SOURCE_ROOT = Path(
+    os.environ.get(
+        "HFC_FIXED_TAG_SOURCE_ROOT",
+        "/private/tmp/hermes-agent-v2026.8.3-v430-audit",
+    )
+)
+
+
+def _review_v3_helpers():
+    path = Path(__file__).with_name("test_install_v3_transaction.py")
+    spec = importlib.util.spec_from_file_location("review_v3_helpers", path)
+    assert spec is not None and spec.loader is not None
+    helpers = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helpers)
+    return helpers
 
 
 def _exact_plan(postimage: bytes):
@@ -880,3 +898,120 @@ def test_enable_plugin_visibility_probe_passes_then_enables(tmp_path, monkeypatc
     assert config["token"] == "PRIVATE-CANARY"
     assert config["plugins"]["enabled"] == [plugin.PLUGIN_KEY, "keep-enabled"]
     assert config["plugins"]["disabled"] == ["keep-disabled"]
+
+
+@pytest.mark.parametrize(
+    "raw, canary",
+    [
+        ("api_key=SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("API_KEY: SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("Authorization: Bearer SYNTHETIC_AUTH_CANARY", "SYNTHETIC_AUTH_CANARY"),
+        ("Authorization: Negotiate SYNTHETIC_NEGOTIATE_CANARY", "SYNTHETIC_NEGOTIATE_CANARY"),
+        ("Authorization=Basic SYNTHETIC_BASIC_CANARY", "SYNTHETIC_BASIC_CANARY"),
+        ('password: "first SYNTHETIC_QUOTED_CANARY"', "SYNTHETIC_QUOTED_CANARY"),
+        ("token: 'first SYNTHETIC_SINGLE_CANARY'", "SYNTHETIC_SINGLE_CANARY"),
+        ("https://user:SYNTHETIC_URL_CANARY@api.example.test/path", "SYNTHETIC_URL_CANARY"),
+        ("Bearer SYNTHETIC_STANDALONE_CANARY", "SYNTHETIC_STANDALONE_CANARY"),
+        ('{"api_key": "SYNTHETIC_JSON_CANARY"}', "SYNTHETIC_JSON_CANARY"),
+    ],
+)
+def test_official_child_output_note_redacts_credential_shapes(raw, canary):
+    note = plugin._official_child_output_note(raw)
+
+    assert canary not in note
+    assert "[REDACTED]" in note
+
+
+@pytest.mark.skipif(
+    not (_REVIEW_FIXED_SOURCE_ROOT / "hermes_cli" / "main.py").is_file(),
+    reason="fixed Hermes fixture unavailable",
+)
+@pytest.mark.parametrize(
+    "raw, canary",
+    [
+        ("api_key=SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("Authorization: Bearer SYNTHETIC_AUTH_CANARY", "SYNTHETIC_AUTH_CANARY"),
+        ('password: "first SYNTHETIC_QUOTED_CANARY"', "SYNTHETIC_QUOTED_CANARY"),
+    ],
+)
+def test_official_enable_failure_redacts_review_canaries_in_v3_refusal(
+    tmp_path, monkeypatch, raw, canary
+):
+    monkeypatch.setenv("HFC_FIXED_TAG_SOURCE_ROOT", str(_REVIEW_FIXED_SOURCE_ROOT))
+    helpers = _review_v3_helpers()
+    root, binding, entrypoint, decision = helpers._fixture(tmp_path)
+    before = binding.config_path.read_bytes()
+    originals = {target: (root / target).read_bytes() for target in v3.HYBRID_PATCH_TARGET_ORDER}
+    monkeypatch.setattr(
+        plugin,
+        "_plan_enabled_config_bytes",
+        lambda b, p, original, desired, enabled: helpers._exact_plan(
+            yaml.safe_dump(desired).encode()
+        ),
+    )
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=raw, stderr=""),
+    )
+    try:
+        with pytest.raises(v3.FixedTagInstallRefused) as caught:
+            helpers._execute_diagnostic_fixture(binding, entrypoint, decision)
+        assert canary not in str(caught.value)
+        assert "[REDACTED]" in str(caught.value)
+        assert v3._bounded_install_refusal(str(caught.value))
+        assert binding.config_path.read_bytes() == before
+        assert all((root / target).read_bytes() == value for target, value in originals.items())
+    finally:
+        v3.restore_fixed_tag_hybrid_install(binding=binding)
+
+
+def test_official_enable_non_utf8_child_output_is_decoded(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *args, **kwargs: None)
+    original_run = subprocess.run
+
+    def raw_child(argv, **kwargs):
+        return original_run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys; sys.stdout.buffer.write(bytes([255])); sys.exit(1)",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(plugin.subprocess, "run", raw_child)
+
+    assert plugin._run_official_enable(binding) == 1
+    assert plugin._official_enable_diagnostic is not None
+    assert chr(0xFFFD) in plugin._official_enable_diagnostic
+    assert "official plugin enable failed" in plugin._official_enable_failure_message()
+
+
+def test_official_enable_visibility_probe_non_utf8_output_is_classified(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    pm_dir = binding.checkout_root / "pm"
+    pm_dir.mkdir()
+    _write_utf8(pm_dir / "environments.py", "# PM-managed checkout\n")
+    original_run = subprocess.run
+
+    def raw_child(argv, **kwargs):
+        return original_run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys; sys.stdout.buffer.write(bytes([255]))",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(plugin.subprocess, "run", raw_child)
+
+    note = plugin._official_enable_visibility_note(binding)
+
+    assert note is not None
+    assert "probe output unreadable" in note
+    assert chr(0xFFFD) in note
