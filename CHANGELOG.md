@@ -1,5 +1,13 @@
 # Changelog
 
+## v5.0.16 — 2026-11-06
+
+- Make official plugin-enable failures diagnosable (#462): the installer child process now captures a sanitized stdout/stderr tail instead of discarding it, so `official plugin enable failed (...)` reports the real upstream reason (for example `No plugin named 'hermes-feishu-card'.`, which v0.22.6 prints on stdout). Non-UTF-8 child output is decoded with replacement instead of escaping the failure classification.
+- Add a preflight plugin-visibility probe for PM-managed Hermes layouts (#462): before writing any config, the installer runs the official `plugins list` path with the same child launch contract and refuses with `official plugin enable visibility probe failed (...)` when the HFC entry point is not resolvable in the selected runtime; ordinary `.venv` layouts are unaffected.
+- Pass bounded install-refusal diagnostics through the fixed-tag install path: the reason whitelist forwards printable, length-bounded enable/probe messages while folding control characters and oversized unknown text back to the fixed refusal.
+- Extend diagnostic redaction (`display_redaction.redact_diagnostic_text()`) to cover key/value assignments, Authorization Bearer/Negotiate/Basic headers, quoted values (including spaces and escaped quotes), quoted CLI flags and URL userinfo before legacy masking; `redact_tool_detail()` and the other frozen contracts are unchanged.
+
+
 ## v5.0.15 — 2026-11-05
 
 - Add opt-in `card.tool_activity: full | summary | hidden` (default `full`) for live tool visibility (#489). `summary` and `hidden` remove tool names, commands, parameters and paths from the running card header subtitle, tool rows (including the retained predecessor), footer and reasoning timeline; completed and failed cards keep their existing behavior.
