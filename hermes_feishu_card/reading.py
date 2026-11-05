@@ -139,6 +139,7 @@ def explain_reading_config(
     # Reuse the runtime's handling of accepted legacy booleans and limits.
     options = card_render_options(resolved)
     for key in ("show_reasoning", "stream_thinking_to_body", "hide_completed_tool_activity",
+                "tool_activity",
                 "timeline_expanded", "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
                 "native_tables"):
         resolved[key] = options[key]

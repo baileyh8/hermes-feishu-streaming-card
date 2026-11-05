@@ -104,6 +104,7 @@ def render_card(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
+    tool_activity: str = "full",
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
     thinking_body_tail_chars: int = 0,
@@ -131,6 +132,7 @@ def render_card(
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
         hide_successful_tool_activity=hide_successful_tool_activity,
+        tool_activity=tool_activity,
         timeline_order=timeline_order,
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
         thinking_body_tail_chars=thinking_body_tail_chars,
@@ -160,6 +162,7 @@ def render_card_result(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
+    tool_activity: str = "full",
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
     thinking_body_tail_chars: int = 0,
@@ -205,6 +208,7 @@ def render_card_result(
         hide_completed_tool_activity=hide_completed_tool_activity,
         stream_thinking_to_body=stream_thinking_to_body,
         hide_successful_tool_activity=hide_successful_tool_activity,
+        tool_activity=tool_activity,
         timeline_order=timeline_order,
         timeline_tools_per_reasoning=timeline_tools_per_reasoning,
         thinking_body_tail_chars=thinking_body_tail_chars,
@@ -296,6 +300,7 @@ def _render_card_unchecked(
     hide_completed_tool_activity: bool = False,
     stream_thinking_to_body: bool = True,
     hide_successful_tool_activity: bool = False,
+    tool_activity: str = "full",
     timeline_order: str = "newest_first",
     timeline_tools_per_reasoning: int = 0,
     thinking_body_tail_chars: int = 0,
@@ -327,6 +332,7 @@ def _render_card_unchecked(
         display_status=display_status,
         compact=presentation == "task",
         include_status=presentation != "task" or native_reply_completed,
+        tool_activity=tool_activity,
         # Maintainer note (contract change): the footer no longer repeats "本轮回复结束" at all.
         # The user asked for it to go from the footer ("footer 区域不显示本轮回复结束"), and only
         # the native-reply rail ever had it there — that rail drops the whole header
@@ -343,7 +349,9 @@ def _render_card_unchecked(
             title.strip() if isinstance(title, str) and title.strip() else DEFAULT_TITLE
         )
     runtime_summary = _runtime_header_summary(session)
-    header_action = _header_action_text(session, display_status=display_status)
+    header_action = _header_action_text(
+        session, display_status=display_status, tool_activity=tool_activity
+    )
     header_title = _header_title_with_state(
         session,
         configured_title,
@@ -411,6 +419,7 @@ def _render_card_unchecked(
             used_text_size_roles=used_text_size_roles,
             reasoning_format=reasoning_format,
             rendered_tool_ids=rendered_tool_ids,
+            tool_activity=tool_activity,
             live_thinking=(
                 session.thinking_text
                 if (not stream_thinking_to_body and session.status not in {"completed", "failed"}
@@ -429,6 +438,7 @@ def _render_card_unchecked(
             display_status=display_status,
             max_chars=max_tool_result_chars,
             hide_successful=hide_terminal_tools,
+            tool_activity=tool_activity,
             task_layout=presentation == "task",
             details_in_timeline=rendered_tool_ids,
             observation_only=presentation == "task" and bool(task_presentation(session).observation),
@@ -453,10 +463,19 @@ def _render_card_unchecked(
             }
         )
     elements.append({"tag": "hr", "element_id": "main_divider"})
+    # "hidden" must also silence the generic summary fallback below: that block
+    # lists tool names, which is exactly what this setting removes from a live
+    # card. A finished card keeps the existing terminal switches unchanged.
+    live_tool_activity_hidden = (
+        tool_activity == "hidden"
+        and session.status not in {"completed", "failed"}
+        and display_status not in {"completed", "failed"}
+    )
     if (
         not timeline_elements
         and not hide_terminal_tools
         and not tool_activity_elements
+        and not live_tool_activity_hidden
         and not pending_approval
         and session.tool_count
     ):
@@ -1015,7 +1034,9 @@ def _last_tool_action_text(session: CardSession) -> str:
     ) or _tool_action_phrase(latest)
 
 
-def _header_action_text(session: CardSession, *, display_status: str) -> str:
+def _header_action_text(
+    session: CardSession, *, display_status: str, tool_activity: str = "full"
+) -> str:
     """The ACTION line for the header's SUB-TITLE — the concrete work, target included.
 
     Maintainer note (contract change): this row has moved twice. It began as the title's LAST
@@ -1045,7 +1066,16 @@ def _header_action_text(session: CardSession, *, display_status: str) -> str:
     if display_status == "completed" or session.status == "completed":
         return ""
     if display_status == "failed" or session.status == "failed":
+        # Terminal cards keep their existing subtitle: where the run stopped is
+        # the information a failed turn exists to show, and this setting only
+        # governs a live turn. hide_completed_tool_activity still owns the body.
         return _last_tool_action_text(session)
+    if tool_activity == "hidden":
+        return ""
+    if tool_activity == "summary":
+        # Generic progress only: never a tool name, command, parameter or path.
+        steps = max(0, int(session.tool_count or 0))
+        return f"执行中 · 第 {steps} 步" if steps else "执行中"
     return _latest_running_action_text(session)
 
 
@@ -1773,6 +1803,35 @@ def _selected_tool_activity(session: CardSession, *, turn_is_live: bool) -> list
     return selected
 
 
+def _tool_activity_summary_element(
+    session: CardSession, *, text_sizes: Mapping[str, Any] | None = None
+) -> list[Dict[str, Any]]:
+    """The summary mode's single live row: progress without tool identity.
+
+    Deliberately carries no tool name, command, parameter or path — only the
+    step count and elapsed time, which is what a group audience needs to know
+    the turn is still moving.
+    """
+    parts = ["执行中"]
+    steps = max(0, int(session.tool_count or 0))
+    if steps:
+        parts.append(f"第 {steps} 步")
+    if session.created_at:
+        elapsed = max(0.0, _time.time() - float(session.created_at))
+        if elapsed >= 1.0:
+            parts.append(_format_duration(elapsed))
+    element = {
+        "tag": "markdown",
+        "element_id": "tool_activity_summary",
+        "content": " · ".join(parts),
+    }
+    _set_text_size(
+        element,
+        _role_text_size(text_sizes, "tool", default=None, used_roles=set()),
+    )
+    return [element]
+
+
 def _render_tool_activity_elements(
     session: CardSession,
     *,
@@ -1781,6 +1840,7 @@ def _render_tool_activity_elements(
     display_status: str = "",
     max_chars: int = _TOOL_ACTIVITY_TEXT_MAX_CHARS,
     hide_successful: bool = False,
+    tool_activity: str = "full",
     task_layout: bool = False,
     details_in_timeline: set[str] | None = None,
     observation_only: bool = False,
@@ -1802,6 +1862,10 @@ def _render_tool_activity_elements(
         "completed",
         "failed",
     }
+    if turn_is_live and tool_activity == "hidden":
+        return []
+    if turn_is_live and tool_activity == "summary":
+        return _tool_activity_summary_element(session, text_sizes=text_sizes)
     selected = _selected_tool_activity(session, turn_is_live=turn_is_live)
     if hide_successful and not turn_is_live:
         selected = sorted((tool for tool in session.tools.values()
@@ -2104,6 +2168,7 @@ def _render_timeline_elements(
     timeline_order: str = "newest_first",
     tools_per_reasoning: int = 0,
     rendered_tool_ids: set[str] | None = None,
+    tool_activity: str = "full",
 ) -> list[Dict[str, Any]]:
     if not getattr(session, "timeline", None):
         return []
@@ -2206,6 +2271,13 @@ def _render_timeline_elements(
                 )
             )
         elif item.kind == "tool":
+            if live and tool_activity != "full":
+                # The panel is the fourth live surface. "summary" and "hidden"
+                # both promise that no tool name, command, parameter or path
+                # reaches the card while the turn runs, so the tool entries
+                # leave the live panel entirely; reasoning text stays. A
+                # finished card keeps its full process history.
+                continue
             full_detail, duration = _split_tool_timeline_detail(
                 redact_tool_detail(item.detail)
             )
@@ -2642,6 +2714,7 @@ def _render_footer(
     display_status: str = "",
     compact: bool = False,
     include_status: bool = True,
+    tool_activity: str = "full",
 ) -> str:
     # Maintainer note (contract change): a stopped or failed turn used to replace the WHOLE footer
     # with just "已停止", throwing away the tool count, elapsed time, model and token counts —
@@ -2664,7 +2737,7 @@ def _render_footer(
         # mid-turn: the core only sends tokens with turn.completed, so an approval that fires
         # during the run legitimately shows no counts rather than a fake ↑0 ↓0).
         waiting: list[str] = []
-        if session.tool_count and not compact:
+        if session.tool_count and not compact and tool_activity != "hidden":
             waiting.append(f"工具 #{session.tool_count}")
         if session.created_at:
             # Only once there is a second to show: a freshly-armed approval would otherwise read
@@ -2690,7 +2763,7 @@ def _render_footer(
         # the title — the user asked for "工具 N · <time>" order in both places (it used to be
         # time then count here).
         running = [f"{_spinner_frame()} {_status_tag('执行中', 'blue')}"] if include_status else []
-        if session.tool_count and not compact:
+        if session.tool_count and not compact and tool_activity != "hidden":
             # Maintainer note (contract change): hash before the count, matching the title.
             running.append(f"工具 #{session.tool_count}")
         running.append(_format_duration(max(0.0, _time.time() - float(session.created_at))))
@@ -2698,7 +2771,7 @@ def _render_footer(
         # ("正在读取文件") so the state line reads the same wherever the eye lands — the user
         # asked for it explicitly.
         phrase = _latest_running_action_phrase(session)
-        if phrase and not compact:
+        if phrase and not compact and tool_activity == "full":
             running.append(phrase)
         return " · ".join(running)
     tokens = session.tokens if isinstance(session.tokens, dict) else {}

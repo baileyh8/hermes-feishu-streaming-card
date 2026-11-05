@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in `card.tool_activity: full | summary | hidden` (default `full`) for live tool visibility (#489). `summary` and `hidden` remove tool names, commands, parameters and paths from the running card's header subtitle, tool rows (including the retained predecessor), footer and reasoning timeline; completed and failed cards keep their existing behavior. Scopes stay global -> profile -> bot; chat-level overrides are a separate design.
+
 ## v5.0.14 — 2026-11-03
 
 - Bind observed output rate to the exact native session/turn pair (#441). Preserve that pair across verified Gateway result projection, consume only its terminal slot, and retain unknown-rate omission. The reporter's missing-rate environment is not independently reproduced.

@@ -72,6 +72,10 @@ card:
   thinking_body_tail_chars: 0
   # Hide content-area tool rows after completed/failed; timeline and counts stay visible.
   hide_completed_tool_activity: false
+  # Live tool activity: full | summary | hidden (default full).
+  # summary/hidden drop tool names, commands, parameters and paths from the
+  # running card; finished cards keep their existing behavior.
+  # tool_activity: full
   timeline_expanded: false
   # Opt-in chronological panel order; card-body reasoning remains chronological.
   timeline_order: newest_first
