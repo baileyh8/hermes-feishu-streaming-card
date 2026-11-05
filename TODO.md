@@ -8,7 +8,7 @@
 - #491：固定 Hermes v0.22.7 精确源码 cohort、运行时拓扑校验、CI 固定检出与负向对照。
 - #495：为 v0.22.7 增加整组 writer family，覆盖安装前置、config backend、PM admission 与 launch/ACL 审计。
 - #492：按会话类型/单 chat 的投递默认与显示覆盖；不配置时行为不变。
-- #494：pip 安装的 CLI 自动推导安装 spec，重复安装不再新建 PM 环境代际。
+- #494：pip 安装的 CLI 自动推导安装 spec；同版本同 spec 继续使用既有 PM 快速路径。
 - #493：正文显示现象待报告者补信息与离线复现，本轮不改动渲染。
 - 最终证据见[发行说明](docs/release-notes-v5.0.15.md)；未完成门禁不记为通过。
 

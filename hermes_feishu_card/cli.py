@@ -2066,17 +2066,8 @@ def _ensure_hermes_runtime_package(
         return
     from .install import pm_dependency
     if pm_dependency.available(detection.root):
-        spec = _runtime_install_spec()
-        if _pm_runtime_already_registered(
-            detection, runtime_python, hermes_home, spec, pm_dependency
-        ):
-            print(
-                f"runtime package: {PACKAGE_VERSION} already registered with "
-                "Hermes PM (no new environment generation)"
-            )
-            return None
         registration = pm_dependency.ensure(detection.root, runtime_python, home=hermes_home,
-                                            spec=spec, version=PACKAGE_VERSION)
+                                            spec=_runtime_install_spec(), version=PACKAGE_VERSION)
         managed_here = registrations is None
         if registration is not None and registrations is not None:
             registrations.append(registration)
@@ -2297,32 +2288,6 @@ def _installed_distribution_spec() -> str | None:
         if isinstance(commit, str) and commit:
             return f"git+{url}@{commit}"
     return None
-
-
-def _pm_runtime_already_registered(
-    detection: Any, runtime_python: Path, hermes_home: Path | None,
-    spec: str | None, pm_dependency: Any,
-) -> bool:
-    """Skip PM admission when this exact version and spec are already live."""
-    try:
-        probe = pm_dependency._call(
-            detection.root, runtime_python, hermes_home, {"operation": "probe"}
-        )
-        member = Path(probe["home"]) / "plugins" / pm_dependency.NAME
-        owner = pm_dependency._owned(member)
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-    if owner is None or owner.get("version") != PACKAGE_VERSION:
-        return False
-    if owner.get("spec_sha256") != pm_dependency._install_spec_digest(spec):
-        return False
-    report = _check_runtime_hook_import(runtime_python)
-    return bool(
-        report.get("status") == "ok"
-        and report.get("version") == PACKAGE_VERSION
-        and _runtime_report_uses_installed_package(report, runtime_python)
-        and pm_dependency.verify_installed(member, runtime_python)
-    )
 
 
 def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:
