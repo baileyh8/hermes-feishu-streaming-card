@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from hermes_feishu_card.install import plugin, plugin_config_bytes
+from hermes_feishu_card.install import plugin, plugin_config_bytes, v3
 
 
 _POSIX_MODES = os.name != "nt"
@@ -28,6 +29,23 @@ def _symlink_or_skip_windows_privilege(path, target, *, directory=False):
 
 def _write_utf8(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
+
+
+_REVIEW_FIXED_SOURCE_ROOT = Path(
+    os.environ.get(
+        "HFC_FIXED_TAG_SOURCE_ROOT",
+        "/private/tmp/hermes-agent-v2026.8.3-v430-audit",
+    )
+)
+
+
+def _review_v3_helpers():
+    path = Path(__file__).with_name("test_install_v3_transaction.py")
+    spec = importlib.util.spec_from_file_location("review_v3_helpers", path)
+    assert spec is not None and spec.loader is not None
+    helpers = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helpers)
+    return helpers
 
 
 def _exact_plan(postimage: bytes):
@@ -730,3 +748,280 @@ def test_enable_failure_rolls_back_only_verified_official_postimage(tmp_path, mo
     with pytest.raises(plugin.PluginConfigRefused, match="official plugin enable failed"):
         plugin.enable_plugin(binding, preimage)
     assert binding.config_path.read_bytes() == original
+
+
+def test_official_enable_failure_includes_sanitized_stdout_tail(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="No plugin named 'hermes-feishu-card'.\n",
+            stderr="",
+        ),
+    )
+
+    assert plugin._run_official_enable(binding) == 1
+    assert plugin._official_enable_diagnostic == "out=No plugin named 'hermes-feishu-card'."
+    assert plugin._official_enable_failure_message() == (
+        "official plugin enable failed (No plugin named 'hermes-feishu-card'.)"
+    )
+
+
+def test_official_enable_failure_message_stays_fixed_without_diagnostic(monkeypatch):
+    monkeypatch.setattr(plugin, "_official_enable_diagnostic", None)
+    monkeypatch.setattr(plugin, "_official_enable_diagnostic_sources", (False, False))
+
+    assert plugin._official_enable_failure_message() == "official plugin enable failed"
+
+
+def test_official_enable_output_note_folds_and_truncates():
+    text = "first line\ntoken: xxx\n" + "A" * 300 + "\x00 tail marker"
+
+    note = plugin._official_child_output_note(text)
+
+    assert note.startswith("...")
+    assert len(note) <= 243
+    assert "\n" not in note
+    assert "\x00" not in note
+    assert "  " not in note
+    assert "token: xxx" not in note
+    assert note.count("token") <= 1
+    assert "tail marker" in note
+    assert "[REDACTED]" in plugin._official_child_output_note("token: xxx\n")
+    assert "token: xxx" not in plugin._official_child_output_note("token: xxx\n")
+
+
+def test_official_enable_visibility_probe_skips_non_pm_checkouts(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("non-PM checkout must not start a probe"),
+    )
+
+    assert plugin._official_enable_visibility_note(binding) is None
+
+
+def test_official_enable_visibility_probe_refuses_unresolvable_plugin(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    pm_dir = binding.checkout_root / "pm"
+    pm_dir.mkdir()
+    _write_utf8(pm_dir / "environments.py", "# PM-managed checkout\n")
+    payload = json.dumps({"entry_points": [], "resolved": None, "error": None})
+    stdout = "Hermes plugins list\nStartup banner\n" + payload + "\n"
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(plugin.subprocess, "run", run)
+
+    note = plugin._official_enable_visibility_note(binding)
+
+    assert note is not None
+    assert "plugin not resolvable in the selected runtime" in note
+    assert "out=" in note
+    assert captured["argv"][:4] == [
+        str(binding.runtime_python),
+        "-I",
+        "-c",
+        plugin._OFFICIAL_ENABLE_PROBE_SCRIPT,
+    ]
+    assert captured["argv"][-2:] == ["plugins", "list"]
+
+
+def test_enable_plugin_visibility_probe_blocks_before_official_enable(tmp_path, monkeypatch):
+    original = "token: PRIVATE-CANARY\nplugins: {}\n"
+    binding = _binding(tmp_path, monkeypatch, original)
+    preimage = plugin.prepare_plugin_config(binding)
+    before_bytes = binding.config_path.read_bytes()
+    monkeypatch.setattr(
+        plugin,
+        "_official_enable_visibility_note",
+        lambda candidate: "plugin not resolvable in the selected runtime",
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_run_official_enable",
+        lambda candidate: pytest.fail("official enable must not run"),
+    )
+
+    with pytest.raises(plugin.PluginConfigRefused, match="visibility probe"):
+        plugin.enable_plugin(binding, preimage)
+
+    assert binding.config_path.read_bytes() == before_bytes
+    assert preimage.backup_path.read_bytes() == before_bytes
+    assert preimage.journal_path.is_file()
+
+
+def test_enable_plugin_visibility_probe_passes_then_enables(tmp_path, monkeypatch):
+    original = (
+        "token: PRIVATE-CANARY\n"
+        "plugins:\n"
+        "  disabled: [hermes-feishu-card, keep-disabled]\n"
+        "  enabled: [keep-enabled]\n"
+    )
+    binding = _binding(tmp_path, monkeypatch, original)
+    preimage = plugin.prepare_plugin_config(binding)
+    probe_calls = []
+    enable_calls = []
+
+    def probe(candidate):
+        probe_calls.append(candidate)
+        return None
+
+    def official_enable(candidate):
+        enable_calls.append(candidate)
+        config = yaml.safe_load(candidate.config_path.read_text(encoding="utf-8"))
+        plugins = config.setdefault("plugins", {})
+        plugins["enabled"] = sorted(set(plugins.get("enabled", [])) | {plugin.PLUGIN_KEY})
+        plugins["disabled"] = sorted(set(plugins.get("disabled", [])) - {plugin.PLUGIN_KEY})
+        plugins.setdefault("entries", {}).setdefault(plugin.PLUGIN_KEY, {})[
+            "allow_tool_override"
+        ] = False
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
+        return 0
+
+    monkeypatch.setattr(plugin, "_official_enable_visibility_note", probe)
+    monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
+
+    ownership = plugin.enable_plugin(binding, preimage)
+
+    assert len(probe_calls) == 1
+    assert len(enable_calls) == 1
+    assert ownership.added_by_hfc is True
+    config = yaml.safe_load(binding.config_path.read_text(encoding="utf-8"))
+    assert config["token"] == "PRIVATE-CANARY"
+    assert config["plugins"]["enabled"] == [plugin.PLUGIN_KEY, "keep-enabled"]
+    assert config["plugins"]["disabled"] == ["keep-disabled"]
+
+
+@pytest.mark.parametrize(
+    "raw, canary",
+    [
+        ("api_key=SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("API_KEY: SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("Authorization: Bearer SYNTHETIC_AUTH_CANARY", "SYNTHETIC_AUTH_CANARY"),
+        ("Authorization: Negotiate SYNTHETIC_NEGOTIATE_CANARY", "SYNTHETIC_NEGOTIATE_CANARY"),
+        ("Authorization=Basic SYNTHETIC_BASIC_CANARY", "SYNTHETIC_BASIC_CANARY"),
+        ('password: "first SYNTHETIC_QUOTED_CANARY"', "SYNTHETIC_QUOTED_CANARY"),
+        ("token: 'first SYNTHETIC_SINGLE_CANARY'", "SYNTHETIC_SINGLE_CANARY"),
+        ("https://user:SYNTHETIC_URL_CANARY@api.example.test/path", "SYNTHETIC_URL_CANARY"),
+        ("Bearer SYNTHETIC_STANDALONE_CANARY", "SYNTHETIC_STANDALONE_CANARY"),
+        ('{"api_key": "SYNTHETIC_JSON_CANARY"}', "SYNTHETIC_JSON_CANARY"),
+    ],
+)
+def test_official_child_output_note_redacts_credential_shapes(raw, canary):
+    note = plugin._official_child_output_note(raw)
+
+    assert canary not in note
+    assert "[REDACTED]" in note
+
+
+@pytest.mark.skipif(
+    not (_REVIEW_FIXED_SOURCE_ROOT / "hermes_cli" / "main.py").is_file(),
+    reason="fixed Hermes fixture unavailable",
+)
+@pytest.mark.parametrize(
+    "raw, canary",
+    [
+        ("api_key=SYNTHETIC_API_CANARY", "SYNTHETIC_API_CANARY"),
+        ("Authorization: Bearer SYNTHETIC_AUTH_CANARY", "SYNTHETIC_AUTH_CANARY"),
+        ('password: "first SYNTHETIC_QUOTED_CANARY"', "SYNTHETIC_QUOTED_CANARY"),
+        ('--password "first SYNTHETIC_FLAG_CANARY"', "SYNTHETIC_FLAG_CANARY"),
+        ('--api-key "first SYNTHETIC_API_FLAG_CANARY"', "SYNTHETIC_API_FLAG_CANARY"),
+        (
+            "failure: password=" + json.dumps('first " SYNTHETIC_ESCAPED_CANARY'),
+            "SYNTHETIC_ESCAPED_CANARY",
+        ),
+        (
+            "failure: api_key=" + json.dumps('first " SYNTHETIC_API_ESCAPED_CANARY'),
+            "SYNTHETIC_API_ESCAPED_CANARY",
+        ),
+    ],
+)
+def test_official_enable_failure_redacts_review_canaries_in_v3_refusal(
+    tmp_path, monkeypatch, raw, canary
+):
+    monkeypatch.setenv("HFC_FIXED_TAG_SOURCE_ROOT", str(_REVIEW_FIXED_SOURCE_ROOT))
+    helpers = _review_v3_helpers()
+    root, binding, entrypoint, decision = helpers._fixture(tmp_path)
+    before = binding.config_path.read_bytes()
+    originals = {target: (root / target).read_bytes() for target in v3.HYBRID_PATCH_TARGET_ORDER}
+    monkeypatch.setattr(
+        plugin,
+        "_plan_enabled_config_bytes",
+        lambda b, p, original, desired, enabled: helpers._exact_plan(
+            yaml.safe_dump(desired).encode()
+        ),
+    )
+    monkeypatch.setattr(
+        plugin.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout=raw, stderr=""),
+    )
+    try:
+        with pytest.raises(v3.FixedTagInstallRefused) as caught:
+            helpers._execute_diagnostic_fixture(binding, entrypoint, decision)
+        assert canary not in str(caught.value)
+        assert "[REDACTED]" in str(caught.value)
+        assert v3._bounded_install_refusal(str(caught.value))
+        assert binding.config_path.read_bytes() == before
+        assert all((root / target).read_bytes() == value for target, value in originals.items())
+    finally:
+        v3.restore_fixed_tag_hybrid_install(binding=binding)
+
+
+def test_official_enable_non_utf8_child_output_is_decoded(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *args, **kwargs: None)
+    original_run = subprocess.run
+
+    def raw_child(argv, **kwargs):
+        return original_run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys; sys.stdout.buffer.write(bytes([255])); sys.exit(1)",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(plugin.subprocess, "run", raw_child)
+
+    assert plugin._run_official_enable(binding) == 1
+    assert plugin._official_enable_diagnostic is not None
+    assert chr(0xFFFD) in plugin._official_enable_diagnostic
+    assert "official plugin enable failed" in plugin._official_enable_failure_message()
+
+
+def test_official_enable_visibility_probe_non_utf8_output_is_classified(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+    pm_dir = binding.checkout_root / "pm"
+    pm_dir.mkdir()
+    _write_utf8(pm_dir / "environments.py", "# PM-managed checkout\n")
+    original_run = subprocess.run
+
+    def raw_child(argv, **kwargs):
+        return original_run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys; sys.stdout.buffer.write(bytes([255]))",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(plugin.subprocess, "run", raw_child)
+
+    note = plugin._official_enable_visibility_note(binding)
+
+    assert note is not None
+    assert "probe output unreadable" in note
+    assert chr(0xFFFD) in note
