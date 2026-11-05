@@ -507,12 +507,12 @@ def test_plan_child_failure_diagnostic_is_bounded_and_redacted(
 def official_enable_diagnostics(monkeypatch):
     from hermes_feishu_card.install import config_backend_0226 as backend
     original_probe = backend._run_child_probe
-    def without_pm_toolchain_port(root, python, home, env, layers):
+    def without_pm_toolchain_port(root, python, home, env, layers, sources):
         # The readonly native selector needs no PM toolchain. Keep the fixture's
         # startup injection out of this child; production source guards remain
         # untouched, and actual official enable still uses the real PM port.
         return original_probe(root, python, home,
-                              {**env, "HFC_TEST_NO_PM_TOOLCHAIN_PORT": "1"}, layers)
+                              {**env, "HFC_TEST_NO_PM_TOOLCHAIN_PORT": "1"}, layers, sources)
     monkeypatch.setattr(backend, "_run_child_probe", without_pm_toolchain_port)
     original = subprocess.run
 
