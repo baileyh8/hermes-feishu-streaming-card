@@ -36,10 +36,24 @@ from .patcher import (
 
 _DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 _MAX_SOURCE_BYTES = 2 * 1024 * 1024
+_BOUNDED_REFUSAL_MAX_LENGTH = 700
+_BOUNDED_REFUSAL_PREFIXES = (
+    f"{plugin_install.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED} (",
+    "official plugin enable failed (",
+)
 
 
 class FixedTagInstallRefused(ValueError):
     pass
+
+
+def _bounded_install_refusal(reason: str) -> bool:
+    return (
+        reason.endswith(")")
+        and len(reason) <= _BOUNDED_REFUSAL_MAX_LENGTH
+        and all(character.isprintable() for character in reason)
+        and any(reason.startswith(prefix) for prefix in _BOUNDED_REFUSAL_PREFIXES)
+    )
 
 
 @dataclass(frozen=True, repr=False)
@@ -291,17 +305,10 @@ def execute_fixed_tag_hybrid_install(
         ownership = plugin_install.enable_plugin(binding, preimage)
     except plugin_install.PluginConfigRefused as exc:
         # These fixed reasons distinguish a config ownership refusal from an
-        # official command failure. Only bounded probe diagnostics may surface;
+        # official command failure. Only bounded diagnostics may surface;
         # never expose arbitrary exception content.
         reason = str(exc)
-        probe_prefix = f"{plugin_install.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED} ("
-        probe_reason = (
-            reason.startswith(probe_prefix)
-            and reason.endswith(")")
-            and len(reason) <= 700
-            and all(character.isprintable() for character in reason)
-        )
-        if not probe_reason and reason not in {
+        if not _bounded_install_refusal(reason) and reason not in {
             "Hermes config changed after preimage",
             "official plugin enable changed unrelated config",
             plugin_install.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED,

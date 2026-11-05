@@ -891,3 +891,74 @@ def test_plugin_visibility_probe_unknown_note_remains_hidden(tmp_path, monkeypat
         assert binding.config_path.read_bytes() == original_config
     finally:
         v3.restore_fixed_tag_hybrid_install(binding=binding)
+
+
+def test_bounded_install_refusal_rules_are_shared():
+    short_note = "(out=No plugin named 'hermes-feishu-card'.)"
+    probe_note = "(plugin not resolvable in the selected runtime)"
+    assert v3._bounded_install_refusal("official plugin enable failed " + short_note)
+    assert v3._bounded_install_refusal(
+        plugin.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED + " " + probe_note
+    )
+    assert not v3._bounded_install_refusal(
+        "official plugin enable failed (out=bad" + chr(0) + "tail)"
+    )
+    assert not v3._bounded_install_refusal(
+        plugin.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED + " (" + "A" * 800 + ")"
+    )
+
+
+def test_plugin_enable_failure_keeps_bounded_stdout_diagnostic(tmp_path, monkeypatch):
+    root, binding, entrypoint, decision = _fixture(tmp_path)
+    original_config = binding.config_path.read_bytes()
+    originals = {target: (root / target).read_bytes() for target in v3.HYBRID_PATCH_TARGET_ORDER}
+    refusal = plugin.PluginConfigRefused(
+        "official plugin enable failed (out=No plugin named 'hermes-feishu-card'.)"
+    )
+
+    def fail_enable(*_args):
+        raise refusal
+
+    monkeypatch.setattr(plugin, "enable_plugin", fail_enable)
+    try:
+        with pytest.raises(v3.FixedTagInstallRefused) as caught:
+            _execute_diagnostic_fixture(binding, entrypoint, decision)
+        assert str(caught.value) == str(refusal)
+        assert "(out=" in str(caught.value)
+        assert caught.value.__cause__ is refusal
+        assert binding.config_path.read_bytes() == original_config
+        assert all((root / target).read_bytes() == raw for target, raw in originals.items())
+    finally:
+        v3.restore_fixed_tag_hybrid_install(binding=binding)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "official plugin enable failed (out=SYNTHETIC-SECRET" + chr(0) + ")",
+        "official plugin enable failed (" + "A" * 800 + ")",
+    ],
+)
+def test_plugin_enable_failure_unbounded_diagnostics_are_folded(
+    tmp_path, monkeypatch, message
+):
+    root, binding, entrypoint, decision = _fixture(tmp_path)
+    original_config = binding.config_path.read_bytes()
+    originals = {target: (root / target).read_bytes() for target in v3.HYBRID_PATCH_TARGET_ORDER}
+    refusal = plugin.PluginConfigRefused(message)
+
+    def fail_enable(*_args):
+        raise refusal
+
+    monkeypatch.setattr(plugin, "enable_plugin", fail_enable)
+    try:
+        with pytest.raises(v3.FixedTagInstallRefused) as caught:
+            _execute_diagnostic_fixture(binding, entrypoint, decision)
+        assert str(caught.value) == "official plugin enable failed"
+        assert "SYNTHETIC-SECRET" not in str(caught.value)
+        assert "A" * 800 not in str(caught.value)
+        assert caught.value.__cause__ is refusal
+        assert binding.config_path.read_bytes() == original_config
+        assert all((root / target).read_bytes() == raw for target, raw in originals.items())
+    finally:
+        v3.restore_fixed_tag_hybrid_install(binding=binding)
