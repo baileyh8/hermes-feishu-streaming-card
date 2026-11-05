@@ -844,3 +844,50 @@ def test_plugin_enable_unknown_exception_is_hidden_and_original_cause_retained(
         assert all((root / target).read_bytes() == raw for target, raw in originals.items())
     finally:
         v3.restore_fixed_tag_hybrid_install(binding=binding)
+
+
+def test_plugin_visibility_probe_refusal_keeps_fixed_reason(tmp_path, monkeypatch):
+    root, binding, entrypoint, decision = _fixture(tmp_path)
+    original_config = binding.config_path.read_bytes()
+    originals = {target: (root / target).read_bytes() for target in v3.HYBRID_PATCH_TARGET_ORDER}
+    refusal = plugin.PluginConfigRefused(
+        "official plugin enable visibility probe failed "
+        "(plugin not resolvable in the selected runtime; out=No plugin named 'hermes-feishu-card'.)"
+    )
+
+    def fail_probe(*_args):
+        raise refusal
+
+    monkeypatch.setattr(plugin, "enable_plugin", fail_probe)
+    try:
+        with pytest.raises(v3.FixedTagInstallRefused) as caught:
+            _execute_diagnostic_fixture(binding, entrypoint, decision)
+        assert str(caught.value) == str(refusal)
+        assert "plugin not resolvable in the selected runtime" in str(caught.value)
+        assert caught.value.__cause__ is refusal
+        assert binding.config_path.read_bytes() == original_config
+        assert all((root / target).read_bytes() == raw for target, raw in originals.items())
+    finally:
+        v3.restore_fixed_tag_hybrid_install(binding=binding)
+
+
+def test_plugin_visibility_probe_unknown_note_remains_hidden(tmp_path, monkeypatch):
+    root, binding, entrypoint, decision = _fixture(tmp_path)
+    original_config = binding.config_path.read_bytes()
+    refusal = plugin.PluginConfigRefused(
+        "official plugin enable visibility probe failed (SYNTHETIC-SECRET " * 40 + ")"
+    )
+
+    def fail_probe(*_args):
+        raise refusal
+
+    monkeypatch.setattr(plugin, "enable_plugin", fail_probe)
+    try:
+        with pytest.raises(v3.FixedTagInstallRefused) as caught:
+            _execute_diagnostic_fixture(binding, entrypoint, decision)
+        assert str(caught.value) == "official plugin enable failed"
+        assert "SYNTHETIC-SECRET" not in str(caught.value)
+        assert caught.value.__cause__ is refusal
+        assert binding.config_path.read_bytes() == original_config
+    finally:
+        v3.restore_fixed_tag_hybrid_install(binding=binding)

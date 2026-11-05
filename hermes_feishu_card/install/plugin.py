@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 import yaml
 
+from ..display_redaction import KEY_VALUE_SECRET_RE, SECRET_FLAG_RE, URL_SECRET_RE
 from .file_transaction import BINARY_FLAG
 from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
 
@@ -23,6 +24,7 @@ from .runtime_python import PMRuntimeRefused, pm_managed_runtime_python
 PLUGIN_KEY = "hermes-feishu-card"
 PLUGIN_ENTRY_POINT = "hermes_feishu_card.hermes_plugin"
 PLUGIN_DISTRIBUTION = "hermes-feishu-streaming-card"
+OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED = "official plugin enable visibility probe failed"
 # The PM generation interpreter is trusted. This bootstrap only selects the
 # reviewed checkout's modules; sitecustomize/.pth and preloaded modules remain
 # inside that runtime boundary.
@@ -32,6 +34,31 @@ _OFFICIAL_ENABLE_BOOTSTRAP = (
     "sys.path.insert(0, root)\n"
     "sys.argv[0] = 'hermes'\n"
     "runpy.run_module('hermes_cli.main', run_name='__main__')\n"
+)
+_OFFICIAL_ENABLE_PROBE_SCRIPT = (
+    "import json, runpy, sys\n"
+    "root = sys.argv.pop(1)\n"
+    "sys.path.insert(0, root)\n"
+    "sys.argv[0] = 'hermes'\n"
+    "entry_points = []\n"
+    "resolved = None\n"
+    "error = None\n"
+    "try:\n"
+    "    try:\n"
+    "        runpy.run_module('hermes_cli.main', run_name='__main__')\n"
+    "    except SystemExit:\n"
+    "        pass\n"
+    "    import importlib.metadata\n"
+    "    for distribution in importlib.metadata.distributions():\n"
+    "        for entry_point in distribution.entry_points:\n"
+    "            if entry_point.group == 'hermes_agent.plugins':\n"
+    "                entry_points.append(entry_point.name)\n"
+    "    import hermes_cli.plugins_cmd\n"
+    f"    entry = hermes_cli.plugins_cmd._find_plugin_entry({PLUGIN_KEY!r})\n"
+    "    resolved = entry[5] if entry else None\n"
+    "except Exception as exc:\n"
+    "    error = type(exc).__name__\n"
+    "print(json.dumps({'entry_points': sorted(set(entry_points)), 'resolved': resolved, 'error': error}))\n"
 )
 
 
@@ -45,6 +72,12 @@ class PluginConfigRefused(ValueError):
 
 class PluginAdoptionUncertain(PluginConfigRefused):
     """The zero-delta adoption journal may have been published; keep evidence."""
+
+
+# Install runs enable on one thread; a single diagnostic slot is enough, and
+# every entry resets it so stale output never leaks into a later refusal.
+_official_enable_diagnostic: str | None = None
+_official_enable_diagnostic_sources: tuple[bool, bool] = (False, False)
 
 
 @dataclass(frozen=True, repr=False)
@@ -308,6 +341,7 @@ def enable_plugin(
     binding: HermesRuntimeBinding,
     preimage: PluginConfigPreimage,
 ) -> PluginOwnership:
+    _reset_official_enable_diagnostic()
     if type(binding) is not HermesRuntimeBinding or type(preimage) is not PluginConfigPreimage:
         raise PluginConfigRefused("plugin config ownership input is invalid")
     from . import posix_transaction as io
@@ -353,12 +387,17 @@ def enable_plugin(
     family = getattr(plan, "family", None)
     if family is not None:
         _verify_official_enable_source(binding.checkout_root, family=family)
+    visibility_note = _official_enable_visibility_note(binding)
+    if visibility_note is not None:
+        raise PluginConfigRefused(
+            f"{OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED} ({visibility_note})"
+        )
     try:
         return_code = _run_official_enable(binding)
     except Exception as exc:
         _verify_config_plan_source(plan)
         _rollback_verified_enable(binding, before_bytes, plan.postimage)
-        raise PluginConfigRefused("official plugin enable failed") from exc
+        raise PluginConfigRefused(_official_enable_failure_message()) from exc
     _verify_config_plan_source(plan)
     after_identity, after_bytes, _mode = io.read_file_state(binding.config_path, parent_fd=None,
         missing_allowed=False, refused=PluginConfigRefused, non_regular_refusal="Hermes config is unsafe",
@@ -370,7 +409,7 @@ def enable_plugin(
     after_sha256 = _sha256(plan.postimage)
     if return_code != 0:
         _rollback_verified_enable(binding, before_bytes, plan.postimage)
-        raise PluginConfigRefused("official plugin enable failed")
+        raise PluginConfigRefused(_official_enable_failure_message())
     if after_bytes != plan.postimage:
         raise PluginConfigRefused("official plugin enable changed unrelated config")
     added_by_hfc = after_bytes != before_bytes
@@ -633,6 +672,7 @@ def _expected_enabled_config(
 
 
 def _run_official_enable(binding: HermesRuntimeBinding) -> int:
+    _reset_official_enable_diagnostic()
     _verify_official_enable_source(binding.checkout_root)
     from .plugin_config_bytes import isolated_child_env
 
@@ -661,9 +701,188 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
                 include_path=True,
             ),
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise PluginConfigRefused("official plugin enable failed") from exc
-    return completed.returncode
+    except subprocess.TimeoutExpired as exc:
+        _set_official_enable_diagnostic(exc.stdout, exc.stderr)
+        raise PluginConfigRefused(_official_enable_failure_message()) from exc
+    except OSError as exc:
+        _set_official_enable_diagnostic(None, None)
+        raise PluginConfigRefused(_official_enable_failure_message()) from exc
+    returncode = getattr(completed, "returncode", 1)
+    if returncode != 0:
+        _set_official_enable_diagnostic(
+            getattr(completed, "stdout", None), getattr(completed, "stderr", None)
+        )
+    return returncode
+
+
+def _reset_official_enable_diagnostic() -> None:
+    global _official_enable_diagnostic, _official_enable_diagnostic_sources
+    _official_enable_diagnostic = None
+    _official_enable_diagnostic_sources = (False, False)
+
+
+def _child_output_text(text: str | bytes | None) -> str:
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        return text.decode("utf-8", errors="replace")
+    return text
+
+
+def _official_child_output_note(text: str | bytes | None, *, limit: int = 240) -> str:
+    note = _child_output_text(text)
+    for pattern in (KEY_VALUE_SECRET_RE, SECRET_FLAG_RE, URL_SECRET_RE):
+        note = pattern.sub(r"\1[REDACTED]", note)
+    flattened = "".join(
+        character if character.isprintable() else " " for character in note
+    ).split()
+    if not flattened:
+        return ""
+    note = " ".join(flattened)
+    if len(note) > limit:
+        note = "..." + note[-limit:]
+    return note
+
+
+def _official_child_diagnostic(
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+    *,
+    limit: int = 240,
+) -> str:
+    out, err = _official_child_notes(stdout, stderr, limit=limit)
+    parts = []
+    if out:
+        parts.append(f"out={out}")
+    if err:
+        parts.append(f"err={err}")
+    return "; ".join(parts)
+
+
+def _official_child_notes(
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+    *,
+    limit: int = 240,
+) -> tuple[str, str]:
+    return (
+        _official_child_output_note(stdout, limit=limit),
+        _official_child_output_note(stderr, limit=limit),
+    )
+
+
+def _set_official_enable_diagnostic(
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+) -> None:
+    global _official_enable_diagnostic, _official_enable_diagnostic_sources
+    out, err = _official_child_notes(stdout, stderr)
+    _official_enable_diagnostic_sources = (bool(out), bool(err))
+    _official_enable_diagnostic = _official_child_diagnostic(stdout, stderr)
+
+
+def _official_enable_failure_message() -> str:
+    diagnostic = _official_enable_diagnostic
+    if not diagnostic:
+        return "official plugin enable failed"
+    if (
+        _official_enable_diagnostic_sources == (True, False)
+        and diagnostic.startswith("out=")
+    ):
+        diagnostic = diagnostic[len("out=") :]
+    return f"official plugin enable failed ({diagnostic})"
+
+
+def _official_probe_payload(stdout: str | bytes | None) -> dict[str, object] | None:
+    for line in reversed(_child_output_text(stdout).splitlines()):
+        if not line.strip():
+            continue
+        try:
+            candidate = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(candidate, dict) and "resolved" in candidate:
+            return candidate
+    return None
+
+
+def _official_probe_refusal(
+    category: str,
+    stdout: str | bytes | None,
+    stderr: str | bytes | None,
+) -> str:
+    diagnostic = _official_child_diagnostic(stdout, stderr)
+    return f"{category}; {diagnostic}" if diagnostic else category
+
+
+def _official_enable_visibility_note(binding: HermesRuntimeBinding) -> str | None:
+    """None means the official enable child should resolve the plugin entry."""
+    pm_source = binding.checkout_root / "pm" / "environments.py"
+    try:
+        metadata = pm_source.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        return "probe incomplete (error=metadata-unavailable)"
+    if not stat.S_ISREG(metadata.st_mode):
+        return "probe incomplete (error=metadata-unavailable)"
+    from .plugin_config_bytes import isolated_child_env
+
+    try:
+        completed = subprocess.run(
+            [
+                str(binding.runtime_python),
+                "-I",
+                "-c",
+                _OFFICIAL_ENABLE_PROBE_SCRIPT,
+                str(binding.checkout_root),
+                "plugins",
+                "list",
+            ],
+            cwd=str(binding.checkout_root),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            env=isolated_child_env(
+                binding.hermes_home,
+                install_root=binding.checkout_root,
+                include_path=True,
+            ),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return _official_probe_refusal(
+            "probe incomplete (error=TimeoutExpired)", exc.stdout, exc.stderr
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _official_probe_refusal(
+            f"probe incomplete (error={type(exc).__name__})", None, None
+        )
+    stdout = getattr(completed, "stdout", None)
+    stderr = getattr(completed, "stderr", None)
+    returncode = getattr(completed, "returncode", 1)
+    if returncode != 0:
+        category = f"probe incomplete (error=exit_code={returncode})"
+        return _official_probe_refusal(category, stdout, stderr)
+    payload = _official_probe_payload(stdout)
+    if payload is None:
+        return _official_probe_refusal("probe output unreadable", stdout, stderr)
+    error = payload.get("error")
+    if error is not None:
+        label = (
+            error
+            if isinstance(error, str) and error.isidentifier() and len(error) <= 64
+            else "Unknown"
+        )
+        return _official_probe_refusal(
+            f"probe incomplete (error={label})", stdout, stderr
+        )
+    if payload.get("resolved") == PLUGIN_KEY:
+        return None
+    return _official_probe_refusal(
+        "plugin not resolvable in the selected runtime", stdout, stderr
+    )
 
 
 def _verify_official_enable_source(root: Path, *, family: str | None = None) -> None:

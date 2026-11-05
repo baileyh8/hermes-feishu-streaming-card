@@ -291,11 +291,20 @@ def execute_fixed_tag_hybrid_install(
         ownership = plugin_install.enable_plugin(binding, preimage)
     except plugin_install.PluginConfigRefused as exc:
         # These fixed reasons distinguish a config ownership refusal from an
-        # official command failure. Never expose arbitrary exception content.
+        # official command failure. Only bounded probe diagnostics may surface;
+        # never expose arbitrary exception content.
         reason = str(exc)
-        if reason not in {
+        probe_prefix = f"{plugin_install.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED} ("
+        probe_reason = (
+            reason.startswith(probe_prefix)
+            and reason.endswith(")")
+            and len(reason) <= 700
+            and all(character.isprintable() for character in reason)
+        )
+        if not probe_reason and reason not in {
             "Hermes config changed after preimage",
             "official plugin enable changed unrelated config",
+            plugin_install.OFFICIAL_ENABLE_VISIBILITY_PROBE_FAILED,
         }:
             reason = "official plugin enable failed"
         raise FixedTagInstallRefused(reason) from exc
