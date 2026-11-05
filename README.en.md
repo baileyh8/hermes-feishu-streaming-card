@@ -21,9 +21,9 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [What’s new in V5](#whats-new-in-v5) · [Upgrade from V4.x](#upgrade-from-v4x-to-v5) · [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.14; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.14.en.md).
+**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.15; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.15.en.md).
 
-Once published, download v5.0.14 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.14).
+Once published, download v5.0.15 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.15).
 
 ## What's new in V5
 
@@ -49,7 +49,7 @@ card:
 
 This combination starts with the process panel collapsed and keeps it available after completion. The `task` preset itself expands the panel by default; the second line explicitly selects collapse. Upgrading does not switch `classic`, `focused` or `detailed` to `task`.
 
-V5.0.14 addresses exact per-turn rate association (#441), verified status callback handoff (#482), background extraction (#485/#486) and Hermes v0.22.6 compatibility. Hermes must complete schema 52 config migration first; HFC accepts only a verified file backend and does not own browser or update-protection migration. Existing installations must refresh managed hooks using the installer and restart Gateway through its service manager. See the [release notes](docs/release-notes-v5.0.14.en.md) for scope and evidence.
+V5.0.15 adds three live tool-activity modes (#489), per-chat-type and exact-chat delivery and display overrides (#492), an exact Hermes v0.22.7 admission cohort (#491), and convergent managed PM upgrades for same-version installs (#494). Existing installations must refresh managed hooks through the installer and restart Gateway through its service manager. See the [release notes](docs/release-notes-v5.0.15.en.md) for scope and evidence.
 
 V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
 
@@ -63,7 +63,6 @@ The v5.0.7 release addresses Hermes v0.22.5 compatibility, per-turn reasoning/to
 
 V5.0.6 puts each platform installer in a versioned top-level directory, addressing the old tar root entry that could rewrite extraction-target permissions ([#454](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/454)). After extraction, enter `hermes-feishu-card-v5.0.6-linux/`, `hermes-feishu-card-v5.0.6-macos/` or `hermes-feishu-card-v5.0.6-windows/` before running the installer. See [release notes](docs/release-notes-v5.0.6.en.md) for archive and actual-extraction gates.
 
-V5.0.5 supports the reviewed Hermes v0.22.4, rc.2, cf4 and pinned main sources for admission completion and official configuration writers, retaining earlier sources and native fallback for unknown admission sources. See [release notes](docs/release-notes-v5.0.5.en.md) for scope and verification limits.
 
 V5.0.4 supplies opt-in `output_rate` on eligible legacy installs, finishes cards across verified Session Authority Task boundaries, and recalls exact Preflight/compaction-complete notices after 15 seconds. Rate display remains off by default; unknown source retains native Hermes delivery. See [release notes](docs/release-notes-v5.0.4.en.md).
 
@@ -130,7 +129,7 @@ These are real historical screenshots, not a claim that every detail matches V5.
 **Keep your existing bot.** Reuse the actual Hermes directory, configuration, credentials and profile. Example paths are not substitutes for your split-HOME, Docker or multi-instance layout.
 
 1. Record current HFC/Hermes versions and service managers. Back up configuration, `.env` and installer recovery material. After tasks finish, stop Gateway, Desktop and sidecar through their existing managers.
-2. Pin the installer to `v5.0.14` and supply the same configuration and credentials paths. Run it only after that tag is published. The installer checks the provenance and compatibility of the old installation.
+2. Pin the installer to `v5.0.15` and supply the same configuration and credentials paths. Run it only after that tag is published. The installer checks the provenance and compatibility of the old installation.
 3. If diagnostics require restoring old hooks first, use the official `restore` command they provide, then reinstall. Stop on unknown source drift; never edit installed `gateway/run.py` or delete manifests/backups to bypass checks.
 4. Opt into the task layout with the two fields above if desired. Keep credentials, routing, native-table settings and other reading preferences from your existing configuration.
 5. Restore the original service managers and restart Gateway/Desktop as directed. Check `status`, `doctor --explain` and `card-config --running`, then send a real message to verify the card and footer.
@@ -141,7 +140,7 @@ macOS / Linux example—replace these paths with those used by your current inst
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.14/install.sh | bash -s -- --version v5.0.14 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.15/install.sh | bash -s -- --version v5.0.15 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 See the **[V4.x → V5 upgrade guide](docs/upgrade-v4-to-v5.en.md)** for Windows, Docker, split HOME, verification and rollback. Updating HFC is separate from updating Hermes; Feishu `/update` is not the plugin-version upgrade command.
@@ -177,7 +176,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.14
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.15
 bash install-docker.sh
 ```
 
@@ -268,6 +267,8 @@ In V5, add `--running` to verify loaded defaults, or use `--minimal-yaml` to pri
 | Show only the latest live-thinking text | `card.thinking_body_tail_chars: 2400` (default `0`: unlimited) |
 | Reduce successful tool rows after completion | `card.hide_completed_tool_activity: true`, retaining unsuccessful tools |
 | Hide live tool commands in group chats | `card.tool_activity: summary` or `hidden` (default `full`); see [live tool activity](docs/wiki/reading-presets.md) |
+| Group chats default to native | `bindings.default_delivery` and `bindings.card_chats` |
+| Different display per chat | `card.chat_overrides`, verify with `card-config --chat-type/--chat-id` |
 | Text sizes, footer and subscription quota | `card.text_sizes`, `card.footer_fields`; optional `subscription_usage`, `output_rate` |
 | Native replies in selected chats | Exact matches in `bindings.native_chats`; configure within each profile when using multiple profiles |
 | Multiple bots, groups and profiles | [Configuration and routing](docs/user-guide.en.md) |
@@ -309,6 +310,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v5.0.15](docs/release-notes-v5.0.15.en.md) | Live tool activity, chat-scoped controls, v0.22.7 cohort and convergent managed upgrades |
 | [v5.0.14](docs/release-notes-v5.0.14.en.md) | Per-turn rate correlation and verified Hermes compatibility |
 | [v5.0.13](docs/release-notes-v5.0.13.en.md) | Native completion isolation and model-picker repair |
 | [v5.0.12](docs/release-notes-v5.0.12.en.md) | Feishu-only source anchor and bounded completion source matching |
@@ -318,12 +320,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.8](docs/release-notes-v5.0.8.en.md) | Owned PM wheels, safe migration rebinding and official-image installation compatibility |
 | [v5.0.7](docs/release-notes-v5.0.7.en.md) | Hermes v0.22.5 compatibility, per-turn callbacks and terminal diagnostics (candidate) |
 | [v5.0.6](docs/release-notes-v5.0.6.en.md) | Versioned archive roots, normalized metadata and extraction safety checks |
-| [v5.0.5](docs/release-notes-v5.0.5.en.md) | Verified Hermes v0.22.4/main admission and config writers; isolated complete CI |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
 
+- V5.0.15: thanks to [Lite-G](https://github.com/Lite-G) for #489, #491, #492 reports and the [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) reference implementation, and [WenhuaXia](https://github.com/WenhuaXia) for the #494 managed-deployment reproduction. Issue evidence is separate from code authorship; historical credits remain.
 - V5.0.14: thanks to [coder-zhw](https://github.com/coder-zhw) for #441 retest evidence, [leavrcn](https://github.com/leavrcn) for #482, and Dependabot for #483/#484 tool maintenance. Issue evidence is separate from code authorship. Thanks to [Lite-G](https://github.com/Lite-G) for the #485 compatibility report and original implementation in [PR #486](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/486). Original commit authors and historical credits are preserved.
 
 - V5.0.13: thanks to [Lite-G](https://github.com/Lite-G) for #479 and [Kevinzz224](https://github.com/Kevinzz224) for #478. The initial #479 patch came from the ChatGPT repair session supplied by Bailey; issue evidence is separate from code authorship.

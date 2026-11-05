@@ -27,6 +27,7 @@ from .config_rules import (
     expand_reading_preset as expand_reading_preset,
     normalize_reading_preset as normalize_reading_preset,
     normalize_native_chats as normalize_native_chats,
+    normalize_bindings as normalize_bindings,
     normalize_boolean as normalize_boolean,
     normalize_config_card_options as normalize_config_card_options,
 )
@@ -154,10 +155,7 @@ def _validate_service_manager(config: dict[str, Any]) -> None:
 def _normalize_config_native_chats(config: dict[str, Any]) -> None:
     bindings = config.get("bindings")
     if isinstance(bindings, dict):
-        bindings["native_chats"] = normalize_native_chats(
-            bindings.get("native_chats", []),
-            path="bindings.native_chats",
-        )
+        normalize_bindings(bindings, path="bindings")
     profiles = config.get("profiles")
     if not isinstance(profiles, Mapping):
         return
@@ -167,9 +165,8 @@ def _normalize_config_native_chats(config: dict[str, Any]) -> None:
         profile_bindings = profile.get("bindings")
         if not isinstance(profile_bindings, dict):
             continue
-        profile_bindings["native_chats"] = normalize_native_chats(
-            profile_bindings.get("native_chats", []),
-            path=f"profiles.{profile_id}.bindings.native_chats",
+        normalize_bindings(
+            profile_bindings, path=f"profiles.{profile_id}.bindings"
         )
 
 

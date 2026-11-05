@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V5.0.14 sidecar configuration
+# Hermes Feishu Streaming Card V5.0.15 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -76,6 +76,14 @@ card:
   # summary/hidden drop tool names, commands, parameters and paths from the
   # running card; finished cards keep their existing behavior.
   # tool_activity: full
+  # Optional display overrides by chat type or exact chat. Only these display
+  # fields are allowed; exact chat wins over chat type, and both are resolved
+  # once when the turn opens. Check with card-config --chat-type/--chat-id.
+  # chat_overrides:
+  #   group: { tool_activity: summary, show_reasoning: false }
+  #   p2p: { tool_activity: full }
+  #   chats:
+  #     oc_xxxxxxxxxxxx: { tool_activity: hidden }
   timeline_expanded: false
   # Opt-in chronological panel order; card-body reasoning remains chronological.
   timeline_order: newest_first
@@ -192,6 +200,14 @@ bindings:
   # Exact chat IDs listed here use Hermes native delivery for the next new turn.
   # Wildcards are rejected. In multi-profile mode configure this per profile.
   native_chats: []
+  # Exact chat IDs forced to card delivery under a native type default.
+  # A chat cannot appear in both native_chats and card_chats.
+  card_chats: []
+  # card (default) or native. A group/p2p mapping sets type defaults;
+  # an unknown or missing chat type uses the scalar/global default.
+  # default_delivery:
+  #   group: native
+  #   p2p: card
   # Example:
   # oc_xxxxxxxxxxxx: sales
   # oc_yyyyyyyyyyyy: support

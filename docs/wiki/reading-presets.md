@@ -62,7 +62,7 @@ profiles:
 
 这个开关只作用于进行中的卡片。completed 与 failed 卡片的标题、正文、时间线和底部保持原有行为，仍由 `hide_completed_tool_activity` 与阅读预设决定；隐藏群聊里的过程不会改写终态卡片。
 
-配置顺序与其他阅读字段相同：全局 → profile → bot，同层显式值优先。`card-config` 的 `values` 与 `sources` 会显示生效值和来源，`--running` 可核对已加载值；修改后重启 sidecar 生效。目前没有按 chat 或会话类型覆盖的层级，群聊与私聊需要分别使用 profile 或 bot 配置。
+配置顺序与其他阅读字段相同：全局 → profile → bot，同层显式值优先。`card-config` 的 `values` 与 `sources` 会显示生效值和来源，`--running` 可核对已加载值；修改后重启 sidecar 生效。按 chat 或会话类型覆盖由 `card.chat_overrides` 提供：在现有 global → profile → bot 合并结果之上，先叠加类型覆盖，再叠加精确 chat 覆盖，决策在会话创建时固定。`card-config --chat-type/--chat-id` 可核对生效值与来源，输出不回显 chat ID；`--minimal-yaml` 不支持 chat 选择器。投递方式的按类型默认与单 chat 例外见[用户指南](../user-guide.md)。
 
 ## 只读检查
 

@@ -43,6 +43,8 @@ Edit `card:` in the actual file selected with `--config` during installation. St
 | Completion notification | `completion_notify.enabled`, `placement`, `mention` | Off by default; an edited card mention does not guarantee push delivery |
 | Attachment summary | Appears with attachments | No separate hide switch |
 | Native replies in a chat | `bindings.native_chats` | Changes delivery, not appearance |
+| Group chats default to native | `bindings.default_delivery.group: native` | Set `p2p: card` separately; `card_chats` lists exceptions |
+| Different display per chat | `card.chat_overrides` | Display fields only; exact chat wins over chat type |
 
 Use the [configuration example](../config.yaml.example) and `card-config` for allowed values. Hermes `display.show_reasoning` / `display.runtime_footer` are not HFC appearance controls. `server`, `service` and `integrity` manage connections and runtime safety.
 
@@ -170,6 +172,10 @@ service:
 ```
 
 In multi-profile mode, `bindings.native_chats` must live under the matching `profiles.<id>.bindings` and never inherits the top-level list. Use `chats use-native CHAT_ID --config CONFIG` and `chats use-card CHAT_ID --config CONFIG` to change it, and `chats list --config CONFIG` for masked output. Changes affect the next new message. A policy-request, config-reload, or profile-validation failure fails open to Hermes native delivery, while `/hfc` stays a card-based management surface.
+
+`bindings.default_delivery` accepts a scalar `card` / `native` or a `{group: native, p2p: card}` mapping. `bindings.card_chats` lists chats that keep cards under a native type default. Precedence is single chat (`native_chats` / `card_chats`) then chat type then global default; a chat in both lists is rejected when the config loads. An absent or unknown chat type skips type-level settings while single-chat rules still apply. In multi-profile mode both settings belong to the profile-specific `bindings`.
+
+`card.chat_overrides` accepts only `tool_activity`, `show_reasoning`, `stream_thinking_to_body` and `hide_completed_tool_activity`. The existing global -> profile -> bot merge stays first, then the chat-type overlay, then the exact-chat overlay. The decision is fixed when a session opens, so a live card never changes appearance mid-turn. Inspect effective values and sources with `card-config --chat-type group --chat-id <CHAT_ID>`; the output never echoes chat IDs, and `--minimal-yaml` does not support chat selectors. Without these settings, defaults are unchanged.
 
 Multi-bot groups from Issue #162 must opt into native mode: add the group to `bindings.native_chats` so the post carries `@bot` when it is created; grant the mentioned app `im:message.group_at_msg.include_bot:readonly`, keep its `im.message.receive_v1` subscription, and publish a new app version after adding the permission so it takes effect. A mention added by a later streaming-card PATCH does not retroactively create an `im.message.receive_v1` event, and HFC does not switch a live turn based on generated content.
 
@@ -578,21 +584,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v5.0.14`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.14.en.md) for validation boundaries.
+Examples pin `v5.0.15`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.15.en.md) for validation boundaries.
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v5.0.14`.
+The Compose example defaults `HFC_VERSION` to `v5.0.15`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.14
+export HFC_VERSION=v5.0.15
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

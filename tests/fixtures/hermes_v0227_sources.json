@@ -1,0 +1,12 @@
+{
+  "commit": "b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
+  "tag": "v0.22.7",
+  "files": {
+    "gateway/platforms/base.py": "25bce7af7473b6eb1289dc6e83570062d04fe4338620832889a28d9f598f6229",
+    "gateway/session_ingress.py": "12466f9c31f57877c6ae8ea6189d76123a278bdc99e5242c13c5c4ecff0f8ae9",
+    "gateway/session_authority.py": "739d26a99bb786f0f2fc84f36b5d7fa92ca01b20692100429d845164d4b76379",
+    "gateway/session_producer_lifecycle.py": "e948b9cb02aac2e169abee70c6b2ffc04dc0edeeb22f4b3b9748ee9890ee56e3",
+    "gateway/platforms/base_post_delivery.py": "89471cd5ff6daf8001cab6d95321b1284a81b5db4943ca3e866fe21361d79206",
+    "gateway/run_turn_followup_ack.py": "f45f7b93d091ecb57f30d80e18d08bca0aa7aae92a7bb796ae9ce4b499852283"
+  }
+}

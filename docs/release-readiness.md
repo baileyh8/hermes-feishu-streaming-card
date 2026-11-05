@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.14`；核验 #441 逐轮速率关联，并合并 #482/#485/#486 与质量工具维护。独立 QA/review、普通 wheel 升级/恢复、精确完整 CI、平台 API、公开安装及资产门禁分别记录。报告者现场、真实 Gateway/model 和客户端点击未验证。见[发行说明](release-notes-v5.0.14.md)。
+本分支目标版本为 `5.0.15`；交付 #489 进行中工具信息三态、#492 按会话控制、#491 的 Hermes v0.22.7 精确源码 cohort 与 #494 受管 PM 升级收敛。独立 QA/review、普通 wheel 升级/恢复、精确完整 CI、平台 API、公开安装及资产门禁分别记录。报告者现场、真实 Gateway/model 和客户端点击未验证。见[发行说明](release-notes-v5.0.15.md)。
 
 ## v5.0.11 历史记录
 

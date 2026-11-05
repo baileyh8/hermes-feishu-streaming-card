@@ -43,6 +43,8 @@ V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文
 | 完成提醒 | `completion_notify.enabled`、`placement`、`mention` | 默认关闭；编辑卡片里的 @ 不保证推送通知 |
 | 附件摘要 | 随附件出现 | 没有独立隐藏开关 |
 | 整个聊天不用卡片 | `bindings.native_chats` | 属于投递选择，回到 Hermes 原生回复 |
+| 群聊默认不发卡片 | `bindings.default_delivery.group: native` | 私聊可单独设 `p2p: card`；`card_chats` 列举例外群 |
+| 不同群显示不同 | `card.chat_overrides` | 仅允许显示类字段；精确 chat 覆盖类型覆盖 |
 
 字段取值与约束以 [配置示例](../config.yaml.example) 和 `card-config` 为准。`display.show_reasoning`、`display.runtime_footer` 是 Hermes 配置，不能代替 HFC 外观设置。`server`、`service`、`integrity` 管理连接和运行，不要为了调外观修改它们。
 
@@ -170,6 +172,10 @@ service:
 ```
 
 `bindings.native_chats` 在多 profile 模式下必须写在对应 `profiles.<id>.bindings` 内，且不会继承顶层列表。用 `chats use-native CHAT_ID --config CONFIG` 与 `chats use-card CHAT_ID --config CONFIG` 修改，用 `chats list --config CONFIG` 查看掩码结果；修改从下一条新消息生效。policy 请求、配置 reload 或 profile 校验失败会 fail-open 到 Hermes 原生消息，`/hfc` 运维面仍保持卡片。
+
+`bindings.default_delivery` 可写标量 `card` / `native`，或 `{group: native, p2p: card}` 这样按类型设默认；`bindings.card_chats` 列出在原生类型默认下仍要出卡片的群。优先级是单 chat（`native_chats` / `card_chats`）→ 会话类型 → 全局默认；同一 chat 同时出现在两个列表会在加载配置时报错。chat_type 缺失或无法识别时不套用类型设置，单 chat 规则仍生效。两个设置都写在对应 profile 的 `bindings` 内，不继承顶层。
+
+`card.chat_overrides` 只能覆盖 `tool_activity`、`show_reasoning`、`stream_thinking_to_body` 和 `hide_completed_tool_activity`；顺序是现有 global → profile → bot 合并结果，再叠加类型覆盖，最后叠加精确 chat 覆盖。决策与覆盖在会话创建时固定，进行中的卡片不会中途改外观。用 `card-config --chat-type group --chat-id <CHAT_ID>` 查看生效值和来源，输出不回显 chat ID；`--minimal-yaml` 不支持 chat 选择器。未配置时默认行为与旧版本一致。
 
 Issue #162 所述的多机器人群聊需要显式使用原生模式：把目标群加入 `bindings.native_chats`，让 post 创建时就携带 `@bot`；被 @ 的应用同时开通 `im:message.group_at_msg.include_bot:readonly`、保留 `im.message.receive_v1` 事件订阅，并在新增权限后发布新版本使权限生效。流式卡片后续 PATCH 出现的 mention 不会补发一条 `im.message.receive_v1`，HFC 也不会在生成途中按答案内容自动切换。
 
@@ -608,7 +614,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下示例固定 `v5.0.14`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.14.md)。
+以下示例固定 `v5.0.15`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.15.md)。
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 
@@ -617,7 +623,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v5.0.14`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v5.0.15`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -625,7 +631,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.14
+export HFC_VERSION=v5.0.15
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

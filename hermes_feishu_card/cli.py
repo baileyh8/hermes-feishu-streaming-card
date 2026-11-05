@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+from importlib import metadata as importlib_metadata
 from ipaddress import ip_address
 import json
 import os
@@ -237,6 +238,8 @@ def _build_parser() -> argparse.ArgumentParser:
     card_config.add_argument("--config", required=True)
     card_config.add_argument("--profile-id")
     card_config.add_argument("--bot-id")
+    card_config.add_argument("--chat-type", choices=("group", "p2p"), help="resolve chat-type display overrides")
+    card_config.add_argument("--chat-id", help="resolve exact-chat display overrides; never printed back")
     card_config_output = card_config.add_mutually_exclusive_group()
     card_config_output.add_argument("--json", action="store_true", dest="json_output")
     card_config_output.add_argument("--minimal-yaml", action="store_true", help="print minimal reading settings for the selected scope; no file changes")
@@ -907,6 +910,11 @@ card:
 def _run_card_config(args: argparse.Namespace) -> int:
     from .reading import explain_reading_config
 
+    chat_type = getattr(args, "chat_type", None)
+    chat_id = getattr(args, "chat_id", None)
+    if getattr(args, "minimal_yaml", False) and (chat_type is not None or chat_id is not None):
+        print("Use chat selectors separately; --minimal-yaml describes the selected YAML scope.", file=sys.stderr)
+        return 2
     if getattr(args, "minimal_yaml", False) and getattr(args, "running", False):
         print("Use --running separately; --minimal-yaml describes the selected YAML scope.", file=sys.stderr)
         return 2
@@ -922,6 +930,7 @@ def _run_card_config(args: argparse.Namespace) -> int:
     try:
         report = explain_reading_config(
             raw, profile_id=args.profile_id, bot_id=args.bot_id, include_scope=True,
+            chat_type=chat_type, chat_id=chat_id,
         )
     except ValueError as exc:
         # Selection errors contain fixed messages, never YAML values.
@@ -937,7 +946,11 @@ def _run_card_config(args: argparse.Namespace) -> int:
         report["running"] = running
         if running["status"] == "verified":
             report["differences"] = compare_reading_values(report["values"], running["values"])
-            report["note"] = "Read-only. Running values are verified loaded defaults for new turns. Existing cards and per-event overrides are excluded. Restart the sidecar to apply YAML changes."
+            report["note"] = (
+                "Read-only. Running values are verified loaded defaults for new turns in the "
+                "selected chat scope. Existing cards and per-event overrides are excluded. "
+                "Restart the sidecar to apply YAML changes."
+            )
         else:
             report["note"] = "Read-only. The running configuration could not be verified; only next-load values are shown. No restart or configuration change was performed."
     if args.preview_dir:
@@ -969,6 +982,8 @@ def _run_card_config(args: argparse.Namespace) -> int:
         for key, value in report["values"].items():
             print(f"{key}: {json.dumps(value, ensure_ascii=False)}  [{report['sources'][key]}]")
         print(report["note"])
+        if "chat_overrides_note" in report:
+            print(report["chat_overrides_note"])
         if "running" in report:
             print(f"running_config: {report['running_config']}")
             if report["running_config"] == "verified":
@@ -2051,8 +2066,17 @@ def _ensure_hermes_runtime_package(
         return
     from .install import pm_dependency
     if pm_dependency.available(detection.root):
+        spec = _runtime_install_spec()
+        if _pm_runtime_already_registered(
+            detection, runtime_python, hermes_home, spec, pm_dependency
+        ):
+            print(
+                f"runtime package: {PACKAGE_VERSION} already registered with "
+                "Hermes PM (no new environment generation)"
+            )
+            return None
         registration = pm_dependency.ensure(detection.root, runtime_python, home=hermes_home,
-                                            spec=_runtime_install_spec(), version=PACKAGE_VERSION)
+                                            spec=spec, version=PACKAGE_VERSION)
         managed_here = registrations is None
         if registration is not None and registrations is not None:
             registrations.append(registration)
@@ -2244,7 +2268,61 @@ def _runtime_install_spec() -> str | None:
     root = Path(__file__).resolve().parents[1]
     if (root / "pyproject.toml").exists() and (root / "hermes_feishu_card").is_dir():
         return str(root)
+    return _installed_distribution_spec()
+
+
+def _installed_distribution_spec() -> str | None:
+    """Derive a reproducible install spec from an ordinary pip install.
+
+    A VCS install records its exact commit in direct_url.json; an index wheel
+    has no source to pin, so callers still need an explicit HFC_INSTALL_SPEC.
+    """
+    try:
+        distribution = importlib_metadata.distribution("hermes-feishu-streaming-card")
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    raw = distribution.read_text("direct_url.json") or ""
+    if not raw:
+        return None
+    try:
+        info = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    url = info.get("url")
+    vcs = info.get("vcs_info")
+    if isinstance(vcs, dict) and isinstance(url, str) and url:
+        commit = vcs.get("commit_id")
+        if isinstance(commit, str) and commit:
+            return f"git+{url}@{commit}"
     return None
+
+
+def _pm_runtime_already_registered(
+    detection: Any, runtime_python: Path, hermes_home: Path | None,
+    spec: str | None, pm_dependency: Any,
+) -> bool:
+    """Skip PM admission when this exact version and spec are already live."""
+    try:
+        probe = pm_dependency._call(
+            detection.root, runtime_python, hermes_home, {"operation": "probe"}
+        )
+        member = Path(probe["home"]) / "plugins" / pm_dependency.NAME
+        owner = pm_dependency._owned(member)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    if owner is None or owner.get("version") != PACKAGE_VERSION:
+        return False
+    if owner.get("spec_sha256") != pm_dependency._install_spec_digest(spec):
+        return False
+    report = _check_runtime_hook_import(runtime_python)
+    return bool(
+        report.get("status") == "ok"
+        and report.get("version") == PACKAGE_VERSION
+        and _runtime_report_uses_installed_package(report, runtime_python)
+        and pm_dependency.verify_installed(member, runtime_python)
+    )
 
 
 def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:

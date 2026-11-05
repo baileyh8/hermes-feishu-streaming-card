@@ -1,8 +1,13 @@
 # Changelog
 
-## Unreleased
+## v5.0.15 — 2026-11-05
 
-- Add opt-in `card.tool_activity: full | summary | hidden` (default `full`) for live tool visibility (#489). `summary` and `hidden` remove tool names, commands, parameters and paths from the running card's header subtitle, tool rows (including the retained predecessor), footer and reasoning timeline; completed and failed cards keep their existing behavior. Scopes stay global -> profile -> bot; chat-level overrides are a separate design.
+- Add opt-in `card.tool_activity: full | summary | hidden` (default `full`) for live tool visibility (#489). `summary` and `hidden` remove tool names, commands, parameters and paths from the running card header subtitle, tool rows (including the retained predecessor), footer and reasoning timeline; completed and failed cards keep their existing behavior.
+- Add `bindings.default_delivery`, `bindings.card_chats` and `card.chat_overrides` (#492): per-chat-type and exact-chat delivery defaults, plus display-field overlays resolved once when a session opens. Unknown chat types keep the global default; conflicting lists and unsupported overlay fields are rejected at load time. `card-config --chat-type/--chat-id` reports effective values and sources without echoing chat IDs.
+- Accept the exact Hermes v0.22.7 source cohort for admission completion (#491) with its own whole-file runtime topology verification, a pinned CI checkout and negative controls. Unknown upstream sources remain fail-closed.
+- Make managed PM upgrades convergent (#494): a pip-installed CLI derives its install spec from `direct_url.json` when pinned to a Git commit, and a repeat install with a verified identical version and spec reuses the existing PM generation instead of creating a new environment generation.
+- #493 remains under investigation; the running-card text report needs reporter environment details and an offline reproduction.
+
 
 ## v5.0.14 — 2026-11-03
 

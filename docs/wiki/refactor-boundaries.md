@@ -9,6 +9,7 @@
 | 事件路由、reply alias、独立通知归属及交互回复位置 | `event_rules` | server 在原锁域读取状态并写入 alias；交互状态、runtime reservation 与直接发卡复用一次 thread/anchor 决策，纯规则不发送消息 |
 | 原生模型结果到 Gateway 的可选速率归属 | `native_rate_scope` / `install.rate_scope` | 冻结并借用原 bound callable，核验源码与实际加载入口；只透传同一 raw result 的 session/turn，未知时隐藏，无执行 registry |
 | 固定 v0.22.6 原生处理与投递后回调来源校验 | `admission_topology_0226` | 只读检查同一源码组及已加载函数、decorator closure 与 aliases；不加载未知模块，不接管原生 lifecycle |
+| 固定 v0.22.7 整组源码与运行时拓扑校验 | `admission_topology_0226.SOURCE_HASHES_0227` | 与 v0.22.6 共用函数形状检查，但使用独立整组摘要；未知源码仍按 unsupported-source 拒绝 |
 | Session Authority 跨 Task terminal display carrier | `admission_completion` | 仅借原 event/marker maps；完整源与 loaded code 绑定、单用 TTL、原 row/epoch 与 route 校验；Base ledger/执行 claim 不迁移 |
 | native terminal admission、重复终态与持久 fence 衔接 | `native_admission` | 只依赖原始事件、owner 快照与四方法 store port；server 保留 policy、cache 提交、HTTP/指标与 repair 调度 |
 | 原 Hermes resolver 的单次认证 HTTP 请求 | `interaction_resolver` | server 在原锁内验证 owner、锁外请求、重新入锁校验对象/token/descriptor，再应用结果；指标与 HTTP 回执仍由 server 管理 |

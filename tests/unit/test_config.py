@@ -86,6 +86,8 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
         "bindings": {
             "chats": {},
             "native_chats": [],
+            "card_chats": [],
+            "default_delivery": "card",
             "group_rules": {"enabled": False},
         },
         "integrity": {"mode": "notify"},
@@ -576,6 +578,8 @@ def test_load_config_defaults_include_multi_bot_sections(tmp_path):
     assert config["bindings"] == {
         "chats": {},
         "native_chats": [],
+        "card_chats": [],
+        "default_delivery": "card",
         "group_rules": {"enabled": False},
     }
 
@@ -858,6 +862,8 @@ profiles:
     assert config["profiles"]["work"]["bindings"] == {
         "chats": {},
         "native_chats": [],
+        "card_chats": [],
+        "default_delivery": "card",
         "group_rules": {"enabled": False},
     }
 

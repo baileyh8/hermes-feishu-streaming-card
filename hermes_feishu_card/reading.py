@@ -12,12 +12,17 @@ from .config_rules import (
     READING_FIELDS as READING_FIELDS,
     normalize_reading_preset as normalize_reading_preset,
     expand_reading_preset as expand_reading_preset,
+    apply_chat_card_overrides as apply_chat_card_overrides,
+    card_chat_kind as card_chat_kind,
+    normalize_chat_overrides as normalize_chat_overrides,
+    normalize_native_chats as normalize_native_chats,
 )
 
 
 def explain_reading_config(
     raw: Mapping[str, Any], *, profile_id: str | None = None, bot_id: str | None = None,
-    include_scope: bool = False,
+    include_scope: bool = False, chat_type: str | None = None,
+    chat_id: str | None = None,
 ) -> dict[str, Any]:
     """Resolve the same config scopes as the runner, returning only safe values.
 
@@ -32,6 +37,11 @@ def explain_reading_config(
     resolved[PRESENTATION_MODE] = "classic"
     sources = {key: "default" for key in (*READING_FIELDS, HIDE_SUCCESSFUL_TOOL_ACTIVITY, PRESENTATION_MODE)}
     text_size_sources: dict[str, str] = {}
+    overlay_sources: dict[tuple[str, str], str] = {}
+    if chat_id is not None:
+        chat_id = normalize_native_chats([chat_id], path="chat selector")[0]
+    if chat_type is not None and chat_type not in {"group", "p2p"}:
+        raise ValueError("Invalid chat type: use group or p2p")
 
     def mapping(value: object, label: str) -> Mapping[str, Any]:
         if value is None:
@@ -43,6 +53,18 @@ def explain_reading_config(
     def apply_scope(value: object, label: str) -> None:
         nonlocal resolved
         card = dict(value) if isinstance(value, Mapping) else {}
+        if "chat_overrides" in card:
+            normalized = normalize_chat_overrides(card["chat_overrides"])
+            kind = card_chat_kind(chat_type)
+            for overlay_kind, fields in (
+                ("type", normalized.get(kind, {})),
+                ("chat", normalized.get("chats", {}).get(chat_id, {})),
+            ):
+                selector = kind if overlay_kind == "type" else "chats[selected]"
+                for key in fields:
+                    overlay_sources[overlay_kind, key] = (
+                        f"{label.removesuffix('.card')}.chat_overrides.{selector} (explicit)"
+                    )
         if "reading_preset" in card:
             preset = normalize_reading_preset(card["reading_preset"])
             for key in ("reading_preset", *READING_PRESETS[preset]):
@@ -83,6 +105,33 @@ def explain_reading_config(
         apply_scope(mapping(items[selected_bot], "bot").get("card"), "bot.card")
     elif bot_id is not None and not (bot_id == "default" and selected.get("feishu")):
         raise ValueError("Unknown bot: select a configured --bot-id")
+
+    overlays = resolved.get("chat_overrides", {})
+    overlay_note = ""
+    if isinstance(overlays, Mapping) and overlays:
+        kinds = [kind for kind in ("group", "p2p") if kind in overlays]
+        kinds.append(f"chats={len(overlays.get('chats', {}))}")
+        if chat_type is None and chat_id is None:
+            overlay_note = (
+                "chat overrides configured: " + ", ".join(kinds)
+                + "; use --chat-type/--chat-id"
+            )
+        type_fields = overlays.get(card_chat_kind(chat_type), {}) if chat_type else {}
+        chat_fields = overlays.get("chats", {}).get(chat_id, {}) if chat_id else {}
+        final_fields = {
+            **(type_fields if isinstance(type_fields, Mapping) else {}),
+            **(chat_fields if isinstance(chat_fields, Mapping) else {}),
+        }
+        for key in final_fields:
+            winning = "chat" if key in chat_fields else "type"
+            label = overlay_sources.get((winning, key))
+            if label is not None:
+                sources[key] = label
+                if key == "hide_completed_tool_activity":
+                    sources[HIDE_SUCCESSFUL_TOOL_ACTIVITY] = label
+    resolved = apply_chat_card_overrides(
+        resolved, chat_type=chat_type, chat_id=chat_id
+    )
 
     # Match the renderer's accepted boolean inputs without changing legacy
     # validation semantics elsewhere in the config loader.
@@ -167,4 +216,10 @@ def explain_reading_config(
         # Private selector for the local control request, removed by the CLI
         # before output. Do not publish configured profile/bot identifiers.
         report["_selected_scope"] = {"profile_id": profile_id or "default", "bot_id": selected_bot}
+        if chat_type is not None:
+            report["_selected_scope"]["chat_type"] = chat_type
+        if chat_id is not None:
+            report["_selected_scope"]["chat_id"] = chat_id
+    if overlay_note:
+        report["chat_overrides_note"] = overlay_note
     return report

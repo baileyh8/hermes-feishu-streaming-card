@@ -19,6 +19,22 @@ SOURCE_HASHES = {
 }
 CORE_HASHES = {name: SOURCE_HASHES[name] for name in (
     "gateway.session_ingress", "gateway.session_authority")}
+# v0.22.7 (b200f5bc60e31588ba2cb60e288029c4a54ba5fa) keeps the ingress and
+# post-delivery sources unchanged but changes authority, producer lifecycle
+# and Base. The admission extraction seam itself is byte-identical. Keep a
+# separate whole-file cohort so an unknown upstream cannot be accepted by a
+# relaxed per-file allowlist.
+SOURCE_HASHES_0227 = {
+    "gateway.platforms.base": "25bce7af7473b6eb1289dc6e83570062d04fe4338620832889a28d9f598f6229",
+    "gateway.session_ingress": "12466f9c31f57877c6ae8ea6189d76123a278bdc99e5242c13c5c4ecff0f8ae9",
+    "gateway.session_authority": "739d26a99bb786f0f2fc84f36b5d7fa92ca01b20692100429d845164d4b76379",
+    "gateway.session_producer_lifecycle": "e948b9cb02aac2e169abee70c6b2ffc04dc0edeeb22f4b3b9748ee9890ee56e3",
+    "gateway.platforms.base_post_delivery": "89471cd5ff6daf8001cab6d95321b1284a81b5db4943ca3e866fe21361d79206",
+    "gateway.run_turn_followup_ack": "f45f7b93d091ecb57f30d80e18d08bca0aa7aae92a7bb796ae9ce4b499852283",
+}
+CORE_HASHES_0227 = {name: SOURCE_HASHES_0227[name] for name in (
+    "gateway.session_ingress", "gateway.session_authority")}
+TOPOLOGY_HASHES = (SOURCE_HASHES, SOURCE_HASHES_0227)
 _FUNCTIONS = {
     "gateway.platforms.base": ("_split_post_delivery_entry",
                                "BasePlatformAdapter.send_typing", "BasePlatformAdapter.on_processing_start"),
@@ -37,10 +53,12 @@ _DECORATED = {("gateway.session_ingress", "_admission_scope"),
               ("gateway.session_producer_lifecycle", "producer_turn")}
 
 
-def source_bytes(root: Path) -> dict[str, bytes] | None:
+def source_bytes(
+    root: Path, expected: dict[str, str] | None = None
+) -> dict[str, bytes] | None:
     try:
         result = {}
-        for name, digest in SOURCE_HASHES.items():
+        for name, digest in (expected or SOURCE_HASHES).items():
             path = root / (name.replace(".", "/") + ".py")
             before = path.lstat()
             limit = 1024 * 1024 if name == "gateway.platforms.base" else 256 * 1024
@@ -61,11 +79,14 @@ def source_bytes(root: Path) -> dict[str, bytes] | None:
         return None
 
 
-def verified(root: Path, ingress: ModuleType, authority: ModuleType) -> bool:
+def verified(
+    root: Path, ingress: ModuleType, authority: ModuleType,
+    expected: dict[str, str] | None = None,
+) -> bool:
     """Bind actual loaded helpers, including asynccontextmanager closure identity."""
     from .admission_completion import _claim_frame, _compiled_code, _shape
 
-    sources = source_bytes(root)
+    sources = source_bytes(root, expected)
     if sources is None:
         return False
     modules = {"gateway.session_ingress": ingress, "gateway.session_authority": authority}

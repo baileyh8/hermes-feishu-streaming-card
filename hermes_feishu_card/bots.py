@@ -186,6 +186,7 @@ class BotRegistry:
         decision = self.delivery_policy.decide(
             context.chat_id,
             profile_id=context.profile_id,
+            chat_type=context.chat_type,
         )
         metadata: dict[str, Any] = {
             "delivery": {

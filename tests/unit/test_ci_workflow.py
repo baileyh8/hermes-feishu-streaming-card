@@ -202,6 +202,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
             for baseline, evidence in sources.items()
         },
         ".upstream/issue471_9b904": "9b904dcc22c23fe8b82834339bbdd96495072e59",
+        ".upstream/0227": "b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
         **{
             f".upstream/background_{baseline}": evidence["commit"]
             for baseline, evidence in json.loads(
@@ -211,6 +212,10 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
     }
     steps = workflow["jobs"]["upstream-shards"]["steps"]
     source_step = next(step for step in steps if "test_upstream_hermes_compat.py" in step.get("run", ""))
+    assert source_step["env"]["HFC_UPSTREAM_0227_ROOT"] == (
+        "${{ github.workspace }}/.upstream/0227"
+    )
+    assert source_step["env"]["HFC_REQUIRE_0227_PIN"] == "1"
     for baseline in sources:
         assert source_step["env"][f"HFC_UPSTREAM_{baseline.upper()}_ROOT"] == (
             "${{ github.workspace }}/.upstream/" + baseline

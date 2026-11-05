@@ -1735,7 +1735,7 @@ async def test_existing_active_card_turn_stays_card_after_policy_changes_native(
         def __init__(self):
             self.native = False
 
-        def decide(self, chat_id, *, profile_id=""):
+        def decide(self, chat_id, *, profile_id="", chat_type=""):
             return ChatDeliveryPolicy(
                 native_chats=(chat_id,) if self.native else ()
             ).decide(chat_id, profile_id=profile_id)
@@ -1781,7 +1781,7 @@ async def test_reused_message_id_nonterminal_event_rechecks_policy_without_start
         def __init__(self):
             self.native = False
 
-        def decide(self, chat_id, *, profile_id=""):
+        def decide(self, chat_id, *, profile_id="", chat_type=""):
             return ChatDeliveryPolicy(
                 native_chats=(chat_id,) if self.native else ()
             ).decide(chat_id, profile_id=profile_id)

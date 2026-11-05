@@ -80,6 +80,11 @@
     "ref": "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"
   },
   {
+    "name": "Checkout Hermes v0.22.7",
+    "path": ".upstream/0227",
+    "ref": "b200f5bc60e31588ba2cb60e288029c4a54ba5fa"
+  },
+  {
     "name": "Checkout Hermes issue 471 reported revision",
     "path": ".upstream/issue471_9b904",
     "ref": "9b904dcc22c23fe8b82834339bbdd96495072e59"

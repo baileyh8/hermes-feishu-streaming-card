@@ -271,6 +271,7 @@ class _PolicyIdentity:
     turn_key: tuple[str, str, str, str]
     is_new_turn: bool
     home_binding: tuple[Path, Path] | None
+    chat_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -1357,6 +1358,12 @@ def _policy_identity(
         or _first_attr_string(gateway_event_obj, ("message_id", "msg_id"))
         or ""
     )
+    chat_type = (
+        _first_string(local_vars, ("chat_type",))
+        or _first_attr_string(message_obj, ("chat_type",))
+        or _first_attr_string(source_obj, ("chat_type",))
+        or ""
+    )
     turn_id = _turn_id_for_runtime_event(event_name, local_vars) or ""
     canonical_id = turn_id or message_id
     endpoint = _summary_base_url(config.event_url)
@@ -1400,6 +1407,7 @@ def _policy_identity(
         turn_key=turn_key,
         is_new_turn=is_new_turn,
         home_binding=_authoritative_binding(),
+        chat_type=chat_type,
     )
 
 
@@ -1410,6 +1418,8 @@ def _policy_payload(identity: _PolicyIdentity) -> dict[str, str]:
         "profile_id": identity.profile_id,
         "conversation_id": identity.conversation_id,
     }
+    if identity.chat_type:
+        payload["chat_type"] = identity.chat_type
     if identity.message_id:
         payload["message_id"] = identity.message_id
     if identity.turn_id:

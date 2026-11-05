@@ -24,7 +24,14 @@ from typing import Any, Awaitable, Callable
 import weakref
 
 from . import completion_diagnostics
-from .admission_topology_0226 import CORE_HASHES as _V0226_CORE_HASHES
+from .admission_topology_0226 import (
+    CORE_HASHES as _V0226_CORE_HASHES,
+    CORE_HASHES_0227 as _V0227_CORE_HASHES,
+    SOURCE_HASHES_0227 as _V0227_SOURCE_HASHES,
+)
+
+# Public provenance names for pinned-source contract tests.
+CORE_HASHES_0227 = _V0227_CORE_HASHES
 
 
 _ATTR = "_hfc_admission_display_completion"
@@ -59,6 +66,9 @@ SOURCE_COHORTS: tuple[dict[str, str], ...] = (
 )
 # v0.22.6 also requires its producer/callback dependency closure at runtime.
 SOURCE_COHORTS += (_V0226_CORE_HASHES,)
+# v0.22.7 changes the authority/producer/Base files while retaining the same
+# admission extraction seam. Its own whole-file closure is verified below.
+SOURCE_COHORTS += (_V0227_CORE_HASHES,)
 
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -199,6 +209,12 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
     if _V0226_CORE_HASHES in cohorts:
         from .admission_topology_0226 import verified
         if root is None or not verified(root, modules[0], modules[1]):
+            return None
+    elif _V0227_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(
+            root, modules[0], modules[1], _V0227_SOURCE_HASHES
+        ):
             return None
     return modules[0], modules[1]
 

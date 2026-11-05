@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.14`, addressing per-turn rate correlation (#441) alongside #482/#485/#486 and quality-tool maintenance. Independent QA/review, ordinary-wheel upgrade/restore, exact-commit full CI, platform API, public installation and assets remain separate gates. Reporter-environment, real Gateway/model and client-click acceptance are unverified. See the [release notes](release-notes-v5.0.14.en.md).
+This branch targets `5.0.15`, delivering three live tool-activity modes (#489), chat-scoped delivery and display controls (#492), an exact Hermes v0.22.7 admission cohort (#491) and convergent managed PM upgrades (#494). Independent QA/review, ordinary-wheel upgrade/restore, exact-commit full CI, platform API, public installation and assets remain separate gates. Reporter-environment, real Gateway/model and client-click acceptance are unverified. See the [release notes](release-notes-v5.0.15.en.md).
 
 ## v5.0.11 historical record
 

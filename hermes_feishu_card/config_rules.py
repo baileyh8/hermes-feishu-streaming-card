@@ -106,6 +106,8 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
     "bindings": {
         "chats": {},
         "native_chats": [],
+        "card_chats": [],
+        "default_delivery": "card",
         "group_rules": {"enabled": False},
     },
     # Missing values stay notification-only for upgraded existing configs.
@@ -244,6 +246,108 @@ def normalize_tool_activity(
     return value.strip().lower()
 
 
+# Only display fields may be overlaid per chat. Delivery, credentials, routing
+# and runtime ownership stay in their existing scopes.
+CHAT_CARD_FIELDS = frozenset({
+    "tool_activity", "show_reasoning", "stream_thinking_to_body",
+    "hide_completed_tool_activity",
+})
+_GROUP_CHAT_TYPES = frozenset({"group", "forum", "channel", "thread"})
+_P2P_CHAT_TYPES = frozenset({"p2p", "dm", "private"})
+
+
+def card_chat_kind(chat_type: object) -> str:
+    """Normalize Feishu chat types; an unknown type has no type-level overlay."""
+    normalized = str(chat_type or "").strip().lower() if isinstance(chat_type, str) else ""
+    if normalized in _GROUP_CHAT_TYPES:
+        return "group"
+    return "p2p" if normalized in _P2P_CHAT_TYPES else ""
+
+
+def normalize_default_delivery(
+    value: object, *, path: str = "bindings.default_delivery"
+) -> str | dict[str, str]:
+    """Scalar card/native, or a per-chat-type mapping. Unset stays card."""
+    if value is None:
+        return "card"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"card", "native"}:
+            return normalized
+        raise ValueError(f"{path} must be card or native")
+    if not isinstance(value, Mapping) or set(value) - {"group", "p2p"}:
+        raise ValueError(f"{path} must be card, native, or a group/p2p mapping")
+    result: dict[str, str] = {}
+    for kind, raw in value.items():
+        if not isinstance(raw, str) or raw.strip().lower() not in {"card", "native"}:
+            raise ValueError(f"{path}.{kind} must be card or native")
+        result[str(kind)] = raw.strip().lower()
+    return result
+
+
+def normalize_bindings(value: dict[str, Any], *, path: str = "bindings") -> None:
+    """Normalize delivery bindings in place and reject ambiguous single chats."""
+    native = normalize_native_chats(value.get("native_chats", []), path=f"{path}.native_chats")
+    cards = normalize_native_chats(value.get("card_chats", []), path=f"{path}.card_chats")
+    if set(native) & set(cards):
+        raise ValueError(f"{path}: chat id cannot be in both native_chats and card_chats")
+    value["native_chats"] = native
+    value["card_chats"] = cards
+    value["default_delivery"] = normalize_default_delivery(
+        value.get("default_delivery"), path=f"{path}.default_delivery"
+    )
+
+
+def _normalize_chat_fields(fields: object, *, path: str) -> dict[str, Any]:
+    if not isinstance(fields, Mapping) or set(fields) - CHAT_CARD_FIELDS:
+        raise ValueError(f"{path} contains unsupported display fields")
+    resolved = copy.deepcopy(dict(fields))
+    normalize_card_config(resolved, path=path)
+    for key in CHAT_CARD_FIELDS - {"tool_activity"}:
+        if key in resolved:
+            resolved[key] = normalize_boolean(resolved[key], f"{path}.{key}")
+    return resolved
+
+
+def normalize_chat_overrides(
+    value: object, *, path: str = "card.chat_overrides"
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) - {"group", "p2p", "chats"}:
+        raise ValueError(f"{path} must contain only group, p2p and chats")
+    resolved: dict[str, Any] = {}
+    for kind, entries in value.items():
+        overlay_path = f"{path}.{kind}"
+        if not isinstance(entries, Mapping):
+            raise ValueError(f"{overlay_path} must be a mapping")
+        if kind != "chats":
+            resolved[kind] = _normalize_chat_fields(entries, path=overlay_path)
+            continue
+        chats: dict[str, Any] = {}
+        for raw_chat_id, fields in entries.items():
+            chat_id = normalize_native_chats([raw_chat_id], path=overlay_path)[0]
+            if chat_id in chats:
+                raise ValueError(f"{overlay_path} contains a duplicate chat id")
+            chats[chat_id] = _normalize_chat_fields(fields, path=overlay_path)
+        resolved[kind] = chats
+    return resolved
+
+
+def apply_chat_card_overrides(
+    card: Mapping[str, Any], *, chat_type: object = None, chat_id: str | None = None,
+) -> dict[str, Any]:
+    """Resolve display overlays once for a turn, without retaining selectors."""
+    resolved = copy.deepcopy(dict(card))
+    overlays = resolved.pop("chat_overrides", {})
+    if not isinstance(overlays, Mapping):
+        return resolved
+    type_overlay = overlays.get(card_chat_kind(chat_type), {})
+    chat_overlay = overlays.get("chats", {}).get(chat_id, {}) if chat_id else {}
+    for overlay in (type_overlay, chat_overlay):
+        if isinstance(overlay, Mapping) and overlay:
+            resolved = merge_card_config(resolved, overlay)
+    return resolved
+
+
 def card_width_config(width_mode: str = "default") -> dict[str, str]:
     """JSON 2.0 width settings; default preserves the client's existing layout."""
     mode = normalize_width_mode(width_mode)
@@ -258,6 +362,18 @@ def merge_card_config(
     incoming = expand_reading_preset(override)
     has_incoming_sizes = "text_sizes" in incoming
     incoming_sizes = incoming.pop("text_sizes", None)
+    if "chat_overrides" in incoming:
+        normalized = normalize_chat_overrides(incoming.pop("chat_overrides"))
+        existing = resolved.get("chat_overrides")
+        overlays = copy.deepcopy(dict(existing)) if isinstance(existing, Mapping) else {}
+        for kind, overlay in normalized.items():
+            if kind == "chats":
+                chats = overlays.setdefault("chats", {})
+                for chat_id, fields in overlay.items():
+                    chats[chat_id] = {**chats.get(chat_id, {}), **copy.deepcopy(fields)}
+            else:
+                overlays[kind] = {**overlays.get(kind, {}), **copy.deepcopy(overlay)}
+        resolved["chat_overrides"] = overlays
     resolved.update(incoming)
     if has_incoming_sizes:
         if isinstance(incoming_sizes, Mapping):
@@ -408,6 +524,10 @@ def _normalize_bot_card_configs(value: object, *, path: str) -> None:
 def normalize_card_config(value: object, *, path: str) -> None:
     if not isinstance(value, dict):
         return
+    if "chat_overrides" in value:
+        value["chat_overrides"] = normalize_chat_overrides(
+            value["chat_overrides"], path=f"{path}.chat_overrides"
+        )
     if "reading_preset" in value:
         value["reading_preset"] = normalize_reading_preset(
             value["reading_preset"], path=f"{path}.reading_preset"

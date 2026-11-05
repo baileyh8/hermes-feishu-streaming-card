@@ -189,6 +189,8 @@ jobs:
         env:
           HFC_UPSTREAM_0226_ROOT: "${{ github.workspace }}/.upstream/0226"
           HFC_REQUIRE_0226_PIN: "1"
+          HFC_UPSTREAM_0227_ROOT: "${{ github.workspace }}/.upstream/0227"
+          HFC_REQUIRE_0227_PIN: "1"
           HFC_UPSTREAM_LATEST_STABLE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_UPSTREAM_LATEST_MAIN_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_UPSTREAM_STABLE_ROOT: "${{ github.workspace }}/.upstream/stable"
@@ -238,6 +240,7 @@ jobs:
           tests/integration/test_session_authority_completion.py::test_issue471_snapshot_matches_pinned_checkout
           tests/integration/test_session_authority_completion.py::test_issue471_writer_contract_rejects_before_child
           tests/integration/test_session_authority_completion.py::test_v0226_snapshot_matches_pinned_checkout
+          tests/integration/test_v0227_admission_sources.py
           tests/integration/test_session_authority_completion.py::test_native_rate_identity_snapshot_matches_existing_pin
           tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
@@ -715,7 +718,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.14
+          HFC_VERSION: v5.0.15
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-

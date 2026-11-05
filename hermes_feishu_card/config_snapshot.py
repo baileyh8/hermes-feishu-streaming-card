@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .reading import explain_reading_config
-from .config_rules import READING_FIELDS
+from .config_rules import READING_FIELDS, apply_chat_card_overrides
 
 CONTROL_CARD_CONFIG_PATH = "/control/card-config"
 SNAPSHOT_SCHEMA = "hfc-card-config-v1"
@@ -23,13 +23,24 @@ def config_path_identity(path: str | Path) -> str:
     return sha256(str(resolved).encode("utf-8")).hexdigest()
 
 
-def scope_identity(profile_id: str, bot_id: str) -> str:
-    material = json.dumps([profile_id, bot_id], separators=(",", ":"))
+def scope_identity(
+    profile_id: str, bot_id: str, *,
+    chat_type: str | None = None, chat_id: str | None = None,
+) -> str:
+    selectors: list[Any] = [profile_id, bot_id]
+    if chat_type is not None or chat_id is not None:
+        selectors.append({
+            key: value for key, value in
+            (("chat_type", chat_type), ("chat_id", chat_id))
+            if value is not None
+        })
+    material = json.dumps(selectors, separators=(",", ":"))
     return sha256(material.encode("utf-8")).hexdigest()
 
 
 def loaded_reading_values(
     base_card: dict[str, Any], boundary: Any, *, profile_id: str, bot_id: str,
+    chat_type: str | None = None, chat_id: str | None = None,
 ) -> dict[str, Any]:
     """Read the factory's existing merge result, without making a Feishu client.
 
@@ -55,6 +66,9 @@ def loaded_reading_values(
         raise ConfigSnapshotUnavailable("scope_unavailable")
     if not isinstance(effective, dict):
         raise ConfigSnapshotUnavailable("scope_unavailable")
+    effective = apply_chat_card_overrides(
+        effective, chat_type=chat_type, chat_id=chat_id
+    )
     return dict(explain_reading_config({"card": effective})["values"])
 
 

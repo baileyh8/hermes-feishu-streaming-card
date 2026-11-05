@@ -34,7 +34,10 @@
       "tests/unit/test_config.py",
       "tests/unit/test_package_metadata.py",
       "tests/unit/test_minimal_reading_config.py",
-      "tests/unit/test_config_rules.py"
+      "tests/unit/test_config_rules.py",
+      "tests/unit/test_tool_activity_mode.py",
+      "tests/unit/test_chat_card_overrides.py",
+      "tests/unit/test_chat_scoped_delivery.py"
     ],
     "install": [
       "tests/unit/test_patcher.py",
@@ -66,7 +69,8 @@
       "tests/integration/test_official_enable_root.py",
       "tests/unit/test_launch_source_paths.py",
       "tests/unit/test_native_rate_scope.py",
-      "tests/unit/test_config_backend_0226.py"
+      "tests/unit/test_config_backend_0226.py",
+      "tests/unit/test_managed_pm_upgrade.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -243,7 +247,8 @@
       "tests/integration/test_feishu_sdk_compat.py"
     ],
     "upstream": [
-      "tests/integration/test_upstream_hermes_compat.py"
+      "tests/integration/test_upstream_hermes_compat.py",
+      "tests/integration/test_v0227_admission_sources.py"
     ],
     "install_transactions": [
       "tests/integration/test_cli_install.py",
@@ -791,6 +796,9 @@
     ],
     "tests/unit/test_ci_prepare_upstream.py": [
       "ci"
+    ],
+    "tests/fixtures/hermes_v0227_sources.json": [
+      "upstream"
     ]
   }
 }
