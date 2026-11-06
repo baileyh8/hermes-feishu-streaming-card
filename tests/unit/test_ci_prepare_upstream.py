@@ -169,11 +169,15 @@ class TestCIPrepareUpstream(unittest.TestCase):
             prepare_mod.prepare_upstream_worktrees(entries, self.target_root, self.cache_dir, remote_url=remote)
         self.assertFalse((self.target_root / ".upstream/repo_bad").exists())
 
-    def test_official_manifest_file_matches_exact_20_pins(self):
+    def test_official_manifest_file_includes_exact_v0230_pin(self):
         manifest_file = ROOT / "tools/upstream_fixtures.json"
         self.assertTrue(manifest_file.exists())
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        self.assertEqual(len(manifest), 20)
+        self.assertEqual(len(manifest), 21)
+        self.assertEqual(
+            next(e["ref"] for e in manifest if e["path"] == ".upstream/0230"),
+            "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
+        )
         paths = [e["path"] for e in manifest]
         self.assertEqual(len(paths), len(set(paths)))
         prepare_mod.validate_manifest(manifest)
