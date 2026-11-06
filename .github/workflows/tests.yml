@@ -191,6 +191,8 @@ jobs:
           HFC_REQUIRE_0226_PIN: "1"
           HFC_UPSTREAM_0227_ROOT: "${{ github.workspace }}/.upstream/0227"
           HFC_REQUIRE_0227_PIN: "1"
+          HFC_UPSTREAM_0230_ROOT: "${{ github.workspace }}/.upstream/0230"
+          HFC_REQUIRE_0230_PIN: "1"
           HFC_UPSTREAM_LATEST_STABLE_ROOT: "${{ github.workspace }}/.upstream/latest_stable"
           HFC_UPSTREAM_LATEST_MAIN_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_UPSTREAM_STABLE_ROOT: "${{ github.workspace }}/.upstream/stable"
@@ -225,6 +227,7 @@ jobs:
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/0226"
           HFC_CONFIG_WRITER_0227_ROOT: "${{ github.workspace }}/.upstream/0227"
+          HFC_CONFIG_WRITER_0230_ROOT: "${{ github.workspace }}/.upstream/0230"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -242,6 +245,9 @@ jobs:
           tests/integration/test_session_authority_completion.py::test_issue471_writer_contract_rejects_before_child
           tests/integration/test_session_authority_completion.py::test_v0226_snapshot_matches_pinned_checkout
           tests/integration/test_v0227_admission_sources.py
+          tests/integration/test_v0230_admission_sources.py
+          tests/integration/test_v0230_writer_family.py
+          tests/integration/test_v0230_wheel_install_restore.py
           tests/integration/test_session_authority_completion.py::test_native_rate_identity_snapshot_matches_existing_pin
           tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
@@ -304,6 +310,12 @@ jobs:
           repository: NousResearch/hermes-agent
           ref: f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab # v0.22.6
           path: .upstream/0226
+      - name: Checkout Hermes v0.23.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19 # v0.23.0
+          path: .upstream/0230
       - name: Checkout Hermes reviewed main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -336,6 +348,7 @@ jobs:
           HFC_CONFIG_WRITER_0225_ROOT: "${{ github.workspace }}/.upstream/issue456_0225"
           HFC_CONFIG_WRITER_0226_ROOT: "${{ github.workspace }}/.upstream/0226"
           HFC_CONFIG_WRITER_0227_ROOT: "${{ github.workspace }}/.upstream/0227"
+          HFC_CONFIG_WRITER_0230_ROOT: "${{ github.workspace }}/.upstream/0230"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -720,7 +733,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.16
+          HFC_VERSION: v5.0.17
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
@@ -907,6 +920,12 @@ jobs:
             pyc_mode: preserved
             legacy: false
           - image: v0.22.5
+            pyc_mode: cleared
+            legacy: false
+          - image: v0.23.0
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.23.0
             pyc_mode: cleared
             legacy: false
     steps:

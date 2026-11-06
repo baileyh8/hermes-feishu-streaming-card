@@ -19,10 +19,12 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     identities = {(case["image"], case["pyc_mode"]) for case in cases}
     assert len(identities) == len(cases)
     assert {image for image, _ in identities} == {
-        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5"
+        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0"
     }
     assert ("v0.22.5", "preserved") in identities
     assert ("v0.22.5", "cleared") in identities
+    assert ("v0.23.0", "preserved") in identities
+    assert ("v0.23.0", "cleared") in identities
     assert any(case["legacy"] for case in cases)
     assert "matrix.pyc_mode" in job["name"]
     windows = workflow["jobs"]["pytest-windows"]
@@ -203,6 +205,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         },
         ".upstream/issue471_9b904": "9b904dcc22c23fe8b82834339bbdd96495072e59",
         ".upstream/0227": "b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
+        ".upstream/0230": "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
         **{
             f".upstream/background_{baseline}": evidence["commit"]
             for baseline, evidence in json.loads(
@@ -216,6 +219,8 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         "${{ github.workspace }}/.upstream/0227"
     )
     assert source_step["env"]["HFC_REQUIRE_0227_PIN"] == "1"
+    assert source_step["env"]["HFC_REQUIRE_0230_PIN"] == "1"
+    assert source_step["env"]["HFC_UPSTREAM_0230_ROOT"] == "${{ github.workspace }}/.upstream/0230"
     for baseline in sources:
         assert source_step["env"][f"HFC_UPSTREAM_{baseline.upper()}_ROOT"] == (
             "${{ github.workspace }}/.upstream/" + baseline
@@ -228,7 +233,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
     assert source_step["env"]["HFC_LEGACY_PLUGIN_SOURCE_ROOT"] == "${{ github.workspace }}/.upstream/baseline_0222"
     for family, baseline in {
         "PM_MAIN": "baseline_main_0ab", "CF4": "issue451_cf4", "RC2": "issue451_rc2",
-        "0224": "latest_stable", "0225": "issue456_0225", "0227": "0227", "MAIN_4E58": "latest_main",
+        "0224": "latest_stable", "0225": "issue456_0225", "0227": "0227", "0230": "0230", "MAIN_4E58": "latest_main",
     }.items():
         assert source_step["env"][f"HFC_CONFIG_WRITER_{family}_ROOT"] == (
             "${{ github.workspace }}/.upstream/" + baseline

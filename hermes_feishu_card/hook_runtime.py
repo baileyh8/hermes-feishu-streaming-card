@@ -462,6 +462,8 @@ def reset_runtime_state() -> None:
         task.cancel()
     _NATIVE_HANDOFF_ACK_TASKS.clear()
     _NATIVE_HANDOFF_PLAN_FINGERPRINTS.clear()
+    with _HFC_BOT_REPLY_CLAIMS_LOCK:
+        _HFC_BOT_REPLY_CLAIMS.clear()
     with _GATEWAY_RUNNER_LOCK:
         _GATEWAY_RUNNER_REF = None
     reset_runtime_control_for_tests()
@@ -9477,6 +9479,112 @@ def should_suppress_native_response(
     if str(native_delivery or "").strip().lower() == "required":
         return False
     if native_delivery is None and attachments:
+        return False
+    return True
+
+
+_HFC_BOT_REPLY_CLAIM_LIMIT = 1024
+_HFC_BOT_REPLY_CLAIMS: OrderedDict[str, tuple[int, weakref.ReferenceType]] = OrderedDict()
+_HFC_BOT_REPLY_CLAIMS_LOCK = threading.Lock()
+
+
+def _drop_bot_reply_owner_claims(owner_id: int) -> None:
+    with _HFC_BOT_REPLY_CLAIMS_LOCK:
+        for key, (bound_owner_id, _) in list(_HFC_BOT_REPLY_CLAIMS.items()):
+            if bound_owner_id == owner_id:
+                del _HFC_BOT_REPLY_CLAIMS[key]
+
+
+def _bot_reply_claim_key(local_vars: dict[str, Any], owner: Any) -> str | None:
+    """Bind one card receipt to its canonical turn, bot recipient and owner."""
+    turn_id = _canonical_id_from_local_vars(local_vars)
+    if not isinstance(turn_id, str) or not turn_id.strip():
+        return None
+    source = local_vars.get("source")
+    event = local_vars.get("event")
+    values = (
+        turn_id,
+        str(getattr(event, "message_id", None) or local_vars.get("message_id") or ""),
+        str(getattr(source, "user_id", None) or ""),
+        str(getattr(source, "chat_id", None) or ""),
+        str(getattr(source, "thread_id", None) or ""),
+        str(getattr(source, "profile_id", None) or getattr(source, "profile", None) or ""),
+        str(id(owner)),
+        str(getattr(owner, "_app_id", None) or ""),
+    )
+    return sha256(
+        json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _claim_bot_reply_once(key: str, owner: Any) -> bool:
+    try:
+        owner_id = id(owner)
+        owner_ref = weakref.ref(
+            owner, lambda ref, bound=owner_id: _drop_bot_reply_owner_claims(bound)
+        )
+    except TypeError:
+        return False
+    with _HFC_BOT_REPLY_CLAIMS_LOCK:
+        if key in _HFC_BOT_REPLY_CLAIMS:
+            return False
+        _HFC_BOT_REPLY_CLAIMS[key] = (owner_id, owner_ref)
+        while len(_HFC_BOT_REPLY_CLAIMS) > _HFC_BOT_REPLY_CLAIM_LIMIT:
+            _HFC_BOT_REPLY_CLAIMS.popitem(last=False)
+        return True
+
+
+def note_bot_reply_for_delivered_card(
+    local_vars: dict[str, Any], card_delivered: bool, native_suppressed: bool
+) -> bool:
+    """Record one v0.23.0 bot-loop reply when HFC owns the delivered card.
+
+    The exact v0.23.0 wrapper notes a bot reply only when its native delivery
+    return value or an already-sent result is truthy. HFC suppresses native
+    text on a confirmed card receipt, so the wrapper condition is false on
+    that path. Call the original synchronous bookkeeping once here, without
+    faking delivered or mutating agent_result. Other paths keep the wrapper's
+    own decision.
+    """
+    if not card_delivered or not native_suppressed:
+        return False
+    owner = local_vars.get("self")
+    note = getattr(owner, "_note_bot_reply", None)
+    if not callable(note):
+        return False
+    source = local_vars.get("source")
+    platform = getattr(getattr(source, "platform", None), "value", None)
+    if platform is None:
+        platform = getattr(source, "platform", None)
+    if str(platform or "").lower() != "feishu":
+        return False
+    if not bool(getattr(source, "is_bot", False)):
+        return False
+    if bool(local_vars.get("_intentional_silence")) or bool(
+        local_vars.get("intentional_silence")
+    ):
+        return False
+    agent_result = local_vars.get("agent_result")
+    if not isinstance(agent_result, dict):
+        return False
+    if agent_result.get("already_sent"):
+        return False
+    if agent_result.get("_hfc_queued_final_delivered") is True and not agent_result.get(
+        "queued_terminal_inbound_id"
+    ):
+        return False
+    claim = _bot_reply_claim_key(local_vars, owner)
+    if claim is None or not _claim_bot_reply_once(claim, owner):
+        return False
+    try:
+        note(source)
+    except Exception as exc:
+        # The card receipt is already committed. A bookkeeping failure must
+        # not fall through to a second native reply; log it instead.
+        logger.warning(
+            "HFC bot reply bookkeeping failed after card delivery: %s",
+            type(exc).__name__,
+        )
         return False
     return True
 

@@ -2,6 +2,10 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
+This branch targets `5.0.17` for exact Hermes v0.23.0 compatibility (#497). Completion, admission and PM installation contracts are under verification; candidate checks are not publication. See the [release notes](release-notes-v5.0.17.en.md).
+
+## v5.0.16 historical record
+
 This branch targets `5.0.16`, delivering #462 install diagnostics: sanitized stdout/stderr tails on official-enable failures, a preflight plugin-visibility probe with fail-closed refusals for PM layouts, bounded install-refusal forwarding, and stronger diagnostic redaction. Independent QA/review (three rounds, final merge recommendation), the PR #496 full matrix, the focused-install regression and real enable-to-install refusal-chain probes are recorded. Reporter-environment, real Gateway/model and client-click acceptance are unverified; PM's sys.path rewrite is not fixed in this release. See the [release notes](release-notes-v5.0.16.en.md).
 
 ## v5.0.15 historical record (published 2026-11-05)

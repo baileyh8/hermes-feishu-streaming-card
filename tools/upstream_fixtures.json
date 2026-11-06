@@ -98,5 +98,10 @@
     "name": "Checkout Hermes background extraction main",
     "path": ".upstream/background_main",
     "ref": "4d26e0cceaed0a08ede833caec0ec6d6ca77a4b8"
+  },
+  {
+    "name": "Checkout Hermes v0.23.0",
+    "path": ".upstream/0230",
+    "ref": "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19"
   }
 ]

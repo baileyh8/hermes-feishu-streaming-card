@@ -7,6 +7,7 @@
       "tests/integration/test_server.py",
       "tests/unit/test_legacy_observed_rate.py",
       "tests/integration/test_session_authority_completion.py",
+      "tests/integration/test_v0230_admission_sources.py",
       "tests/unit/test_admission_completion_state.py",
       "tests/unit/test_admission_completion_detection.py",
       "tests/unit/test_issue451_stage_diagnostics.py",
@@ -43,6 +44,7 @@
       "tests/unit/test_patcher.py",
       "tests/unit/test_completion_platform_isolation.py",
       "tests/unit/test_issue_456_453_contracts.py",
+      "tests/integration/test_v0230_admission_sources.py",
       "tests/unit/test_gateway_contracts.py",
       "tests/unit/test_stale_interrupted_turn.py",
       "tests/unit/test_cron_contracts.py",
@@ -249,7 +251,10 @@
     "upstream": [
       "tests/integration/test_upstream_hermes_compat.py",
       "tests/integration/test_v0227_admission_sources.py",
-      "tests/integration/test_v0227_writer_family.py"
+      "tests/integration/test_v0230_admission_sources.py",
+      "tests/integration/test_v0227_writer_family.py",
+      "tests/integration/test_v0230_writer_family.py",
+      "tests/integration/test_v0230_wheel_install_restore.py"
     ],
     "install_transactions": [
       "tests/integration/test_cli_install.py",
@@ -801,7 +806,32 @@
     "tests/fixtures/hermes_v0227_sources.json": [
       "upstream"
     ],
+    "tests/fixtures/hermes_v0230_sources.json": [
+      "upstream"
+    ],
     "hermes_feishu_card/install/_writer_0227.py": [
+      "install",
+      "install_transactions"
+    ],
+    "hermes_feishu_card/install/_writer_0230.py": [
+      "install",
+      "install_transactions"
+    ],
+    "tests/fixtures/hermes_v0230_writer_family.json": [
+      "upstream"
+    ],
+    "tests/integration/test_v0230_writer_family.py": [
+      "upstream",
+      "install",
+      "install_transactions"
+    ],
+    "tests/integration/test_v0230_admission_sources.py": [
+      "upstream",
+      "install",
+      "runtime"
+    ],
+    "tests/integration/test_v0230_wheel_install_restore.py": [
+      "upstream",
       "install",
       "install_transactions"
     ]

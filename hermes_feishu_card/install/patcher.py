@@ -20,6 +20,7 @@ from .completion_contracts import (
     WRAPPER as _COMPLETION_WRAPPER,
     dispatch_return as _completion_dispatch_return,
     return_matches as _completion_return_matches,
+    source_has_v0230_wrapper as _completion_source_has_v0230_wrapper,
     wrapper_is_exact as _completion_wrapper_is_exact,
 )
 
@@ -436,6 +437,7 @@ def _apply_complete_patch(content: str, *, strategy: str = "legacy_gateway_run",
                           completion_sources=None, target=None) -> str:
     decomposed_node = (_split_completion_node({**completion_sources, target: content}, target)
                        if completion_sources is not None else None)
+    bot_reply_note = _completion_sources_have_v0230_bot_reply_wrapper(completion_sources)
     renderer = (
         _render_decomposed_complete_hook_block
         if decomposed_node is not None or _find_decomposed_completion_node(_parse_content(content)) is not None
@@ -458,7 +460,7 @@ def _apply_complete_patch(content: str, *, strategy: str = "legacy_gateway_run",
         begin_index, end_index = owned_block
         indent = _leading_whitespace(_strip_line_ending(lines[begin_index]))
         newline = _line_ending(lines[begin_index]) or _detect_newline(content)
-        expected = renderer(indent, newline)
+        expected = renderer(indent, newline, bot_reply_note=bot_reply_note)
         if lines[begin_index : end_index + 1] == expected:
             return content
         return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
@@ -471,8 +473,20 @@ def _apply_complete_patch(content: str, *, strategy: str = "legacy_gateway_run",
 
     newline = _detect_newline(content)
     insert_at, body_indent = completion_location
-    hook = renderer(body_indent, newline)
+    hook = renderer(body_indent, newline, bot_reply_note=bot_reply_note)
     return "".join(lines[:insert_at] + hook + lines[insert_at:])
+
+
+def _completion_sources_have_v0230_bot_reply_wrapper(completion_sources) -> bool:
+    """Enable the card-receipt bot gate only for the exact v0.23.0 wrapper."""
+    if not completion_sources:
+        return False
+    for name, raw in completion_sources.items():
+        if (isinstance(raw, str)
+                and name.endswith("gateway/run_turn_persistence.py")
+                and _completion_source_has_v0230_wrapper(raw)):
+            return True
+    return False
 
 
 def _apply_queued_complete_patch(content: str) -> str:
@@ -2286,6 +2300,23 @@ def _find_owned_complete_block(content: str):
         line.replace('"duration": _response_time,', '"duration": agent_result.get("_hfc_turn_seconds"),')
         for line in unscoped_with_anchor
     ]
+    bot_scoped = _render_complete_hook_block(indent, newline, bot_reply_note=True)
+    bot_with_anchor = _render_complete_hook_block_with_reply_anchor(
+        indent, newline, bot_reply_note=True
+    )
+    bot_unscoped = _render_unscoped_complete_hook_block(
+        indent, newline, bot_reply_note=True
+    )
+    bot_unscoped_with_anchor = _render_complete_hook_block_with_reply_anchor(
+        indent, newline, _scoped=False, bot_reply_note=True
+    )
+    bot_unscoped_decomposed = [
+        line.replace('"duration": _response_time,', '"duration": agent_result.get("_hfc_turn_seconds"),')
+        for line in bot_unscoped_with_anchor
+    ]
+    bot_decomposed = _render_decomposed_complete_hook_block(
+        indent, newline, bot_reply_note=True
+    )
     actual = lines[begin_index : end_index + 1]
     if actual not in (
         unscoped,
@@ -2294,6 +2325,15 @@ def _find_owned_complete_block(content: str):
         _with_silent_exception_handler(unscoped, indent, newline),
         _with_silent_exception_handler(unscoped_with_anchor, indent, newline),
         _render_decomposed_complete_hook_block(indent, newline),
+        bot_unscoped,
+        bot_unscoped_with_anchor,
+        bot_unscoped_decomposed,
+        bot_decomposed,
+        bot_with_anchor,
+        bot_scoped,
+        _with_silent_exception_handler(bot_unscoped, indent, newline),
+        _with_silent_exception_handler(bot_unscoped_with_anchor, indent, newline),
+        _with_silent_exception_handler(bot_with_anchor, indent, newline),
         expected_with_anchor,
         expected,
         v400,
@@ -2965,18 +3005,24 @@ def _scope_complete_hook_to_feishu(block, indent: str, newline: str):
     ]
 
 
-def _render_complete_hook_block(indent: str, newline: str):
+def _render_complete_hook_block(indent: str, newline: str, *, bot_reply_note: bool = False):
     return _scope_complete_hook_to_feishu(
-        _render_unscoped_complete_hook_block(indent, newline), indent, newline
+        _render_unscoped_complete_hook_block(
+            indent, newline, bot_reply_note=bot_reply_note
+        ),
+        indent,
+        newline,
     )
 
 
-def _render_unscoped_complete_hook_block(indent: str, newline: str):
+def _render_unscoped_complete_hook_block(
+    indent: str, newline: str, *, bot_reply_note: bool = False
+):
     """Historical v5.0.5-v5.0.12 bytes, retained for exact owned migration."""
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     deepest_indent = _child_indent(deeper_indent)
-    return [
+    block = [
         f"{indent}{COMPLETE_PATCH_BEGIN}{newline}",
         f"{indent}try:{newline}",
         (
@@ -3048,14 +3094,56 @@ def _render_unscoped_complete_hook_block(indent: str, newline: str):
         f"{deeper_indent}_hfc_platform = getattr(source.platform, \"value\", source.platform){newline}",
         f"{deeper_indent}if str(_hfc_platform).lower() == \"feishu\" and _hfc_card_delivered and _hfc_native_delivery == \"required\":{newline}",
         f"{deepest_indent}response = _hfc_media_only(response){newline}",
-        f"{deeper_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery):{newline}",
-        f"{deepest_indent}return None{newline}",
         *_render_hook_exception_handler(indent, newline),
         f"{indent}{COMPLETE_PATCH_END}{newline}",
     ]
+    insertion = next(
+        i for i, line in enumerate(block)
+        if "response = _hfc_media_only(response)" in line
+    ) + 1
+    if not bot_reply_note:
+        block[insertion:insertion] = [
+            f"{deeper_indent}if _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery):{newline}",
+            f"{deepest_indent}return None{newline}",
+        ]
+        return block
+    queued_index = next(
+        i for i, line in enumerate(block) if "_hfc_queued_preview" in line
+    )
+    queued_return = next(
+        i for i in range(queued_index, len(block))
+        if "return None" in block[i]
+    )
+    block[queued_return:queued_return] = [
+        f"{deeper_indent}_hfc_queued_bot_locals = {{**_hfc_completed_locals, \"source\": source, \"message_id\": agent_result.get(\"queued_terminal_inbound_id\") or getattr(event, \"message_id\", None), \"agent_result\": agent_result, \"_intentional_silence\": _intentional_silence}}{newline}",
+        f"{deeper_indent}_hfc_note_bot_reply(_hfc_queued_bot_locals, True, True){newline}",
+    ]
+    import_index = next(
+        i for i, line in enumerate(block)
+        if "import should_suppress_native_response as _hfc_should_suppress" in line
+    ) + 1
+    block[import_index:import_index] = [
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import note_bot_reply_for_delivered_card as _hfc_note_bot_reply{newline}"
+        ),
+    ]
+    insertion = next(
+        i for i, line in enumerate(block)
+        if "response = _hfc_media_only(response)" in line
+    ) + 1
+    block[insertion:insertion] = [
+        f"{deeper_indent}_hfc_native_suppressed = _hfc_should_suppress(_hfc_platform, _hfc_card_delivered, _hfc_attachments, _hfc_native_delivery){newline}",
+        f"{deeper_indent}_hfc_note_bot_reply(_hfc_completed_locals, _hfc_card_delivered, _hfc_native_suppressed){newline}",
+        f"{deeper_indent}if _hfc_native_suppressed:{newline}",
+        f"{deepest_indent}return None{newline}",
+    ]
+    return block
 
 
-def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str, *, _scoped=True):
+def _render_complete_hook_block_with_reply_anchor(
+    indent: str, newline: str, *, _scoped=True, bot_reply_note: bool = False
+):
     """Completion hook for gateway_run_013_plus handlers.
 
     Derives an explicit message_id from the same reply anchor the started and
@@ -3065,7 +3153,9 @@ def _render_complete_hook_block_with_reply_anchor(indent: str, newline: str, *, 
     """
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
-    block = list(_render_unscoped_complete_hook_block(indent, newline))
+    block = list(_render_unscoped_complete_hook_block(
+        indent, newline, bot_reply_note=bot_reply_note
+    ))
     anchor_lines = [
         f"{inner_indent}_hfc_completed_message_id = None{newline}",
         f"{inner_indent}try:{newline}",
@@ -4629,10 +4719,14 @@ def _find_decomposed_completion_node(tree):
     return delivery
 
 
-def _render_decomposed_complete_hook_block(indent, newline):
+def _render_decomposed_complete_hook_block(
+    indent, newline, *, bot_reply_note: bool = False
+):
     # Timing is copied from the caller without mutating its original result.
     return [line.replace('"duration": _response_time,', '"duration": agent_result.get("_hfc_turn_seconds"),')
-            for line in _render_complete_hook_block_with_reply_anchor(indent, newline)]
+            for line in _render_complete_hook_block_with_reply_anchor(
+                indent, newline, bot_reply_note=bot_reply_note
+            )]
 
 
 

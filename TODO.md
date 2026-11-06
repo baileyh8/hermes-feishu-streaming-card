@@ -2,6 +2,10 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
+## V5.0.17
+
+- #497：核验并支持精确 Hermes v0.23.0 的 completion、admission 与 PM 安装契约；发布门禁结果见对应发行说明。
+
 ## V5.0.16
 
 - #462：官方 enable 安装失败带脱敏 stdout/stderr 摘要；PM 布局写配置前增加插件可见性探针并 fail-closed 拒绝。本版不修复 PM sys.path 重写，完整关闭以报告者复测为准。
