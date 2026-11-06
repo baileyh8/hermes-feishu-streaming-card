@@ -13,12 +13,13 @@
 
 ## 验收
 
-自动化证据：PR #496 完整矩阵 59 项检查全部通过（含 Python 3.10–3.14 全量、macOS 十片、Windows、官方镜像 v0.22.1–v0.22.5 preserved/cleared、上游固定检出分片、CodeQL、SDK 兼容与 Docker Compose smoke），merge commit `e607efc8e04eea229ec0be4733f43a4be4a04443`。本地与独立验证：focused install 全量回归 2444 tests / 0 failures / 0 errors / 85 skipped（独立 venv + 固定 Hermes fixture）；真实 `enable_plugin → install` 拒绝链上四类凭证 canary（api_key 赋值、Bearer、带空格引号值、转义引号、quoted flag）全部遮蔽；0xff 真实子进程输出归入正常分类；好布局 `install --yes` 仍成功，坏布局出现 visibility probe 拒绝文案。
+自动化证据：merge commit `b943017010eb6d79db1ca59c0f7b63348401e311`（含 9623437 与 b943017 两个发布提交）。PR #496 完整矩阵 59 项检查全部通过；main 上 release 分支提交的 tests 完整矩阵在补齐 test_docs 版本断言后通过；tag 门禁 `release-assets` 42127350923 最终 59/59 job success（首轮 macOS 分片 2 的 `test_real_regular_wheel_plugin_manager_probe_reports_exactly_four_capabilities` 因 `git_head` 探针 5 秒超时失败，属 timeout 型抖动，重跑后同测试通过；PR #496 同测试亦通过）。本地与独立验证：focused install 全量回归 2444 tests / 0 failures / 0 errors / 85 skipped；真实 `enable_plugin → install` 拒绝链上多类凭证 canary（api_key 赋值、Bearer、带空格引号值、转义引号、quoted flag）全部遮蔽；0xff 真实子进程输出归入正常分类；好布局 `install --yes` 仍成功，坏布局出现 visibility probe 拒绝文案。
+
+发布验收记录：4 个资产匿名下载校验和全部 OK；Linux/macOS 归档各含单一顶层目录与 9 文件清单；公开普通包安装 `git+...@v5.0.16` 成功，module 版本 5.0.16、console `--help` 正常，`direct_url.json` commit `b943017010eb6d79db1ca59c0f7b63348401e311`、requested_revision `v5.0.16`。
 
 已知未验证项：报告者的 macOS 受管现场升级、真实 Hermes Gateway/model 执行与真实飞书客户端视觉/点击不在本轮范围；本版不修复 PM `sys.path` 重写本身，探针只把失败提前并给出原因；报告者复测若仍失败，请附脱敏的完整 stderr/stdout 文案（新版本会自动带出）。
 
-## 发布验收记录
+## 贡献
 
-- main 精确合并提交 `e607efc8e04eea229ec0be4733f43a4be4a04443`：PR #496 CI 59/59 通过。
-- tag 门禁（release-assets）、资产校验和、公开匿名下载与普通包安装验收：tag 推送后由 CI 执行并在 GitHub Release 记录。
+感谢 saulgoodmanngabriel 提供 #462 的 v0.22.6 精确复现、手跑 enable 的 stderr/stdout 对照与分层修复建议；问题证据与代码作者分开记录，历史贡献全部保留。
 
