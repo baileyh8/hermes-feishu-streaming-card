@@ -1,5 +1,10 @@
 # Changelog
 
+## v5.0.17 — 2026-11-06
+
+- Add exact Hermes v0.23.0 completion-wrapper, admission dependency and PM writer/launch contracts (#497). Retain bot-loop bookkeeping, native ownership, single-use completion and unknown-source refusal.
+- Pin v0.23.0 source and official-image preserved/cleared acceptance in CI; retain prior version matrices.
+
 ## v5.0.16 — 2026-11-06
 
 - Make official plugin-enable failures diagnosable (#462): the installer child process now captures a sanitized stdout/stderr tail instead of discarding it, so `official plugin enable failed (...)` reports the real upstream reason (for example `No plugin named 'hermes-feishu-card'.`, which v0.22.6 prints on stdout). Non-UTF-8 child output is decoded with replacement instead of escaping the failure classification.

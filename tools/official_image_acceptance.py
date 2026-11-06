@@ -123,7 +123,36 @@ IMAGE_SPECS: dict[str, ImageSpec] = {
         "sha256:fd822bae0a61bf023450737edbeaeea5fc6460f17cb4ee240a7e67b306ed63fb",
         1059361696,
     ),
+    "v0.23.0": ImageSpec(
+        "v0.23.0",
+        "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
+        "sha256:adb7890916de63245523492be8f68f9d2095fecbec4e2a6dab7960381f0fc002",
+        "sha256:0dd31821db01611eaeedc44743260336c2d72bff47b9117b06313b29ca85ad76",
+        1120150106,
+    ),
 }
+
+# Images whose official writer admission requires the upstream config schema
+# to be migrated from FULL_SEED. The seed itself stays at version 50; the
+# official docker_config_migrate script performs the real 50 -> 52 upgrade.
+CONFIG_MIGRATION_SOURCE_SHAS = frozenset({IMAGE_SPECS["v0.23.0"].source_sha})
+MIN_MIGRATED_CONFIG_VERSION = 52
+
+_OFFICIAL_CONFIG_MIGRATE_CODE = r'''
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+from hermes_cli.config_defaults import DEFAULT_CONFIG
+from hermes_cli.config_version_stamp import check_config_version
+from scripts.docker_config_migrate import main as migrate
+rc = migrate()
+if rc:
+    raise SystemExit(rc)
+stamp, latest = check_config_version(raise_on_parse_error=True)
+print(json.dumps({"stamp": stamp, "latest": latest,
+                  "default": DEFAULT_CONFIG.get("_config_version")}, sort_keys=True))
+'''
 
 
 class AcceptanceFailure(RuntimeError):
@@ -506,6 +535,59 @@ def _pyc_baseline(
 def _seed(path: Path, value: bytes = FULL_SEED) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(value)
+
+
+def _baseline_image_requires_config_migration() -> bool:
+    tag = os.environ.get("HFC_IMAGE_TAG", "")
+    spec = IMAGE_SPECS.get(tag)
+    source_sha = os.environ.get("HFC_IMAGE_SOURCE_SHA", "")
+    return (
+        source_sha in CONFIG_MIGRATION_SOURCE_SHAS
+        or spec is not None and spec.source_sha in CONFIG_MIGRATION_SOURCE_SHAS
+    )
+
+
+def _officially_migrate_baseline_config(evidence: Path) -> dict[str, Any]:
+    """Run the pinned upstream Docker config migration on FULL_SEED."""
+    result = _run_command(
+        [
+            str(_base_python()), "-B", "-I", "-c",
+            _OFFICIAL_CONFIG_MIGRATE_CODE, HERMES_ROOT,
+        ],
+        cwd=Path(HERMES_ROOT),
+        env=_clean_container_env(),
+        timeout=300,
+    )
+    _write_log(evidence / "official-config-migrate", result)
+    if result.returncode:
+        raise AcceptanceFailure("official config migration failed")
+    try:
+        payload = json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise AcceptanceFailure("official config migration returned invalid evidence") from exc
+    if type(payload) is not dict:
+        raise AcceptanceFailure("official config migration evidence is invalid")
+    stamp = payload.get("stamp")
+    latest = payload.get("latest")
+    default = payload.get("default")
+    if (
+        type(stamp) is not int or type(latest) is not int or type(default) is not int
+        or stamp != latest or latest != default
+        or stamp < MIN_MIGRATED_CONFIG_VERSION
+    ):
+        raise AcceptanceFailure("official config migration did not reach the reviewed schema")
+    if _config_mapping().get("_config_version") != stamp:
+        raise AcceptanceFailure("official config migration left an unstamped config")
+    digest = _snapshot_config(evidence, "config-after-official-migrate")
+    report = {
+        "source": "scripts/docker_config_migrate.py",
+        "stamp": stamp,
+        "latest": latest,
+        "default": default,
+        "config_sha256": digest,
+    }
+    _write_json(evidence / "official-config-migrate.json", report)
+    return report
 
 
 def _seed_legacy_config(evidence: Path) -> str:
@@ -1649,6 +1731,9 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         mode="base",
     )
     _seed(Path(HERMES_HOME) / "config.yaml")
+    config_migration = None
+    if _baseline_image_requires_config_migration():
+        config_migration = _officially_migrate_baseline_config(evidence)
     generations_before = _generation_names(Path(HERMES_HOME))
     _register_other_plugin(evidence, "other-before-install")
     source_before = _source_snapshot(Path(HERMES_ROOT))
@@ -1713,6 +1798,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         "launch_families": launch_matches,
         "config_before_sha256": config_before,
         "config_after_sha256": _sha256_file(Path(HERMES_HOME) / "config.yaml"),
+        "config_migration": config_migration,
         "base_runtime": base_report,
         "selected_runtime": selected_report,
         "observer": observer,

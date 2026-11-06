@@ -58,9 +58,23 @@ def test_launch_sources_require_exact_non_symlink_bytes(tmp_path, monkeypatch):
 
 def test_every_writer_family_has_a_launch_source_contract():
     assert set(planner.FAMILIES) <= set(planner.LAUNCH_SOURCES)
-    for sources in planner.LAUNCH_SOURCES.values():
-        assert set(sources) == {"hermes_cli/main.py", "hermes_cli/__init__.py"}
+    base = {"hermes_cli/main.py", "hermes_cli/__init__.py"}
+    extra = {
+        "pm-0230": {"hermes_cli/cpu_profile.py", "hermes_cli/main_dashboard.py"},
+    }
+    for family, sources in planner.LAUNCH_SOURCES.items():
+        assert base <= set(sources), family
+        assert set(sources) - base == extra.get(family, set()), family
         assert all(len(digest) == 64 for digest in sources.values())
+
+
+def test_pm_0230_launch_contract_binds_new_execution_dependencies():
+    family = planner.FAMILIES["pm-0230"]
+    launch = planner.LAUNCH_SOURCES["pm-0230"]
+    assert "hermes_cli/cpu_profile.py" in launch
+    assert "hermes_cli/main_dashboard.py" in launch
+    assert launch["hermes_cli/cpu_profile.py"] == family["hermes_cli/cpu_profile.py"]
+    assert launch["hermes_cli/main_dashboard.py"] == family["hermes_cli/main_dashboard.py"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation is not a portable Windows fixture")

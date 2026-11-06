@@ -49,6 +49,7 @@ def test_image_matrix_is_pinned_and_includes_0222():
         "v0.22.3",
         "v0.22.4",
         "v0.22.5",
+        "v0.23.0",
     }
     for spec in acceptance.IMAGE_SPECS.values():
         assert spec.reference.startswith("nousresearch/hermes-agent@sha256:")
@@ -129,6 +130,9 @@ def test_baseline_registers_other_before_install(tmp_path, monkeypatch):
     monkeypatch.setattr(acceptance, "_run_runtime_verify", lambda *a, **k: {})
     monkeypatch.setattr(acceptance, "_seed", lambda *a, **k: calls.append("seed"))
     monkeypatch.setattr(
+        acceptance, "_baseline_image_requires_config_migration", lambda: False
+    )
+    monkeypatch.setattr(
         acceptance,
         "_register_other_plugin",
         lambda *a, **k: calls.append("register") or (_ for _ in ()).throw(RuntimeError("stop")),
@@ -139,6 +143,101 @@ def test_baseline_registers_other_before_install(tmp_path, monkeypatch):
             tmp_path, SimpleNamespace(sha256="a" * 64, version=VERSION)
         )
     assert calls == ["seed", "register"]
+
+
+def test_baseline_migrates_pinned_0230_seed_before_install(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        acceptance,
+        "_layout_report",
+        lambda: {
+            "repo_root": acceptance.HERMES_ROOT,
+            "repo_root_expected": acceptance.HERMES_ROOT,
+            "hermes_install_root_present": False,
+            "pythonpath_present": False,
+        },
+    )
+    monkeypatch.setattr(acceptance, "_current_wheel", lambda: tmp_path / "candidate.whl")
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(
+        acceptance,
+        "_pyc_baseline",
+        lambda *a, **k: {"cleared": {}, "operation_root": {}, "operation_home": {}},
+    )
+    monkeypatch.setattr(acceptance, "_run_runtime_verify", lambda *a, **k: {})
+    monkeypatch.setattr(acceptance, "_seed", lambda *a, **k: calls.append("seed"))
+    monkeypatch.setattr(
+        acceptance, "_baseline_image_requires_config_migration", lambda: True
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_officially_migrate_baseline_config",
+        lambda evidence: calls.append("migrate") or {},
+    )
+    monkeypatch.setattr(
+        acceptance, "_register_other_plugin",
+        lambda *a, **k: calls.append("register") or (_ for _ in ()).throw(RuntimeError("stop")),
+    )
+    with pytest.raises(RuntimeError, match="stop"):
+        acceptance._baseline_phase(
+            tmp_path, SimpleNamespace(sha256="a" * 64, version=VERSION)
+        )
+    assert calls == ["seed", "migrate", "register"]
+
+
+def test_config_migration_required_only_for_pinned_0230(monkeypatch):
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.0")
+    monkeypatch.delenv("HFC_IMAGE_SOURCE_SHA", raising=False)
+    assert acceptance._baseline_image_requires_config_migration()
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.22.5")
+    monkeypatch.delenv("HFC_IMAGE_SOURCE_SHA", raising=False)
+    assert not acceptance._baseline_image_requires_config_migration()
+    monkeypatch.setenv(
+        "HFC_IMAGE_SOURCE_SHA", acceptance.IMAGE_SPECS["v0.23.0"].source_sha
+    )
+    assert acceptance._baseline_image_requires_config_migration()
+
+
+def test_official_config_migration_runs_pinned_upstream_script(tmp_path, monkeypatch):
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").write_bytes(acceptance.FULL_SEED)
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(root))
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(
+        acceptance,
+        "_clean_container_env",
+        lambda: {"HOME": str(home), "HERMES_HOME": str(home)},
+    )
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            command, 0,
+            stdout='{"default": 52, "latest": 52, "stamp": 52}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(acceptance, "_run_command", fake_run)
+    monkeypatch.setattr(acceptance, "_write_log", lambda *a, **k: None)
+    monkeypatch.setattr(acceptance, "_config_mapping", lambda: {"_config_version": 52})
+    monkeypatch.setattr(acceptance, "_snapshot_config", lambda *a, **k: "b" * 64)
+    report = acceptance._officially_migrate_baseline_config(evidence)
+    command = captured["command"]
+    assert command[:4] == ["/base/python", "-B", "-I", "-c"]
+    assert "scripts.docker_config_migrate" in command[4]
+    assert command[5] == str(root)
+    assert captured["kwargs"]["cwd"] == root
+    assert captured["kwargs"]["env"]["HERMES_HOME"] == str(home)
+    assert report["stamp"] == 52
+    assert (evidence / "official-config-migrate.json").is_file()
 
 
 def test_legacy_registers_other_before_legacy_install(tmp_path, monkeypatch):

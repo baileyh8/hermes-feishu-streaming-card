@@ -89,7 +89,7 @@ def test_shadow_acl_refuses_source_or_callable_drift(shadow_acl, drift):
     assert acl._grant is before
 
 
-@pytest.mark.parametrize("family", ["pm-0225", "pm-0226", "pm-0227"])
+@pytest.mark.parametrize("family", ["pm-0225", "pm-0226", "pm-0227", "pm-0230"])
 @pytest.mark.parametrize("name", ["_grant_with_pywin32", "_grant_with_icacls", "_whoami_sid"])
 def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, name, family):
     from hermes_feishu_card.install import plugin_config_bytes as planner
@@ -103,8 +103,8 @@ def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, n
     guard = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
     # Exercise the Windows branch on every host, in a fresh real child only.
     guard = guard.replace(
-        "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227')",
-        "request['family'] in ('pm-0225', 'pm-0226', 'pm-0227')",
+        "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230')",
+        "request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230')",
     )
     probe = guard + (
         "\nscope={'__name__':'hermes_dir_acl','sentinel':home/'entered'}\n"
@@ -435,7 +435,7 @@ def test_git_audit_accepts_only_the_exact_bound_windows_argv(tmp_path):
     assert not (home / "continued").exists()
 
 
-@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227"])
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230"])
 def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path, family):
     """A real child must not resume after an upstream catch disables profiling."""
     import subprocess

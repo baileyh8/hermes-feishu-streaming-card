@@ -27,11 +27,17 @@ from . import completion_diagnostics
 from .admission_topology_0226 import (
     CORE_HASHES as _V0226_CORE_HASHES,
     CORE_HASHES_0227 as _V0227_CORE_HASHES,
+    CORE_HASHES_0230 as _V0230_CORE_HASHES,
+    DECORATED_0230 as _V0230_DECORATED,
+    FUNCTIONS_0230 as _V0230_FUNCTIONS,
+    OPTIONAL_MODULES_0230 as _V0230_OPTIONAL_MODULES,
     SOURCE_HASHES_0227 as _V0227_SOURCE_HASHES,
+    SOURCE_HASHES_0230 as _V0230_SOURCE_HASHES,
 )
 
 # Public provenance names for pinned-source contract tests.
 CORE_HASHES_0227 = _V0227_CORE_HASHES
+CORE_HASHES_0230 = _V0230_CORE_HASHES
 
 
 _ATTR = "_hfc_admission_display_completion"
@@ -69,6 +75,10 @@ SOURCE_COHORTS += (_V0226_CORE_HASHES,)
 # v0.22.7 changes the authority/producer/Base files while retaining the same
 # admission extraction seam. Its own whole-file closure is verified below.
 SOURCE_COHORTS += (_V0227_CORE_HASHES,)
+# v0.23.0 keeps the v0.22.7 ingress, changes authority's settlement/delivery
+# topology and adds the bot-loop guard. Its whole-file closure is verified at
+# detection time and its loaded helpers are bound again at runtime.
+SOURCE_COHORTS += (_V0230_CORE_HASHES,)
 
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -214,6 +224,15 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
         from .admission_topology_0226 import verified
         if root is None or not verified(
             root, modules[0], modules[1], _V0227_SOURCE_HASHES
+        ):
+            return None
+    elif _V0230_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(
+            root, modules[0], modules[1], _V0230_SOURCE_HASHES,
+            functions=_V0230_FUNCTIONS,
+            decorated=_V0230_DECORATED,
+            optional_modules=_V0230_OPTIONAL_MODULES,
         ):
             return None
     return modules[0], modules[1]
