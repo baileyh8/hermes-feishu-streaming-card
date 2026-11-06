@@ -14,6 +14,8 @@ import threading
 from types import CodeType, ModuleType
 from typing import Any, cast
 
+from . import __version__ as _HFC_VERSION
+
 SOURCE_HASHES = {
     "gateway.platforms.base": "ad064118a29bbe6d0d33424fbcde01484305a501aef4aa2584f5808c9b399a3d",
     "gateway.session_ingress": "12466f9c31f57877c6ae8ea6189d76123a278bdc99e5242c13c5c4ecff0f8ae9",
@@ -79,6 +81,27 @@ SOURCE_HASHES_0230 = {
 }
 CORE_HASHES_0230 = {name: SOURCE_HASHES_0230[name] for name in (
     "gateway.session_ingress", "gateway.session_authority")}
+# Exact rendered bytes produced by decomposed_ownership.render for the pinned
+# clean v0.23.0 sources and HFC 5.0.17. A full installer render is too costly
+# on a terminal admission request; the project test proves these hashes are
+# byte-for-byte equivalent to that render and rejects mixed/drifted files.
+RENDER_VERSION_0230 = "5.0.17"
+EXPECTED_RENDERED_HASHES_0230 = {
+    "gateway/run.py": "f2eabc2972822df232375a4e32b22e79daafcec9bc2f66a6cfb305c255cf11d3",
+    "gateway/run_background.py": "7702a2b46dd13acfe82c2bbc0fecff63761498ba0ca257fcddcf21cea0288f54",
+    "gateway/run_turn.py": "1dabfdfca3011509df7a7cc5d36a5ef6f05cce848982d7bc295fe795f0cfe731",
+    "gateway/run_turn_persistence.py": "02ed65aafda9716548b12aead376772d2ee310336251affc6238667860d2642f",
+    "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
+    "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
+    "gateway/run_turn_runner.py": "e26c9d13c04c5821730aafb2583b8d36acbaa8e149d768817b89a1d7235d21f2",
+    "gateway/run_inbound.py": "974d23c4a4dc4dc07e532b06b75a130ac8edbf56a6a2239a0754ad591051c93f",
+    "gateway/run_busy.py": "a5ea46067ed52619821a8e84101cc2ab49d44085abcd40556819e2d61b8dcc29",
+    "gateway/run_startup.py": "68f549a53eebfd578002b748e6454a21229a312495bc5405cae0a633eb88c17d",
+    "gateway/run_notifications.py": "e156bced1c28743477f6c405aa833f40b9ef5836ac258a7b1705ec6b7a056c71",
+    "cron/scheduler.py": "b5956a54f05a8d360b9652149cae0f603e92bc52bb4a5af2b911fbd457f98470",
+    "cron/scheduler_delivery.py": "09ed28e78e0230c87070c3159f669155a13050405e162d9817a312196c0ad4ce",
+    "gateway/platforms/base.py": "fbec459568bc66d231514ea172fe10f127a5861197043760769d2cf9552cb9e3",
+}
 TOPOLOGY_HASHES = (SOURCE_HASHES, SOURCE_HASHES_0227, SOURCE_HASHES_0230)
 _FUNCTIONS = {
     "gateway.platforms.base": ("_split_post_delivery_entry",
@@ -190,43 +213,19 @@ OPTIONAL_MODULES_0230 = frozenset({
 
 
 _MISSING_DEFAULT = object()
-_RENDER_CACHE_LIMIT = 4
-_RENDER_CACHE: OrderedDict[str, dict[str, bytes]] = OrderedDict()
-_RENDER_CACHE_LOCK = threading.Lock()
 _COMPILE_CACHE_LIMIT = 32
 _COMPILE_CACHE: OrderedDict[tuple[str, str], CodeType] = OrderedDict()
 _COMPILE_CACHE_LOCK = threading.Lock()
 _FUNCTION_NODE_CACHE_LIMIT = 256
 _FUNCTION_NODE_CACHE: OrderedDict[tuple[str, str], object] = OrderedDict()
 _FUNCTION_NODE_CACHE_LOCK = threading.Lock()
+_AST_TREE_CACHE_LIMIT = 64
+_AST_TREE_CACHE: OrderedDict[str, ast.Module] = OrderedDict()
+_AST_TREE_CACHE_LOCK = threading.Lock()
 
 
 def _module_path(name: str) -> str:
     return name.replace(".", "/") + ".py"
-
-
-def _render_0230(originals: dict[str, bytes], owned: dict[str, str]) -> dict[str, bytes]:
-    """Cache pure rendering for one exact set of verified clean source bytes."""
-    key = sha256(
-        b"".join(
-            path.encode("utf-8") + b"\0" + originals[name]
-            for name, path in sorted(owned.items(), key=lambda item: item[1])
-        )
-    ).hexdigest()
-    with _RENDER_CACHE_LOCK:
-        cached = _RENDER_CACHE.get(key)
-        if cached is not None:
-            _RENDER_CACHE.move_to_end(key)
-            return cached
-    from .install import decomposed_ownership
-    rendered = decomposed_ownership.render(
-        {path: originals[name] for name, path in owned.items()}
-    )
-    with _RENDER_CACHE_LOCK:
-        _RENDER_CACHE[key] = rendered
-        while len(_RENDER_CACHE) > _RENDER_CACHE_LIMIT:
-            _RENDER_CACHE.popitem(last=False)
-    return rendered
 
 
 def _compiled_source(code_raw: bytes, path: Path) -> CodeType:
@@ -242,6 +241,23 @@ def _compiled_source(code_raw: bytes, path: Path) -> CodeType:
         while len(_COMPILE_CACHE) > _COMPILE_CACHE_LIMIT:
             _COMPILE_CACHE.popitem(last=False)
     return compiled
+
+
+def _parsed_ast(source: bytes | str) -> ast.Module:
+    """Private read-only AST cache; callers must never mutate or expose it."""
+    text = source.decode("utf-8") if isinstance(source, bytes) else source
+    key = sha256(text.encode("utf-8")).hexdigest()
+    with _AST_TREE_CACHE_LOCK:
+        cached = _AST_TREE_CACHE.get(key)
+        if cached is not None:
+            _AST_TREE_CACHE.move_to_end(key)
+            return cached
+    tree = ast.parse(text)
+    with _AST_TREE_CACHE_LOCK:
+        _AST_TREE_CACHE[key] = tree
+        while len(_AST_TREE_CACHE) > _AST_TREE_CACHE_LIMIT:
+            _AST_TREE_CACHE.popitem(last=False)
+    return tree
 
 
 def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
@@ -290,14 +306,19 @@ def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] 
             return None
         if all(installed[name] == originals[name] for name in owned):
             return originals, originals
-        expected_rendered = _render_0230(originals, owned)
+        if (
+            _HFC_VERSION != RENDER_VERSION_0230
+            or set(owned.values()) != set(EXPECTED_RENDERED_HASHES_0230)
+        ):
+            return None
         if not all(
-            installed[name] == expected_rendered[path]
-            for name, path in owned.items()
+            sha256(installed[name]).hexdigest()
+            == EXPECTED_RENDERED_HASHES_0230[owned[name]]
+            for name in owned
         ):
             return None
         code_source = {
-            name: (expected_rendered[owned[name]] if name in owned
+            name: (installed[name] if name in owned
                    else originals[name])
             for name in SOURCE_HASHES_0230
         }
@@ -322,7 +343,7 @@ def _function_node(source: bytes | str, qualified: str) -> ast.FunctionDef | ast
             return cached  # type: ignore[return-value]
         if key in _FUNCTION_NODE_CACHE:
             return None
-    tree = ast.parse(text)
+    tree = _parsed_ast(text)
     owner, _, name = qualified.rpartition(".")
     scopes = (
         [n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == owner]
@@ -353,7 +374,6 @@ def _default_value(
     scope.setdefault("__builtins__", builtins.__dict__)
     try:
         expression = ast.Expression(body=cast(ast.expr, node))
-        ast.fix_missing_locations(expression)
         return eval(compile(expression, filename, "eval"), scope)
     except Exception:
         return _MISSING_DEFAULT

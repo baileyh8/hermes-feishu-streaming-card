@@ -32,6 +32,7 @@ import pytest
 from hermes_feishu_card import admission_completion as ac
 from hermes_feishu_card import admission_topology_0226 as topology
 from hermes_feishu_card import hook_runtime as h
+from hermes_feishu_card import __version__ as HFC_VERSION
 from hermes_feishu_card.admission_completion import _compiled_code
 from hermes_feishu_card.admission_topology_0226 import (
     SOURCE_HASHES_0230,
@@ -185,6 +186,24 @@ def _bot_locals(runner, *, message_id="fixture", user_id="bot-a", is_bot=True,
     }
     values.update(extra)
     return values
+
+
+def _instrumentation_snapshot() -> dict:
+    monitoring = {}
+    monitor = getattr(sys, "monitoring", None)
+    if monitor is not None:
+        for tool_id in range(6):
+            try:
+                tool = monitor.get_tool(tool_id)
+                events = int(monitor.get_events(tool_id)) if tool else 0
+            except (AttributeError, TypeError, ValueError, OSError):
+                tool, events = None, 0
+            monitoring[str(tool_id)] = {"tool": tool, "events": events}
+    return {
+        "profile": sys.getprofile() is not None,
+        "trace": sys.gettrace() is not None,
+        "monitoring": monitoring,
+    }
 
 
 def test_v0230_pinned_checkout_is_supported():
@@ -673,16 +692,26 @@ def test_v0230_installed_rendered_sources_are_verified(tmp_path, monkeypatch):
             optional_modules=topology.OPTIONAL_MODULES_0230,
         )
 
-    topology._RENDER_CACHE.clear()
     topology._COMPILE_CACHE.clear()
     topology._FUNCTION_NODE_CACHE.clear()
+    topology._AST_TREE_CACHE.clear()
+    cold_cpu_start = time.process_time()
     started = time.monotonic()
     assert checked()
     first_seconds = time.monotonic() - started
+    cold_cpu_seconds = time.process_time() - cold_cpu_start
+    warm_cpu_start = time.process_time()
     started = time.monotonic()
     for _ in range(4):
         assert ac._verified() is not None
     repeated_seconds = time.monotonic() - started
+    warm_cpu_seconds = time.process_time() - warm_cpu_start
+    print(
+        f"v0230 installed topology: cold_wall={first_seconds:.3f}s "
+        f"cold_cpu={cold_cpu_seconds:.3f}s warm4_wall={repeated_seconds:.3f}s "
+        f"warm4_cpu={warm_cpu_seconds:.3f}s "
+        f"instrumentation={json.dumps(_instrumentation_snapshot(), sort_keys=True)}"
+    )
     key_bindings = {
         "settle_and_deliver",
         "settle_with_retry",
@@ -713,16 +742,161 @@ def test_v0230_installed_rendered_sources_are_verified(tmp_path, monkeypatch):
     assert first_seconds < 5.0
     assert repeated_seconds / 4 < first_seconds
     assert repeated_seconds < 2.0
-    print(
-        f"v0230 installed topology: cold={first_seconds:.3f}s, "
-        f"four terminal checks={repeated_seconds:.3f}s"
-    )
     for name in names:
         candidate = tmp_path / ("drift-" + name.replace("/", "_"))
         shutil.copytree(installed, candidate)
         with (candidate / name).open("ab") as stream:
             stream.write(b"\n# unowned drift\n")
         assert source_bytes(candidate, SOURCE_HASHES_0230) is None, name
+
+
+def test_v0230_rendered_digests_match_full_exact_patcher():
+    root = _pinned_root()
+    assert HFC_VERSION == MANIFEST["render_version"] == topology.RENDER_VERSION_0230
+    originals = {
+        name: (root / name).read_bytes()
+        for name in DECOMPOSED_SOURCE_TARGETS
+        if (root / name).is_file()
+    }
+    rendered = decomposed_ownership.render(originals)
+    actual = {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in rendered.items()
+    }
+    assert actual == MANIFEST["rendered_files"]
+    assert topology.EXPECTED_RENDERED_HASHES_0230 == MANIFEST["rendered_files"]
+
+
+def test_v0230_installed_verification_uses_pinned_rendered_sources(tmp_path, monkeypatch):
+    root = _pinned_root()
+    installed = tmp_path / "installed"
+    _copy_sources(root, installed)
+    originals = {
+        name: (installed / name).read_bytes()
+        for name in DECOMPOSED_SOURCE_TARGETS
+        if (installed / name).is_file()
+    }
+    rendered = decomposed_ownership.render(originals)
+    for name, raw in rendered.items():
+        (installed / name).write_bytes(raw)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("runtime verification re-ran the full installer render")
+
+    monkeypatch.setattr(decomposed_ownership, "render", forbidden)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+    assert source_bytes_0230(installed) is not None
+
+    mixed = tmp_path / "mixed"
+    _copy_sources(root, mixed)
+    for name, raw in rendered.items():
+        (mixed / name).write_bytes(raw)
+    (mixed / "gateway/run_turn.py").write_bytes(
+        (root / "gateway/run_turn.py").read_bytes()
+    )
+    assert source_bytes(mixed, SOURCE_HASHES_0230) is None
+    monkeypatch.setattr(topology, "_HFC_VERSION", "5.0.18")
+    assert source_bytes(installed, SOURCE_HASHES_0230) is None
+
+
+def test_v0230_pinned_rendered_sources_reject_relocation_defaults_and_warm_drift(
+    tmp_path, monkeypatch
+):
+    root = _pinned_root()
+    installed = tmp_path / "installed"
+    _copy_sources(root, installed)
+    originals = {
+        name: (installed / name).read_bytes()
+        for name in DECOMPOSED_SOURCE_TARGETS
+        if (installed / name).is_file()
+    }
+    rendered = decomposed_ownership.render(originals)
+    for name, raw in rendered.items():
+        (installed / name).write_bytes(raw)
+    assert source_bytes_0230(installed) is not None
+    with patch.object(topology, "_HFC_VERSION", "5.0.18"):
+        assert source_bytes_0230(installed) is None
+
+    target = "gateway/run_turn_persistence.py"
+    lines = rendered[target].decode().splitlines(keepends=True)
+    start = next(
+        i for i, line in enumerate(lines)
+        if line.strip() == "# HERMES_FEISHU_CARD_COMPLETE_PATCH_BEGIN"
+    )
+    end = next(
+        i for i, line in enumerate(lines)
+        if line.strip() == "# HERMES_FEISHU_CARD_COMPLETE_PATCH_END"
+    ) + 1
+    block = lines[start:end]
+    rest = lines[:start] + lines[end:]
+    helper = next(
+        node for node in ast.walk(ast.parse("".join(rest)))
+        if isinstance(node, ast.AsyncFunctionDef)
+        and node.name == "_hmwa_deliver_turn_response"
+    )
+    moved = "".join(
+        rest[: helper.end_lineno] + block + rest[helper.end_lineno :]
+    ).encode()
+    assert decomposed_ownership._remove_target(target, moved) == (
+        decomposed_ownership._remove_target(target, rendered[target])
+    )
+    assert hashlib.sha256(moved).hexdigest() != MANIFEST["rendered_files"][target]
+    (installed / target).write_bytes(moved)
+    assert source_bytes_0230(installed) is None
+    (installed / target).write_bytes(rendered[target])
+
+    pair = source_bytes_0230(installed)
+    assert pair is not None
+    modules = _build_modules(installed, pair[1])
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    def checked():
+        return topology.verified(
+            installed,
+            modules["gateway.session_ingress"],
+            modules["gateway.session_authority"],
+            topology.SOURCE_HASHES_0230,
+            functions=topology.FUNCTIONS_0230,
+            decorated=topology.DECORATED_0230,
+            optional_modules=topology.OPTIONAL_MODULES_0230,
+        )
+
+    assert checked()
+    persist = modules["gateway.session_runtime_workers"].persist_work_count
+    original_defaults = persist.__defaults__
+    persist.__defaults__ = (object(),)
+    assert not checked()
+    persist.__defaults__ = original_defaults
+    assert checked()
+    claim = modules["hermes_state_runtime"].claim_session_input
+    original_kwdefaults = claim.__kwdefaults__
+    claim.__kwdefaults__ = {**original_kwdefaults, "head": object()}
+    assert not checked()
+    claim.__kwdefaults__ = original_kwdefaults
+    assert checked()
+
+    checked_defaults = 0
+    for module_name, qualified_names in topology.FUNCTIONS_0230.items():
+        raw = pair[1][module_name]
+        tree = topology._parsed_ast(raw)
+        before = ast.dump(tree, include_attributes=True)
+        for qualified in qualified_names:
+            assert topology._expected_function_defaults(
+                raw,
+                qualified,
+                vars(modules[module_name]),
+                str(installed / (module_name.replace(".", "/") + ".py")),
+            ) is not None
+            checked_defaults += 1
+        assert ast.dump(tree, include_attributes=True) == before, module_name
+    assert checked_defaults == 81
+
+    ingress_path = installed / "gateway/session_ingress.py"
+    original = ingress_path.read_bytes()
+    ingress_path.write_bytes(original + b"\n# warm disk mutation\n")
+    assert not checked()
+    ingress_path.write_bytes(original)
+    assert checked()
 
 
 class Port:
