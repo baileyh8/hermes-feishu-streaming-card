@@ -1045,6 +1045,141 @@ def _restore_distribution_direct_url(path: Path, original: bytes | None) -> None
         path.write_bytes(original)
 
 
+def _run_installed_distribution_validation(runtime: Path) -> dict[str, object]:
+    """Exercise the installed package identity verifier without source gates.
+
+    The full probe deliberately checks Hermes Git state before distribution
+    provenance. This direct URL contract needs only the ordinary installed
+    wheel's real distribution validator, so a source probe timeout cannot
+    replace the expected direct URL fault.
+    """
+    code = '''
+import hashlib
+import importlib
+import importlib.metadata
+import json
+import sys
+import sysconfig
+from pathlib import Path
+from hermes_feishu_card.install import native_hooks
+module_origin = Path(native_hooks.__file__).resolve()
+if module_origin.name != "native_hooks.py":
+    raise RuntimeError("installed validator origin unavailable")
+purelib = Path(sysconfig.get_paths()["purelib"]).resolve()
+if module_origin != (
+    purelib / "hermes_feishu_card" / "install" / "native_hooks.py"
+):
+    raise RuntimeError("installed validator origin unavailable")
+package = importlib.import_module("hermes_feishu_card")
+plugin = importlib.import_module("hermes_feishu_card.hermes_plugin")
+package_origin = Path(package.__file__).resolve()
+entrypoint_origin = Path(plugin.__file__).resolve()
+distribution = importlib.metadata.distribution("hermes-feishu-streaming-card")
+dist_path = Path(str(distribution._path)).resolve()
+metadata_path = dist_path
+record_path = Path(
+    str(distribution.locate_file(dist_path.name + "/RECORD"))
+).resolve()
+record_bytes = record_path.read_bytes()
+payload = {
+    "distribution_metadata_path": str(metadata_path),
+    "record_path": str(record_path),
+    "package_origin": str(package_origin),
+    "entrypoint_origin": str(entrypoint_origin),
+    "distribution_version": distribution.version,
+    "record_sha256": "sha256:" + hashlib.sha256(record_bytes).hexdigest(),
+    "loaded_modules": [
+        {
+            "name": "hermes_feishu_card",
+            "origin": str(package_origin),
+        },
+        {
+            "name": "hermes_feishu_card.hermes_plugin",
+            "origin": str(entrypoint_origin),
+        },
+        {
+            "name": "hermes_feishu_card.install.native_hooks",
+            "origin": str(module_origin),
+        },
+    ],
+}
+print(json.dumps({
+    "valid": native_hooks._validate_installed_distribution(payload, purelib),
+    "module_origin": str(module_origin),
+    "package_origin": str(package_origin),
+    "entrypoint_origin": str(entrypoint_origin),
+    "metadata_path": str(metadata_path),
+    "record_path": str(record_path),
+    "distribution_version": payload["distribution_version"],
+}))
+'''
+    completed = subprocess.run(
+        [
+            str(runtime),
+            "-I",
+            "-c",
+            code,
+        ],
+        check=True,
+        cwd=runtime.parents[2],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+        env={"HOME": str(runtime.parents[2])},
+    )
+    result = json.loads(completed.stdout)
+    module_origin = Path(str(result["module_origin"])).resolve()
+    module_origin.relative_to(runtime.parents[1].resolve())
+    for key in ("package_origin", "entrypoint_origin", "metadata_path", "record_path"):
+        Path(str(result[key])).resolve().relative_to(runtime.parents[1].resolve())
+    assert result["distribution_version"] == PACKAGE_VERSION
+    return result
+
+
+def _assert_installed_probe_reason(
+    result: dict[str, object], expected: str
+) -> None:
+    if result["reason_code"] != expected:
+        raise AssertionError(_manager_evidence_diagnostic(result))
+
+
+def test_installed_probe_reason_failure_diagnostic_drops_private_reason():
+    with pytest.raises(AssertionError) as error:
+        _assert_installed_probe_reason(
+            {
+                "reason_code": "PRIVATE_REASON",
+                "source_commit": "private-source-value",
+                "source_probe_failures": [("git_head", "timeout")],
+            },
+            "verified",
+        )
+    assert "PRIVATE_REASON" not in str(error.value)
+    assert "private-source-value" not in str(error.value)
+    assert "unavailable" in str(error.value)
+
+
+def test_installed_distribution_validation_accepts_current_release_tag(
+    installed_fixed_runtime,
+):
+    direct_url_path, original = _replace_distribution_direct_url(
+        installed_fixed_runtime,
+        {
+            "url": "https://github.com/baileyh8/hermes-feishu-streaming-card.git",
+            "vcs_info": {
+                "vcs": "git",
+                "commit_id": "b13fccbf72f912890d452ec0cfc126b0adc07c88",
+                "requested_revision": f"v{PACKAGE_VERSION}",
+            },
+        },
+    )
+    try:
+        result = _run_installed_distribution_validation(installed_fixed_runtime)
+    finally:
+        _restore_distribution_direct_url(direct_url_path, original)
+    assert result["valid"] is True
+
+
 def test_release_git_tag_install_provenance_is_verified(installed_fixed_runtime):
     direct_url_path, original = _replace_distribution_direct_url(
         installed_fixed_runtime,
@@ -1065,7 +1200,7 @@ def test_release_git_tag_install_provenance_is_verified(installed_fixed_runtime)
     finally:
         _restore_distribution_direct_url(direct_url_path, original)
 
-    assert result["reason_code"] == "verified"
+    _assert_installed_probe_reason(result, "verified")
 
 
 @pytest.mark.parametrize(
@@ -1084,7 +1219,7 @@ def test_release_git_tag_install_provenance_is_verified(installed_fixed_runtime)
             "vcs_info": {
                 "vcs": "git",
                 "commit_id": "b13fccbf72f912890d452ec0cfc126b0adc07c88",
-                "requested_revision": "v4.3.1",
+                "requested_revision": f"v{PACKAGE_VERSION}",
             },
         },
         {
@@ -1106,7 +1241,7 @@ def test_release_git_tag_install_provenance_is_verified(installed_fixed_runtime)
             "vcs_info": {
                 "vcs": "git",
                 "commit_id": "b13fccb",
-                "requested_revision": "v4.3.1",
+                "requested_revision": f"v{PACKAGE_VERSION}",
             },
         },
     ],
@@ -1120,11 +1255,11 @@ def test_untrusted_git_install_provenance_is_rejected(
         direct_url,
     )
     try:
-        result = _run_installed_probe(installed_fixed_runtime, FIXED_SOURCE_ROOT)
+        result = _run_installed_distribution_validation(installed_fixed_runtime)
     finally:
         _restore_distribution_direct_url(direct_url_path, original)
 
-    assert result["reason_code"] == "entrypoint_identity_mismatch"
+    assert result["valid"] is False
 
 
 def test_second_review_real_ignored_unchecked_pyc_cannot_influence_probe(
