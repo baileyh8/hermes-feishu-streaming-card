@@ -13,9 +13,15 @@
 
 ## 验收记录
 
-源码与独立审查已验证 completion、31 来源漂移拒绝、已安装补丁及 loaded binding、默认参数、多 owner/重复/迟到回执，以及真实 settlement Task 的正常/取消/unknown 轨迹。旧版相关聚焦回归 800 项通过；缺失本地固定来源的跳过项由 CI 固定矩阵覆盖。4 次热路径 `_verified()` 合计约 0.86–0.97 秒，此数值不是完整 Gateway/model 延迟。
+发布提交为 `d1bd76d5fcdd76cba810ca3b4ede6e1dba0fd877`。[PR #498 完整 CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42168897620) 59/59、[主线精确提交 CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42174054769) 59/59、[annotated tag 门禁](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42178168337) 61/61 均通过；[CodeQL](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42174054777) 通过。支持的 Python、平台、旧上游与 8 个官方镜像场景均保留。PR 末轮曾因 macOS 报告上传 DNS 错误失败，保留原记录后在同一提交单项重跑通过。
 
-普通 wheel 完整安装/恢复事务、精确提交完整跨平台 CI、官方镜像 preserved/cleared、tag、资产与公开安装分别作为发布门禁；最终结果和精确提交见本版 GitHub Release，不以检测 full 代替这些证据。
+普通非 editable wheel 在精确 v0.23.0 的私有环境中完成 install → repair → repeat install → doctor → restore，1 项事务测试通过（70.49 秒），源码与配置恢复逐字节一致。160 个包资源（158 个 Python 文件）与提交、wheel 和安装结果一致。匿名公开 Git tag 安装也通过：版本 5.0.17、`direct_url.json` 的 commit/tag、资源字节和 console `--help` 均符合预期。
+
+公开后的四个资产匿名下载均为 HTTP 200，SHA-256 与 draft 核验副本一致，随后再次通过归档与实际解压检查。
+
+三平台归档校验和、单一顶层目录及 9 文件清单通过。macOS 实际解压至 0700 / 1777 目标时，目录 inode/uid/gid/mode、哨兵和文件字节保持正确；Linux GNU tar 的 root/非 root 验收由 CI 覆盖。
+
+源码与独立审查覆盖 31 来源漂移拒绝、loaded binding/default、多个 owner、重复与迟到回执，以及真实 settlement Task 的正常/取消/unknown 轨迹。本地冷校验约 0.44–0.58 秒，四次热校验约 0.07–0.08 秒；这是校验路径微基准，不是 Gateway/model 或客户端端到端延迟。原有来源拒绝和超时门禁未放宽，详细修正与失败记录见 [#498](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/498)。
 
 报告者 Linux / PM / systemd user / split HOME 现场、真实 Gateway/model 与飞书客户端尚未复测。发布后应通过正常安装器刷新受管 hook，由原服务管理方重启 Gateway，再核对 `/health` 的新版本、generation 和 runtime readiness；不要手改 Hermes 源码或删除保护记录。
 

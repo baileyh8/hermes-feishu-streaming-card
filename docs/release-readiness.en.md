@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.17` for exact Hermes v0.23.0 compatibility (#497). Completion, admission and PM installation contracts are under verification; candidate checks are not publication. See the [release notes](release-notes-v5.0.17.en.md).
+This branch targets `5.0.17`, now published for exact Hermes v0.23.0 compatibility (#497). Full PR/main/tag CI, ordinary-wheel install/restore, public tag installation and anonymous asset downloads passed. Reporter-environment, real Gateway/model and Feishu-client retests remain unverified. See the [release notes](release-notes-v5.0.17.en.md).
 
 ## v5.0.16 historical record
 

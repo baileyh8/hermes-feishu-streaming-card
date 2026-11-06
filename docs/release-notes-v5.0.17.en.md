@@ -13,9 +13,15 @@ This release addresses [#497](https://github.com/baileyh8/hermes-feishu-streamin
 
 ## Acceptance record
 
-Source tests and independent review verify completion, 31-source drift refusal, installed patches and loaded bindings, defaults, multiple owners, duplicate/late receipts, and the actual settlement Task normal/cancel/unknown traces. The older focused regression has 800 passes; missing local pinned-source skips are covered by the CI source matrix. Four hot-path `_verified()` calls take about 0.86–0.97 seconds; this is not complete Gateway/model latency.
+Release commit: `d1bd76d5fcdd76cba810ca3b4ede6e1dba0fd877`. [PR #498 full CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42168897620) passed 59/59 jobs, [exact main-commit CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42174054769) passed 59/59, and the [annotated-tag gate](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42178168337) passed 61/61. [CodeQL](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/42174054777) passed. Supported Python/platform coverage, earlier upstream contracts and all eight official-image cases were retained. A macOS report upload encountered a DNS failure in the final PR run; the failure was preserved and the affected job passed on the same commit after a targeted infrastructure rerun.
 
-Ordinary-wheel installation/restore, exact-commit full platform CI, official-image preserved/cleared acceptance, tag verification, assets and public installation remain separate release gates. Final results and exact commits are recorded in this version’s GitHub Release; detection full is not a substitute.
+The ordinary noneditable wheel completed install → repair → repeat install → doctor → restore against exact v0.23.0 in a private environment: one transaction test passed in 70.49 seconds, with byte-for-byte source/configuration restoration. All 160 package resources (158 Python files) match the commit, wheel and installed files. Anonymous public Git-tag installation also passed: version 5.0.17, the `direct_url.json` commit/tag, resource bytes and console `--help` were verified.
+
+After publication, all four assets returned HTTP 200 without authentication and matched the draft copies by SHA-256; archive and actual-extraction checks passed again.
+
+All three platform archives passed checksums, the single top-level directory and nine-file inventory checks. Actual macOS extraction into 0700 / 1777 targets preserved parent inode/uid/gid/mode, the sentinel and file bytes; Linux GNU tar root/non-root extraction was covered by CI.
+
+Source tests and independent review cover 31-source drift refusal, loaded bindings/defaults, multiple owners, duplicate/late receipts, and actual settlement Task normal/cancel/unknown traces. Local cold checks took about 0.44–0.58 seconds and four warm checks about 0.07–0.08 seconds. These are verifier microbenchmarks, not Gateway/model or client end-to-end latency. Source refusal and timeout gates were not relaxed; [#498](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/498) records the corrections and earlier failures.
 
 The reporter's Linux / PM / systemd user / split-HOME environment, real Gateway/model execution and Feishu clients have not been retested. After publication, refresh managed hooks with the normal installer, restart Gateway through its service owner, and verify the new package version, generation and runtime readiness in `/health`. Do not hand-edit Hermes or delete protection records.
 

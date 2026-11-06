@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.17`；#497 兼容精确 Hermes v0.23.0。完成回调、admission 与 PM 安装契约逐项核验，验收中，不把候选检查记为已发布。见[发行说明](release-notes-v5.0.17.md)。
+本分支目标版本为 `5.0.17`；已发布对精确 Hermes v0.23.0 的 #497 兼容。PR、主线与 tag 完整矩阵、普通 wheel 安装/恢复、公开 tag 安装及匿名资产下载均通过；报告者现场、真实 Gateway/model 与飞书客户端仍待复测。见[发行说明](release-notes-v5.0.17.md)。
 
 ## v5.0.16 历史记录
 
