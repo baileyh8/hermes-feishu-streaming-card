@@ -695,6 +695,7 @@ def test_v0230_installed_rendered_sources_are_verified(tmp_path, monkeypatch):
     topology._COMPILE_CACHE.clear()
     topology._FUNCTION_NODE_CACHE.clear()
     topology._AST_TREE_CACHE.clear()
+    topology._OWNED_REMOVAL_CACHE.clear()
     cold_cpu_start = time.process_time()
     started = time.monotonic()
     assert checked()
@@ -796,6 +797,43 @@ def test_v0230_installed_verification_uses_pinned_rendered_sources(tmp_path, mon
     assert source_bytes(mixed, SOURCE_HASHES_0230) is None
     monkeypatch.setattr(topology, "_HFC_VERSION", "5.0.18")
     assert source_bytes(installed, SOURCE_HASHES_0230) is None
+
+
+def test_v0230_owned_removal_memo_is_pure_and_drift_sensitive(tmp_path, monkeypatch):
+    root = _pinned_root()
+    installed = tmp_path / "installed"
+    _copy_sources(root, installed)
+    originals = {
+        name: (installed / name).read_bytes()
+        for name in DECOMPOSED_SOURCE_TARGETS
+        if (installed / name).is_file()
+    }
+    rendered = decomposed_ownership.render(originals)
+    for name, raw in rendered.items():
+        (installed / name).write_bytes(raw)
+    topology._OWNED_REMOVAL_CACHE.clear()
+    calls = []
+    strict_remove = decomposed_ownership._remove_target
+
+    def counted(target, raw):
+        calls.append((target, hashlib.sha256(raw).hexdigest()))
+        return strict_remove(target, raw)
+
+    monkeypatch.setattr(decomposed_ownership, "_remove_target", counted)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+    first_calls = len(calls)
+    assert first_calls == len(DECOMPOSED_SOURCE_TARGETS)
+    assert len(topology._OWNED_REMOVAL_CACHE) <= 32
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+    assert len(calls) == first_calls
+
+    target = installed / "gateway/run_turn.py"
+    original = target.read_bytes()
+    target.write_bytes(original + b"\n# unowned drift\n")
+    assert source_bytes(installed, SOURCE_HASHES_0230) is None
+    assert len(calls) > first_calls
+    target.write_bytes(original)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
 
 
 def test_v0230_pinned_rendered_sources_reject_relocation_defaults_and_warm_drift(

@@ -222,6 +222,9 @@ _FUNCTION_NODE_CACHE_LOCK = threading.Lock()
 _AST_TREE_CACHE_LIMIT = 64
 _AST_TREE_CACHE: OrderedDict[str, ast.Module] = OrderedDict()
 _AST_TREE_CACHE_LOCK = threading.Lock()
+_OWNED_REMOVAL_CACHE_LIMIT = 32
+_OWNED_REMOVAL_CACHE: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+_OWNED_REMOVAL_CACHE_LOCK = threading.Lock()
 
 
 def _module_path(name: str) -> str:
@@ -260,6 +263,27 @@ def _parsed_ast(source: bytes | str) -> ast.Module:
     return tree
 
 
+def _owned_removal_key(target: str, raw: bytes) -> tuple[str, str]:
+    return (target, sha256(raw).hexdigest())
+
+
+def _cached_owned_removal(key: tuple[str, str]) -> bytes | None:
+    """Reuse a pure normalization result; never cache disk or loaded facts."""
+    with _OWNED_REMOVAL_CACHE_LOCK:
+        cached = _OWNED_REMOVAL_CACHE.get(key)
+        if cached is not None:
+            _OWNED_REMOVAL_CACHE.move_to_end(key)
+            return cached
+    return None
+
+
+def _remember_owned_removal(key: tuple[str, str], original: bytes) -> None:
+    with _OWNED_REMOVAL_CACHE_LOCK:
+        _OWNED_REMOVAL_CACHE[key] = original
+        while len(_OWNED_REMOVAL_CACHE) > _OWNED_REMOVAL_CACHE_LIMIT:
+            _OWNED_REMOVAL_CACHE.popitem(last=False)
+
+
 def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
     """Verify clean or strictly owned rendered sources, and return both forms.
 
@@ -293,12 +317,20 @@ def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] 
             if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
                     != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
                 return None
-            original = (
-                decomposed_ownership._remove_target(owned[name], raw)
-                if name in owned else raw
-            )
-            if sha256(original).hexdigest() != digest:
+            key = None
+            if name in owned:
+                key = _owned_removal_key(owned[name], raw)
+                original = _cached_owned_removal(key)
+                if original is None:
+                    original = decomposed_ownership._remove_target(
+                        owned[name], raw
+                    )
+            else:
+                original = raw
+            if original is None or sha256(original).hexdigest() != digest:
                 return None
+            if key is not None:
+                _remember_owned_removal(key, original)
             originals[name] = original
             installed[name] = raw
         if any(installed[name] != originals[name] for name in SOURCE_HASHES_0230
