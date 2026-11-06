@@ -7,6 +7,10 @@ from .source_layout import (
     DECOMPOSED_TARGETS as DECOMPOSED_TARGETS,
 )
 from . import admission_extraction, stop_cancellation, rate_scope
+
+# Rendering compatibility is independent of package metadata/local build suffixes.
+# Bump this together with the pinned rendered digests whenever hook bytes change.
+RENDER_CONTRACT_VERSION = "completion-native-fallthrough-v1"
 from .gateway_contracts import find_stale_interrupted_location
 from .cron_contracts import (
     find_cron_deliver_body_location as _find_cron_deliver_body_location,
@@ -2317,8 +2321,20 @@ def _find_owned_complete_block(content: str):
     bot_decomposed = _render_decomposed_complete_hook_block(
         indent, newline, bot_reply_note=True
     )
+    # v5.0.13-v5.0.17 scoped blocks predate native fallthrough. Keep their
+    # exact bytes removable/upgradable without accepting arbitrary drift.
+    previous_scoped = []
+    for historical in (
+        unscoped, unscoped_with_anchor, unscoped_decomposed,
+        bot_unscoped, bot_unscoped_with_anchor, bot_unscoped_decomposed,
+    ):
+        scoped = _scope_complete_hook_to_feishu(historical, indent, newline)
+        previous_scoped.extend((
+            scoped, _with_silent_exception_handler(scoped, indent, newline),
+        ))
     actual = lines[begin_index : end_index + 1]
     if actual not in (
+        *previous_scoped,
         unscoped,
         unscoped_with_anchor,
         unscoped_decomposed,
@@ -3008,7 +3024,7 @@ def _scope_complete_hook_to_feishu(block, indent: str, newline: str):
 def _render_complete_hook_block(indent: str, newline: str, *, bot_reply_note: bool = False):
     return _scope_complete_hook_to_feishu(
         _render_unscoped_complete_hook_block(
-            indent, newline, bot_reply_note=bot_reply_note
+            indent, newline, bot_reply_note=bot_reply_note, _native_fallthrough=True
         ),
         indent,
         newline,
@@ -3016,12 +3032,15 @@ def _render_complete_hook_block(indent: str, newline: str, *, bot_reply_note: bo
 
 
 def _render_unscoped_complete_hook_block(
-    indent: str, newline: str, *, bot_reply_note: bool = False
+    indent: str, newline: str, *, bot_reply_note: bool = False,
+    _native_fallthrough: bool = False,
 ):
-    """Historical v5.0.5-v5.0.12 bytes, retained for exact owned migration."""
+    """Retain historical bytes by default; current hooks fall through to Hermes."""
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     deepest_indent = _child_indent(deeper_indent)
+    stage_guard = '_hfc_admission != "native" and ' if _native_fallthrough else ""
+    emit_guard = '_hfc_admission not in ("native", "handoff") and ' if _native_fallthrough else ""
     block = [
         f"{indent}{COMPLETE_PATCH_BEGIN}{newline}",
         f"{indent}try:{newline}",
@@ -3075,14 +3094,20 @@ def _render_unscoped_complete_hook_block(
         f"{deeper_indent}return None{newline}",
         f"{inner_indent}from hermes_feishu_card.hook_runtime import admission_completion_mode as _hfc_admission_mode{newline}",
         f"{inner_indent}_hfc_admission = _hfc_admission_mode(_hfc_completed_locals){newline}",
-        f"{inner_indent}if _hfc_admission == \"native\":{newline}",
-        f"{deeper_indent}return response{newline}",
+        # Fail-open means leave the hook, not the enclosing Hermes method:
+        # its already_sent branch still owns media, footer and failure delivery.
+        *([] if _native_fallthrough else [
+            f"{inner_indent}if _hfc_admission == \"native\":{newline}",
+            f"{deeper_indent}return response{newline}",
+        ]),
         f"{inner_indent}_hfc_exact_staged = False{newline}",
-        f"{inner_indent}if _hfc_can_stage_exact(_hfc_completed_locals):{newline}",
+        f"{inner_indent}if {stage_guard}_hfc_can_stage_exact(_hfc_completed_locals):{newline}",
         f"{deeper_indent}_hfc_exact_staged = await _hfc_stage_exact(_hfc_completed_locals){newline}",
-        f"{inner_indent}if _hfc_admission == \"handoff\" and not _hfc_exact_staged:{newline}",
-        f"{deeper_indent}return response{newline}",
-        f"{inner_indent}if not _hfc_exact_staged:{newline}",
+        *([] if _native_fallthrough else [
+            f"{inner_indent}if _hfc_admission == \"handoff\" and not _hfc_exact_staged:{newline}",
+            f"{deeper_indent}return response{newline}",
+        ]),
+        f"{inner_indent}if {emit_guard}not _hfc_exact_staged:{newline}",
         f"{deeper_indent}_hfc_completed_event = _hfc_build_event(\"message.completed\", _hfc_completed_locals, preview=True){newline}",
         f"{deeper_indent}_hfc_attachments = []{newline}",
         f"{deeper_indent}_hfc_native_delivery = \"allowed\"{newline}",
@@ -3154,7 +3179,7 @@ def _render_complete_hook_block_with_reply_anchor(
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     block = list(_render_unscoped_complete_hook_block(
-        indent, newline, bot_reply_note=bot_reply_note
+        indent, newline, bot_reply_note=bot_reply_note, _native_fallthrough=_scoped
     ))
     anchor_lines = [
         f"{inner_indent}_hfc_completed_message_id = None{newline}",
