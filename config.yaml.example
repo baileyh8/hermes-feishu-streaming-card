@@ -115,6 +115,11 @@ card:
     # Explicit @ mention toggle for the completion notification. Absent =
     # fall back to the global mentions_in_cards switch (absent = enabled).
     mention: true
+    # Only push the notification for turns that lasted at least this many
+    # seconds. 0 (default) notifies on every completed turn. Use this to keep
+    # short question/answer turns quiet while still being told when a long
+    # task finishes. Values must be a number from 0 to 86400.
+    min_duration_seconds: 0
   # Global switch for @ mentions of the initiating Feishu user inside
   # interaction cards (approval / clarify) and in the completion notification.
   # Set to false to disable the feature entirely (this is the master OFF

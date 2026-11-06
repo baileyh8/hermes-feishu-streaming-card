@@ -33,7 +33,10 @@ def test_load_config_defaults_leave_mentions_unset_but_enabled(tmp_path):
     # Defaults must NOT inject a per-kind mapping: an injected mapping would
     # shadow ``mentions_in_cards: false`` after the config merge.
     assert config["card"]["interaction_mentions"] is None
-    assert config["card"]["completion_notify"] == {"enabled": False}
+    assert config["card"]["completion_notify"] == {
+        "enabled": False,
+        "min_duration_seconds": 0,
+    }
     assert card_interaction_mention_enabled(config["card"], kind="clarify") is True
     assert card_interaction_mention_enabled(config["card"], kind="approval") is True
     assert card_completion_mention_enabled(config["card"]) is True
@@ -343,3 +346,51 @@ def test_completion_mention_enabled_honors_legacy_global_switch():
         )
         is False
     )
+
+
+# ---------------------------------------------------------------------------
+# completion_notify.min_duration_seconds
+# ---------------------------------------------------------------------------
+
+
+def test_completion_notify_min_duration_defaults_to_no_gate(tmp_path):
+    config = load_config(tmp_path / "missing.yaml")
+
+    assert config["card"]["completion_notify"]["min_duration_seconds"] == 0
+
+
+def test_completion_notify_min_duration_accepts_number(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"card": {"completion_notify": {"enabled": True, "min_duration_seconds": 60}}}
+        )
+    )
+    config = load_config(path)
+
+    assert config["card"]["completion_notify"]["min_duration_seconds"] == 60
+
+
+@pytest.mark.parametrize("bad", [-1, 90_000, "60", True, float("inf"), float("nan")])
+def test_completion_notify_min_duration_rejects_invalid_values(tmp_path, bad):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {"card": {"completion_notify": {"enabled": True, "min_duration_seconds": bad}}}
+        )
+    )
+
+    with pytest.raises(ValueError):
+        load_config(path)
+
+
+def test_completion_notify_min_duration_absent_keeps_mapping_valid(tmp_path):
+    """A YAML completion_notify mapping replaces the default mapping rather
+    than deep-merging it; an omitted key must stay absent and be read as 0."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump({"card": {"completion_notify": {"enabled": True}}})
+    )
+    config = load_config(path)
+
+    assert config["card"]["completion_notify"] == {"enabled": True}

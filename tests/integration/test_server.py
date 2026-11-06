@@ -8629,6 +8629,212 @@ async def test_completion_notify_rejects_invalid_sender_when_mention_enabled(
         await test_client.close()
 
 
+async def test_completion_notify_skips_turn_shorter_than_min_duration(tmp_path):
+    """min_duration_seconds keeps fast turns quiet."""
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={
+            "completion_notify": {
+                "placement": "message",
+                "enabled": True,
+                "min_duration_seconds": 60,
+            }
+        },
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started",
+                0,
+                {
+                    "sender_open_id": "ou_sender-01",
+                    "reply_to_message_id": "om_user_message",
+                },
+            ),
+        )
+        feishu_client.operations.clear()
+        completed = await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {
+                    "answer": "done",
+                    "duration": 12.0,
+                    "sender_open_id": "ou_sender-01",
+                },
+            ),
+        )
+
+        assert completed.status == 200
+        assert feishu_client.texts == []
+        session = app[SESSIONS_KEY]["hermes-message-1"]
+        # The skipped decision is recorded, so a replay cannot notify later.
+        assert session.completion_notify_state == "sent"
+    finally:
+        await test_client.close()
+
+
+async def test_completion_notify_sends_turn_at_or_above_min_duration(tmp_path):
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={
+            "completion_notify": {
+                "placement": "message",
+                "enabled": True,
+                "min_duration_seconds": 60,
+            }
+        },
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started",
+                0,
+                {
+                    "sender_open_id": "ou_sender-01",
+                    "reply_to_message_id": "om_user_message",
+                },
+            ),
+        )
+        feishu_client.operations.clear()
+        completed = await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {
+                    "answer": "done",
+                    "duration": 61.0,
+                    "sender_open_id": "ou_sender-01",
+                },
+            ),
+        )
+
+        assert completed.status == 200
+        assert feishu_client.texts == [
+            (
+                "oc_abc",
+                '<at user_id="ou_sender-01"></at> ✅ 本轮回复结束（用时 1m1s）',
+                None,
+                "om_user_message",
+            )
+        ]
+        assert app[SESSIONS_KEY]["hermes-message-1"].completion_notify_state == "sent"
+    finally:
+        await test_client.close()
+
+
+async def test_completion_notify_gate_falls_back_to_session_age_without_duration(
+    tmp_path,
+):
+    """Some terminal paths report no duration. A long turn must not be
+    mistaken for a short one -- the session age is the fallback measurement."""
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={
+            "completion_notify": {
+                "placement": "message",
+                "enabled": True,
+                "min_duration_seconds": 60,
+            }
+        },
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started",
+                0,
+                {
+                    "sender_open_id": "ou_sender-01",
+                    "reply_to_message_id": "om_user_message",
+                },
+            ),
+        )
+        app[SESSIONS_KEY]["hermes-message-1"].created_at -= 90.0
+        feishu_client.operations.clear()
+        completed = await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {"answer": "done", "sender_open_id": "ou_sender-01"},
+            ),
+        )
+
+        assert completed.status == 200
+        assert len(feishu_client.texts) == 1
+        assert app[SESSIONS_KEY]["hermes-message-1"].completion_notify_state == "sent"
+    finally:
+        await test_client.close()
+
+
+async def test_completion_notify_zero_min_duration_keeps_every_turn(tmp_path):
+    """An explicit 0 (the default) must behave exactly like the old opt-in."""
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={
+            "completion_notify": {
+                "placement": "message",
+                "enabled": True,
+                "min_duration_seconds": 0,
+            }
+        },
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.started",
+                0,
+                {
+                    "sender_open_id": "ou_sender-01",
+                    "reply_to_message_id": "om_user_message",
+                },
+            ),
+        )
+        feishu_client.operations.clear()
+        await test_client.post(
+            "/events",
+            json=event_payload(
+                "message.completed",
+                1,
+                {
+                    "answer": "done",
+                    "duration": 2.0,
+                    "sender_open_id": "ou_sender-01",
+                },
+            ),
+        )
+
+        assert len(feishu_client.texts) == 1
+    finally:
+        await test_client.close()
+
+
 async def test_completion_notify_preserves_reply_in_thread_without_thread_id(
     tmp_path,
 ):

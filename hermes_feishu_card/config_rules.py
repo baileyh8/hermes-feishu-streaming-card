@@ -136,7 +136,12 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "max_tool_result_chars": 600,
         "table_overflow_mode": "compact",
         "native_tables": False,
-        "completion_notify": {"enabled": False},
+        "completion_notify": {
+            "enabled": False,
+            # Seconds a turn must last before the completion notification is
+            # pushed. 0 (default) keeps the notification on every turn.
+            "min_duration_seconds": 0,
+        },
         # Per-kind @ mention switches in interaction cards (clarify /
         # approval). The default is UNSET (None): the resolving helpers fall
         # back to the legacy global ``mentions_in_cards`` key (when present)
@@ -597,6 +602,26 @@ def normalize_card_config(value: object, *, path: str) -> None:
             notify["mention"] = normalize_boolean(
                 notify["mention"], f"{path}.completion_notify.mention"
             )
+        if "min_duration_seconds" in notify and notify["min_duration_seconds"] is not None:
+            threshold = notify["min_duration_seconds"]
+            # bool is an int subclass: reject it explicitly instead of letting
+            # ``true`` silently mean one second.
+            if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+                raise ValueError(
+                    f"{path}.completion_notify.min_duration_seconds "
+                    "must be a non-negative number"
+                )
+            # This module only imports ``copy`` from the standard library, so
+            # spell out the finite check rather than importing math.
+            if threshold != threshold or threshold in (float("inf"), float("-inf")):
+                raise ValueError(
+                    f"{path}.completion_notify.min_duration_seconds must be finite"
+                )
+            if threshold < 0 or threshold > 86_400:
+                raise ValueError(
+                    f"{path}.completion_notify.min_duration_seconds "
+                    "must be between 0 and 86400"
+                )
 
 
 def normalize_boolean(value: Any, name: str) -> bool:
