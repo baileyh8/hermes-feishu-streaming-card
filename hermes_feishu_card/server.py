@@ -5943,6 +5943,11 @@ async def _maybe_send_completion_notify(
         or session.sender_open_id_rejected
     ):
         return
+    # Synthetic turns (background-process completions, queue markers) carry a
+    # composite ["completion", ...] id and no requester: never send a completion
+    # notice for them, or a topic turn @s twice (in the topic and in the chat).
+    if _is_synthetic_turn(session):
+        return
     if notify_config.get("placement", "message") == "card":
         session.completion_notify_state = "sent"
         return
@@ -5992,6 +5997,12 @@ async def _maybe_send_completion_notify(
         _diagnostic_id_hash(session.sender_open_id, domain="completion-sender"),
         _diagnostic_id_hash(session_key, domain="completion-session"),
     )
+
+
+def _is_synthetic_turn(session: CardSession) -> bool:
+    """Queue/process-completion turns carry a JSON-array id, not a Feishu one."""
+    message_id = session.message_id
+    return isinstance(message_id, str) and message_id.lstrip().startswith("[")
 
 
 async def _completion_mention_open_id(client: Any, session: CardSession) -> str:

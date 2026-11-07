@@ -587,3 +587,21 @@ async def test_animation_updates_do_not_retry_failed_recalls_without_a_cooldown(
         await server._send_card_for_app(app, "oc_fixture", {}, "work:alpha")
         await drain()
         assert fake.deleted == ["om_notice"]
+
+
+@pytest.mark.asyncio
+async def test_completion_notify_skips_synthetic_turns():
+    """Background-process completions must not add a second @ for the same topic."""
+    app, clients = app_with_clients()
+    fake = clients["work", "alpha"]
+    session = CardSession("omt_target", '["completion","proc_fixture",1794068840.3]',
+                          "oc_fixture", status="completed")
+    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
+    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+        "completion_notify": {"enabled": True, "mention": False},
+    }
+    async with TestClient(TestServer(app)) as http:
+        await server._maybe_send_completion_notify(app, "work:om_user", session, _completed_event())
+        await drain()
+    assert fake.texts == []
+    assert session.completion_notify_state == "idle"
