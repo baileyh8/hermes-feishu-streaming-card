@@ -206,6 +206,10 @@ class CardSession:
     execution_scope: str = ""
     chat_type: str = ""
     sender_open_id: str = ""
+    # Tenant-scoped Feishu user_id from the gateway's admission identity. The
+    # mention target (``ou_``) is app-scoped and not always on the event, so it
+    # is resolved from this on demand; the tenant id itself is never a mention.
+    sender_user_id: str = ""
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
@@ -306,6 +310,9 @@ class CardSession:
             if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
                     and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
                 self.sender_name = sender_name
+        sender_user_id = event.data.get("admission_user_id")
+        if (type(sender_user_id) is str and 0 < len(sender_user_id.strip()) <= 256):
+            self.sender_user_id = sender_user_id.strip()
         # Card-action callbacks are authenticated out-of-band transitions. They
         # may complete an interaction while Hermes is already preparing the next
         # batch clarify request, so they must not consume the transport sequence

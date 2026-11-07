@@ -28,6 +28,7 @@ class Client:
         self.fail_update = False
         self.before_update = None
         self.texts = []
+        self.resolve_open_id = None
 
     async def send_card(self, chat_id, card, **kwargs):
         if self.before_send:
@@ -392,6 +393,55 @@ async def test_completion_notification_waits_for_success_and_keeps_the_receipt()
         assert len(fake.texts) == 1
         assert "本轮回复结束" in fake.texts[0][1]
         assert clients["default", "alpha"].deleted == []
+
+
+def _completed_event():
+    return SidecarEvent.from_dict({
+        "schema_version": "1", "event": "message.completed", "platform": "feishu",
+        "conversation_id": "omt_target", "message_id": "om_user", "chat_id": "oc_fixture",
+        "sequence": 2, "created_at": time.time(), "data": {"profile_id": "work"},
+    })
+
+
+@pytest.mark.asyncio
+async def test_completion_notify_resolves_mention_from_tenant_user_id():
+    """Newer gateway events carry only the tenant user_id; the open_id is looked up."""
+    app, clients = app_with_clients()
+    fake = clients["work", "alpha"]
+
+    async def resolve(user_id):
+        return "ou_resolved" if user_id == "u_tenant" else ""
+
+    fake.resolve_open_id = resolve
+    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
+                          sender_user_id="u_tenant")
+    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
+    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+        "completion_notify": {"enabled": True, "mention": True},
+    }
+    async with TestClient(TestServer(app)) as http:
+        await server._maybe_send_completion_notify(app, "work:om_user", session, _completed_event())
+        await drain()
+    assert len(fake.texts) == 1
+    assert '<at user_id="ou_resolved"></at>' in fake.texts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_completion_notify_sends_without_mention_when_identity_missing():
+    """An unresolvable mention must not swallow the completion notification."""
+    app, clients = app_with_clients()
+    fake = clients["work", "alpha"]
+    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed")
+    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
+    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+        "completion_notify": {"enabled": True, "mention": True},
+    }
+    async with TestClient(TestServer(app)) as http:
+        await server._maybe_send_completion_notify(app, "work:om_user", session, _completed_event())
+        await drain()
+    assert len(fake.texts) == 1
+    assert "<at " not in fake.texts[0][1]
+    assert "本轮回复结束" in fake.texts[0][1]
 
 
 @pytest.mark.asyncio
