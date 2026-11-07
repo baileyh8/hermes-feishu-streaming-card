@@ -210,6 +210,9 @@ class CardSession:
     # mention target (``ou_``) is app-scoped and not always on the event, so it
     # is resolved from this on demand; the tenant id itself is never a mention.
     sender_user_id: str = ""
+    # True when an event claimed a sender id that is not a valid Feishu open_id
+    # (spoof signal): the completion notice is suppressed instead of degraded.
+    sender_open_id_rejected: bool = False
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
@@ -301,7 +304,8 @@ class CardSession:
         chat_type = event.data.get("chat_type")
         if isinstance(chat_type, str) and chat_type.strip().lower() in {"group", "dm", "p2p", "private"}:
             self.chat_type = chat_type.strip().lower()
-        sender_open_id = _exact_feishu_open_id(event.data.get("sender_open_id"))
+        raw_sender_open_id = event.data.get("sender_open_id")
+        sender_open_id = _exact_feishu_open_id(raw_sender_open_id)
         if sender_open_id:
             if self.sender_open_id != sender_open_id:
                 self.sender_name = ""
@@ -310,6 +314,10 @@ class CardSession:
             if (isinstance(sender_name, str) and 0 < len(sender_name) <= 80
                     and not any(ord(c) < 32 or c in "<>" for c in sender_name)):
                 self.sender_name = sender_name
+        elif type(raw_sender_open_id) is str and raw_sender_open_id:
+            # A claimed but unparseable requester id is treated as spoofing:
+            # the completion notice is suppressed rather than falling back.
+            self.sender_open_id_rejected = True
         sender_user_id = event.data.get("admission_user_id")
         if (type(sender_user_id) is str and 0 < len(sender_user_id.strip()) <= 256):
             self.sender_user_id = sender_user_id.strip()

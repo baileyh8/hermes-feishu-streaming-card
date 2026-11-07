@@ -5939,6 +5939,8 @@ async def _maybe_send_completion_notify(
         or session.status != "completed"
         or session.delivery_kind != "chat"
         or session.completion_notify_state != "idle"
+        # A claimed-but-invalid sender is a spoof signal: send nothing at all.
+        or session.sender_open_id_rejected
     ):
         return
     if notify_config.get("placement", "message") == "card":
@@ -5965,16 +5967,12 @@ async def _maybe_send_completion_notify(
     )
     notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     try:
-        # Feishu rejects thread placement without a reply anchor, and the
-        # completion notice must reach the chat either way.
-        send_kwargs: dict[str, Any] = {}
-        thread_id = _thread_id_for_event(event)
-        reply_to = session.reply_to_message_id
-        if thread_id and reply_to:
-            send_kwargs["thread_id"] = thread_id
-            send_kwargs["reply_to_message_id"] = reply_to
-            if session.reply_in_thread:
-                send_kwargs["reply_in_thread"] = True
+        send_kwargs: dict[str, Any] = {
+            "thread_id": _thread_id_for_event(event) or None,
+            "reply_to_message_id": session.reply_to_message_id or None,
+        }
+        if session.reply_in_thread:
+            send_kwargs["reply_in_thread"] = True
         sent_message_id = await send_text(session.chat_id, text, **send_kwargs)
     except asyncio.CancelledError:
         session.completion_notify_state = "idle"

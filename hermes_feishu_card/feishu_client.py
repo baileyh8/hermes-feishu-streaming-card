@@ -394,7 +394,10 @@ class FeishuClient:
         if (thread_id or reply_in_thread) and (
             not isinstance(reply_to_message_id, str) or not reply_to_message_id.strip()
         ):
-            raise ValueError("reply_to_message_id is required for thread placement")
+            # Feishu can only place a message inside a topic by replying to an
+            # anchor. Without one, deliver to the chat rather than dropping it.
+            thread_id = None
+            reply_in_thread = False
 
         token = await self._tenant_token()
         content = json.dumps({"text": text}, ensure_ascii=False)
@@ -518,7 +521,10 @@ class FeishuClient:
                 open_id = candidate
         except Exception:
             open_id = ""
-        self._open_id_cache[key] = open_id
+        if open_id:
+            # Failures stay uncached: a timeout or 429 must not pin the
+            # requester as permanently unmentionable for this process.
+            self._open_id_cache[key] = open_id
         return open_id
 
     async def _request_json(

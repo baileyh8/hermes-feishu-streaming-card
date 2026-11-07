@@ -117,3 +117,10 @@ def test_auxiliary_payload_is_bounded_and_validated_again_when_loading(tmp_path)
         allow_nan=False, sort_keys=True).encode()).hexdigest()
     path.write_text(json.dumps(envelope))
     assert store.load() == []
+
+
+def test_sender_user_id_is_not_persisted_in_the_v1_checkpoint():
+    # Derived from every gateway event; persisting it would change the v1
+    # field set and make old/new checkpoints unreadable in both directions.
+    from hermes_feishu_card.session_store import _FIELDS
+    assert 'sender_user_id' not in _FIELDS
