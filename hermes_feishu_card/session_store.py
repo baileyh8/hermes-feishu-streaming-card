@@ -20,7 +20,10 @@ MAX_RECORDS = 128
 RETENTION_SECONDS = 24 * 3600
 _EXCLUDED = {'tools', 'timeline', 'thinking_normalizer', 'answer_normalizer',
              'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id', '_process_activity',
-             'presentation_state', 'observation'}
+             'presentation_state', 'observation',
+             # Supplied by every gateway event; persisting them would change the
+             # v1 checkpoint field set and strand records in both directions.
+             'sender_user_id', 'sender_open_id_rejected'}
 _FIELDS = {f.name for f in fields(CardSession)} - _EXCLUDED
 
 

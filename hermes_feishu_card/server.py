@@ -5928,11 +5928,10 @@ async def _maybe_send_completion_notify(
         if type(card_config) is dict
         else None
     )
-    # The @ mention is optional: when disabled (completion_notify.mention=false
-    # or the global mentions_in_cards off switch), the plain completion
-    # notification must be sent even without a (valid) sender open_id --
-    # system/background turns have no requester to mention. Only when the
-    # mention is enabled do we require and validate the sender open_id.
+    # The @ mention is optional: the notification itself must be sent even when
+    # no mention target resolves. System/background turns have no requester to
+    # mention, and newer gateway events carry only the tenant user_id, so the
+    # open_id is resolved below and a failed lookup must not swallow the notice.
     mention_enabled = card_completion_mention_enabled(card_config)
     if (
         type(notify_config) is not dict
@@ -5940,14 +5939,14 @@ async def _maybe_send_completion_notify(
         or session.status != "completed"
         or session.delivery_kind != "chat"
         or session.completion_notify_state != "idle"
-        or (
-            mention_enabled
-            and re.fullmatch(
-                r"ou_[A-Za-z0-9_-]{1,128}", session.sender_open_id
-            )
-            is None
-        )
+        # A claimed-but-invalid sender is a spoof signal: send nothing at all.
+        or session.sender_open_id_rejected
     ):
+        return
+    # Synthetic turns (background-process completions, queue markers) carry a
+    # composite ["completion", ...] id and no requester: never send a completion
+    # notice for them, or a topic turn @s twice (in the topic and in the chat).
+    if _is_synthetic_turn(session):
         return
     if notify_config.get("placement", "message") == "card":
         session.completion_notify_state = "sent"
@@ -5961,10 +5960,9 @@ async def _maybe_send_completion_notify(
     session.completion_notify_state = "sending"
     duration_text = _format_duration(session.duration) if session.duration > 0 else ""
     suffix = f"（用时 {duration_text}）" if duration_text else ""
+    mention_open_id = await _completion_mention_open_id(client, session) if mention_enabled else ""
     mention_prefix = (
-        f'<at user_id="{session.sender_open_id}"></at> '
-        if mention_enabled
-        else ""
+        f'<at user_id="{mention_open_id}"></at> ' if mention_open_id else ""
     )
     text = f"{mention_prefix}✅ 本轮回复结束{suffix}"
     notice_scope = _restart_notice_scope(
@@ -5999,6 +5997,26 @@ async def _maybe_send_completion_notify(
         _diagnostic_id_hash(session.sender_open_id, domain="completion-sender"),
         _diagnostic_id_hash(session_key, domain="completion-session"),
     )
+
+
+def _is_synthetic_turn(session: CardSession) -> bool:
+    """Queue/process-completion turns carry a JSON-array id, not a Feishu one."""
+    message_id = session.message_id
+    return isinstance(message_id, str) and message_id.lstrip().startswith("[")
+
+
+async def _completion_mention_open_id(client: Any, session: CardSession) -> str:
+    """Resolve the requester's open_id; "" means send the notice unmentioned."""
+    if re.fullmatch(r"ou_[A-Za-z0-9_-]{1,128}", session.sender_open_id):
+        return session.sender_open_id
+    resolver: Any = getattr(client, "resolve_open_id", None)
+    if not callable(resolver):
+        return ""
+    try:
+        resolved = await resolver(session.sender_user_id)
+    except Exception:
+        return ""
+    return resolved if isinstance(resolved, str) else ""
 
 
 def _post_terminal_cleanup(
