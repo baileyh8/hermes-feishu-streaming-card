@@ -502,7 +502,7 @@ def _verified_contextmanager(function: object, *, synchronous: bool) -> object |
     """Return only the single generator held by an exact contextlib wrapper."""
     if not inspect.isfunction(function):
         return None
-    wrapped = getattr(function, "__wrapped__", None)
+    wrapped: object | None = getattr(function, "__wrapped__", None)
     expected_wrapper: Any
     if synchronous:
         if not inspect.isgeneratorfunction(wrapped):
@@ -512,13 +512,17 @@ def _verified_contextmanager(function: object, *, synchronous: bool) -> object |
         if not inspect.isasyncgenfunction(wrapped):
             return None
         expected_wrapper = asynccontextmanager(wrapped)
+    # An `is not` against the Any-typed cell_contents would re-narrow
+    # `wrapped` to Any; compare through a typed alias to keep its declared
+    # object|None type for the final return.
+    wrapped_cell: object | None = wrapped
     if (function.__code__ is not expected_wrapper.__code__
             or function.__globals__ is not expected_wrapper.__globals__
             or function.__defaults__ is not expected_wrapper.__defaults__
             or function.__kwdefaults__ is not expected_wrapper.__kwdefaults__
             or function.__closure__ is None
             or len(function.__closure__) != 1
-            or function.__closure__[0].cell_contents is not wrapped):
+            or function.__closure__[0].cell_contents is not wrapped_cell):
         return None
     return wrapped
 

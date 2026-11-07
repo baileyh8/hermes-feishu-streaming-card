@@ -2071,7 +2071,9 @@ def test_complete_hook_block_contains_suppression_guard():
     assert "_hfc_attachments" in block
     assert "can_stage_exact_base_completion as _hfc_can_stage_exact" in block
     assert "stage_message_completed_from_hermes_locals_async as _hfc_stage_exact" in block
-    assert "if not _hfc_exact_staged:" in block
+    assert 'if _hfc_admission != "native" and _hfc_can_stage_exact(_hfc_completed_locals):' in block
+    assert 'if _hfc_admission not in ("native", "handoff") and not _hfc_exact_staged:' in block
+    assert "if _hfc_admission ==" not in block
     assert "return None" in block
 
 
