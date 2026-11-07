@@ -28,6 +28,7 @@ class Client:
         self.fail_update = False
         self.before_update = None
         self.texts = []
+        self.text_kwargs = []
         self.resolve_open_id = None
 
     async def send_card(self, chat_id, card, **kwargs):
@@ -50,6 +51,7 @@ class Client:
         if self.fail_send:
             raise FeishuAPIError("fixture text refusal", outcome="not_sent")
         self.texts.append((chat_id, text))
+        self.text_kwargs.append(kwargs)
         return f"om_text_{len(self.texts)}"
 
     async def delete_message(self, message_id):
@@ -442,6 +444,30 @@ async def test_completion_notify_sends_without_mention_when_identity_missing():
     assert len(fake.texts) == 1
     assert "<at " not in fake.texts[0][1]
     assert "本轮回复结束" in fake.texts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_completion_notify_without_reply_anchor_skips_thread_placement():
+    """A topic without a reply anchor must still deliver (thread kwargs need both)."""
+    app, clients = app_with_clients()
+    fake = clients["work", "alpha"]
+    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed")
+    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
+    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+        "completion_notify": {"enabled": True, "mention": False},
+    }
+    event = SidecarEvent.from_dict({
+        "schema_version": "1", "event": "message.completed", "platform": "feishu",
+        "conversation_id": "omt_target", "message_id": "om_user", "chat_id": "oc_fixture",
+        "sequence": 2, "created_at": time.time(),
+        "data": {"profile_id": "work", "thread_id": "omt_target"},
+    })
+    async with TestClient(TestServer(app)) as http:
+        await server._maybe_send_completion_notify(app, "work:om_user", session, event)
+        await drain()
+    assert len(fake.texts) == 1
+    assert fake.text_kwargs[0].get("thread_id") is None
+    assert fake.text_kwargs[0].get("reply_to_message_id") is None
 
 
 @pytest.mark.asyncio
