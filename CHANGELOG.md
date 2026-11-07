@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.18 — 2026-11-07
+
+- Fix real-delivery on exact Hermes v0.23.0 (#497/#504): the explicitly registered sync `@contextmanager` helper (`gateway.session_ingress_media.capture_lease`) is now verified as the exact contextlib wrapper, and a native/handoff fallback that leaves the hook returns control to Hermes so `already_sent`, media, footer and failure delivery stay in the core path; degraded turns no longer duplicate the full body.
+- Fix self-managed PM installation (#503): the plugin visibility probe runs on the store interpreter the official bootstrap relaunches to; resolution failures keep the bound-runtime probe and every refusal, and unreadable output is still rejected.
+- Carry the verified #505 renderer-contract decoupling from package metadata, with pinned render digests and exact legacy hook migration retained.
+
 ## v5.0.17 — 2026-11-06
 
 - Add exact Hermes v0.23.0 completion-wrapper, admission dependency and PM writer/launch contracts (#497). Retain bot-loop bookkeeping, native ownership, single-use completion and unknown-source refusal.
