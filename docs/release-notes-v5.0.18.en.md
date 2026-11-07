@@ -12,7 +12,7 @@ For [#504](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/504) 
 
 ## Acceptance
 
-(Filled before release: full CI, exact-commit matrix, ordinary-wheel install/restore, public tag installation and asset verification links and results.)
+The release commit is 4b823e39d6fce031b9d0a5ce579c13162e76834a (merge of PR #506). PR #506 full CI 59/59, main exact-commit CI 59/59, annotated tag gate 61/61, and CodeQL all passed. Supported Python 3.9-3.14, three platforms, prior upstream matrices and the 8 official-image scenes are retained. Three-platform archive checksums, single top-level directory, 9-file manifest and the macOS real-extraction checks (0700/1777 targets, normalized modes, byte-identical files) passed. Reporter-environment (self-managed PM / real v0.23.0 turns), real Gateway/model and Feishu-client retests remain unverified. After upgrading, refresh the managed hook through the normal installer and restart Gateway through its service owner, then verify the new version, generation and runtime readiness in /health. Do not hand-edit Hermes source or delete protection records.
 
 ## Credits
 

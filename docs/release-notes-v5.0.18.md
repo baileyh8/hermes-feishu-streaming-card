@@ -12,7 +12,7 @@
 
 ## 验收记录
 
-（发布前填写：完整 CI、精确提交矩阵、普通 wheel 安装/恢复、公开 tag 安装与资产校验的链接与结果。）
+发布提交为 4b823e39d6fce031b9d0a5ce579c13162e76834a（merge of PR #506）。PR #506 完整 CI 59/59、主线精确提交 CI 59/59、annotated tag 门禁 61/61、CodeQL 均通过。支持的 Python 3.9–3.14、三平台、旧上游矩阵与 8 个官方镜像场景全部保留。三平台归档 checksums、单一顶层目录、9 文件清单与 macOS 实际解压（0700/1777 目标、目录/权限归一、字节一致）已通过。报告者现场（自管理 PM / v0.23.0 真实回合）、真实 Gateway/model 与飞书客户端尚未复测。发布后应通过正常安装器刷新受管 hook，由原服务管理方重启 Gateway，再核对 /health 的新版本、generation 与 runtime readiness；不要手改 Hermes 源码或删除保护记录。
 
 ## 贡献
 
