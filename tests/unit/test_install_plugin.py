@@ -805,6 +805,47 @@ def test_official_enable_visibility_probe_skips_non_pm_checkouts(tmp_path, monke
     assert plugin._official_enable_visibility_note(binding) is None
 
 
+def test_official_probe_interpreter_resolution_failure_keeps_venv(tmp_path, monkeypatch):
+    """Resolution is an optimization, never a bypass: any failure keeps the
+    existing probe/refusal behavior on the bound runtime python."""
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+
+    def refuse(*args, **kwargs):
+        raise OSError("resolution unavailable")
+
+    monkeypatch.setattr(plugin.subprocess, "run", refuse)
+
+    assert plugin._official_probe_interpreter(binding) is None
+
+
+def test_official_probe_interpreter_rejects_relative_and_missing(tmp_path, monkeypatch):
+    binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
+
+    def fake_run(argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="relative/python\n", stderr="")
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+    assert plugin._official_probe_interpreter(binding) is None
+
+    def missing_run(argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=str(tmp_path / "no-python") + "\n", stderr="")
+
+    monkeypatch.setattr(plugin.subprocess, "run", missing_run)
+    assert plugin._official_probe_interpreter(binding) is None
+
+    def multi_run(argv, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="/usr/bin/python3\n/usr/bin/python3\n", stderr="")
+
+    monkeypatch.setattr(plugin.subprocess, "run", multi_run)
+    assert plugin._official_probe_interpreter(binding) is None
+
+    def failed_run(argv, **kwargs):
+        return SimpleNamespace(returncode=4, stdout="", stderr="none\n")
+
+    monkeypatch.setattr(plugin.subprocess, "run", failed_run)
+    assert plugin._official_probe_interpreter(binding) is None
+
+
 def test_official_enable_visibility_probe_refuses_unresolvable_plugin(tmp_path, monkeypatch):
     binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
     pm_dir = binding.checkout_root / "pm"

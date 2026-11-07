@@ -32,7 +32,7 @@ import pytest
 from hermes_feishu_card import admission_completion as ac
 from hermes_feishu_card import admission_topology_0226 as topology
 from hermes_feishu_card import hook_runtime as h
-from hermes_feishu_card import __version__ as HFC_VERSION
+from hermes_feishu_card.install.patcher import RENDER_CONTRACT_VERSION
 from hermes_feishu_card.admission_completion import _compiled_code
 from hermes_feishu_card.admission_topology_0226 import (
     SOURCE_HASHES_0230,
@@ -626,6 +626,8 @@ def _build_modules(root: Path, sources: dict[str, bytes]) -> dict[str, ModuleTyp
             function.__kwdefaults__ = expected[1] or None
             if (name, qualified) in topology.DECORATED_0230:
                 function = contextlib.asynccontextmanager(function)
+            elif (name, qualified) in topology.SYNC_DECORATED_0230:
+                function = contextlib.contextmanager(function)
             if owner:
                 if not hasattr(module, owner):
                     setattr(module, owner, type(owner, (), {}))
@@ -753,7 +755,7 @@ def test_v0230_installed_rendered_sources_are_verified(tmp_path, monkeypatch):
 
 def test_v0230_rendered_digests_match_full_exact_patcher():
     root = _pinned_root()
-    assert HFC_VERSION == MANIFEST["render_version"] == topology.RENDER_VERSION_0230
+    assert RENDER_CONTRACT_VERSION == MANIFEST["render_version"] == topology.RENDER_VERSION_0230
     originals = {
         name: (root / name).read_bytes()
         for name in DECOMPOSED_SOURCE_TARGETS

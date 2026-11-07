@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import ast
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import builtins
 from hashlib import sha256
 import sys
@@ -14,7 +14,7 @@ import threading
 from types import CodeType, ModuleType
 from typing import Any, cast
 
-from . import __version__ as _HFC_VERSION
+from .install.patcher import RENDER_CONTRACT_VERSION as _HFC_VERSION
 
 SOURCE_HASHES = {
     "gateway.platforms.base": "ad064118a29bbe6d0d33424fbcde01484305a501aef4aa2584f5808c9b399a3d",
@@ -85,12 +85,12 @@ CORE_HASHES_0230 = {name: SOURCE_HASHES_0230[name] for name in (
 # clean v0.23.0 sources and HFC 5.0.17. A full installer render is too costly
 # on a terminal admission request; the project test proves these hashes are
 # byte-for-byte equivalent to that render and rejects mixed/drifted files.
-RENDER_VERSION_0230 = "5.0.17"
+RENDER_VERSION_0230 = "completion-native-fallthrough-v1"
 EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run.py": "f2eabc2972822df232375a4e32b22e79daafcec9bc2f66a6cfb305c255cf11d3",
     "gateway/run_background.py": "7702a2b46dd13acfe82c2bbc0fecff63761498ba0ca257fcddcf21cea0288f54",
     "gateway/run_turn.py": "1dabfdfca3011509df7a7cc5d36a5ef6f05cce848982d7bc295fe795f0cfe731",
-    "gateway/run_turn_persistence.py": "02ed65aafda9716548b12aead376772d2ee310336251affc6238667860d2642f",
+    "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_runner.py": "e26c9d13c04c5821730aafb2583b8d36acbaa8e149d768817b89a1d7235d21f2",
@@ -182,6 +182,11 @@ _FUNCTIONS_0230 = {
 }
 FUNCTIONS_0230 = _FUNCTIONS_0230
 DECORATED_0230 = _DECORATED
+# Only this pinned helper uses the synchronous contextlib wrapper. Never unwrap
+# arbitrary __wrapped__ chains, or treat every generator as a context manager.
+SYNC_DECORATED_0230 = frozenset({
+    ("gateway.session_ingress_media", "capture_lease"),
+})
 # These modules are imported lazily by the pinned settlement path. Their source
 # bytes are always checked; loaded bindings are checked as soon as they exist.
 OPTIONAL_MODULES_0230 = frozenset({
@@ -493,6 +498,35 @@ def source_bytes(
         return None
 
 
+def _verified_contextmanager(function: object, *, synchronous: bool) -> object | None:
+    """Return only the single generator held by an exact contextlib wrapper."""
+    if not inspect.isfunction(function):
+        return None
+    wrapped: object | None = getattr(function, "__wrapped__", None)
+    expected_wrapper: Any
+    if synchronous:
+        if not inspect.isgeneratorfunction(wrapped):
+            return None
+        expected_wrapper = contextmanager(wrapped)
+    else:
+        if not inspect.isasyncgenfunction(wrapped):
+            return None
+        expected_wrapper = asynccontextmanager(wrapped)
+    # An `is not` against the Any-typed cell_contents would re-narrow
+    # `wrapped` to Any; compare through a typed alias to keep its declared
+    # object|None type for the final return.
+    wrapped_cell: object | None = wrapped
+    if (function.__code__ is not expected_wrapper.__code__
+            or function.__globals__ is not expected_wrapper.__globals__
+            or function.__defaults__ is not expected_wrapper.__defaults__
+            or function.__kwdefaults__ is not expected_wrapper.__kwdefaults__
+            or function.__closure__ is None
+            or len(function.__closure__) != 1
+            or function.__closure__[0].cell_contents is not wrapped_cell):
+        return None
+    return wrapped
+
+
 def verified(
     root: Path, ingress: ModuleType, authority: ModuleType,
     expected: dict[str, str] | None = None,
@@ -500,7 +534,7 @@ def verified(
     decorated: set[tuple[str, str]] | None = None,
     optional_modules: frozenset[str] = frozenset(),
 ) -> bool:
-    """Bind actual loaded helpers, including asynccontextmanager closure identity."""
+    """Bind loaded helpers and their explicitly registered contextlib wrappers."""
     from .admission_completion import _claim_frame, _compiled_code, _shape
 
     if expected == SOURCE_HASHES_0230:
@@ -516,6 +550,9 @@ def verified(
         code_sources = legacy_sources
     functions = _FUNCTIONS if functions is None else functions
     decorated = _DECORATED if decorated is None else decorated
+    sync_decorated = (
+        SYNC_DECORATED_0230 if expected == SOURCE_HASHES_0230 else frozenset()
+    )
     modules = {"gateway.session_ingress": ingress, "gateway.session_authority": authority}
     try:
         for name, raw in sources.items():
@@ -547,18 +584,12 @@ def verified(
             for qualified in functions[name]:
                 owner, _, function_name = qualified.rpartition(".")
                 function = getattr(getattr(module, owner) if owner else module, function_name)
-                if (name, qualified) in decorated:
-                    wrapped = getattr(function, "__wrapped__", None)
-                    if not inspect.isasyncgenfunction(wrapped):
-                        return False
-                    expected_wrapper = asynccontextmanager(wrapped)
-                    if (function.__code__ is not expected_wrapper.__code__
-                            or function.__globals__ is not expected_wrapper.__globals__
-                            or function.__defaults__ != expected_wrapper.__defaults__
-                            or function.__kwdefaults__ != expected_wrapper.__kwdefaults__
-                            or function.__closure__ is None
-                            or len(function.__closure__) != 1
-                            or function.__closure__[0].cell_contents is not wrapped):
+                key = (name, qualified)
+                if key in decorated or key in sync_decorated:
+                    wrapped = _verified_contextmanager(
+                        function, synchronous=key in sync_decorated
+                    )
+                    if wrapped is None:
                         return False
                     function = wrapped
                 expected_defaults = _expected_function_defaults(

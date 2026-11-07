@@ -35,6 +35,23 @@ _OFFICIAL_ENABLE_BOOTSTRAP = (
     "sys.argv[0] = 'hermes'\n"
     "runpy.run_module('hermes_cli.main', run_name='__main__')\n"
 )
+# Self-managed checkouts may relaunch to the store interpreter before the CLI
+# body runs (official hermes_bootstrap os.execv). The visibility probe must run
+# on that same startup interpreter or its trailing JSON is lost. Resolution
+# happens in its own tiny child that never imports hermes_bootstrap, so the
+# exec cannot replace it. Any resolution failure keeps the existing refusal.
+_OFFICIAL_ENABLE_RESOLVE_SCRIPT = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "root = Path(sys.argv.pop(1))\n"
+    "sys.path.insert(0, str(root))\n"
+    "from hermes_cli._launchers import resolve_store_python\n"
+    "python = resolve_store_python(root)\n"
+    "if python is None:\n"
+    "    raise SystemExit(4)\n"
+    "import os\n"
+    "print(os.path.abspath(python))\n"
+)
 _OFFICIAL_ENABLE_PROBE_SCRIPT = (
     "import json, runpy, sys\n"
     "root = sys.argv.pop(1)\n"
@@ -806,6 +823,45 @@ def _official_probe_payload(stdout: str | bytes | None) -> dict[str, object] | N
     return None
 
 
+def _official_probe_interpreter(binding: HermesRuntimeBinding) -> Path | None:
+    """The interpreter the official CLI would actually start on, if resolvable."""
+    from .plugin_config_bytes import isolated_child_env
+
+    try:
+        completed = subprocess.run(
+            [
+                str(binding.runtime_python),
+                "-I",
+                "-c",
+                _OFFICIAL_ENABLE_RESOLVE_SCRIPT,
+                str(binding.checkout_root),
+            ],
+            cwd=str(binding.checkout_root),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            env=isolated_child_env(
+                binding.hermes_home,
+                install_root=binding.checkout_root,
+                include_path=True,
+            ),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    lines = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
+    if len(lines) != 1:
+        return None
+    candidate = Path(lines[0])
+    if not candidate.is_absolute() or not candidate.is_file():
+        return None
+    return candidate
+
+
 def _official_probe_refusal(
     category: str,
     stdout: str | bytes | None,
@@ -828,10 +884,12 @@ def _official_enable_visibility_note(binding: HermesRuntimeBinding) -> str | Non
         return "probe incomplete (error=metadata-unavailable)"
     from .plugin_config_bytes import isolated_child_env
 
+    probe_python = _official_probe_interpreter(binding) or binding.runtime_python
+
     try:
         completed = subprocess.run(
             [
-                str(binding.runtime_python),
+                str(probe_python),
                 "-I",
                 "-c",
                 _OFFICIAL_ENABLE_PROBE_SCRIPT,

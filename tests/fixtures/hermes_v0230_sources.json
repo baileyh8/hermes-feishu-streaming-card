@@ -34,12 +34,12 @@
     "cron/scheduler.py": "b5956a54f05a8d360b9652149cae0f603e92bc52bb4a5af2b911fbd457f98470",
     "cron/scheduler_delivery.py": "a47babe7b6e1be929a5af3c8699f490f4f957c8391c62878666a8d516dbd85e2"
   },
-  "render_version": "5.0.17",
+  "render_version": "completion-native-fallthrough-v1",
   "rendered_files": {
     "gateway/run.py": "f2eabc2972822df232375a4e32b22e79daafcec9bc2f66a6cfb305c255cf11d3",
     "gateway/run_background.py": "7702a2b46dd13acfe82c2bbc0fecff63761498ba0ca257fcddcf21cea0288f54",
     "gateway/run_turn.py": "1dabfdfca3011509df7a7cc5d36a5ef6f05cce848982d7bc295fe795f0cfe731",
-    "gateway/run_turn_persistence.py": "02ed65aafda9716548b12aead376772d2ee310336251affc6238667860d2642f",
+    "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_runner.py": "e26c9d13c04c5821730aafb2583b8d36acbaa8e149d768817b89a1d7235d21f2",
