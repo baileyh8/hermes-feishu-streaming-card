@@ -64,6 +64,7 @@ READING_FIELDS = (
     "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
     "table_overflow_mode",
     "native_tables",
+    "over_limit",
     "timeline_order", "timeline_tools_per_reasoning", "thinking_body_tail_chars",
     "width_mode", "text_sizes", "footer_fields", "interaction_mode", "streaming_mode",
 )
