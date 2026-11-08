@@ -199,8 +199,10 @@ def config_snapshot():
         data = stream.read(2 * 1024 * 1024 + 1)
         finished = os.fstat(stream.fileno())
     after = path.lstat()
+    # Same NTFS lstat/fstat ctime divergence as #509; see _signature in
+    # config_backend_0226.py. Content integrity comes from the digest.
     signature = lambda value: (value.st_dev, value.st_ino, value.st_size,
-                               value.st_mtime_ns, value.st_ctime_ns)
+                               value.st_mtime_ns)
     if (signature(before) != signature(opened) or signature(opened) != signature(finished)
             or signature(finished) != signature(after) or len(data) > 2 * 1024 * 1024):
         raise RuntimeError('PM selection config changed')

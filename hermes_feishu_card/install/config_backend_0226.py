@@ -34,11 +34,16 @@ def _is_reparse(metadata: os.stat_result) -> bool:
     )
 
 
-def _signature(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
-    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns)
+def _signature(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    # NTFS reports a constant nonzero ctime delta between path queries
+    # (lstat) and handle queries (fstat), so mixing them would refuse every
+    # read on real Windows files (#509). Content changes are covered by the
+    # sha256 digest; ABA rewrites that restore the original bytes carry no
+    # integrity loss. mtime stays as the first content-change signal.
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
 
 
-def _inspect_layer_file(path: Path) -> tuple[str, str | None, tuple[int, int, int, int, int] | None]:
+def _inspect_layer_file(path: Path) -> tuple[str, str | None, tuple[int, int, int, int] | None]:
     """Safely inspect and read an env file without following symlinks or reparse points."""
     try:
         lmeta = path.lstat()
@@ -157,7 +162,7 @@ def under(path,base): return path==base or base in path.parents
 libraries={Path(p).resolve() for k,p in sysconfig.get_paths().items() if k in ('stdlib','platstdlib','purelib','platlib')}
 if any(under(root,p) for p in libraries): deny('library_overlap')
 def library(path): return any(under(path,p) for p in libraries)
-def signature(m): return m.st_dev,m.st_ino,m.st_size,m.st_mtime_ns,m.st_ctime_ns
+def signature(m): return m.st_dev,m.st_ino,m.st_size,m.st_mtime_ns
 def verified_bytes(name):
     path=root/name
     try:
@@ -227,7 +232,7 @@ except Exception:deny('native_probe_failed')
 print(json.dumps({'verdict':'file','reason':'file_confirmed'}),flush=True)
 '''
 
-def _layer_snapshot(root: Path, home: Path, env: dict[str, str]) -> dict[str, tuple[str, str, str | None, tuple[int, int, int, int, int] | None]]:
+def _layer_snapshot(root: Path, home: Path, env: dict[str, str]) -> dict[str, tuple[str, str, str | None, tuple[int, int, int, int] | None]]:
     candidates = _resolve_candidate_layers(root, home, env)
     return {key: (str(path.resolve()), *_inspect_layer_file(path))
             for key, path in candidates.items()}
@@ -238,7 +243,7 @@ class BackendProof:
     root: Path
     python: Path
     home: Path
-    scope_layers: dict[str, dict[str, tuple[str, str, str | None, tuple[int, int, int, int, int] | None]]]
+    scope_layers: dict[str, dict[str, tuple[str, str, str | None, tuple[int, int, int, int] | None]]]
     sources: Mapping[str, str] | None = None
 
     def verify(self) -> None:

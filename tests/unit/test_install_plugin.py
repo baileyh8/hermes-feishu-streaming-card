@@ -846,6 +846,97 @@ def test_official_probe_interpreter_rejects_relative_and_missing(tmp_path, monke
     assert plugin._official_probe_interpreter(binding) is None
 
 
+def _profile_home(tmp_path: Path, name: str = "jishu") -> tuple[Path, Path]:
+    home = tmp_path / "hermes-home"
+    profile = home / "profiles" / name
+    profile.mkdir(parents=True)
+    (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    (profile / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    return home, profile
+
+
+def test_official_profile_target_follows_sticky_active_profile(tmp_path):
+    home, profile = _profile_home(tmp_path)
+    (home / "active_profile").write_text("jishu\n", encoding="utf-8")
+
+    effective, flag = plugin._official_profile_target(
+        home, home / "config.yaml"
+    )
+
+    assert effective == profile / "config.yaml"
+    assert flag == "jishu"
+
+
+def test_official_profile_target_ignores_default_and_profiles_home(tmp_path):
+    home, _profile = _profile_home(tmp_path)
+    (home / "active_profile").write_text("default\n", encoding="utf-8")
+    assert plugin._official_profile_target(home, home / "config.yaml") == (
+        home / "config.yaml", None
+    )
+    assert plugin._official_profile_target(
+        home / "profiles" / "jishu", home / "profiles" / "jishu" / "config.yaml"
+    ) == (home / "profiles" / "jishu" / "config.yaml", None)
+
+
+def test_official_profile_target_refuses_missing_profile_home(tmp_path):
+    home, _profile = _profile_home(tmp_path)
+    (home / "active_profile").write_text("gone\n", encoding="utf-8")
+
+    with pytest.raises(plugin.RuntimeBindingRefused, match="active profile home is missing"):
+        plugin._official_profile_target(home, home / "config.yaml")
+
+
+def test_official_enable_child_pins_sticky_profile(tmp_path, monkeypatch):
+    home, profile = _profile_home(tmp_path)
+    (home / "active_profile").write_text("jishu\n", encoding="utf-8")
+    binding = SimpleNamespace(
+        checkout_root=tmp_path / "checkout",
+        runtime_python=Path(sys.executable),
+        hermes_home=home,
+        effective_config_path=profile / "config.yaml",
+        profile_flag="jishu",
+    )
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *a, **k: None)
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(plugin.subprocess, "run", run)
+
+    assert plugin._run_official_enable(binding) == 0
+    assert captured["argv"][-6:] == [
+        "-p", "jishu", "plugins", "enable", plugin.PLUGIN_KEY,
+        "--no-allow-tool-override",
+    ]
+
+
+def test_enable_plugin_targets_sticky_profile_config(tmp_path, monkeypatch):
+    home, profile = _profile_home(tmp_path)
+    (home / "active_profile").write_text("jishu\n", encoding="utf-8")
+    binding = plugin.HermesRuntimeBinding(
+        checkout_root=tmp_path / "checkout",
+        runtime_python=Path(sys.executable),
+        runtime_python_resolved=Path(sys.executable),
+        python_identity="sha256:" + "a" * 64,
+        hermes_home=home,
+        config_path=home / "config.yaml",
+        effective_config_path=profile / "config.yaml",
+        profile_flag="jishu",
+        purelib=tmp_path,
+        platlib=tmp_path,
+    )
+    assert plugin._official_config_path(binding) == profile / "config.yaml"
+    preimage = plugin.prepare_plugin_config(binding)
+    assert preimage.pre_sha256 == plugin._sha256(
+        (profile / "config.yaml").read_bytes()
+    )
+    journal = json.loads(preimage.journal_path.read_bytes())
+    assert journal["target_config"] == str(profile / "config.yaml")
+    assert journal["target_profile"] == "jishu"
+
+
 def test_official_enable_visibility_probe_refuses_unresolvable_plugin(tmp_path, monkeypatch):
     binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
     pm_dir = binding.checkout_root / "pm"

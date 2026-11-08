@@ -68,16 +68,16 @@ class BootEvidence:
 class GraphEvidence:
     facts_path: Path
     facts_identity: tuple[int, int, str]
-    facts_version: tuple[int, int, int, int, int]
+    facts_version: tuple[int, int, int, int]
     lock_path: Path
     lock_identity: tuple[int, int, str]
-    lock_version: tuple[int, int, int, int, int]
+    lock_version: tuple[int, int, int, int]
     directories: dict[Path, tuple[int, int]]
 
 
 @dataclass(frozen=True)
 class EnvironmentEvidence:
-    files: dict[Path, tuple[tuple[int, int, str] | None, tuple[int, int, int, int, int] | None]]
+    files: dict[Path, tuple[tuple[int, int, str] | None, tuple[int, int, int, int] | None]]
     directories: dict[Path, tuple[int, int]]
 
 
@@ -136,9 +136,10 @@ def _read_evidence(path: Path) -> tuple[tuple[int, int, str], bytes]:
     return snapshot, payload
 
 
-def _read_versioned_evidence(path: Path, message: str) -> tuple[tuple[int, int, str], bytes, tuple[int, int, int, int, int]]:
-    def version(info: os.stat_result) -> tuple[int, int, int, int, int]:
-        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+def _read_versioned_evidence(path: Path, message: str) -> tuple[tuple[int, int, str], bytes, tuple[int, int, int, int]]:
+    # Keep the same 4-tuple identity as the NTFS-safe signatures (#509).
+    def version(info: os.stat_result) -> tuple[int, int, int, int]:
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
     try:
         before = version(path.lstat())
         identity, payload = _read_evidence(path)
@@ -151,7 +152,7 @@ def _read_versioned_evidence(path: Path, message: str) -> tuple[tuple[int, int, 
 
 
 def _assert_versioned_evidence(path: Path, identity: tuple[int, int, str],
-                               version: tuple[int, int, int, int, int], message: str) -> None:
+                               version: tuple[int, int, int, int], message: str) -> None:
     current_identity, _payload, current_version = _read_versioned_evidence(path, message)
     if current_identity != identity or current_version != version:
         raise LegacyAdoptionRefused(message)
@@ -181,7 +182,7 @@ def inspect_unmanaged_environment(root: Path, python: Path, home: Path) -> Envir
                                                          "legacy adoption environment directory is unsafe")
         for path in (root, home)
     }
-    files: dict[Path, tuple[tuple[int, int, str] | None, tuple[int, int, int, int, int] | None]] = {}
+    files: dict[Path, tuple[tuple[int, int, str] | None, tuple[int, int, int, int] | None]] = {}
     contents = []
     for path in paths:
         try:
@@ -496,8 +497,8 @@ def checked_resource(name, expected):
     if not stat.S_ISREG(before.st_mode):
         raise RuntimeError('SDK resource is invalid')
     payload=path.read_bytes(); after=path.lstat()
-    if ((before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)
-            != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+    if ((before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)
+            != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns)
             or payload != expected):
         raise RuntimeError('SDK resource changed')
     return path

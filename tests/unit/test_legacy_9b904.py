@@ -272,7 +272,11 @@ def test_adoption_post_journal_generation_drift_retains_evidence(tmp_path, monke
     assert len(list(journal.parent.glob('*.yaml'))) == 1
 
 
-@pytest.mark.parametrize('changed', ['config', 'config-aba', 'marker', 'marker-aba', 'member', 'facts', 'lock'])
+# ctime no longer participates in evidence signatures (#509): an ABA rewrite
+# that restores the exact bytes AND mtime carries no integrity loss and must
+# pass. The aba-partial variants cover the detection that still matters: the
+# bytes are restored but the mtime is not, which the 4-tuple signature rejects.
+@pytest.mark.parametrize('changed', ['config', 'config-aba-partial', 'marker', 'marker-aba-partial', 'member', 'facts', 'lock'])
 def test_source_restore_guard_rejects_changed_bound_evidence(tmp_path, monkeypatch, changed):
     from hermes_feishu_card.install import legacy_9b904_transaction
 
@@ -337,14 +341,11 @@ def test_source_restore_guard_rejects_changed_bound_evidence(tmp_path, monkeypat
     if changed == 'member':
         member.rename(home / 'previous-member')
         member.mkdir()
-    elif changed in ('config-aba', 'marker-aba'):
-        target = config if changed == 'config-aba' else marker
+    elif changed in ('config-aba-partial', 'marker-aba-partial'):
+        target = config if changed == 'config-aba-partial' else marker
         data, metadata = target.read_bytes(), target.stat()
         target.write_bytes(data + b'changed')
         target.write_bytes(data)
-        os.utime(target, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
-        if target.stat().st_ctime_ns == metadata.st_ctime_ns:
-            pytest.skip('filesystem did not expose a ctime change')
     elif changed == 'marker':
         replacement = marker.with_name('replacement-marker')
         replacement.write_bytes(marker.read_bytes())
@@ -354,6 +355,23 @@ def test_source_restore_guard_rejects_changed_bound_evidence(tmp_path, monkeypat
         target.write_bytes(target.read_bytes() + b'changed')
     with pytest.raises(ValueError, match='changed'):
         guard()
+
+
+@pytest.mark.parametrize('label', ['config', 'facts'])
+def test_versioned_evidence_accepts_exact_aba_restore(tmp_path, label):
+    """An ABA rewrite that restores the exact bytes and mtime carries no
+    integrity loss (#509): the ctime-free 4-tuple signature accepts it."""
+    path = tmp_path / (label + '.json')
+    path.write_bytes(b'evidence')
+    identity, payload, version = legacy_9b904._read_versioned_evidence(path, 'changed')
+    metadata = path.stat()
+    path.write_bytes(b'evidence-changed')
+    path.write_bytes(b'evidence')
+    os.utime(path, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+    again_identity, again_payload, again_version = legacy_9b904._read_versioned_evidence(path, 'changed')
+    assert again_identity == identity
+    assert again_payload == payload
+    assert again_version == version
 
 
 @pytest.mark.parametrize('state,extras,expected', [
@@ -582,6 +600,8 @@ requires-dist = [{{ name = "hermes-feishu-streaming-card", path = {json.dumps(hf
     with pytest.raises(legacy_9b904.LegacyAdoptionRefused, match='resolved lock is unverified'):
         legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation), 'config-digest')
     lock.write_bytes(original_lock)
+    # Same metadata restore as facts: the lock ABA must be fully identical.
+    os.utime(lock, ns=(graph.lock_version[3], graph.lock_version[3]))
     original_facts = facts.read_bytes()
     def drift_during_current(*_args):
         changed = json.loads(original_facts)
@@ -592,17 +612,25 @@ requires-dist = [{{ name = "hermes-feishu-streaming-card", path = {json.dumps(hf
     with pytest.raises(legacy_9b904.LegacyAdoptionRefused, match='PM facts changed'):
         legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation), 'config-digest')
     facts.write_bytes(original_facts)
+    # Restore the expected mtime too, so the evidence is again byte- and
+    # metadata-identical to the expected graph before the ABA case runs.
+    os.utime(facts, ns=(graph.facts_version[3], graph.facts_version[3]))
     monkeypatch.setattr(pm_dependency, '_verified_call', lambda *_args: dict(current))
     if os.name != 'nt':
-        metadata = facts.stat()
         def restore_bytes_during_current(*_args):
             facts.write_text('{"temporary": "replacement"}')
             facts.write_bytes(original_facts)
-            os.utime(facts, ns=(metadata.st_atime_ns, metadata.st_mtime_ns))
+            # Restore exactly the mtime the expected graph recorded, so the
+            # in-place ABA rewrite is byte- and metadata-identical (#509).
+            os.utime(facts, ns=(graph.facts_version[3], graph.facts_version[3]))
             return dict(current)
         monkeypatch.setattr(pm_dependency, '_verified_call', restore_bytes_during_current)
-        with pytest.raises(legacy_9b904.LegacyAdoptionRefused, match='PM facts changed'):
-            legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation), 'config-digest')
+        # An in-place ABA restore (same inode, same bytes, same mtime) is
+        # integrity-neutral (#509): the ctime-free signature accepts it and
+        # the re-verified graph is byte-identical to the expected one.
+        restored = legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation),
+                                               'config-digest', expected=graph)
+        assert restored == graph
         monkeypatch.setattr(pm_dependency, '_verified_call', lambda *_args: dict(current))
     graph = legacy_9b904.verify_pm_graph(root, Path(sys.executable), home, owner, str(generation), 'config-digest')
     replacement = lock.with_name('replacement.lock')
