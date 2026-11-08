@@ -1,5 +1,10 @@
 # Changelog
 
+## v5.0.19 — 2026-11-08
+
+- Fix self-managed PM installs with a sticky active profile (#507): the binding derives the effective official config target with the same rules as the CLI, prepare/journal record it, and the probe/enable children pass `-p` so the official writer and every verify/rollback path touch the same file. Unresolvable profile homes refuse before any write; the postimage byte gate is unchanged.
+- Fix Windows NTFS installs (#509): file-signature comparisons drop `st_ctime_ns`, whose constant lstat/fstat delta refused every read; content integrity stays on the sha256 digest, and the adoption ABA tests now cover restored and tampered bytes.
+
 ## v5.0.18 — 2026-11-07
 
 - Fix real-delivery on exact Hermes v0.23.0 (#497/#504): the explicitly registered sync `@contextmanager` helper (`gateway.session_ingress_media.capture_lease`) is now verified as the exact contextlib wrapper, and a native/handoff fallback that leaves the hook returns control to Hermes so `already_sent`, media, footer and failure delivery stay in the core path; degraded turns no longer duplicate the full body.
