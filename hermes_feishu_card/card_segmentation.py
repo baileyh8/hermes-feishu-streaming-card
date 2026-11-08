@@ -11,6 +11,7 @@ code. When the text cannot be split within the budgets, planning returns
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from .card_limits import FEISHU_MAX_TABLES, SAFE_CARD_JSON_BYTES
 from .text import MarkdownBlock, scan_markdown_blocks, split_markdown_blocks
@@ -29,6 +30,10 @@ DEFAULT_LEAD_BYTES = 8_000
 # UTF-8 needs at most 4 bytes per character, so a character budget of
 # bytes // 4 can never overrun the byte budget before verification.
 _MAX_UTF8_BYTES_PER_CHAR = 4
+# Cards read best as whole sections: once a card is at least this full, a new
+# markdown heading opens the next card instead of splitting the section.
+SECTION_BREAK_MIN_FILL = 0.4
+_HEADING_RE = re.compile(r"^#{1,6}\s")
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,10 @@ def _utf8_bytes(text: str) -> int:
 
 def _table_count(block: MarkdownBlock) -> int:
     return 1 if block.kind == "table" else 0
+
+
+def _opens_section(block: MarkdownBlock) -> bool:
+    return block.kind == "plain" and bool(_HEADING_RE.match(block.text))
 
 
 def _split_oversized_blocks(
@@ -77,12 +86,14 @@ def _split_oversized_blocks(
 def _pack_lead(
     pieces: list[MarkdownBlock], *, byte_budget: int, table_budget: int
 ) -> tuple[str, list[MarkdownBlock]]:
-    """Take the maximal fitting prefix of pieces as the lead text.
+    """Take the fitting prefix of pieces as the lead text.
 
     The lead may be empty when the answer opens with a structure larger than
     the main-card budget; the opener then travels on the first continuation
-    card instead of overflowing the main card.
+    card instead of overflowing the main card. A heading closes the lead once
+    it is reasonably full, so the main card ends on a section boundary.
     """
+    min_fill_bytes = int(byte_budget * SECTION_BREAK_MIN_FILL)
     lead: list[str] = []
     lead_bytes = 0
     lead_tables = 0
@@ -91,6 +102,8 @@ def _pack_lead(
         piece_bytes = _utf8_bytes(piece.text)
         piece_tables = _table_count(piece)
         if lead_bytes + piece_bytes > byte_budget or lead_tables + piece_tables > table_budget:
+            break
+        if lead and lead_bytes >= min_fill_bytes and _opens_section(piece):
             break
         lead.append(piece.text)
         lead_bytes += piece_bytes
@@ -102,7 +115,13 @@ def _pack_lead(
 def _pack_segments(
     pieces: list[MarkdownBlock], *, byte_budget: int, table_budget: int
 ) -> list[str]:
-    """Greedily pack pieces in order; every piece already fits one segment."""
+    """Pack pieces in order; every piece already fits one segment.
+
+    Beyond the hard byte/table budgets, a markdown heading opens a new card
+    once the current one is reasonably full, so each card carries whole
+    sections instead of cutting mid-section at an arbitrary byte count.
+    """
+    min_fill_bytes = int(byte_budget * SECTION_BREAK_MIN_FILL)
     segments: list[str] = []
     current: list[str] = []
     current_bytes = 0
@@ -112,7 +131,12 @@ def _pack_segments(
         piece_tables = _table_count(piece)
         byte_overflow = current_bytes + piece_bytes > byte_budget
         table_overflow = current_tables + piece_tables > table_budget
-        if current and (byte_overflow or table_overflow):
+        section_break = (
+            bool(current)
+            and current_bytes >= min_fill_bytes
+            and _opens_section(piece)
+        )
+        if current and (byte_overflow or table_overflow or section_break):
             segments.append("".join(current))
             current = [piece.text]
             current_bytes = piece_bytes

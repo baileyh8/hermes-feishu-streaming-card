@@ -89,6 +89,23 @@ def test_zero_lead_budget_moves_the_opener_to_continuations():
     assert "".join(plan.segments) == text
 
 
+def test_sections_stay_whole_when_cards_have_room():
+    def section(index: int) -> str:
+        return f"## 第{index}节\n\n" + "小节内容段落，保持相对完整。\n\n" * 10
+
+    text = "".join(section(index) for index in range(1, 6))
+
+    plan = plan_terminal_segments(text, lead_bytes=1_000, segment_bytes=1_000)
+
+    assert plan is not None
+    # With section-sized content well under the card budget, every card
+    # opens on a heading instead of cutting the previous section mid-way.
+    assert plan.lead_text.startswith("## 第1节")
+    for segment in plan.segments:
+        assert segment.startswith("## ")
+    assert plan.lead_text + "".join(plan.segments) == text
+
+
 def test_card_count_cap_falls_back_to_none():
     text = "密" * ((SAFE_CARD_JSON_BYTES - SEGMENT_CHROME_BYTES) * MAX_SEGMENT_CARDS)
 
