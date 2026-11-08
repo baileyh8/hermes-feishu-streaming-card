@@ -707,6 +707,19 @@ exceptions={'RuntimeError','ValueError','PermissionError','FileNotFoundError','O
             'AdmissionRefused','DependencyConflict','ResolutionConflict','NoCommittedEnvironment',
             'AssertionError','RecursionError','MemoryError','TypeError','NameError',
             'SyntaxError','KeyError','AttributeError','NotADirectoryError','IsADirectoryError'}
+failure_needles=(
+    ('network_timeout',('operation timed out','request timed out','timed out')),
+    ('download_failed',('failed to download','error sending request','failed to fetch','connection error')),
+    ('build_failed',('failed to build','subprocess-exited-with-error')),
+    ('resolution_failed',('no solution found','resolution failed','dependency conflict')),
+    ('certificate_error',('certificate verify failed','ssl error','sslv3')),
+)
+def failure_categories(text):
+    # Classify only a bounded stderr head into fixed enum codes; raw lines,
+    # URLs, package names and credentials never reach the record.
+    lower=text[:8192].lower()
+    return [code for code,needles in failure_needles
+            if any(needle in lower for needle in needles)]
 def metadata(output):
     raw=output if isinstance(output,bytes) else (output or '').encode('utf-8',errors='replace')
     return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
@@ -745,6 +758,10 @@ def record(command,kwargs,result=None,error=None):
             item['frames']=list(frames_deque)
             item['exception_headers']=sorted(headers_set)
             kind=tail.split(':',1)[0]
+            if result.returncode != 0:
+                categories=failure_categories(text)
+                if categories:
+                    item['failure_categories']=categories
         else:
             kind=type(error).__name__
         item['exception']=(None if result is not None and result.returncode==0 and not result.stderr

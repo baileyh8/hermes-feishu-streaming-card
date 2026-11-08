@@ -523,7 +523,7 @@ def official_enable_diagnostics(monkeypatch):
             len(command) >= 9
             and list(command[1:3]) == ["-I", "-c"]
             and "hermes_cli.main" in command[3]
-            and list(command[5:9]) == ["plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"]
+            and list(command[-4:]) == ["plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"]
         ):
             return _run_with_failure_diagnostic(original, *args, **kwargs)
         return original(*args, **kwargs)

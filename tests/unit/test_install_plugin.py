@@ -846,6 +846,140 @@ def test_official_probe_interpreter_rejects_relative_and_missing(tmp_path, monke
     assert plugin._official_probe_interpreter(binding) is None
 
 
+def _profile_home(tmp_path: Path, name: str = "jishu") -> tuple[Path, Path]:
+    home = tmp_path / "hermes-home"
+    profile = home / "profiles" / name
+    profile.mkdir(parents=True)
+    (home / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    (profile / "config.yaml").write_text("plugins: {}\n", encoding="utf-8")
+    return home, profile
+
+
+
+
+@pytest.mark.parametrize(
+    "sticky,expected_args",
+    [
+        ("jishu", ["-p", "default"]),
+        ("default", ["-p", "default"]),
+        ("", ["-p", "default"]),
+        (None, ["-p", "default"]),
+        ("../escape", ["-p", "default"]),
+        ("[invalid", ["-p", "default"]),
+    ],
+)
+def test_official_enable_child_pins_root_home_against_sticky(
+    tmp_path, monkeypatch, sticky, expected_args
+):
+    """A root home stays bound even with a sticky profile active (#507)."""
+    home, _profile = _profile_home(tmp_path)
+    if sticky is not None:
+        (home / "active_profile").write_text(sticky + "\n", encoding="utf-8")
+    binding = SimpleNamespace(
+        checkout_root=tmp_path / "checkout",
+        runtime_python=Path(sys.executable),
+        hermes_home=home,
+    )
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *a, **k: None)
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(plugin.subprocess, "run", run)
+
+    assert plugin._run_official_enable(binding) == 0
+    assert captured["argv"][-6:] == [
+        *expected_args, "plugins", "enable", plugin.PLUGIN_KEY,
+        "--no-allow-tool-override",
+    ]
+
+
+def test_official_enable_child_skips_flag_for_explicit_profiles_home(
+    tmp_path, monkeypatch
+):
+    """An explicit profiles/<name> home is trusted by the official CLI (#507)."""
+    _home, profile = _profile_home(tmp_path)
+    (profile.parent.parent / "active_profile").write_text(
+        "jishu\n", encoding="utf-8"
+    )
+    binding = SimpleNamespace(
+        checkout_root=tmp_path / "checkout",
+        runtime_python=Path(sys.executable),
+        hermes_home=profile,
+    )
+    monkeypatch.setattr(plugin, "_verify_official_enable_source", lambda *a, **k: None)
+    captured = {}
+
+    def run(argv, **kwargs):
+        captured["argv"] = argv
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(plugin.subprocess, "run", run)
+
+    assert plugin._run_official_enable(binding) == 0
+    assert captured["argv"][-4:] == [
+        "plugins", "enable", plugin.PLUGIN_KEY,
+        "--no-allow-tool-override",
+    ]
+
+
+def test_enable_plugin_restores_root_config_after_enable_and_sticky_change(
+    tmp_path, monkeypatch
+):
+    """Enable then restore the bound root config across a sticky change (#507)."""
+    checkout, home = _checkout(tmp_path)
+    profile = home / "profiles" / "jishu"
+    profile.mkdir(parents=True)
+    _write_utf8(profile / "config.yaml", "plugins: {}\n")
+    (home / "active_profile").write_text("jishu\n", encoding="utf-8")
+    original = "# preserve\nplugins: {}\n"
+    _write_utf8(home / "config.yaml", original)
+    monkeypatch.setattr(
+        plugin,
+        "_plan_enabled_config_bytes",
+        lambda b, p, raw, desired, enabled: _exact_plan(
+            yaml.safe_dump(desired).encode()
+        ),
+    )
+    monkeypatch.setattr(
+        plugin, "_probe_runtime_identity", lambda launcher: _runtime_payload(checkout)
+    )
+    binding = plugin.resolve_runtime_binding(
+        checkout_root=checkout, hermes_home=home, profile_id=None
+    )
+    preimage = plugin.prepare_plugin_config(binding)
+
+    def official_enable(candidate):
+        # The official child writes the bound root config, not the profile.
+        assert candidate.config_path == home / "config.yaml"
+        config = yaml.safe_load(candidate.config_path.read_bytes())
+        plugins = config.setdefault("plugins", {})
+        plugins["enabled"] = sorted(
+            set(plugins.get("enabled") or []) | {plugin.PLUGIN_KEY}
+        )
+        plugins["disabled"] = sorted(
+            set(plugins.get("disabled") or []) - {plugin.PLUGIN_KEY}
+        )
+        plugins.setdefault("entries", {}).setdefault(plugin.PLUGIN_KEY, {})[
+            "allow_tool_override"
+        ] = False
+        _write_utf8(candidate.config_path, yaml.safe_dump(config))
+        return 0
+
+    monkeypatch.setattr(plugin, "_run_official_enable", official_enable)
+    ownership = plugin.enable_plugin(binding, preimage)
+    enabled_bytes = (home / "config.yaml").read_bytes()
+    assert plugin.PLUGIN_KEY in yaml.safe_load(enabled_bytes)["plugins"]["enabled"]
+
+    # The sticky profile changes before restore; the root evidence stays put.
+    (home / "active_profile").write_text("other\n", encoding="utf-8")
+    plugin.restore_plugin_config(binding, preimage, ownership)
+    assert (home / "config.yaml").read_bytes() == original.encode()
+    assert (profile / "config.yaml").read_text(encoding="utf-8") == "plugins: {}\n"
+
+
 def test_official_enable_visibility_probe_refuses_unresolvable_plugin(tmp_path, monkeypatch):
     binding = _binding(tmp_path, monkeypatch, "plugins: {}\n")
     pm_dir = binding.checkout_root / "pm"

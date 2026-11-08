@@ -95,8 +95,10 @@ def _read_regular(path: Path, *, limit: int) -> bytes | None:
     finally:
         os.close(descriptor)
     after = path.lstat()
-    def signature(item: os.stat_result) -> tuple[int, int, int, int, int]:
-        return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns
+    # Same NTFS lstat/fstat ctime divergence as #509; see _signature in
+    # config_backend_0226.py. Content integrity comes from after_sha256.
+    def signature(item: os.stat_result) -> tuple[int, int, int, int]:
+        return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
     if signature(before) != signature(opened) or signature(opened) != signature(finished) or signature(finished) != signature(after):
         raise ValueError('legacy HOME revocation evidence changed')
     return bytes(chunks)

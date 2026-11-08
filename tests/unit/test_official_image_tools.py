@@ -938,6 +938,26 @@ def test_pm_observer_preserves_bounded_head_frames_of_long_errors(tmp_path, monk
         assert private not in output.read_text()
 
 
+def test_pm_observer_classifies_download_timeout_without_leaking_url(tmp_path, monkeypatch):
+    output = tmp_path / 'observations.jsonl'
+    stderr = (
+      'Traceback (most recent call last):\n'
+      '  File "/private/secret/client.py", line 233, in sync_venv\n'
+      'hermes_cli.plugins_admission.AdmissionRefused: venv: uv lock exited 1\n'
+      '  \u00d7 Failed to download `kittentts @ https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl`\n'
+      '  \u251c\u2500\u25b6 Request failed after 3 retries in 132.7s\n'
+      '  \u2570\u2500\u25b6 operation timed out \u2014 retry, or run `hermes pm doctor`\n'
+    )
+    result = subprocess.CompletedProcess([], 1, stdout='', stderr=stderr)
+    pm, command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    assert pm._call(command, {'input': '{"operation":"add"}'}) is result
+    record = json.loads(output.read_text())
+    assert record['failure_categories'] == ['network_timeout', 'download_failed']
+    text = output.read_text()
+    for private in ('https://', 'github.com', 'kittentts', 'KittenML', 'secret', '/private/'):
+        assert private not in text, private
+
+
 @pytest.mark.parametrize('header', ['SecretRuntimeError', 'RuntimeErrorSecret', 'SecretAdmissionRefused'])
 def test_pm_observer_does_not_match_private_class_prefixes(tmp_path, monkeypatch, header):
     output = tmp_path / 'observations.jsonl'

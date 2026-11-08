@@ -701,6 +701,7 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
                 "-c",
                 _OFFICIAL_ENABLE_BOOTSTRAP,
                 str(binding.checkout_root),
+                *_official_profile_args(binding),
                 "plugins",
                 "enable",
                 PLUGIN_KEY,
@@ -810,6 +811,21 @@ def _official_enable_failure_message() -> str:
     return f"official plugin enable failed ({diagnostic})"
 
 
+def _official_profile_args(binding: HermesRuntimeBinding) -> list[str]:
+    """Keep the official child on the user's bound home.
+
+    hermes_cli.main._apply_profile_override redirects a child whose
+    HERMES_HOME is not a profiles/<name> directory to
+    <home>/profiles/<active_profile> before any command writes config. The
+    user explicitly bound this home with --hermes-home, so pin ``-p default``
+    to block the sticky redirect. An explicit profiles/<name> home is trusted
+    by the official CLI and needs no flag.
+    """
+    if binding.hermes_home.parent.name == "profiles":
+        return []
+    return ["-p", "default"]
+
+
 def _official_probe_payload(stdout: str | bytes | None) -> dict[str, object] | None:
     for line in reversed(_child_output_text(stdout).splitlines()):
         if not line.strip():
@@ -894,6 +910,7 @@ def _official_enable_visibility_note(binding: HermesRuntimeBinding) -> str | Non
                 "-c",
                 _OFFICIAL_ENABLE_PROBE_SCRIPT,
                 str(binding.checkout_root),
+                *_official_profile_args(binding),
                 "plugins",
                 "list",
             ],
