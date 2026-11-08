@@ -32,6 +32,8 @@ def _positive(value: Any, default: int) -> int:
 def card_render_options(config: Mapping[str, Any]) -> dict[str, Any]:
     mode = config.get("table_overflow_mode", "compact")
     mode = mode.strip().lower() if isinstance(mode, str) else "compact"
+    over_limit = config.get("over_limit", "native")
+    over_limit = over_limit.strip().lower() if isinstance(over_limit, str) else "native"
     tool_activity = config.get("tool_activity", "full")
     tool_activity = tool_activity.strip().lower() if isinstance(tool_activity, str) else "full"
     result = {
@@ -57,6 +59,7 @@ def card_render_options(config: Mapping[str, Any]) -> dict[str, Any]:
         text_sizes=config.get("text_sizes") if isinstance(config.get("text_sizes"), dict) else None,
         table_overflow_mode=mode if mode in {"compact", "truncate"} else "compact",
         tool_activity=tool_activity if tool_activity in {"full", "summary", "hidden"} else "full",
+        over_limit=over_limit if over_limit in {"native", "segmented"} else "native",
         native_tables=_boolean(config.get("native_tables"), False),
         width_mode=config.get("width_mode", "default"),
         presentation=config.get("_presentation_mode", "classic"),

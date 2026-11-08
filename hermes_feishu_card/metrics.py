@@ -56,6 +56,8 @@ class SidecarMetrics:
     table_truncations: int = 0
     card_limit_deferrals: int = 0
     card_native_handoffs: int = 0
+    card_segmented_deliveries: int = 0
+    card_segmented_fallbacks: int = 0
     card_limit_json_bytes: int = 0
     card_limit_elements: int = 0
     card_limit_tables: int = 0

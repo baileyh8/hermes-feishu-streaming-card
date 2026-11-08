@@ -223,6 +223,8 @@ service:
 
 `card.native_tables`（默认 `false`）把正文 Markdown 表格渲染成飞书卡片原生 `table` 组件：列宽按内容计算，`row_height: auto` 让长内容换行而不是被单元格末尾省略。无法用原生组件表示的表格、以及因此超出卡片预算的整卡，都会回退到 Markdown 布局。详见[正文表格](docs/user-guide.md#正文表格)。
 
+`card.over_limit`（默认 `native`）决定终态答案在所有卡内降级后仍超出安全预算时的策略：`native` 保持既有 limit handoff（占位卡＋全文走 Hermes 原生消息）；`segmented` 在终态投递主卡（开头正文＋统计＋可折叠过程面板）后追加编号续卡（「续 i/N」，每张都经预算校验），流式期间仍是单张实时卡。任一续卡切分不可行或投递失败时整体回退既有 native handoff，不产生静默截断。
+
 配置同目录的 `.env`：
 
 ```dotenv
