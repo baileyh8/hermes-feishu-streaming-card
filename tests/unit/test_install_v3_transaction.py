@@ -762,7 +762,8 @@ def test_plugin_enable_exit_zero_unrelated_change_reports_guard_and_preserves_ed
     def controlled_enable_child(argv, **kwargs):
         assert argv[:3] == [str(binding.runtime_python), "-I", "-c"]
         assert argv[4] == str(root)
-        assert argv[5:] == ["plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"]
+        assert argv[5:] == ["-p", "default", "plugins", "enable", plugin.PLUGIN_KEY,
+                            "--no-allow-tool-override"]
         assert kwargs["cwd"] == str(root)
         assert kwargs["env"] == {
             "HOME": str(binding.hermes_home),
