@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.19` (#507/#509 fixes). Full PR/main/tag CI, ordinary-wheel install/restore, public tag installation and asset verification are completed and recorded here before release; real Gateway/model and Feishu-client acceptance is recorded separately. See the [release notes](release-notes-v5.0.19.en.md).
+This branch targets `5.0.20` (#512 Docker multiplex fix). Full PR/main/tag CI, ordinary-wheel install/restore, public tag installation and asset verification are completed and recorded here before release; real Gateway/model and Feishu-client acceptance is recorded separately. See the [release notes](release-notes-v5.0.20.en.md).
 
 ## v5.0.16 historical record
 

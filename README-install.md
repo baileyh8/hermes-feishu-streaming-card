@@ -9,9 +9,9 @@ load the new protocol. See the [runtime configuration guide](docs/user-guide.en.
 
 [中文](README.md) | [English](README.en.md)
 
-V5.0.19 fixes the sticky-profile enable target on self-managed PM installs (#507) and the Windows NTFS file-signature refusal (#509); V5.0.18 added exact Hermes v0.23.0 completion, admission dependency and PM writer/launch contracts (#497). Unknown sources remain refused. Existing installations must refresh managed hooks through the normal installer and restart Gateway through its service owner. See the [release notes](docs/release-notes-v5.0.19.en.md) for compatibility, acceptance progress and remaining limits.
+V5.0.20 fixes the sticky-profile enable target on self-managed PM installs (#507) and the Windows NTFS file-signature refusal (#509); V5.0.18 added exact Hermes v0.23.0 completion, admission dependency and PM writer/launch contracts (#497). Unknown sources remain refused. Existing installations must refresh managed hooks through the normal installer and restart Gateway through its service owner. See the [release notes](docs/release-notes-v5.0.20.en.md) for compatibility, acceptance progress and remaining limits.
 
-**Release target: v5.0.19; published availability follows GitHub Releases.** The default `latest` selects the published stable release. V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
+**Release target: v5.0.20; published availability follows GitHub Releases.** The default `latest` selects the published stable release. V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
 
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
@@ -312,20 +312,20 @@ unknown same-name units, drift, or unsafe shutdown. Remove the owned unit with
 ## Extracting release assets (v5.0.6 and later)
 
 Use a new dedicated extraction directory and verify the published checksums first.
-Each archive contains nine files under `hermes-feishu-card-v5.0.19-linux/`,
-`hermes-feishu-card-v5.0.19-macos/` or `hermes-feishu-card-v5.0.19-windows/`.
+Each archive contains nine files under `hermes-feishu-card-v5.0.20-linux/`,
+`hermes-feishu-card-v5.0.20-macos/` or `hermes-feishu-card-v5.0.20-windows/`.
 The old flat layout allowed `./install.sh` immediately in the extraction target;
 enter the versioned platform directory first with these assets.
 
 ```bash
-mkdir hfc-install-v5.0.19
-tar -xzf hermes-feishu-card-v5.0.19-linux.tar.gz -C hfc-install-v5.0.19
-cd hfc-install-v5.0.19/hermes-feishu-card-v5.0.19-linux
-./install.sh --version v5.0.19
+mkdir hfc-install-v5.0.20
+tar -xzf hermes-feishu-card-v5.0.20-linux.tar.gz -C hfc-install-v5.0.20
+cd hfc-install-v5.0.20/hermes-feishu-card-v5.0.20-linux
+./install.sh --version v5.0.20
 ```
 
 For macOS, use the `macos` asset and subdirectory. On Windows, extract the ZIP,
-enter `hermes-feishu-card-v5.0.19-windows`, then run `.\install.ps1`.
+enter `hermes-feishu-card-v5.0.20-windows`, then run `.\install.ps1`.
 Tar metadata uses uid/gid 0, directories and shell installers 0755, other regular
 files 0644. These archive modes do not represent Windows ACL validation.
 Published v5.0.6 and earlier assets and tags are retained. See the [v5.0.6 release notes](docs/release-notes-v5.0.6.en.md)
@@ -396,7 +396,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.19
+export HFC_VERSION=v5.0.20
 bash install-docker.sh
 ```
 

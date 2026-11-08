@@ -102,6 +102,62 @@ def test_multiplex_default_profile_requires_known_source(
     assert h._admission_default_profile_unverified(values) is unverified
 
 
+def test_multiplex_default_guard_helper_error_refuses_even_standard_home(
+    tmp_path, monkeypatch
+):
+    """#512: helper-present-but-failing refuses, even when the selected
+    home happens to equal the platform standard default."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "hermes_constants", SimpleNamespace(
+        get_hermes_home=lambda: home,
+        get_default_hermes_root=lambda: (_ for _ in ()).throw(OSError("boom")),
+    ))
+    monkeypatch.setattr(h, "_GATEWAY_RUNNER_REF", None)
+    monkeypatch.setattr(
+        h, "_profile_identity", lambda *args: ("default", "fallback_default")
+    )
+    values = {"self": SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True))}
+    assert h._admission_default_profile_unverified(values) is True
+
+
+def test_multiplex_default_guard_accepts_verified_root_home(tmp_path, monkeypatch):
+    """#512: official Docker root (HERMES_HOME=/opt/data shape) is accepted
+    as the default home when the native helper verifies it."""
+    root = tmp_path / "opt" / "data"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(tmp_path / "account"))
+    monkeypatch.setitem(sys.modules, "hermes_constants", SimpleNamespace(
+        get_hermes_home=lambda: root,
+        get_default_hermes_root=lambda: root,
+    ))
+    monkeypatch.setattr(h, "_GATEWAY_RUNNER_REF", None)
+    monkeypatch.setattr(
+        h, "_profile_identity", lambda *args: ("default", "fallback_default")
+    )
+    values = {"self": SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True))}
+    assert h._admission_default_profile_unverified(values) is False
+
+
+def test_multiplex_default_guard_missing_helper_keeps_standard_rule(
+    tmp_path, monkeypatch
+):
+    """Pre-#512 Hermes (no helper): platform standard stays accepted."""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "hermes_constants", SimpleNamespace(
+        get_hermes_home=lambda: home,
+    ))
+    monkeypatch.setattr(h, "_GATEWAY_RUNNER_REF", None)
+    monkeypatch.setattr(
+        h, "_profile_identity", lambda *args: ("default", "fallback_default")
+    )
+    values = {"self": SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True))}
+    assert h._admission_default_profile_unverified(values) is False
+
+
 def test_emit_uses_logger_once_and_only_falls_back_when_logger_fails(monkeypatch):
     logged: list[str] = []
     printed: list[str] = []

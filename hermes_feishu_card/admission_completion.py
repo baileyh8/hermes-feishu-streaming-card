@@ -677,29 +677,49 @@ def _automation_owner(event: Any, ref: Any, row: Any, key: str | None) -> tuple[
 
 
 def _authority_profile_matches(authority: Any, profile: str) -> bool:
-    from .profile_sources import profile_from_hermes_home_path, legacy_profile_identity
+    from .profile_sources import legacy_profile_identity, profile_from_hermes_home_path
+    from .profile_root import ProfileRootUnavailable, native_profile_root
 
     try:
-        authority_profile = profile_from_hermes_home_path(str(authority.profile_id))
-        if authority_profile is None:
-            authority_value = str(authority.profile_id)
-            if Path(authority_value).is_absolute():
-                home = Path(authority_value).resolve()
-                if Path(authority.db.db_path).resolve().parent != home:
+        authority_value = str(authority.profile_id)
+        if Path(authority_value).is_absolute():
+            # Absolute claims always bind to their own DB first (#512): the
+            # parser must not bypass this proof for .hermes-shaped paths.
+            home = Path(authority_value).resolve()
+            if Path(authority.db.db_path).resolve().parent != home:
+                return False
+            # With a verified native root, the name is root-bound: only the
+            # root itself (default) or an exact <root>/profiles/<name> child
+            # counts. Without the helper, keep the pre-#512 shape rule.
+            try:
+                root = native_profile_root()
+            except ProfileRootUnavailable:
+                # Failed inspection refuses the match instead of raising
+                # into the native caller (uncaptured RuntimeError would
+                # break the original native path).
+                return False
+            if root is not None:
+                authority_profile = profile_from_hermes_home_path(
+                    str(home), hermes_root=str(root)
+                )
+                if authority_profile is None:
                     return False
+            else:
                 authority_profile = (
                     home.name
                     if home.parent.name == "profiles" and not home.name.startswith(".")
                     else "default"
                 )
-            else:
+        else:
+            authority_profile = profile_from_hermes_home_path(authority_value)
+            if authority_profile is None:
                 authority_profile, authority_source = legacy_profile_identity(
                     authority_value, "authority"
                 )
                 if authority_source.startswith("sanitized_"):
                     return False
         return authority_profile == profile
-    except (AttributeError, OSError, TypeError, ValueError):
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return False
 
 

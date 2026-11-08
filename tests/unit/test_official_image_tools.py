@@ -1000,3 +1000,42 @@ def test_pm_observer_bounds_frames_capacity_to_twelve(tmp_path, monkeypatch):
     assert record["frames"][-1] == {"file": "install.py", "line": 30, "function": "sync_venv"}
     assert record["frames"][0] == {"file": "install.py", "line": 19, "function": "sync_venv"}
     assert record["exception_headers"] == ["RuntimeError"]
+
+
+@pytest.mark.parametrize("returncode,payload", [(1, {}), (0, {"status": "ok", "profiles": 3})])
+def test_multiplex_probe_rejects_failed_or_incomplete_native_evidence(
+    tmp_path, monkeypatch, returncode, payload
+):
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.0")
+    monkeypatch.setattr(acceptance, "_clean_container_env", lambda: {})
+    monkeypatch.setattr(
+        acceptance, "_run_command",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], returncode, json.dumps(payload), ""
+        ),
+    )
+    with pytest.raises(acceptance.AcceptanceFailure, match="multiplex profile"):
+        acceptance._run_multiplex_profile_probe(tmp_path, Path(sys.executable), VERSION)
+
+
+def test_multiplex_probe_uses_the_selected_installed_runtime(tmp_path, monkeypatch):
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.0")
+    selected = Path("/selected/runtime/bin/python")
+    payload = {
+        "status": "ok", "profiles": 3, "gateway_model_feishu_turn": False,
+        "native_contextvars": True, "native_authorities": True,
+        "real_sqlite_stores": True, "installed_package": True,
+        "checks": {"scoped_turns": 9, "database_refusals": 3,
+                   "cross_profile_refusals": 18, "outside_root_refusals": 3,
+                   "removed_profile_refusals": 1},
+    }
+    def execute(command, **kwargs):
+        assert command[:4] == [str(selected), "-B", "-I", "-c"]
+        assert command[5:] == [acceptance.HERMES_ROOT, acceptance.HERMES_HOME, VERSION]
+        assert "from gateway.session_authorities import SessionAuthorities" in command[4]
+        assert "from hermes_state import SessionDB" in command[4]
+        assert kwargs["timeout"] == 120
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+    monkeypatch.setattr(acceptance, "_run_command", execute)
+    assert acceptance._run_multiplex_profile_probe(tmp_path, selected, VERSION) == payload
+    assert json.loads((tmp_path / "multiplex-profile.json").read_text()) == payload

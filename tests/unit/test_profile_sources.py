@@ -132,6 +132,45 @@ def test_shared_legacy_home_parser_preserves_existing_path_contract(path, expect
 
 
 @pytest.mark.parametrize(
+    ("path", "expected"),
+    (
+        ("/opt/data", "default"),
+        ("/opt/data/profiles/content", "content"),
+        ("/opt/data/profiles/finance", "finance"),
+        ("/opt/data/profiles", None),
+        ("/opt/data/profiles/a/b", None),
+        ("/opt/data/profiles/.hidden", None),
+        ("/opt/data/profiles/Bad_Name", None),
+        ("/opt/data/profiles/-x", None),
+        ("/other/root", None),
+        ("/opt/data/profiles/content/extra", None),
+    ),
+)
+def test_root_bound_parser_matches_only_root_or_exact_profiles_child(path, expected):
+    assert profile_sources.profile_from_hermes_home_path(
+        path, hermes_root="/opt/data"
+    ) == expected
+
+
+def test_root_bound_parser_without_root_keeps_legacy_contract():
+    # The optional keyword must not change the historical behavior.
+    assert profile_sources.profile_from_hermes_home_path(
+        "/home/u/.hermes/profiles/sales"
+    ) == "sales"
+    assert profile_sources.profile_from_hermes_home_path(
+        "/opt/data/profiles/content"
+    ) is None
+
+
+def test_root_bound_parser_has_no_legacy_fallthrough():
+    # With a root given, a legacy .hermes path outside that root is refused
+    # even though the legacy rule alone would have accepted it.
+    assert profile_sources.profile_from_hermes_home_path(
+        "/home/u/.hermes/profiles/sales", hermes_root="/opt/data"
+    ) is None
+
+
+@pytest.mark.parametrize(
     ("value", "source", "expected"),
     (
         ("work", "env", ("work", "env")),
@@ -142,3 +181,16 @@ def test_shared_legacy_home_parser_preserves_existing_path_contract(path, expect
 )
 def test_shared_legacy_sanitizer_preserves_existing_labels(value, source, expected):
     assert profile_sources.legacy_profile_identity(value, source) == expected
+
+
+@pytest.mark.parametrize(("root", "home", "expected"), [
+    (r"C:\data", r"C:\data\profiles\work", "work"),
+    (r"C:\data", "c:/DATA/Profiles/work", "work"),
+    (r"C:\data", r"D:\data\profiles\work", None),
+    (r"\\server\share", r"\\server\share\profiles\work", "work"),
+    (r"\\server\share", r"\\other\share\profiles\work", None),
+    ("/opt/data", r"C:\opt\data\profiles\work", None),
+    ("/opt/data", "/opt/data/profiles/ work ", None),
+])
+def test_root_bound_paths_preserve_platform_grammar(root, home, expected):
+    assert profile_sources.profile_from_hermes_home_path(home, hermes_root=root) == expected

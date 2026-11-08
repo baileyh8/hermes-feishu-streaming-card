@@ -1,5 +1,9 @@
 # Changelog
 
+## v5.0.20 — 2026-11-09
+
+- Fix official Docker multiplex profile recognition (#512): bind the current Hermes home to the native data root and retain profile-local database ownership checks. Unknown roots and mismatched databases remain on the native delivery path.
+
 ## v5.0.19 — 2026-11-08
 
 - Fix self-managed PM installs with a sticky active profile (#507): pin the official visibility probe and enable children to the bound root with `-p default`; named profile homes retain the official environment binding. Config ownership, journal and restore formats stay unchanged, as do postimage verification and unrelated-drift protection.
