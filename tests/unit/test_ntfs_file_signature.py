@@ -95,7 +95,7 @@ def test_layer_reader_refuses_in_place_content_drift(tmp_path, ntfs_ctime_split,
 
     def rewrite_mid_read(fd, *args):
         payload = real_read(fd, *args)
-        layer.write_bytes(b"HERMES_MANAGED_DIR=/other\\n")
+        layer.write_bytes(b"HERMES_MANAGED_DIR=/otherx\\n")
         os.utime(layer, ns=(original.st_atime_ns, original.st_mtime_ns + 2_000_000_000))
         return payload
 
@@ -133,5 +133,3 @@ def test_layer_snapshot_changes_after_bytes_restore_with_mtime_drift(tmp_path, r
     assert before[1] == "present" and after[1] == "present"
     assert before[3] is not None and after[3] is not None
     assert before[3] != after[3], "restored bytes with changed mtime must shift the signature"
-
-
