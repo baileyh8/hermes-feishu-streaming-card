@@ -111,6 +111,7 @@ PY
 Gateway 读不到其 `operations.transport.key`，同时出现零业务事件和缺失 heartbeat。
 这是已用真实回环 HTTP 回归重现的可能原因，**不是对 #83/#266 远端根因的确认**。
 
+
 在服务管理器或容器配置中核对 Gateway **实际 PID** 与 sidecar 的运行用户、
 `HERMES_FEISHU_CARD_STATE_DIR`、`HERMES_FEISHU_CARD_EVENT_URL`、
 `HERMES_FEISHU_CARD_ENABLED` 是否符合部署安排。`docker exec env` 只能证明新 shell
@@ -123,6 +124,27 @@ Gateway 读不到其 `operations.transport.key`，同时出现零业务事件和
 
 提交问题时提供上述脱敏前后计数、实际加载版本、doctor 结论、部署方式和已核实的
 配置一致性即可。不要粘贴完整进程环境或含凭据的启动命令。
+
+### 4. 官方 Docker 数据根布局（#512）
+
+官方 Docker 文档把数据卷挂载为 `-v ~/.hermes:/opt/data`，容器内
+`HERMES_HOME=/opt/data`，named profile 的 home 是 `/opt/data/profiles/<name>`，
+不带 `.hermes` 前导段。HFC 的身份解析按以下边界处理这类布局：
+
+1. 进程 root 只来自 native `hermes_constants.get_default_hermes_root()`；
+   task home 来自 `get_hermes_home()` 的 ContextVar。两者分开，不互相推断。
+2. root-bound 解析只接受两种形态：root 本身（`default` profile）与
+   `<root>/profiles/<name>`（恰好两层，native 小写 grammar）。不会回退到
+   legacy `.hermes` 字符串规则，也不接受任何其它 `X/profiles/<name>` 字符串。
+3. native helper 缺失（旧版 Hermes）保留 pre-#512 的 standard-default 行为；
+   helper 存在但检查失败（抛错、relative、不可解析）一律拒绝，不做 legacy
+   回退，missing capability 与 failed inspection 是两种状态。
+4. admission 的绝对路径 authority 始终先做 `authority.db.db_path` 归属证明，
+   再做 root-bound 命名；DB 归属失败或路径不在验证过的 root 形态内一律拒绝。
+
+未验证边界：官方 Docker + multiplex 多 profile 的真实出卡验收仍未执行；
+单元测试只证明解析与拒绝逻辑，不代替真实容器验收。
+
 
 #263 的 `cont-init` 截图还显示后台启动输出被完全丢弃、之后仅修复 `.env` 所有者。
 具体可见证据、同 Gateway 用户启动以及显式传递 state/config/env/Hermes 参数的

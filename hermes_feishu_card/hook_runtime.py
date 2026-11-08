@@ -2687,11 +2687,28 @@ def _admission_default_profile_unverified(local_vars: dict[str, Any]) -> bool:
         return False
     try:
         from hermes_constants import get_hermes_home
-        selected = Path(get_hermes_home()).expanduser().resolve()
-        standard_default = (Path.home() / ".hermes").resolve()
-        return selected != standard_default
-    except Exception:
+        selected = Path(get_hermes_home()).expanduser()
+        if not selected.is_absolute():
+            return True
+        selected = selected.resolve()
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return True
+    from .profile_root import ProfileRootUnavailable, native_profile_root
+    try:
+        root = native_profile_root()
+    except ProfileRootUnavailable:
+        # Inspection failed: refuse even when the home looks standard.
+        return True
+    # A verified process root is a trustworthy default home (official Docker
+    # /opt/data). The platform standard stays accepted only when the helper
+    # is missing (pre-#512 Hermes); with a helper, a standard-default home
+    # that the helper did not name is unproven and keeps refusing.
+    if root is None:
+        try:
+            return selected != (Path.home() / ".hermes").resolve()
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return True
+    return selected != root
 
 
 def capture_admission_base_extraction(local_vars: dict[str, Any]) -> None:
@@ -11236,14 +11253,35 @@ def _profile_identity(local_vars: dict[str, Any], source_obj: Any, message_obj: 
     )
     if direct:
         return legacy_profile_identity(direct, "locals")
+    try:
+        import importlib
+
+        native = importlib.import_module("hermes_constants")
+        get_hermes_home = getattr(native, "get_hermes_home", None)
+        task_home = str(get_hermes_home()) if get_hermes_home else ""
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        task_home = ""
+    # Root-bound identity first (#512). A missing native helper keeps the
+    # legacy paths below; a helper that fails verification refuses instead
+    # of falling back to legacy string guessing.
+    from .profile_root import ProfileRootUnavailable, resolve_task_profile_identity
+    try:
+        rooted = resolve_task_profile_identity(
+            task_home=task_home, multiplex=multiplex,
+            process_home=os.environ.get("HERMES_HOME", ""),
+        )
+    except ProfileRootUnavailable:
+        # Refuse safely inside the identity contract instead of raising into
+        # the native caller: an unverified root must not gain an identity.
+        return "default", "fallback_default"
+    if rooted is not None:
+        return rooted
     if multiplex:
         # Hermes scopes get_hermes_home() with a ContextVar for each turn;
         # process-wide HERMES_HOME belongs to the primary profile only.
-        try:
-            from hermes_constants import get_hermes_home
-            profile = profile_from_hermes_home_path(str(get_hermes_home()))
-        except (ImportError, AttributeError):
-            profile = None
+        profile = None
+        if task_home:
+            profile = profile_from_hermes_home_path(task_home)
         if profile:
             return legacy_profile_identity(profile, "hermes_home")
         return "default", "fallback_default"

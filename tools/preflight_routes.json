@@ -13,7 +13,9 @@
       "tests/unit/test_issue451_stage_diagnostics.py",
       "tests/unit/test_admission_delivery_verdict.py",
       "tests/unit/test_observed_rate_identity.py",
-      "tests/unit/test_native_rate_scope.py"
+      "tests/unit/test_native_rate_scope.py",
+      "tests/unit/test_profile_root.py",
+      "tests/unit/test_512_authority_profile_matches.py"
     ],
     "render": [
       "tests/unit/test_render.py",
@@ -142,7 +144,9 @@
       "tests/integration/test_session_authority_completion.py",
       "tests/unit/test_admission_completion_state.py",
       "tests/unit/test_admission_delivery_verdict.py",
-      "tests/unit/test_observed_rate_identity.py"
+      "tests/unit/test_observed_rate_identity.py",
+      "tests/unit/test_profile_root.py",
+      "tests/unit/test_512_authority_profile_matches.py"
     ],
     "interaction": [
       "tests/unit/test_card_action_admission.py",
@@ -235,7 +239,9 @@
       "tests/unit/test_profile_sources.py",
       "tests/unit/test_multiplex_adapters.py",
       "tests/integration/test_multiplex_zero_events.py",
-      "tests/unit/test_config_rules.py"
+      "tests/unit/test_config_rules.py",
+      "tests/unit/test_profile_root.py",
+      "tests/unit/test_512_authority_profile_matches.py"
     ],
     "sdk": [
       "tests/unit/test_cold_start_card_callbacks.py",
@@ -834,6 +840,11 @@
       "upstream",
       "install",
       "install_transactions"
+    ],
+    "hermes_feishu_card/profile_root.py": [
+      "routing",
+      "runtime",
+      "delivery"
     ]
   }
 }

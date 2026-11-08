@@ -1718,6 +1718,141 @@ def _cli(
     )
 
 
+def _multiplex_profile_probe_code() -> str:
+    """Exercise native scoped homes and real stores, without a Gateway/model turn."""
+    return r'''
+import asyncio,json,os,shutil,sys,tempfile
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0,sys.argv[1])
+from hermes_constants import (get_hermes_home,get_default_hermes_root,
+    set_hermes_home_override,reset_hermes_home_override)
+from hermes_state import SessionDB
+from gateway.session_authority import SessionAuthority
+from gateway.session_authorities import SessionAuthorities
+import hermes_feishu_card as package
+from hermes_feishu_card import hook_runtime as h
+from hermes_feishu_card import admission_completion as ac
+root=Path(sys.argv[2]).resolve()
+assert Path(package.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+assert package.__version__==sys.argv[3]
+assert get_default_hermes_root().resolve()==root
+assert get_hermes_home().resolve()==root
+runner=SimpleNamespace(config=SimpleNamespace(multiplex_profiles=True))
+registry=SessionAuthorities(root,multiplexed=True)
+runner.session_authorities=registry
+profiles=root/'profiles'
+profiles.mkdir(exist_ok=True)
+created=[]
+stores=[]
+authorities=[]
+checks={'scoped_turns':0,'database_refusals':0,'cross_profile_refusals':0,
+        'outside_root_refusals':0,'removed_profile_refusals':0}
+try:
+    homes=[root]
+    for prefix in ('hfc-probe-a-','hfc-probe-b-'):
+        home=Path(tempfile.mkdtemp(prefix=prefix,dir=profiles))
+        created.append(home)
+        (home/'config.yaml').write_text('gateway: {multiplex_profiles: true}\n')
+        homes.append(home)
+    names=['default',*(home.name for home in homes[1:])]
+    for name,home in zip(names,homes):
+        db=SessionDB(home/'state.db')
+        stores.append(db)
+        authority=SessionAuthority(runner,profile_id=str(home),instance_id='hfc-probe',db=db,epoch=1)
+        authorities.append(authority)
+        registry.add(home,authority,name=name)
+    os.environ['HERMES_FEISHU_CARD_PROFILE_ID']='wrong-global-profile'
+    async def scoped(index):
+        home,name=homes[index],names[index]
+        token=set_hermes_home_override(home)
+        try:
+            for _ in range(3):
+                await asyncio.sleep(0)
+                authority=registry.active()
+                assert authority is authorities[index]
+                assert get_hermes_home().resolve()==home.resolve()
+                assert h._profile_identity({'self':runner},None,None)==(name,'hermes_home')
+                assert not h._admission_default_profile_unverified({'self':runner})
+                assert ac._authority_profile_matches(authority,name)
+                checks['scoped_turns']+=1
+                for other in names:
+                    if other!=name:
+                        assert not ac._authority_profile_matches(authority,other)
+                        checks['cross_profile_refusals']+=1
+            wrong=SessionAuthority(runner,profile_id=str(home),instance_id='hfc-probe',
+                db=stores[(index+1)%len(stores)],epoch=1)
+            assert not ac._authority_profile_matches(wrong,name)
+            checks['database_refusals']+=1
+        finally:
+            reset_hermes_home_override(token)
+    async def run():
+        await asyncio.gather(*(scoped(i) for i in range(len(homes))))
+    asyncio.run(run())
+    for outside in (root/'other'/'profiles'/names[1], homes[1]/'deep',
+                    root/'other'/'.hermes'/'profiles'/names[1]):
+        token=set_hermes_home_override(outside)
+        try:
+            assert h._profile_identity({'self':runner},None,None)==('default','fallback_default')
+            assert h._admission_default_profile_unverified({'self':runner})
+            assert registry.active() is None
+            unknown=SessionAuthority(runner,profile_id=str(outside),instance_id='hfc-probe',
+                db=SimpleNamespace(db_path=outside/'state.db'),epoch=1)
+            assert not ac._authority_profile_matches(unknown,'default')
+            assert not ac._authority_profile_matches(unknown,names[1])
+            checks['outside_root_refusals']+=1
+        finally:
+            reset_hermes_home_override(token)
+    registry.remove(homes[1])
+    token=set_hermes_home_override(homes[1])
+    try:
+        assert registry.active() is None
+        checks['removed_profile_refusals']+=1
+    finally:
+        reset_hermes_home_override(token)
+    assert get_hermes_home().resolve()==root
+    print(json.dumps({'status':'ok','profiles':len(homes),'native_contextvars':True,
+        'native_authorities':True,'real_sqlite_stores':True,'installed_package':True,
+        'gateway_model_feishu_turn':False,'checks':checks},sort_keys=True))
+finally:
+    for db in stores:
+        db.close()
+    for home in reversed(created):
+        shutil.rmtree(home)
+'''
+
+
+def _run_multiplex_profile_probe(
+    evidence: Path, python: Path, version: str
+) -> dict[str, Any]:
+    if os.environ.get('HFC_IMAGE_TAG') != 'v0.23.0':
+        return {'status': 'not_applicable'}
+    result = _run_command(
+        [str(python), '-B', '-I', '-c', _multiplex_profile_probe_code(),
+         HERMES_ROOT, HERMES_HOME, version],
+        env=_clean_container_env(), timeout=120,
+    )
+    _write_log(evidence / 'multiplex-profile-probe', result)
+    if result.returncode:
+        raise AcceptanceFailure('native multiplex profile probe failed')
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise AcceptanceFailure('native multiplex profile probe returned invalid evidence') from exc
+    expected_checks = {
+        'scoped_turns': 9, 'database_refusals': 3, 'cross_profile_refusals': 18,
+        'outside_root_refusals': 3, 'removed_profile_refusals': 1,
+    }
+    if (type(payload) is not dict or payload.get('status') != 'ok'
+            or payload.get('profiles') != 3 or payload.get('gateway_model_feishu_turn') is not False
+            or any(payload.get(key) is not True for key in (
+                'native_contextvars', 'native_authorities', 'real_sqlite_stores', 'installed_package'))
+            or payload.get('checks') != expected_checks):
+        raise AcceptanceFailure('native multiplex profile evidence is incomplete')
+    _write_json(evidence / 'multiplex-profile.json', payload)
+    return payload
+
+
 def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     wheel_path = _current_wheel()
     pyc_mode = os.environ.get("HFC_PYC_MODE", "preserved")
@@ -1797,6 +1932,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     if observer["status"] != "active":
         raise AcceptanceFailure("legacy observer is not active after install")
     config = _config_assertions()
+    multiplex_probe = _run_multiplex_profile_probe(evidence, selected, wheel_info.version)
     source_after_install = _source_snapshot(Path(HERMES_ROOT))
     install_diff = _source_diff(source_before, source_after_install)
     # The official image may use a native/decomposed path that needs no source
@@ -1831,6 +1967,7 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
         "home_pyc_after": home_pyc_after,
         "selected_launcher": str(selected),
         "binding_identity": _binding_identity(),
+        "multiplex_profile_probe": multiplex_probe,
     }
     _write_json(evidence / "installed.json", install_state)
 

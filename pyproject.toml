@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.19"
+version = "5.0.20"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -73,6 +73,8 @@ include = [
   "hermes_feishu_card/transient_notices.py",
   "hermes_feishu_card/native_admission.py",
   "hermes_feishu_card/admission_completion.py",
+  "hermes_feishu_card/profile_root.py",
+  "hermes_feishu_card/profile_sources.py",
   "hermes_feishu_card/admission_topology_0226.py",
   "hermes_feishu_card/completion_diagnostics.py",
   "hermes_feishu_card/install/admission_extraction.py",
@@ -141,6 +143,8 @@ files = [
   "hermes_feishu_card/transient_notices.py",
   "hermes_feishu_card/native_admission.py",
   "hermes_feishu_card/admission_completion.py",
+  "hermes_feishu_card/profile_root.py",
+  "hermes_feishu_card/profile_sources.py",
   "hermes_feishu_card/admission_topology_0226.py",
   "hermes_feishu_card/completion_diagnostics.py",
   "hermes_feishu_card/install/admission_extraction.py",
