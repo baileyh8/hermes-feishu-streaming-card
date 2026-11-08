@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from .card_limits import FEISHU_MAX_TABLES, SAFE_CARD_JSON_BYTES
 from .text import MarkdownBlock, scan_markdown_blocks, split_markdown_blocks
 
-MAX_SEGMENT_CARDS = 10
+# Segmented delivery is a bounded continuation of the process record, not a
+# channel dump of the full body: a few cards cover the "one card is not
+# enough, a document is too heavy" middle band, and anything beyond the cap
+# falls back to the native handoff so longer content keeps its dedicated
+# document delivery instead of a wall of cards.
+MAX_SEGMENT_CARDS = 5
 # Fixed continuation-card chrome (header, footer, element scaffolding) kept
 # below the real serialized overhead; every planned card is still fully
 # verified by ``inspect_card_limits`` before the disposition commits.
@@ -132,8 +137,9 @@ def plan_terminal_segments(
 
     The lead keeps whole block boundaries. Continuations pack whole pieces and
     never exceed the byte or per-card table budgets. Failing the card-count cap
-    returns None: the existing native handoff stays the fail-closed answer for
-    content that cannot be bounded.
+    returns None: content too large for a few continuation cards keeps the
+    native limit handoff, where a dedicated document/native delivery can carry
+    the full body instead of flooding the chat with cards.
     """
     blocks = [block for block in scan_markdown_blocks(primary_text) if block.text]
     if not blocks:

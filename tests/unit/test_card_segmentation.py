@@ -39,7 +39,7 @@ def test_every_card_respects_the_byte_budget():
 def test_segmented_table_pieces_repeat_their_headers():
     header = "| 指标 | 数值 | 说明 |"
     separator = "| --- | --- | --- |"
-    rows = "\n".join(f"| 项目{i} | {i} | 长说明{'内容' * 40} |" for i in range(400))
+    rows = "\n".join(f"| 项目{i} | {i} | 长说明{'内容' * 40} |" for i in range(150))
     text = f"# 表格报告\n\n{header}\n{separator}\n{rows}"
 
     plan = plan_terminal_segments(text)
