@@ -2,7 +2,7 @@
 
 ## v5.0.19 — 2026-11-08
 
-- Fix self-managed PM installs with a sticky active profile (#507): the binding derives the effective official config target with the same rules as the CLI, prepare/journal record it, and the probe/enable children pass `-p` so the official writer and every verify/rollback path touch the same file. Unresolvable profile homes refuse before any write; the postimage byte gate is unchanged.
+- Fix self-managed PM installs with a sticky active profile (#507): pin the official visibility probe and enable children to the bound root with `-p default`; named profile homes retain the official environment binding. Config ownership, journal and restore formats stay unchanged, as do postimage verification and unrelated-drift protection.
 - Fix Windows NTFS installs (#509): file-signature comparisons drop `st_ctime_ns`, whose constant lstat/fstat delta refused every read; content integrity stays on the sha256 digest, and the adoption ABA tests now cover restored and tampered bytes.
 
 ## v5.0.18 — 2026-11-07

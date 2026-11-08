@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import secrets
 import stat
 import subprocess
@@ -108,13 +107,6 @@ class HermesRuntimeBinding:
     config_path: Path
     purelib: Path
     platlib: Path
-    # The config file the official CLI actually writes. When the bound home
-    # is not a profiles/<name> directory and <home>/active_profile names a
-    # live profile, Hermes v0.23.x redirects the child to that profile home
-    # (_apply_profile_override), so planning, enable and verification must
-    # target the same file and pass the profile explicitly.
-    effective_config_path: Path = Path("")
-    profile_flag: str | None = None
 
 
 @dataclass(frozen=True, repr=False)
@@ -196,7 +188,6 @@ def resolve_runtime_binding(
         raise RuntimeBindingRefused("Hermes home is ambiguous; pass --hermes-home")
     home = _require_directory(homes[0], "Hermes home")
     config_path = _require_regular_file(home / "config.yaml", "Hermes config")
-    effective_config_path, profile_flag = _official_profile_target(home, config_path)
 
     runtime_python = _runtime_launcher(root, hermes_home=home)
     launcher_metadata = runtime_python.lstat()
@@ -253,78 +244,9 @@ def resolve_runtime_binding(
         python_identity=python_identity,
         hermes_home=home,
         config_path=config_path,
-        effective_config_path=effective_config_path,
-        profile_flag=profile_flag,
         purelib=purelib,
         platlib=platlib,
     )
-
-
-_PROFILE_NAME_RE_TEXT = r"[a-z0-9][a-z0-9_-]{0,63}"
-
-
-def _official_profile_target(home: Path, config_path: Path) -> tuple[Path, str | None]:
-    """Mirror the official CLI's sticky-profile redirection (#507).
-
-    hermes_cli.main._apply_profile_override trusts an explicit HERMES_HOME
-    only when its parent directory is named ``profiles``; otherwise it reads
-    ``<home>/active_profile`` and re-homes to ``profiles/<name>`` before any
-    command writes config. Return the config file the child will actually
-    write plus the ``-p`` flag that pins it, or the unchanged binding target
-    when there is no redirect. The live-profile check matches the official
-    named-profile rules: a real directory with its own identity.
-    """
-    if home.parent.name == "profiles":
-        return config_path, None
-    active_path = home / "active_profile"
-    try:
-        metadata = active_path.lstat()
-    except (FileNotFoundError, NotADirectoryError):
-        return config_path, None
-    except OSError as exc:
-        raise RuntimeBindingRefused("Hermes active profile state is uninspectable") from exc
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
-        raise RuntimeBindingRefused("Hermes active profile state is invalid")
-    try:
-        name = active_path.read_text(encoding="utf-8-sig").strip()
-    except (UnicodeDecodeError, OSError) as exc:
-        raise RuntimeBindingRefused("Hermes active profile state is unreadable") from exc
-    if not name or name == "default":
-        return config_path, None
-    if not re.fullmatch(_PROFILE_NAME_RE_TEXT, name):
-        raise RuntimeBindingRefused("Hermes active profile name is invalid")
-    profile_home = home / "profiles" / name
-    try:
-        profile_metadata = profile_home.lstat()
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        raise RuntimeBindingRefused(
-            "Hermes active profile home is missing; switch profiles with "
-            "`hermes profile use default` before installing"
-        ) from exc
-    except OSError as exc:
-        raise RuntimeBindingRefused("Hermes profile home is uninspectable") from exc
-    if not stat.S_ISDIR(profile_metadata.st_mode):
-        raise RuntimeBindingRefused("Hermes active profile home is not a directory")
-    effective_config = _require_regular_file(
-        profile_home / "config.yaml", "Hermes profile config"
-    )
-    return effective_config, name
-
-
-def _official_config_path(binding: HermesRuntimeBinding) -> Path:
-    """The config file official enable reads and writes for this binding."""
-    effective = getattr(binding, "effective_config_path", None)
-    if isinstance(effective, Path) and str(effective):
-        return effective
-    return binding.config_path
-
-
-def _official_profile_args(binding: HermesRuntimeBinding) -> list[str]:
-    """Leading ``-p <name>`` pins the official child to the bound profile."""
-    flag = getattr(binding, "profile_flag", None)
-    if type(flag) is str and flag:
-        return ["-p", flag]
-    return []
 
 
 def probe_plugin_entrypoint(
@@ -400,16 +322,12 @@ def prepare_plugin_config(binding: HermesRuntimeBinding) -> PluginConfigPreimage
     backup_path = state_dir / f"{config_backup_id}.yaml"
     journal_path = state_dir / f"{config_backup_id}.json"
     backup_sha256 = _sha256(config_bytes)
-    target_path = _official_config_path(binding)
-    profile_flag = getattr(binding, "profile_flag", None)
     journal = json.dumps(
         {
             "protocol": "hfc-plugin-config-preimage-v1",
             "config_backup_id": config_backup_id,
             "pre_sha256": pre_sha256,
             "backup_sha256": backup_sha256,
-            "target_config": str(target_path),
-            "target_profile": profile_flag,
             "phase": "prepared",
         },
         sort_keys=True,
@@ -457,28 +375,9 @@ def enable_plugin(
         raise PluginConfigRefused("plugin config journal is invalid") from exc
     expected_prepared = {"protocol": "hfc-plugin-config-preimage-v1", "phase": "prepared",
                          "config_backup_id": preimage.config_backup_id, "pre_sha256": preimage.pre_sha256,
-                         "backup_sha256": preimage.backup_sha256,
-                         "target_config": str(_official_config_path(binding)),
-                        "target_profile": getattr(binding, "profile_flag", None)}
-    enabled_variants = (
-        {**expected_prepared, "enabled_before": preimage.enabled_before},
-        dict(expected_prepared),
-        # Journals written before the effective-target fields existed bind the
-        # legacy config path; they stay valid only without a profile redirect.
-        {"protocol": "hfc-plugin-config-preimage-v1", "phase": "prepared",
-         "config_backup_id": preimage.config_backup_id, "pre_sha256": preimage.pre_sha256,
-         "backup_sha256": preimage.backup_sha256,
-         "enabled_before": preimage.enabled_before},
-        {"protocol": "hfc-plugin-config-preimage-v1", "phase": "prepared",
-         "config_backup_id": preimage.config_backup_id, "pre_sha256": preimage.pre_sha256,
-         "backup_sha256": preimage.backup_sha256},
-    )
-    if prepared not in enabled_variants:
+                         "backup_sha256": preimage.backup_sha256}
+    if prepared not in (expected_prepared, {**expected_prepared, "enabled_before": preimage.enabled_before}):
         raise PluginConfigRefused("plugin config journal is invalid")
-    if prepared.get("target_profile") and prepared["target_profile"] != getattr(
-        binding, "profile_flag", None
-    ):
-        raise PluginConfigRefused("plugin config target profile changed")
     io.assert_path_snapshot(preimage.journal_path, journal_identity, PluginConfigRefused, "plugin config journal changed")
     before_bytes = _read_bound_config(binding)
     if _sha256(before_bytes) != preimage.pre_sha256:
@@ -517,13 +416,12 @@ def enable_plugin(
         _rollback_verified_enable(binding, before_bytes, plan.postimage)
         raise PluginConfigRefused(_official_enable_failure_message()) from exc
     _verify_config_plan_source(plan)
-    target_path = _official_config_path(binding)
-    after_identity, after_bytes, _mode = io.read_file_state(target_path, parent_fd=None,
+    after_identity, after_bytes, _mode = io.read_file_state(binding.config_path, parent_fd=None,
         missing_allowed=False, refused=PluginConfigRefused, non_regular_refusal="Hermes config is unsafe",
         changed_refusal="Hermes config changed since plugin enable", wrap_read_error=True)
     if after_identity is None or after_bytes is None:
         raise PluginConfigRefused("Hermes config changed since plugin enable")
-    parent_identity = io.read_directory_identity(target_path.parent, PluginConfigRefused,
+    parent_identity = io.read_directory_identity(binding.config_path.parent, PluginConfigRefused,
                                                   "Hermes config directory changed")
     after_sha256 = _sha256(plan.postimage)
     if return_code != 0:
@@ -551,9 +449,9 @@ def enable_plugin(
         _restore_exact_config(binding, before_bytes, expected_sha256=after_sha256,
                               expected_identity=after_identity, expected_parent=parent_identity)
         raise
-    io.assert_path_snapshot(target_path, after_identity, PluginConfigRefused,
+    io.assert_path_snapshot(binding.config_path, after_identity, PluginConfigRefused,
                             "Hermes config changed since plugin enable")
-    if io.read_directory_identity(target_path.parent, PluginConfigRefused,
+    if io.read_directory_identity(binding.config_path.parent, PluginConfigRefused,
                                   "Hermes config directory changed") != parent_identity:
         raise PluginConfigRefused("Hermes config directory changed")
     from dataclasses import replace
@@ -913,6 +811,21 @@ def _official_enable_failure_message() -> str:
     return f"official plugin enable failed ({diagnostic})"
 
 
+def _official_profile_args(binding: HermesRuntimeBinding) -> list[str]:
+    """Keep the official child on the user's bound home.
+
+    hermes_cli.main._apply_profile_override redirects a child whose
+    HERMES_HOME is not a profiles/<name> directory to
+    <home>/profiles/<active_profile> before any command writes config. The
+    user explicitly bound this home with --hermes-home, so pin ``-p default``
+    to block the sticky redirect. An explicit profiles/<name> home is trusted
+    by the official CLI and needs no flag.
+    """
+    if binding.hermes_home.parent.name == "profiles":
+        return []
+    return ["-p", "default"]
+
+
 def _official_probe_payload(stdout: str | bytes | None) -> dict[str, object] | None:
     for line in reversed(_child_output_text(stdout).splitlines()):
         if not line.strip():
@@ -1059,7 +972,7 @@ def _verify_official_enable_source(root: Path, *, family: str | None = None) -> 
 
 
 def _read_bound_config(binding: HermesRuntimeBinding) -> bytes:
-    config_path = _require_regular_file(_official_config_path(binding), "Hermes config")
+    config_path = _require_regular_file(binding.config_path, "Hermes config")
     try:
         value = config_path.read_bytes()
     except OSError as exc:
@@ -1217,7 +1130,7 @@ def _restore_exact_config(
     expected_parent: tuple[int, int] | None = None,
 ) -> None:
     from . import file_transaction as portable, posix_transaction as io
-    path = _official_config_path(binding)
+    path = binding.config_path
     snapshot, current, mode = io.read_file_state(path, parent_fd=None, missing_allowed=False,
         refused=PluginConfigRefused, non_regular_refusal="Hermes config is unsafe",
         changed_refusal="Hermes config changed; refusing to overwrite", wrap_read_error=True)

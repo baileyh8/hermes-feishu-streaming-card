@@ -320,6 +320,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 ## 贡献者
 
+- V5.0.19：感谢 [lvanwei180-lvan](https://github.com/lvanwei180-lvan) 提供 #507 的安装现场证据，[czh9101-lang](https://github.com/czh9101-lang) 提供 #509 的 NTFS 根因定位与最小复现；问题证据与代码作者分开记录，历史贡献保留。
+
 - V5.0.18：感谢 [Lite-G](https://github.com/Lite-G) 提供 #497 的精确源码定位与复测建议；问题证据与代码作者分开记录，历史贡献保留。
 
 - V5.0.15：感谢 [Lite-G](https://github.com/Lite-G) 提供 #489、#491、#492 定位与 [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) 的参考实现，[ywarmy](https://github.com/ywarmy) 提供 #495 字节级 writer 数据，[WenhuaXia](https://github.com/WenhuaXia) 提供 #494 受管部署复现记录。问题证据与代码作者分开记录，历史贡献记录保留。

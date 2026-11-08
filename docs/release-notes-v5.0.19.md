@@ -6,12 +6,17 @@
 
 ## 范围
 
-- sticky active profile：绑定阶段按官方 `_apply_profile_override` 同款规则派生实际写入的 config 目标；prepare/journal 记录该目标；探针与 enable 子进程显式 `-p <name>`；enable 的读取、校验、回滚与恢复全部作用于同一文件。profile home 不存在时在写任何配置前拒绝。postimage 字节门与无关改动保护不变。
-- Windows NTFS：`st_ctime_ns` 在路径查询与句柄查询间存在恒定读差，所有文件身份签名改用 dev/ino/size/mtime 四元组；内容完整性由 sha256 摘要承担，ABA 恢复原字节的场景不再误拒，真实内容变化仍拒绝。
+- sticky active profile：普通 Hermes home 的官方探针与 enable 子进程显式传入 `-p default`，阻止 sticky profile 将写入重定向到其他配置；`profiles/<name>` 形式的命名 profile home 保持官方环境绑定。配置读写、journal、所有权及恢复仍使用用户指定的 home，postimage 字节门与无关改动保护保留。
+- Windows NTFS：`st_ctime_ns` 在路径查询与句柄查询间存在恒定读差，环境层、PM admission 和相关 legacy 证据签名改用 dev/ino/size/mtime 四元组；内容完整性由 sha256 摘要承担，ABA 恢复原字节的场景不再误拒，真实内容变化仍拒绝。
 
 ## 验收记录
 
-（发布前填写：完整 CI、主线精确提交 CI、tag 门禁、普通 wheel 安装/恢复、公开 tag 安装与资产校验的链接与结果。）
+- 本地文档与版本元数据：104 项通过；ruff 通过，mypy 检查的 60 个源文件通过。
+- 安装、配置和恢复的相关回归：390 项通过、208 项跳过。跳过包含平台条件及未提供的特定历史/上游 fixture，不作为完整兼容验收。
+- NTFS 读差注入及 CI 配置契约：23 项通过，无跳过；新回归纳入 Windows portable 套件。mtime 漂移显式注入，不依赖文件系统时钟粒度。
+- 固定 Hermes v0.23.0 的隔离子进程对照确认：原始启动跟随 sticky profile；普通 home 显式 `-p default` 保持绑定根；命名 profile home 保持原环境绑定。
+- 完整 CI、主线精确提交、annotated tag 门禁、普通 wheel 安装/恢复、公开安装与资产校验：发布前待完成，最终记录见 GitHub Release。
+- 报告者原主机的安装及实际飞书回合仍待现场复测；本轮不声称已完成真实 Gateway 或客户端验收。
 
 ## 贡献
 

@@ -325,6 +325,8 @@ See [release history](docs/release-history.en.md) for earlier versions, and [CHA
 
 ## Contributors
 
+- V5.0.19: thanks to [lvanwei180-lvan](https://github.com/lvanwei180-lvan) for the #507 installation evidence and [czh9101-lang](https://github.com/czh9101-lang) for the #509 NTFS diagnosis and minimal reproduction. Issue evidence is separate from code authorship; historical credits are retained.
+
 - V5.0.18: thanks to [Lite-G](https://github.com/Lite-G) for the exact-source analysis and retest plan in #497. Issue evidence is separate from code authorship; historical credits are retained.
 
 - V5.0.15: thanks to [Lite-G](https://github.com/Lite-G) for #489, #491, #492 reports and the [PR #490](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/490) reference implementation, and [WenhuaXia](https://github.com/WenhuaXia) for the #494 managed-deployment reproduction. Issue evidence is separate from code authorship; historical credits remain.

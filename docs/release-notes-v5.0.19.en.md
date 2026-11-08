@@ -6,12 +6,17 @@ For [#507](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/507) 
 
 ## Scope
 
-- Sticky active profile: the binding derives the effective official config target with the same rules as `_apply_profile_override`; prepare/journal record that target; the probe and enable children pass `-p <name>`; every enable read, verification, rollback and restore path targets the same file. A missing profile home refuses before any config write. The postimage byte gate and unrelated-drift protection are unchanged.
-- Windows NTFS: `st_ctime_ns` reports a constant delta between path and handle queries, so every file-signature comparison now uses a dev/ino/size/mtime tuple; content integrity stays on the sha256 digest, exact-ABA restores are no longer refused, and real content changes still are.
+- Sticky active profile: the official visibility probe and enable children pass `-p default` for an ordinary Hermes home, preventing a sticky profile from redirecting writes to another config. A named home under `profiles/<name>` retains the official environment binding. Config reads and writes, journals, ownership and restore continue to use the user-bound home; the postimage byte gate and unrelated-drift protection remain in force.
+- Windows NTFS: `st_ctime_ns` reports a constant delta between path and handle queries, so environment-layer, PM-admission and related legacy-evidence signatures now use a dev/ino/size/mtime tuple; content integrity stays on the sha256 digest, exact-ABA restores are no longer refused, and real content changes still are.
 
 ## Acceptance
 
-(Filled before release: full CI, main exact-commit CI, tag gate, ordinary-wheel install/restore, public tag installation and asset verification links and results.)
+- Local docs and version metadata: 104 passed; ruff passed and mypy passed for 60 source files.
+- Related install, config and restore regression: 390 passed, 208 skipped. Skips include platform conditions and missing specific historical/upstream fixtures; this is not complete compatibility acceptance.
+- NTFS divergence injection and CI workflow contracts: 23 passed, no skips; the new regression is included in the Windows portable suite. Explicit mtime drift avoids relying on filesystem clock granularity.
+- An isolated child-process comparison on pinned Hermes v0.23.0 confirms that an unpinned launch follows the sticky profile, `-p default` keeps an ordinary bound root, and a named profile home retains its environment binding.
+- Complete CI, the exact main commit, annotated-tag gate, ordinary-wheel install/restore, public installation and asset verification remain required before publication. Final records will be in the GitHub Release.
+- Installation and real Feishu turns on the reporters' original hosts remain field verification; this release does not claim real Gateway or client acceptance.
 
 ## Credits
 
