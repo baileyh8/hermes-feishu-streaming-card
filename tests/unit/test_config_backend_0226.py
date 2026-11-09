@@ -219,7 +219,10 @@ def test_backend_child_probe_decodes_utf8_under_gbk_parent(tmp_path, monkeypatch
     root.mkdir()
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(locale, "getencoding", lambda: "gbk")
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda *args, **kwargs: "gbk")
+    if hasattr(locale, "getencoding"):
+        monkeypatch.setattr(locale, "getencoding", lambda: "gbk")
+    assert locale.getpreferredencoding(False) == "gbk"
     monkeypatch.setattr(backend, "_CHILD_PROBE", "\n".join([
         "import json,sys",
         "sys.stdin.read()",

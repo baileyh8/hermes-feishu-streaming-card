@@ -2186,7 +2186,10 @@ def test_pm_child_call_decodes_utf8_stderr_under_gbk_parent(tmp_path, monkeypatc
     root.mkdir()
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr(locale, "getencoding", lambda: "gbk")
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda *args, **kwargs: "gbk")
+    if hasattr(locale, "getencoding"):
+        monkeypatch.setattr(locale, "getencoding", lambda: "gbk")
+    assert locale.getpreferredencoding(False) == "gbk"
     monkeypatch.setattr(pm, "_CHILD", "\n".join([
         "import json,sys",
         "from pathlib import Path",

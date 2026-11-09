@@ -2,7 +2,7 @@
 
 ## v5.0.21 — 2026-11-09
 
-- Carry authoritative per-turn model/provider metadata into completion events for Codex subscription-usage display (#518), including coherent fallback route capture on the pinned Hermes v0.23.0 result path. Unknown, conflicting or mixed-route attribution remains hidden, and optional quota-query exceptions no longer strand the terminal card.
+- Carry authoritative per-turn model/provider metadata into completion events for Codex subscription-usage display (#518), including coherent fallback route capture on the pinned Hermes v0.23.0 result path. Unknown, conflicting or mixed-route attribution remains hidden, and optional quota-query exceptions no longer strand the terminal card. Keep exact v5.0.20 and current installed-hook source proofs for reversible upgrades; mixed or foreign bytes remain refused.
 - Make controlled PM/backend Python subprocess output decoding explicit for non-UTF-8 parent locales (#497). The separate reported Windows setup `source_digest` refusal has not been independently reproduced; the formal selected-family source proof remains enforced.
 
 ## v5.0.20 — 2026-11-09

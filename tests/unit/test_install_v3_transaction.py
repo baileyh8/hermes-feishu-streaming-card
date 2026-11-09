@@ -760,9 +760,12 @@ def test_plugin_enable_exit_zero_unrelated_change_reports_guard_and_preserves_ed
     child_results = []
 
     def controlled_enable_child(argv, **kwargs):
-        assert argv[:3] == [str(binding.runtime_python), "-I", "-c"]
-        assert argv[4] == str(root)
-        assert argv[5:] == ["-p", "default", "plugins", "enable", plugin.PLUGIN_KEY,
+        assert argv[:5] == [str(binding.runtime_python), "-I", "-X", "utf8", "-c"]
+        assert argv[5] == plugin._OFFICIAL_ENABLE_BOOTSTRAP
+        assert argv[6] == str(root)
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        assert argv[7:] == ["-p", "default", "plugins", "enable", plugin.PLUGIN_KEY,
                             "--no-allow-tool-override"]
         assert kwargs["cwd"] == str(root)
         assert kwargs["env"] == {
@@ -775,7 +778,7 @@ def test_plugin_enable_exit_zero_unrelated_change_reports_guard_and_preserves_ed
         script = ("from pathlib import Path; "
                   f"Path({str(binding.config_path)!r}).write_text("
                   "'private: CHANGED\\nplugins:\\n  enabled: [hermes-feishu-card]\\n', encoding='utf-8')")
-        result = original_run([sys.executable, "-I", "-c", script], **kwargs)
+        result = original_run([sys.executable, "-I", "-X", "utf8", "-c", script], **kwargs)
         child_results.append(result)
         return result
 
@@ -785,6 +788,7 @@ def test_plugin_enable_exit_zero_unrelated_change_reports_guard_and_preserves_ed
             _execute_diagnostic_fixture(binding, entrypoint, decision)
         assert len(child_results) == 1 and child_results[0].returncode == 0
         assert b"private: CHANGED" in binding.config_path.read_bytes()
+        assert binding.config_path.read_bytes() != original_config
         assert all((root / target).read_bytes() == raw for target, raw in originals.items())
         manifest = json.loads((root / ".hermes_feishu_card_manifest").read_text())
         assert manifest["phase"] == "prepared"

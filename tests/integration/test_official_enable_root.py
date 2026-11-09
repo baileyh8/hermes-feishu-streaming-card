@@ -115,8 +115,11 @@ def test_official_enable_bootstrap_loads_checkout_main(tmp_path, monkeypatch):
 
     def version_child(argv, **kwargs):
         assert argv[0] == str(python)
-        assert argv[1:3] == ["-I", "-c"]
-        assert argv[4] == str(source)
+        assert argv[1:5] == ["-I", "-X", "utf8", "-c"]
+        assert argv[5] == plugin._OFFICIAL_ENABLE_BOOTSTRAP
+        assert argv[6] == str(source)
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
         assert argv[-4:] == [
             "plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"
         ]
@@ -129,7 +132,7 @@ def test_official_enable_bootstrap_loads_checkout_main(tmp_path, monkeypatch):
         # Exercise the same bootstrap with the real upstream CLI's dependency-free
         # fast path. The workspace copy would win if the bootstrap did not prepend
         # the selected checkout before importing ``hermes_cli.main``.
-        result = original_run([*argv[:5], "--version"], **kwargs)
+        result = original_run([*argv[:7], "--version"], **kwargs)
         assert result.returncode == 0, result.stderr
         assert f"Install directory: {source}" in result.stdout
         return result

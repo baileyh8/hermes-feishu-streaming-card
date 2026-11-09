@@ -767,6 +767,7 @@ def test_v0230_rendered_digests_match_full_exact_patcher():
     }
     assert actual == MANIFEST["rendered_files"]
     assert topology.EXPECTED_RENDERED_HASHES_0230 == MANIFEST["rendered_files"]
+    assert topology.LEGACY_EXPECTED_RENDERED_HASHES_0230 == MANIFEST["legacy_rendered_files"]
 
 
 def test_v0230_installed_verification_uses_pinned_rendered_sources(tmp_path, monkeypatch):
@@ -1560,3 +1561,87 @@ def test_issue518_v0230_provider_route_exception_does_not_authorize_stale_usage(
     )
     assert usage["provider"] == ""
     assert usage["model"] == "gpt-6-astra"
+
+
+def test_v0230_exact_rendered_sets_accept_clean_v20_v21_and_reject_mixed(tmp_path):
+    from hermes_feishu_card.install import provider_route
+
+    root = _pinned_root()
+    installed = tmp_path / "installed"
+    _copy_sources(root, installed)
+    originals = {
+        name: (installed / name).read_bytes()
+        for name in DECOMPOSED_SOURCE_TARGETS
+        if (installed / name).is_file()
+    }
+    rendered = decomposed_ownership.render(originals)
+    runner = "gateway/run_turn_runner.py"
+    legacy = dict(rendered)
+    legacy[runner] = provider_route.remove_provider_route_patch(
+        rendered[runner].decode("utf-8")
+    ).encode("utf-8")
+
+    current_hashes = {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in rendered.items()
+    }
+    legacy_hashes = {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in legacy.items()
+    }
+    assert current_hashes == MANIFEST["rendered_files"]
+    assert legacy_hashes == MANIFEST["legacy_rendered_files"]
+    assert topology.EXPECTED_RENDERED_HASHES_0230 == current_hashes
+    assert topology.LEGACY_EXPECTED_RENDERED_HASHES_0230 == legacy_hashes
+
+    def write_all(mapping):
+        for name, raw in mapping.items():
+            (installed / name).write_bytes(raw)
+        topology._OWNED_REMOVAL_CACHE.clear()
+
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+    with patch.object(topology, "_HFC_VERSION", "5.0.18"):
+        assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+
+    write_all(rendered)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+    with patch.object(topology, "_HFC_VERSION", "5.0.18"):
+        assert source_bytes(installed, SOURCE_HASHES_0230) is None
+
+    write_all(legacy)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+
+    mixed = dict(legacy)
+    mixed["gateway/run_turn.py"] = originals["gateway/run_turn.py"]
+    write_all(mixed)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is None
+
+    write_all(legacy)
+    (installed / runner).write_bytes(
+        legacy[runner] + bytes(chr(10) + "# unowned drift" + chr(10), "utf-8")
+    )
+    topology._OWNED_REMOVAL_CACHE.clear()
+    assert source_bytes(installed, SOURCE_HASHES_0230) is None
+
+    restored_runner = decomposed_ownership._remove_target(runner, legacy[runner])
+    assert restored_runner == originals[runner]
+    restored_originals = dict(originals)
+    restored_originals[runner] = restored_runner
+    upgraded = decomposed_ownership.render(restored_originals)
+    assert upgraded[runner] == rendered[runner]
+    write_all(upgraded)
+    assert source_bytes(installed, SOURCE_HASHES_0230) is not None
+
+
+def test_v0230_scoped_usage_marker_is_reversible_idempotent_and_drift_sensitive():
+    from hermes_feishu_card.install import provider_route
+
+    root = _pinned_root()
+    runner = "gateway/run_turn_runner.py"
+    clean = (root / runner).read_text()
+    once = provider_route.apply_provider_route_patch(clean)
+    assert once != clean
+    assert provider_route.apply_provider_route_patch(once) == once
+    assert provider_route.remove_provider_route_patch(once) == clean
+
+    corrupt = once.replace("    _hfc_route = None", "    raise", 1)
+    with pytest.raises(ValueError, match="modified provider"):
+        provider_route.remove_provider_route_patch(corrupt)

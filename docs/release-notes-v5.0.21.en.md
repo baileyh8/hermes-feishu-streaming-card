@@ -7,7 +7,7 @@ This release addresses new reports in [#518](https://github.com/baileyh8/hermes-
 ## Scope
 
 - Carry model/provider together from the authoritative Hermes turn result so eligible Codex completions can query enabled `subscription_usage`. Global configuration, account availability and an unqualified GPT name do not establish turn attribution.
-- Capture the actual fallback route at the pinned v0.23.0 result construction point. Unknown, conflicting or mixed attribution keeps quota hidden. Quota-query errors cannot block the terminal card; duplicate completions do not query again. Existing defaults and configuration remain.
+- Capture the actual fallback route at the pinned v0.23.0 result construction point. Unknown, conflicting or mixed attribution keeps quota hidden. Quota-query errors cannot block the terminal card; duplicate completions do not query again. Existing defaults and configuration remain. Installed-source proof accepts the exact published v5.0.20 hooks and the current hooks, each reversible to the pinned clean source; mixed or foreign bytes remain refused.
 - Make controlled PM/backend Python subprocess output encoding explicit for non-UTF-8 parent locales, retaining redacted diagnostics, source refusal and transaction protection.
 
 ## Findings and limits
