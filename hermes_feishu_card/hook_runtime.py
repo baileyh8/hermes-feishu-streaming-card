@@ -11071,6 +11071,7 @@ def _event_data(
         return data
     if event_name == "message.completed":
         answer = _completion_answer(local_vars)
+        model, provider = _completion_route(local_vars)
         # The completion envelope also carries failed/partial Gateway returns.
         # Keep its delivery/attachment contract, but do not lose exact outcome
         # flags or infer task success from the presence of response text.
@@ -11083,10 +11084,12 @@ def _event_data(
             "attachments": attachments,
             "native_delivery": _native_delivery_policy(answer, local_vars),
             "duration": _completion_duration(local_vars),
-            "model": _completion_model(local_vars),
+            "model": model,
             "tokens": _completion_tokens(local_vars, answer),
             "context": _completion_context(local_vars),
         })
+        if provider:
+            data["provider"] = provider
         # Preview checks body/media only; the actual terminal payload consumes
         # observations once and is reused by exact staging and transport retries.
         rate = None if preview else _completion_observed_rate(local_vars)
@@ -11846,6 +11849,55 @@ def _completion_model(local_vars: dict[str, Any]) -> str:
         if result_model is not None:
             return result_model
     return "Unknown"
+
+
+def _completion_route(local_vars: dict[str, Any]) -> tuple[str, str]:
+    """Read a coherent terminal route from one same-turn authoritative source."""
+    from .turn_metrics import metric_label
+
+    result = local_vars.get("agent_result")
+    if type(result) is dict:
+        model = _first_string(result, ("model", "current_model", "resolved_model"))
+        if model is not None:
+            candidate = result.get("provider")
+            provider = ""
+            if type(candidate) is str:
+                candidate = candidate.strip()
+                if candidate and "/" not in candidate and metric_label(candidate):
+                    provider = candidate
+            return model, provider
+    # No same-turn result pair: locals model is display-only. Remove a stale
+    # provider prefix so it cannot authorize another account's quota.
+    display_model = _completion_model(local_vars)
+    if "/" in display_model:
+        display_model = display_model.split("/", 1)[-1].strip() or "Unknown"
+    return display_model, ""
+
+
+def effective_response_route(agent: Any) -> tuple[str, str] | None:
+    """Return one coherent model/provider pair from the actual turn route."""
+    from .turn_metrics import metric_label
+
+    route = getattr(agent, "_provider_fallback_route", None)
+    fallback_active = getattr(agent, "_provider_fallback_active", False) is True
+    if isinstance(route, (tuple, list)) and len(route) == 2:
+        model, provider = route
+    elif fallback_active:
+        return None
+    else:
+        model, provider = getattr(agent, "model", None), getattr(agent, "provider", None)
+    if type(model) is not str or type(provider) is not str:
+        return None
+    model, provider = model.strip(), provider.strip()
+    if not model or not provider:
+        return None
+    if not metric_label(model) or not metric_label(provider) or "/" in provider:
+        return None
+    if "/" in model:
+        prefix = model.split("/", 1)[0].strip()
+        if prefix.casefold() != provider.casefold():
+            return None
+    return model, provider
 
 
 def effective_response_model(agent: Any) -> str:

@@ -13610,3 +13610,133 @@ def test_only_the_restart_completion_notice_skips_the_card():
     assert hook_runtime._hfc_notice_plain_text(waiting) is None
     assert hook_runtime._hfc_notice_plain_text(compression) is None
     assert hook_runtime._hfc_notice_plain_text(None) is None
+
+
+def _issue518_completed_locals(result_model, result_provider, local_model, local_provider=""):
+    return {
+        "chat_id": "oc_abc",
+        "message_id": "msg_issue518",
+        "profile_id": "default",
+        "answer": "最终答案",
+        "model": local_model,
+        "provider": local_provider,
+        "agent_result": {
+            "final_response": "最终答案",
+            "model": result_model,
+            "provider": result_provider,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "result_model,result_provider,local_model,local_provider,expected_model,expected_provider,allowed",
+    [
+        ("gpt-6-astra", "openai-codex", "gpt-6-astra", "", "gpt-6-astra", "openai-codex", True),
+        ("gpt-6-astra", "openai", "gpt-6-astra", "openai-codex", "gpt-6-astra", "openai", False),
+        ("deepseek-v4-pro", "openai-codex", "gpt-6-astra", "", "deepseek-v4-pro", "openai-codex", False),
+        ("gpt-6-astra", "", "gpt-6-astra", "openai-codex", "gpt-6-astra", "", False),
+        ("gpt-6-astra", "https://secret.invalid", "gpt-6-astra", "", "gpt-6-astra", "", False),
+        ("openai-codex/gpt-6-astra", "openai", "gpt-6-astra", "", "openai-codex/gpt-6-astra", "openai", False),
+        ("openai-codex/gpt-6-astra", "", "gpt-6-astra", "", "openai-codex/gpt-6-astra", "", True),
+    ],
+)
+def test_issue518_completion_route_never_mixes_locals_with_result(
+    result_model, result_provider, local_model, local_provider,
+    expected_model, expected_provider, allowed,
+):
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    payload = hook_runtime.build_event(
+        "message.completed",
+        _issue518_completed_locals(result_model, result_provider, local_model, local_provider),
+        preview=True,
+    )
+    data = payload["data"]
+    assert data["model"] == expected_model
+    assert data.get("provider", "") == expected_provider
+    assert uses_codex_subscription(data["model"], data.get("provider", "")) is allowed
+
+
+def test_issue518_effective_response_route_uses_one_fallback_tuple():
+    agent = SimpleNamespace(
+        model="primary-model",
+        provider="primary",
+        _provider_fallback_route=("gpt-6-astra", "openai-codex"),
+        _provider_fallback_active=True,
+    )
+    assert hook_runtime.effective_response_route(agent) == ("gpt-6-astra", "openai-codex")
+
+    stale = SimpleNamespace(
+        model="primary-model",
+        provider="openai-codex",
+        _provider_fallback_route=None,
+        _provider_fallback_active=True,
+    )
+    assert hook_runtime.effective_response_route(stale) is None
+
+    conflict = SimpleNamespace(
+        model="primary/gpt-6-astra",
+        provider="backup",
+        _provider_fallback_route=None,
+        _provider_fallback_active=False,
+    )
+    assert hook_runtime.effective_response_route(conflict) is None
+
+
+def test_issue518_fallback_route_terminal_event_authorizes_codex_quota():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    agent = SimpleNamespace(
+        model="primary-model",
+        provider="primary",
+        _provider_fallback_route=("gpt-6-astra", "openai-codex"),
+        _provider_fallback_active=True,
+    )
+    route = hook_runtime.effective_response_route(agent)
+    assert route == ("gpt-6-astra", "openai-codex")
+    payload = hook_runtime.build_event(
+        "message.completed",
+        _issue518_completed_locals(route[0], route[1], "primary-model"),
+        preview=True,
+    )
+    assert payload["data"]["model"] == "gpt-6-astra"
+    assert payload["data"]["provider"] == "openai-codex"
+    assert uses_codex_subscription(
+        payload["data"]["model"], payload["data"]["provider"]
+    ) is True
+
+
+def test_issue518_display_only_locals_model_cannot_authorize_codex_quota():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    payload = hook_runtime.build_event(
+        "message.completed",
+        {
+            "chat_id": "oc_abc",
+            "message_id": "msg_issue518_display_only",
+            "answer": "最终答案",
+            "model": "openai-codex/gpt-6-astra",
+            "agent_result": {"final_response": "最终答案"},
+        },
+        preview=True,
+    )
+    data = payload["data"]
+    assert data["model"] == "gpt-6-astra"
+    assert "provider" not in data
+    assert uses_codex_subscription(data["model"], data.get("provider", "")) is False
+
+
+def test_issue518_authoritative_qualified_result_label_still_authorizes_codex_quota():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    payload = hook_runtime.build_event(
+        "message.completed",
+        _issue518_completed_locals(
+            "openai-codex/gpt-6-astra", "", "gpt-6-astra"
+        ),
+        preview=True,
+    )
+    data = payload["data"]
+    assert data["model"] == "openai-codex/gpt-6-astra"
+    assert "provider" not in data
+    assert uses_codex_subscription(data["model"], data.get("provider", "")) is True

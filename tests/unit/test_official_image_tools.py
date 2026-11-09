@@ -829,7 +829,7 @@ def test_runtime_verify_does_not_overwrite_capture_mode(tmp_path, monkeypatch):
     assert json.loads(marker.read_text()) == {"diagnostic_wrapper": True}
 
 
-def _attach_pm_probe(monkeypatch, output, result=None, error=None):
+def _attach_pm_probe(monkeypatch, output, result=None, error=None, *, code=None, command=None):
     from hermes_feishu_card.install import pm_dependency as pm
     calls = []
 
@@ -846,8 +846,11 @@ def _attach_pm_probe(monkeypatch, output, result=None, error=None):
     monkeypatch.setattr(pm.subprocess, 'run', original)
     monkeypatch.setattr(sys, 'argv', ['observer', str(output), '--help'])
     namespace = {}
-    exec(acceptance._pm_observed_cli_code().split('# HFC_PM_OBSERVER_ENTRY')[0], namespace)
-    command = ['python', '-I', '-B', '-c', pm._CHILD, '/private-test-root']
+    if code is None:
+        code = acceptance._pm_observed_cli_code().split('# HFC_PM_OBSERVER_ENTRY')[0]
+    exec(code, namespace)
+    if command is None:
+        command = ['python', '-I', '-B', '-c', pm._CHILD, '/private-test-root']
     return pm, command, calls
 
 
@@ -883,7 +886,7 @@ def test_pm_observer_preserves_exception_identity_and_does_not_replay(tmp_path, 
     with pytest.raises(RuntimeError) as caught:
         pm._call(command, {'input': '{"operation":"remove"}'})
     assert caught.value is error and len(calls) == 1
-    assert json.loads(output.read_text()) == {'operation': 'remove', 'exception': 'RuntimeError'}
+    assert json.loads(output.read_text()) == {'operation': 'remove', 'exception': 'RuntimeError', 'command_shape': 'legacy6'}
 
 
 def test_pm_observer_ignores_other_commands_and_callers(tmp_path, monkeypatch):
@@ -1039,3 +1042,190 @@ def test_multiplex_probe_uses_the_selected_installed_runtime(tmp_path, monkeypat
     monkeypatch.setattr(acceptance, "_run_command", execute)
     assert acceptance._run_multiplex_profile_probe(tmp_path, selected, VERSION) == payload
     assert json.loads((tmp_path / "multiplex-profile.json").read_text()) == payload
+
+
+@pytest.mark.parametrize("shape", ["legacy6", "utf8_8"])
+def test_pm_observer_matches_old_and_new_controlled_commands(tmp_path, monkeypatch, shape):
+    output = tmp_path / "observations.jsonl"
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr="RuntimeError: secret-detail")
+    pm, default_command, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    if shape == "legacy6":
+        command = default_command
+    else:
+        command = ["python", "-I", "-B", "-X", "utf8", "-c", pm._CHILD, "/private-test-root"]
+    assert pm._call(command, {"input": '{"operation":"add"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert record["command_shape"] == shape
+    assert record["operation"] == "add"
+    assert record["exception"] == "RuntimeError"
+    assert "secret-detail" not in output.read_text()
+
+
+def test_pm_observer_ignores_malformed_utf8_command(tmp_path, monkeypatch):
+    output = tmp_path / "observations.jsonl"
+    result = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+    pm, _default, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    malformed = ["python", "-I", "-B", "-X", "utf8", "-c", "not-child", "/private-test-root"]
+    assert pm._call(malformed, {"input": "{}"}) is result
+    assert len(calls) == 1 and not output.exists()
+
+
+def test_pm_observer_prologue_captures_utf8_command_with_literal_capture(tmp_path, monkeypatch):
+    output = tmp_path / "private-observations.jsonl"
+    code = acceptance._pm_observer_prologue(repr(str(output)))
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr="RuntimeError: private-secret")
+    pm, _default, calls = _attach_pm_probe(monkeypatch, output, result=result, code=code)
+    command = ["python", "-I", "-B", "-X", "utf8", "-c", pm._CHILD, "/private-test-root"]
+    monkeypatch.setattr(sys, "argv", ["private-script"])
+    assert pm._call(command, {"input": '{"operation":"remove"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert record["command_shape"] == "utf8_8"
+    assert record["operation"] == "remove"
+    assert record["exception"] == "RuntimeError"
+    assert "private-secret" not in output.read_text()
+    assert "sys.argv[1]" not in code
+
+
+def test_pm_observer_classifies_http_504_without_leaking_url(tmp_path, monkeypatch):
+    output = tmp_path / "observations.jsonl"
+    stderr = (
+        "venv: uv lock exited 1: Failed to download kittentts @ https://secret.invalid/kittentts.whl\n"
+        "Failed to fetch: https://secret.invalid/kittentts.whl\n"
+        "HTTP status server error (504 Gateway Timeout) for url (https://secret.invalid/kittentts.whl)\n"
+        "pm.package.InstallError: private-detail\n"
+    )
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+    pm, _default, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    command = ["python", "-I", "-B", "-X", "utf8", "-c", pm._CHILD, "/private-test-root"]
+    assert pm._call(command, {"input": '{"operation":"add"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert record["command_shape"] == "utf8_8"
+    assert record["failure_categories"] == ["download_failed", "http_504"]
+    assert record["exception_headers"] == ["InstallError"]
+    text = output.read_text()
+    for private in ("https://", "secret.invalid", "kittentts", "private-detail"):
+        assert private not in text
+
+
+def test_pm_replacement_rollback_code_compiles_and_gates_observer(tmp_path):
+    evidence = tmp_path / "evidence"
+    kwargs = {
+        "evidence": evidence,
+        "root": "/opt/hermes",
+        "selected": Path("/opt/data/runtime/bin/python"),
+        "home": "/opt/data",
+        "replacement": Path("/opt/hfc/evidence/replacement-wheel/test.whl"),
+        "version": "5.0.21",
+    }
+    plain = acceptance._pm_replacement_rollback_code(**kwargs, capture=False)
+    captured = acceptance._pm_replacement_rollback_code(**kwargs, capture=True)
+    compile(plain, "<pm-rollback-plain>", "exec")
+    compile(captured, "<pm-rollback-captured>", "exec")
+    for code in (plain, captured):
+        assert "r.rollback()" in code
+        assert "'old_external':old_external" in code
+    assert "observed_run" not in plain
+    assert "pm-replacement-rollback-pm-observations.jsonl" not in plain
+    assert "observed_run" in captured
+    assert repr(str(evidence / "pm-replacement-rollback-pm-observations.jsonl")) in captured
+    assert "sys.argv[1]" not in captured
+
+
+def test_pm_observer_does_not_classify_http_500_as_504(tmp_path, monkeypatch):
+    output = tmp_path / "observations.jsonl"
+    stderr = (
+        "venv: uv lock exited 1: Failed to download kittentts @ https://secret.invalid/kittentts.whl\n"
+        "HTTP status server error (500 Internal Server Error) for url (https://secret.invalid/kittentts.whl)\n"
+        "pm.package.InstallError: private-detail\n"
+    )
+    result = subprocess.CompletedProcess([], 1, stdout="", stderr=stderr)
+    pm, _default, calls = _attach_pm_probe(monkeypatch, output, result=result)
+    command = ["python", "-I", "-B", "-X", "utf8", "-c", pm._CHILD, "/private-test-root"]
+    assert pm._call(command, {"input": '{"operation":"add"}'}) is result
+    assert len(calls) == 1
+    record = json.loads(output.read_text())
+    assert record["failure_categories"] == ["download_failed"]
+    assert "http_504" not in record["failure_categories"]
+    for private in ("https://", "secret.invalid", "kittentts", "private-detail"):
+        assert private not in output.read_text()
+
+
+def test_pm_replacement_rollback_wrapper_executes_once_without_replay(tmp_path, monkeypatch, capsys):
+    from hermes_feishu_card.install import pm_dependency as pm
+
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    observation = evidence / "pm-replacement-rollback-pm-observations.jsonl"
+    member = tmp_path / "member"
+    member.mkdir()
+    old_owner = {"schema": 3, "external_wheel": {"path": "/fixture/replacement.whl"}}
+    new_owner = {"schema": 2, "external_wheel": {"path": "/fixture/original.whl"}}
+    (member / ".hfc-owner.json").write_text(json.dumps(old_owner), encoding="utf-8")
+
+    result = subprocess.CompletedProcess([], 0, stdout="{}", stderr="")
+    calls = []
+    ensure_calls = []
+    seen_results = []
+
+    def original_run(*args, **kwargs):
+        calls.append((args, kwargs))
+        return result
+
+    def fake_call(command, kwargs):
+        seen = pm.subprocess.run(command, **kwargs)
+        seen_results.append(seen)
+        return seen
+
+    class FakeRegistration:
+        def __init__(self):
+            self.member = member
+            self.rollback_count = 0
+
+        def rollback(self):
+            self.rollback_count += 1
+            (member / ".hfc-owner.json").write_text(json.dumps(new_owner), encoding="utf-8")
+
+    registration = FakeRegistration()
+
+    def fake_ensure(*args, **kwargs):
+        ensure_calls.append((args, kwargs))
+        pm._call(
+            ["python", "-I", "-B", "-X", "utf8", "-c", pm._CHILD, "/opt/hermes"],
+            {"input": '{"operation":"add"}'},
+        )
+        return registration
+
+    monkeypatch.setattr(pm, "_call", fake_call)
+    monkeypatch.setattr(pm, "ensure", fake_ensure)
+    monkeypatch.setattr(pm.subprocess, "run", original_run)
+    monkeypatch.setattr(sys, "argv", ["private-script"])
+    code = acceptance._pm_replacement_rollback_code(
+        evidence=evidence,
+        root="/opt/hermes",
+        selected=Path("/opt/data/runtime/bin/python"),
+        home="/opt/data",
+        replacement=Path("/opt/hfc/evidence/replacement-wheel/test.whl"),
+        version="5.0.21",
+        capture=True,
+    )
+    assert "import sys;" in code
+    assert "sys.argv[1]" not in code
+    namespace = {}
+    exec(code, namespace)
+    payload = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert payload["old_external"] == "/fixture/replacement.whl"
+    assert payload["new_owner"] == new_owner
+    assert len(ensure_calls) == 1
+    assert registration.rollback_count == 1
+    assert len(calls) == 1 and seen_results == [result]
+    assert len(observation.read_text().splitlines()) == 1
+    record = json.loads(observation.read_text())
+    assert record["command_shape"] == "utf8_8"
+    assert record["operation"] == "add"
+    assert record["returncode"] == 0
+    assert record["exception"] is None
+    for private in ("https://", "secret", "/fixture/replacement.whl"):
+        assert private not in observation.read_text()

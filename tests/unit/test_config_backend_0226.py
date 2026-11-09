@@ -1,6 +1,11 @@
 """Unit tests for v0.22.6 config backend verification probe."""
+import json
+import locale
 import os
 from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
 from hermes_feishu_card.install.config_backend_0226 import (
@@ -163,3 +168,73 @@ def test_real_probe_rejects_same_inode_rewrite_and_restore(tmp_path, monkeypatch
     assert error.value.code == "backend-drift"
     assert len(calls) == 1
     assert layer.read_bytes() == original_bytes
+
+def test_isolated_python_utf8_option_survives_ignored_environment():
+    """-I ignores PYTHONUTF8, but the explicit -X utf8 child protocol stays active."""
+    env = dict(os.environ, PYTHONUTF8="0")
+    proc = subprocess.run(
+        [sys.executable, "-I", "-B", "-X", "utf8", "-c",
+         "import sys; print(sys.flags.utf8_mode); print('测')"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, timeout=10, check=False,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.splitlines()[0] == "1"
+    assert "测" in proc.stdout
+
+
+def test_backend_child_probe_protocol_forces_utf8(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import config_backend_0226 as backend
+
+    root = tmp_path / "root"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(
+            command, 0,
+            stdout=json.dumps({"verdict": "file", "reason": "file_confirmed"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(backend.subprocess, "run", fake_run)
+    result = backend._run_child_probe(
+        root, Path(sys.executable), home, {}, {}, {"source.py": "0" * 64},
+    )
+    assert result == {"verdict": "file", "reason": "file_confirmed"}
+    assert "-X" in seen["command"]
+    assert seen["command"][seen["command"].index("-X") + 1] == "utf8"
+    assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["errors"] == "replace"
+
+
+def test_backend_child_probe_decodes_utf8_under_gbk_parent(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import config_backend_0226 as backend
+
+    root = tmp_path / "root"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda *args, **kwargs: "gbk")
+    if hasattr(locale, "getencoding"):
+        monkeypatch.setattr(locale, "getencoding", lambda: "gbk")
+    assert locale.getpreferredencoding(False) == "gbk"
+    monkeypatch.setattr(backend, "_CHILD_PROBE", "\n".join([
+        "import json,sys",
+        "sys.stdin.read()",
+        "sys.stdout.write(json.dumps({'verdict':'file','reason':'file_confirmed'}) + chr(10))",
+        "sys.stdout.flush()",
+        "sys.stderr.write('PM receipt 测' + chr(10))",
+        "sys.stderr.flush()",
+        "sys.exit(73)",
+    ]))
+    with pytest.raises(BackendRefused) as error:
+        backend._run_child_probe(
+            root, Path(sys.executable), home, dict(os.environ), {},
+            {"source.py": "0" * 64},
+        )
+    assert error.value.code == "backend-non-file"

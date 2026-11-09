@@ -7047,9 +7047,13 @@ async def _populate_subscription_usage(
         return
     session.subscription_usage_checked = True
     route = (session.model, session.provider)
-    usage = await fetch_codex_subscription_usage(
-        app[OPERATIONS_HERMES_ROOT_KEY]
-    )
+    try:
+        usage = await fetch_codex_subscription_usage(
+            app[OPERATIONS_HERMES_ROOT_KEY]
+        )
+    except Exception:
+        # Optional account usage must never strand the terminal card.
+        usage = ""
     # A delayed account response must not attach to changed model metadata.
     session.subscription_usage = usage if route == (session.model, session.provider) else ""
 

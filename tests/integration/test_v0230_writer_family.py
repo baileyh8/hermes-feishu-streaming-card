@@ -44,6 +44,17 @@ def _root() -> Path:
     return root
 
 
+def _python() -> Path:
+    configured = os.environ.get("HFC_LEGACY_PLUGIN_PYTHON")
+    if not configured:
+        if os.environ.get("HFC_REQUIRE_CONFIG_WRITER_CONTRACT") == "1":
+            pytest.fail("required v0.23.0 runtime Python missing")
+        pytest.skip("v0.23.0 runtime Python not supplied")
+    python = Path(configured)
+    assert python.is_file(), f"configured runtime {python} is not a file"
+    return python
+
+
 def _minimal_root(source: Path, tmp_path: Path, fixture: dict) -> Path:
     root = tmp_path / "hermes"
     for name in sorted(set(fixture["writer_files"]) | set(fixture["launch_files"])):
@@ -118,3 +129,50 @@ def test_v0230_every_registered_file_drift_is_rejected(tmp_path):
         assert planner.verify_launch_sources(root) == "pm-0230", name
         checked += 1
     assert checked == len(set(writer) | set(launch))
+
+def test_v0230_pm_admission_uses_selected_writer_family(tmp_path, monkeypatch):
+    from hermes_feishu_card.install import pm_dependency
+
+    root = _root()
+    python = _python()
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    (home / "config.yaml").write_bytes(b"_config_version: 52\nplugins: {enabled: []}\n")
+    seen = {}
+    real_admission = planner.verify_0226_admission
+
+    def capture(root, python, home, *, before=None, sources=None):
+        seen["sources"] = dict(sources) if sources is not None else None
+        return real_admission(root, python, home, before=before, sources=sources)
+
+    monkeypatch.setattr(planner, "verify_0226_admission", capture)
+    family = pm_dependency._verify_observer_writer_before_admission(
+        root, python=python, home=home,
+    )
+    assert family == "pm-0230"
+    assert seen["sources"] == planner.FAMILIES["pm-0230"]
+
+
+def test_v0230_backend_rejects_old_writer_family_sources(tmp_path):
+    from hermes_feishu_card.install import config_backend_0226 as backend
+
+    root = _root()
+    python = _python()
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    (home / "config.yaml").write_bytes(b"_config_version: 52\nplugins: {enabled: []}\n")
+    with pytest.raises(backend.BackendRefused) as error:
+        backend.verify_file_backend(root, python, home, sources=backend.FAMILY_SOURCES)
+    assert error.value.code == "backend-non-file"
+    assert "source_digest" in str(error.value)
+
+
+def test_v0230_crlf_writer_bytes_are_rejected(tmp_path):
+    """Simulated CRLF checkout bytes; real NTFS/Windows CI remains separate evidence."""
+    source = _root()
+    fixture = _fixture()
+    root = _minimal_root(source, tmp_path, fixture)
+    target = root / "utils.py"
+    target.write_bytes(target.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(planner.ConfigBytesRefused):
+        planner.verify_family(root, "pm-0230")

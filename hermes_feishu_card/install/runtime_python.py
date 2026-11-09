@@ -34,8 +34,9 @@ def pm_managed_runtime_python(
         env = dict(os.environ, HERMES_HOME=str(hermes_home))
     try:
         result = subprocess.run(
-            [sys.executable, "-I", "-B", "-c", _PM_RUNTIME_PROBE, str(root)],
+            [sys.executable, "-I", "-B", "-X", "utf8", "-c", _PM_RUNTIME_PROBE, str(root)],
             capture_output=True, text=True, check=False,
+            encoding="utf-8", errors="replace",
             timeout=_PM_RUNTIME_PROBE_TIMEOUT_SECONDS, env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:

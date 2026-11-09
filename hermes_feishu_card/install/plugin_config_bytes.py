@@ -1204,7 +1204,7 @@ def _plan_enabled_bytes(
                 with os.fdopen(descriptor, "wb") as stream:
                     stream.write(value)
             child = subprocess.run(
-                [str(python), "-I", "-c", _CHILD, str(root), str(shadow)],
+                [str(python), "-I", "-X", "utf8", "-c", _CHILD, str(root), str(shadow)],
                 cwd=root,
                 env=isolated_child_env(shadow, temp_dir=child_temp),
                 stdout=subprocess.DEVNULL,

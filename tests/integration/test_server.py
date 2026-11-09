@@ -14830,3 +14830,263 @@ async def test_health_counts_only_valid_retained_invocation_rates(tokens, availa
     timing = json.loads(response.body)["timing"]
     assert timing["token_rate_status"] == ("available" if available else "unavailable")
     assert timing.get("token_rate_samples", 0) == int(available)
+
+
+def _issue518_terminal_payloads(result_model, result_provider, *, message_id, profile_id="default"):
+    local_vars = {
+        "chat_id": "oc_issue518",
+        "conversation_id": f"conv-{message_id}",
+        "message_id": message_id,
+        "profile_id": profile_id,
+        "answer": "最终答案",
+        "agent_result": {
+            "final_response": "最终答案",
+            "model": result_model,
+            "provider": result_provider,
+        },
+    }
+    return (
+        hook_runtime.build_event("message.started", local_vars),
+        hook_runtime.build_event("message.completed", local_vars),
+    )
+
+
+async def test_issue518_two_profiles_same_gpt_model_do_not_cross_quota(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    calls = []
+
+    async def fake_fetch(_hermes_root):
+        calls.append(_hermes_root)
+        return "weekly 57%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", fake_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0,
+        "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+
+    async def post_turn(profile, provider):
+        message_id = f"msg-{profile}"
+        common = {"profile_id": profile, "profile_source": "locals", "model": "gpt-6-astra"}
+        started = await test_client.post("/events", json=event_payload(
+            "message.started", 0, dict(common),
+            conversation_id=f"conv-{profile}", message_id=message_id,
+            chat_id="oc_shared", turn_id=f"turn-{profile}",
+        ))
+        completed = await test_client.post("/events", json=event_payload(
+            "message.completed", 1,
+            {**common, "answer": f"最终答案 {profile}", "provider": provider},
+            conversation_id=f"conv-{profile}", message_id=message_id,
+            chat_id="oc_shared", turn_id=f"turn-{profile}",
+        ))
+        return started, completed
+
+    try:
+        responses = await asyncio.gather(
+            post_turn("alpha", "openai-codex"),
+            post_turn("beta", "openai"),
+        )
+        assert all(response.status == 200 for pair in responses for response in pair)
+        _, alpha_card = await wait_for_card_update(feishu_client, "最终答案 alpha")
+        _, beta_card = await wait_for_card_update(feishu_client, "最终答案 beta")
+        await wait_for_condition(lambda: len(calls) == 1)
+    finally:
+        await test_client.close()
+
+    def session_for(message_id):
+        return next(
+            candidate for candidate in app[SESSIONS_KEY].values()
+            if candidate.message_id == message_id
+        )
+
+    alpha = session_for("msg-alpha")
+    beta = session_for("msg-beta")
+    assert alpha.provider == "openai-codex"
+    assert beta.provider == "openai"
+    assert alpha.subscription_usage == "weekly 57%"
+    assert beta.subscription_usage == ""
+    assert "weekly 57%" in str(alpha_card)
+    assert "weekly 57%" not in str(beta_card)
+
+
+async def test_issue518_duplicate_completion_queries_once(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    calls = []
+
+    async def fake_fetch(_hermes_root):
+        calls.append(_hermes_root)
+        return "weekly 57%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", fake_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0,
+        "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    started, completed = _issue518_terminal_payloads(
+        "gpt-6-astra", "openai-codex", message_id="msg-issue518-duplicate"
+    )
+    try:
+        await test_client.post("/events", json=started)
+        await test_client.post("/events", json=completed)
+        await wait_for_card_update(feishu_client, "weekly 57%")
+        await test_client.post("/events", json=completed)
+        await wait_for_condition(lambda: len(calls) == 1)
+    finally:
+        await test_client.close()
+
+    assert len(calls) == 1
+    assert app[SESSIONS_KEY]["default:msg-issue518-duplicate"].subscription_usage_checked is True
+
+
+async def test_issue518_conflicting_result_pair_hides_quota_and_keeps_model(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    calls = []
+
+    async def unexpected_fetch(_hermes_root):
+        calls.append(_hermes_root)
+        return "weekly 57%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", unexpected_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0,
+        "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    started, completed = _issue518_terminal_payloads(
+        "openai-codex/gpt-6-astra", "openai", message_id="msg-issue518-conflict"
+    )
+    try:
+        await test_client.post("/events", json=started)
+        await test_client.post("/events", json=completed)
+        _, card = await wait_for_card_update(feishu_client, "最终答案")
+    finally:
+        await test_client.close()
+
+    assert calls == []
+    assert "weekly 57%" not in str(card)
+    assert "gpt-6-astra" in str(card)
+
+
+async def test_issue518_fallback_actual_provider_queries_codex(monkeypatch):
+    feishu_client = FakeFeishuClient()
+    calls = []
+
+    async def fake_fetch(_hermes_root):
+        calls.append(_hermes_root)
+        return "weekly 57%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", fake_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0,
+        "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    agent = SimpleNamespace(
+        model="primary-model",
+        provider="primary",
+        _provider_fallback_route=("gpt-6-astra", "openai-codex"),
+        _provider_fallback_active=True,
+    )
+    route = hook_runtime.effective_response_route(agent)
+    assert route == ("gpt-6-astra", "openai-codex")
+    started, completed = _issue518_terminal_payloads(
+        route[0], route[1], message_id="msg-issue518-fallback"
+    )
+    try:
+        await test_client.post("/events", json=started)
+        await test_client.post("/events", json=completed)
+        await wait_for_card_update(feishu_client, "weekly 57%")
+    finally:
+        await test_client.close()
+
+    assert len(calls) == 1
+
+
+async def test_issue518_quota_fetch_failure_keeps_terminal_card(monkeypatch):
+    feishu_client = FakeFeishuClient()
+
+    async def failing_fetch(_hermes_root):
+        raise RuntimeError("quota unavailable")
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", failing_fetch)
+    app = create_app(feishu_client, card_config={
+        "flush_interval_ms": 0,
+        "footer_fields": ["model", "subscription_usage"],
+    })
+    test_client = TestClient(TestServer(app))
+    await test_client.start_server()
+    started, completed = _issue518_terminal_payloads(
+        "gpt-6-astra", "openai-codex", message_id="msg-issue518-failure"
+    )
+    try:
+        await test_client.post("/events", json=started)
+        await test_client.post("/events", json=completed)
+        _, card = await wait_for_card_update(feishu_client, "最终答案")
+    finally:
+        await test_client.close()
+
+    assert "weekly" not in str(card)
+    session = app[SESSIONS_KEY]["default:msg-issue518-failure"]
+    assert session.subscription_usage == ""
+    assert session.subscription_usage_checked is True
+
+
+async def test_issue518_late_query_provider_change_discards_usage(monkeypatch):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_fetch(_hermes_root):
+        started.set()
+        await release.wait()
+        return "weekly 57%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", delayed_fetch)
+    app = create_app(FakeFeishuClient(), card_config={"footer_fields": ["subscription_usage"]})
+    session = CardSession(conversation_id="conv-1", message_id="msg-1", chat_id="oc_abc")
+    session.status = "completed"
+    session.model = "gpt-6-astra"
+    session.provider = "openai-codex"
+    pending = asyncio.create_task(sidecar_server._populate_subscription_usage(app, session))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        session.provider = "openai"
+    finally:
+        release.set()
+        await pending
+    assert session.subscription_usage == ""
+
+
+async def test_issue518_late_query_does_not_attach_to_new_session(monkeypatch):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_fetch(_hermes_root):
+        started.set()
+        await release.wait()
+        return "weekly 57%"
+
+    monkeypatch.setattr(sidecar_server, "fetch_codex_subscription_usage", delayed_fetch)
+    app = create_app(FakeFeishuClient(), card_config={"footer_fields": ["subscription_usage"]})
+    old = CardSession(conversation_id="conv-1", message_id="msg-1", chat_id="oc_abc")
+    old.status = "completed"
+    old.model = "gpt-6-astra"
+    old.provider = "openai-codex"
+    new = CardSession(conversation_id="conv-2", message_id="msg-2", chat_id="oc_abc")
+    new.status = "completed"
+    new.model = "gpt-6-astra"
+    new.provider = "openai-codex"
+    app[SESSIONS_KEY]["default:msg-1"] = old
+    pending = asyncio.create_task(sidecar_server._populate_subscription_usage(app, old))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        app[SESSIONS_KEY]["default:msg-1"] = new
+    finally:
+        release.set()
+        await pending
+    assert old.subscription_usage == "weekly 57%"
+    assert new.subscription_usage == ""
+    assert new.subscription_usage_checked is False

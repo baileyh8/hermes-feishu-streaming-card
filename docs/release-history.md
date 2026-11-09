@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.11](release-notes-v5.0.11.md) | 固定 Hermes main admission 与首个展示策略的归属核验 |
 | [v5.0.9](release-notes-v5.0.9.md) | 原生 admission 身份、Windows 安装与历史 PM 恢复 |
 | [v5.0.7](release-notes-v5.0.7.md) | Hermes v0.22.5 兼容、每轮回调与终局诊断（候选） |
 | [v5.0.4](release-notes-v5.0.4.md) | Legacy 逐调用生成速率、精确压缩提示撤回与跨 Task 完成卡收尾 |

@@ -681,14 +681,11 @@ def _base_cli() -> list[str]:
     return [str(_base_python()), "-B", "-I", "-m", "hermes_feishu_card.cli"]
 
 
-def _pm_observed_cli_code() -> str:
-    """Observe PM subprocess metadata once; never publish resolver messages."""
-    return r'''
+_PM_OBSERVER_BODY = r'''
 import collections,hashlib,io,json,re,runpy,sys
 from pathlib import Path
 from hermes_feishu_card.install import pm_dependency as p
-capture=Path(sys.argv[1])
-cli_args=sys.argv[2:]
+capture=Path(__HFC_PM_CAPTURE__)
 original_run=p.subprocess.run
 call_code=p._call.__code__
 child_code=p._CHILD
@@ -700,7 +697,8 @@ files={'<string>','plugins_admission.py','install.py','environments.py','filesys
 functions={'<module>','admit_plugin_set_change','sync_venv','committed_venv',
            'read_home_selection','file_digest','verified_bytes','verify_sources',
            'config_snapshot','run','check_call','check_output','__init__',
-           'resolve','install','ensure','_call','_run','sync','_sync_venv'}
+           'resolve','install','ensure','_call','_run','sync','_sync_venv',
+           '_request','_raise_worker_error'}
 exceptions={'RuntimeError','ValueError','PermissionError','FileNotFoundError','OSError',
             'CalledProcessError','TimeoutExpired','InstallError','SyncError',
             'PMError','AdmissionError','LockError','ModuleNotFoundError','ImportError',
@@ -710,6 +708,7 @@ exceptions={'RuntimeError','ValueError','PermissionError','FileNotFoundError','O
 failure_needles=(
     ('network_timeout',('operation timed out','request timed out','timed out')),
     ('download_failed',('failed to download','error sending request','failed to fetch','connection error')),
+    ('http_504',('504 gateway timeout','http status server error (504')),
     ('build_failed',('failed to build','subprocess-exited-with-error')),
     ('resolution_failed',('no solution found','resolution failed','dependency conflict')),
     ('certificate_error',('certificate verify failed','ssl error','sslv3')),
@@ -723,11 +722,13 @@ def failure_categories(text):
 def metadata(output):
     raw=output if isinstance(output,bytes) else (output or '').encode('utf-8',errors='replace')
     return {'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()}
-def record(command,kwargs,result=None,error=None):
+def record(command,kwargs,result=None,error=None,shape=None):
     try:
         request=json.loads(kwargs.get('input','{}'))
         operation=request.get('operation') if isinstance(request,dict) else None
         item={'operation':operation if operation in operations else 'unknown'}
+        if shape is not None:
+            item['command_shape']=shape
         if result is not None:
             item['returncode']=result.returncode
             item['stdout']=metadata(result.stdout);item['stderr']=metadata(result.stderr)
@@ -770,23 +771,72 @@ def record(command,kwargs,result=None,error=None):
             stream.write(json.dumps(item,sort_keys=True)+'\n')
     except Exception:
         pass  # Diagnostics must never replace the original result/exception.
+def controlled(command):
+    if type(command) not in (list,tuple):return None
+    if len(command)==6 and command[1:5]==['-I','-B','-c',child_code] and isinstance(command[5],str):
+        return 'legacy6'
+    if len(command)==8 and command[1:7]==['-I','-B','-X','utf8','-c',child_code] and isinstance(command[7],str):
+        return 'utf8_8'
+    return None
 def observed_run(*args,**kwargs):
     command=args[0] if args else kwargs.get('args')
-    match=(sys._getframe(1).f_code is call_code and type(command) in (list,tuple)
-           and len(command)==6 and command[1:4]==['-I','-B','-c']
-           and command[4]==child_code)
+    shape=controlled(command)
+    match=sys._getframe(1).f_code is call_code and shape is not None
     try:
         result=original_run(*args,**kwargs)
     except BaseException as error:
-        if match:record(command,kwargs,error=error)
+        if match:record(command,kwargs,error=error,shape=shape)
         raise
-    if match:record(command,kwargs,result=result)
+    if match:record(command,kwargs,result=result,shape=shape)
     return result
 p.subprocess.run=observed_run
-# HFC_PM_OBSERVER_ENTRY
-sys.argv=['hermes-feishu-card',*cli_args]
-runpy.run_module('hermes_feishu_card.cli',run_name='__main__')
 '''
+
+
+def _pm_observer_prologue(capture_expression: str) -> str:
+    # Return the fixed-enum/hash PM observer without a CLI entry point.
+    return _PM_OBSERVER_BODY.replace("__HFC_PM_CAPTURE__", capture_expression)
+
+
+def _pm_observed_cli_code() -> str:
+    # Observe PM subprocess metadata once; never publish resolver messages.
+    return (_pm_observer_prologue("sys.argv[1]")
+            + "\n# HFC_PM_OBSERVER_ENTRY\n"
+            + "cli_args=sys.argv[2:]\n"
+            + "sys.argv=['hermes-feishu-card',*cli_args]\n"
+            + "runpy.run_module('hermes_feishu_card.cli',run_name='__main__')\n")
+
+
+def _pm_replacement_rollback_code(
+    *,
+    evidence: Path,
+    root: str,
+    selected: Path,
+    home: str,
+    replacement: Path,
+    version: str,
+    capture: bool,
+) -> str:
+    # Private rollback script with the same fixed-enum PM child diagnostics.
+    original = (
+        "import json,sys;from pathlib import Path;"
+        f"sys.path.insert(0,{root!r});"
+        "from hermes_feishu_card.install import pm_dependency as p;"
+        f"r=p.ensure(Path({root!r}),Path({str(selected)!r}),home=Path({home!r}),spec={str(replacement)!r},version={version!r});"
+        "assert r is not None;"
+        "old=json.loads((r.member/'.hfc-owner.json').read_text());"
+        "old_external=old['external_wheel']['path'];"
+        "r.rollback();"
+        "new=json.loads((r.member/'.hfc-owner.json').read_text());"
+        "print(json.dumps({'old_external':old_external,'new_owner':new}))"
+    )
+    if not capture:
+        return original
+    observation = evidence / "pm-replacement-rollback-pm-observations.jsonl"
+    return ("import sys;"
+            f"sys.path.insert(0,{root!r});"
+            + _pm_observer_prologue(repr(str(observation)))
+            + original)
 
 
 def _cli_command(evidence: Path, name: str, arguments: Sequence[str]) -> list[str]:
@@ -2002,17 +2052,14 @@ def _baseline_phase(evidence: Path, wheel_info: WheelInfo) -> dict[str, Any]:
     )
 
     replacement = _make_replacement_wheel(evidence, wheel_path)
-    replacement_code = (
-        "import json,sys;from pathlib import Path;"
-        f"sys.path.insert(0,{HERMES_ROOT!r});"
-        "from hermes_feishu_card.install import pm_dependency as p;"
-        f"r=p.ensure(Path({HERMES_ROOT!r}),Path({str(selected)!r}),home=Path({HERMES_HOME!r}),spec={str(replacement)!r},version={wheel_info.version!r});"
-        "assert r is not None;"
-        "old=json.loads((r.member/'.hfc-owner.json').read_text());"
-        "old_external=old['external_wheel']['path'];"
-        "r.rollback();"
-        "new=json.loads((r.member/'.hfc-owner.json').read_text());"
-        "print(json.dumps({'old_external':old_external,'new_owner':new}))"
+    replacement_code = _pm_replacement_rollback_code(
+        evidence=evidence,
+        root=HERMES_ROOT,
+        selected=selected,
+        home=HERMES_HOME,
+        replacement=replacement,
+        version=wheel_info.version,
+        capture=os.environ.get("HFC_CAPTURE_PM") == "1",
     )
     rollback_result = _run_logged(
         "pm-replacement-rollback",

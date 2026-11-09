@@ -79,6 +79,25 @@ SOURCE_HASHES_0230 = {
     "cron.scheduler": "b5956a54f05a8d360b9652149cae0f603e92bc52bb4a5af2b911fbd457f98470",
     "cron.scheduler_delivery": "a47babe7b6e1be929a5af3c8699f490f4f957c8391c62878666a8d516dbd85e2",
 }
+# Exact rendered bytes published with HFC 5.0.20 / bed049. Kept as a
+# whole-file set so an already installed v0.23.0 Gateway remains provable
+# after the SCOPED_USAGE hook changes the current rendered bytes.
+LEGACY_EXPECTED_RENDERED_HASHES_0230 = {
+    "cron/scheduler.py": "b5956a54f05a8d360b9652149cae0f603e92bc52bb4a5af2b911fbd457f98470",
+    "cron/scheduler_delivery.py": "09ed28e78e0230c87070c3159f669155a13050405e162d9817a312196c0ad4ce",
+    "gateway/platforms/base.py": "fbec459568bc66d231514ea172fe10f127a5861197043760769d2cf9552cb9e3",
+    "gateway/run.py": "f2eabc2972822df232375a4e32b22e79daafcec9bc2f66a6cfb305c255cf11d3",
+    "gateway/run_background.py": "7702a2b46dd13acfe82c2bbc0fecff63761498ba0ca257fcddcf21cea0288f54",
+    "gateway/run_busy.py": "a5ea46067ed52619821a8e84101cc2ab49d44085abcd40556819e2d61b8dcc29",
+    "gateway/run_inbound.py": "974d23c4a4dc4dc07e532b06b75a130ac8edbf56a6a2239a0754ad591051c93f",
+    "gateway/run_notifications.py": "e156bced1c28743477f6c405aa833f40b9ef5836ac258a7b1705ec6b7a056c71",
+    "gateway/run_startup.py": "68f549a53eebfd578002b748e6454a21229a312495bc5405cae0a633eb88c17d",
+    "gateway/run_turn.py": "1dabfdfca3011509df7a7cc5d36a5ef6f05cce848982d7bc295fe795f0cfe731",
+    "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
+    "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
+    "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
+    "gateway/run_turn_runner.py": "e26c9d13c04c5821730aafb2583b8d36acbaa8e149d768817b89a1d7235d21f2",
+}
 CORE_HASHES_0230 = {name: SOURCE_HASHES_0230[name] for name in (
     "gateway.session_ingress", "gateway.session_authority")}
 # Exact rendered bytes produced by decomposed_ownership.render for the pinned
@@ -93,7 +112,7 @@ EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
-    "gateway/run_turn_runner.py": "e26c9d13c04c5821730aafb2583b8d36acbaa8e149d768817b89a1d7235d21f2",
+    "gateway/run_turn_runner.py": "ddd1626eae7ec28ba387e33c17c85704580d42daa340fa1428386fba2143b1ca",
     "gateway/run_inbound.py": "974d23c4a4dc4dc07e532b06b75a130ac8edbf56a6a2239a0754ad591051c93f",
     "gateway/run_busy.py": "a5ea46067ed52619821a8e84101cc2ab49d44085abcd40556819e2d61b8dcc29",
     "gateway/run_startup.py": "68f549a53eebfd578002b748e6454a21229a312495bc5405cae0a633eb88c17d",
@@ -343,15 +362,20 @@ def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] 
             return None
         if all(installed[name] == originals[name] for name in owned):
             return originals, originals
-        if (
-            _HFC_VERSION != RENDER_VERSION_0230
-            or set(owned.values()) != set(EXPECTED_RENDERED_HASHES_0230)
-        ):
+        if _HFC_VERSION != RENDER_VERSION_0230:
             return None
-        if not all(
-            sha256(installed[name]).hexdigest()
-            == EXPECTED_RENDERED_HASHES_0230[owned[name]]
-            for name in owned
+        # Clean sources returned above. Installed hooks must match one exact
+        # published whole-file set; mixed or foreign bytes match neither.
+        if not any(
+            set(owned.values()) == set(expected)
+            and all(
+                sha256(installed[name]).hexdigest() == expected[owned[name]]
+                for name in owned
+            )
+            for expected in (
+                EXPECTED_RENDERED_HASHES_0230,
+                LEGACY_EXPECTED_RENDERED_HASHES_0230,
+            )
         ):
             return None
         code_source = {

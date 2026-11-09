@@ -1,6 +1,7 @@
 """Owned PM member transaction regressions; no production HOME or PM state."""
 from hashlib import sha256
 import json
+import locale
 import os
 import py_compile
 import stat
@@ -2151,3 +2152,69 @@ def test_0226_pending_or_unknown_schema_refuses_before_pm(pm_env, monkeypatch, s
     assert pm_env.calls == []
     assert config.read_bytes() == before
     assert not (pm_env.home / 'plugins').exists()
+
+def test_pm_child_protocol_forces_utf8_and_explicit_decode(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    payload = {
+        "home": str(home),
+        "enabled": [],
+        "disabled": [],
+        "expected": "x",
+        "generation": "none",
+    }
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(pm.subprocess, "run", fake_run)
+    result = pm._call(root, Path(sys.executable), home, {"operation": "probe"})
+    assert result == payload
+    assert "-X" in seen["command"]
+    assert seen["command"][seen["command"].index("-X") + 1] == "utf8"
+    assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["errors"] == "replace"
+
+
+def test_pm_child_call_decodes_utf8_stderr_under_gbk_parent(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda *args, **kwargs: "gbk")
+    if hasattr(locale, "getencoding"):
+        monkeypatch.setattr(locale, "getencoding", lambda: "gbk")
+    assert locale.getpreferredencoding(False) == "gbk"
+    monkeypatch.setattr(pm, "_CHILD", "\n".join([
+        "import json,sys",
+        "from pathlib import Path",
+        "sys.stdin.read()",
+        "sys.stderr.write('PM receipt 测' + chr(10))",
+        "sys.stderr.flush()",
+        "print(json.dumps({'home': str(Path.cwd().parent / 'home'), 'enabled': [], 'disabled': [], 'expected': 'x', 'generation': 'none'}))",
+    ]))
+    result = pm._call(root, Path(sys.executable), home, {"operation": "probe"})
+    assert result["home"] == str(home)
+
+def test_pm_wheel_builder_forces_utf8_and_explicit_decode(pm_env, monkeypatch):
+    original = pm.subprocess.run
+    seen = {}
+
+    def capture(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(pm.subprocess, "run", capture)
+    assert register(pm_env) is not None
+    assert "-X" in seen["command"]
+    assert seen["command"][seen["command"].index("-X") + 1] == "utf8"
+    assert "-m" in seen["command"]
+    assert seen["command"][seen["command"].index("-m") + 1] == "pip"
+    assert seen["kwargs"]["encoding"] == "utf-8"
+    assert seen["kwargs"]["errors"] == "replace"
