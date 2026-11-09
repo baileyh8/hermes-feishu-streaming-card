@@ -1241,3 +1241,37 @@ def test_issue518_three_route_sequence_cannot_revive_mixed_provider():
     assert uses_codex_subscription(
         payload.get("model", ""), payload.get("provider", "")
     ) is False
+
+
+def test_issue518_zero_api_initial_qualified_model_is_display_only():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    runtime, posted = active_runtime()
+    agent = synthetic_agent()
+    agent.model = "openai-codex/gpt-6-astra"
+    agent.provider = "openai-codex"
+    try:
+        invoke_original(runtime, "pre_llm_call", agent)
+        finish(runtime, agent)
+        payload, session = terminal_session(posted)
+    finally:
+        runtime.close()
+
+    assert "provider" not in payload["data"]
+    assert payload["data"]["model"] == "gpt-6-astra"
+    assert uses_codex_subscription(session.model, session.provider) is False
+
+
+def test_issue518_observed_api_qualified_model_keeps_authoritative_label():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    metrics = TurnMetrics(0.0, model="openai-codex/gpt-6-astra")
+    metrics.observe_api(api_values(
+        "observed", output=10,
+        model="openai-codex/gpt-6-astra", provider=""
+    ))
+    payload = metrics.payload(10.0)
+    assert payload["model"] == "openai-codex/gpt-6-astra"
+    assert uses_codex_subscription(
+        payload["model"], payload.get("provider", "")
+    ) is True

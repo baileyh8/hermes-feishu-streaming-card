@@ -191,14 +191,20 @@ class TurnMetrics:
             not self.route_mixed
             and (self.rate_route is None or route == self.rate_route)
         )
+        observed_api_route = self.rate_route is not None
         if self.model:
-            # A mixed-route turn must not leave a qualified label or a last
-            # provider behind as if the whole turn used that account.
-            result["model"] = (
-                self.model if route_consistent
-                else self.model.split("/", 1)[-1].strip() or "Unknown"
-            )
-        if self.provider and route_consistent:
+            if not observed_api_route and "/" in self.model:
+                # A pre-LLM initial model with zero API observations is only a
+                # display label; its provider prefix cannot authorize quota.
+                result["model"] = self.model.split("/", 1)[-1].strip() or "Unknown"
+            else:
+                # A mixed-route turn must not leave a qualified label or a last
+                # provider behind as if the whole turn used that account.
+                result["model"] = (
+                    self.model if route_consistent
+                    else self.model.split("/", 1)[-1].strip() or "Unknown"
+                )
+        if self.provider and route_consistent and observed_api_route:
             result["provider"] = self.provider
         duration = now - self.started_at
         if isfinite(duration) and duration >= 0:

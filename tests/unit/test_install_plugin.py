@@ -1000,9 +1000,11 @@ def test_official_enable_visibility_probe_refuses_unresolvable_plugin(tmp_path, 
     assert note is not None
     assert "plugin not resolvable in the selected runtime" in note
     assert "out=" in note
-    assert captured["argv"][:4] == [
+    assert captured["argv"][:6] == [
         str(binding.runtime_python),
         "-I",
+        "-X",
+        "utf8",
         "-c",
         plugin._OFFICIAL_ENABLE_PROBE_SCRIPT,
     ]
