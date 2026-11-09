@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v5.0.11](release-notes-v5.0.11.en.md) | Pinned Hermes main admission and first display-policy ownership checks |
 | [v5.0.7](release-notes-v5.0.7.en.md) | Hermes v0.22.5 compatibility, per-turn callbacks and terminal diagnostics (candidate) |
 | [v5.0.4](release-notes-v5.0.4.en.md) | Legacy observed rate, exact compression notice recall and cross-Task completion |
 | [v5.0.3](release-notes-v5.0.3.en.md) | Verified Hermes channel inheritance, expired-interaction continuation and optional output rate |

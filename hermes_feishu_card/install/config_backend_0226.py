@@ -296,12 +296,14 @@ def _run_child_probe(
     python_cmd = str(python)
     try:
         proc = subprocess.run(
-            [python_cmd, "-I", "-B", "-c", _CHILD_PROBE, str(root), str(home)],
+            [python_cmd, "-I", "-B", "-X", "utf8", "-c", _CHILD_PROBE, str(root), str(home)],
             cwd=str(root),
             input=payload_input,
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
             check=False,
         )

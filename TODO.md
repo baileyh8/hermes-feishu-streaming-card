@@ -2,9 +2,15 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
-## V5.0.20（进行中）
+## V5.0.21
 
-- #512：官方 Docker 自定义数据根的 default / named profile 身份识别，数据库归属与跨 profile 隔离；回归及官方镜像验收进行中。
+- #518：沿实际本轮结果补齐 model/provider 与 Codex 额度归属，验证 fallback、未知/冲突和跨 profile 隔离。
+- #497：正式 setup 的 family/sources 传递核验；修复可复现的子进程输出解码问题。报告者原机 source_digest 原因未独立复现。
+- 独立 QA、完整 CI、普通 wheel、精确 tag 与公开发行门禁完成后发布，证据见[发行说明](docs/release-notes-v5.0.21.md)。
+
+## V5.0.20（2026-11-09 已发布）
+
+- #512：官方 Docker 自定义数据根的 default / named profile 身份识别，数据库归属与跨 profile 隔离；已发布，实际部署验收范围以该精确版本记录为准。
 - 发布门禁与未验证边界见[发行说明](docs/release-notes-v5.0.20.md)，待完成项不记为通过。
 
 ## V5.0.19（2026-11-08 已发布）

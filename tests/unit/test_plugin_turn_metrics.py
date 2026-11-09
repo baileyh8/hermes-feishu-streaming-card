@@ -1176,3 +1176,68 @@ def test_opt_in_rate_retains_final_payload_budget(presentation, basis, repetitio
         assert "tok/s" not in raw
     else:
         assert "tok/s" in raw
+
+
+def test_issue518_official_terminal_payload_carries_same_turn_provider():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    runtime, posted = active_runtime()
+    agent = synthetic_agent()
+    agent.model = "gpt-6-astra"
+    agent.provider = "openai-codex"
+    try:
+        invoke_original(runtime, "pre_llm_call", agent)
+        runtime.handle_post_api_request(
+            **api_values(
+                "issue518-api", output=10,
+                model="gpt-6-astra",
+                provider="openai-codex",
+                platform="feishu",
+                session_id="synthetic-session",
+                turn_id="synthetic-turn",
+            )
+        )
+        finish(runtime, agent)
+        payload, session = terminal_session(posted)
+    finally:
+        runtime.close()
+
+    assert payload["data"]["provider"] == "openai-codex"
+    assert session.provider == "openai-codex"
+    assert uses_codex_subscription(session.model, session.provider) is True
+
+
+def test_issue518_mixed_api_routes_do_not_authorize_last_provider():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    metrics = TurnMetrics(0.0)
+    metrics.observe_api(api_values(
+        "a", output=10, model="gpt-6-astra", provider="openai"
+    ))
+    metrics.observe_api(api_values(
+        "b", output=10, model="gpt-6-astra", provider="openai-codex"
+    ))
+    payload = metrics.payload(10.0)
+    assert "provider" not in payload
+    assert uses_codex_subscription(
+        payload.get("model", ""), payload.get("provider", "")
+    ) is False
+
+
+def test_issue518_three_route_sequence_cannot_revive_mixed_provider():
+    from hermes_feishu_card.subscription_usage import uses_codex_subscription
+
+    metrics = TurnMetrics(0.0)
+    for request_id, provider in (
+        ("a", "openai-codex"),
+        ("b", "openai"),
+        ("c", "openai-codex"),
+    ):
+        metrics.observe_api(api_values(
+            request_id, output=10, model="gpt-6-astra", provider=provider
+        ))
+    payload = metrics.payload(10.0)
+    assert "provider" not in payload
+    assert uses_codex_subscription(
+        payload.get("model", ""), payload.get("provider", "")
+    ) is False

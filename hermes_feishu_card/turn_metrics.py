@@ -103,6 +103,8 @@ class TurnMetrics:
     rate_complete: bool = True
     rate_request_basis: bool = False
     rate_route: tuple[str, str] | None = None
+    # Sticky per-turn display attribution only. Never persisted in CardSession.
+    route_mixed: bool = False
     request_ids: set[str] = field(default_factory=set, repr=False)
 
     def observe_api(self, values: dict[str, object]) -> None:
@@ -128,7 +130,11 @@ class TurnMetrics:
         route = (model, metric_label(values.get("provider")))
         if self.rate_route is not None and route != self.rate_route:
             self.rate_complete = False
-        self.rate_route = route
+            self.route_mixed = True
+        else:
+            # Keep the first observed route so mixed-route turns cannot be
+            # attributed to whichever provider happened to answer last.
+            self.rate_route = route
         # MoA: usage describes only the aggregator while timing spans the advisors.
         if values.get("moa_references"):
             self.rate_complete = False
@@ -180,9 +186,19 @@ class TurnMetrics:
 
     def payload(self, now: float) -> dict[str, object]:
         result: dict[str, object] = {}
+        route = (self.model, self.provider)
+        route_consistent = (
+            not self.route_mixed
+            and (self.rate_route is None or route == self.rate_route)
+        )
         if self.model:
-            result["model"] = self.model
-        if self.provider:
+            # A mixed-route turn must not leave a qualified label or a last
+            # provider behind as if the whole turn used that account.
+            result["model"] = (
+                self.model if route_consistent
+                else self.model.split("/", 1)[-1].strip() or "Unknown"
+            )
+        if self.provider and route_consistent:
             result["provider"] = self.provider
         duration = now - self.started_at
         if isfinite(duration) and duration >= 0:

@@ -271,8 +271,9 @@ def _call(root: Path, python: Path, home: Path | None, request: dict[str, Any]) 
     guarded_mutation = (request.get("source_digests") is not None
                         and request.get("operation") not in ("probe", "current"))
     try:
-        result = subprocess.run([str(python), "-I", "-B", "-c", _CHILD, str(root)],
+        result = subprocess.run([str(python), "-I", "-B", "-X", "utf8", "-c", _CHILD, str(root)],
                                 input=json.dumps(request), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace",
                                 cwd=str(root), env=env, timeout=600)
     except (OSError, subprocess.SubprocessError) as exc:
         if guarded_mutation:
@@ -921,8 +922,9 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
             wheels = [built / source.name]
         else:
             try:
-                result = subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-deps',
+                result = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'pip', 'wheel', '--no-deps',
                                          '--wheel-dir', str(built), wheel_spec], capture_output=True, text=True,
+                                        encoding='utf-8', errors='replace',
                                         cwd=str(staging), timeout=180)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise ValueError("HFC runtime wheel build did not complete") from exc
@@ -1176,10 +1178,11 @@ def verify_installed(member: Path, python: Path) -> bool:
         if ((identity.st_dev, identity.st_ino) != (before_child.st_dev, before_child.st_ino)
                 or _owned(member) != owner):
             return False
-        result = subprocess.run([str(python), '-I', '-B', '-c', _VERIFY_CHILD], input=json.dumps(
+        result = subprocess.run([str(python), '-I', '-B', '-X', 'utf8', '-c', _VERIFY_CHILD], input=json.dumps(
             {'wheel_sha256': owner['files'][wheel_name], 'files': hashes,
              'external_wheel': external, 'wheel_version': wheel_version}),
-            capture_output=True, text=True, cwd=str(member), timeout=30)
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            cwd=str(member), timeout=30)
         after = member.lstat()
         sdk_ok = True
         if owner['schema'] == 3:

@@ -96,3 +96,11 @@ PM generation 的解释器与执行源码目录分别核验，工作目录本身
 ## 验收边界
 
 单元测试覆盖身份迁移、无关配置保留、漂移拒绝、事务失败、同名不同 wheel、路径替换、旧 schema 1 flat store、空 `archive_info`、错误 file URL、错误版本、资源漂移与权限/链接拒绝。完整矩阵、真实 PM lock/sync、普通 wheel 子进程与源码逐字恢复须分别记录证据。报告者原环境迁移、服务重启及飞书 Gateway/model 仍需现场复测；CI 通过不替代这些结论。
+
+## Windows PM 子进程诊断（V5.0.21）
+
+受控 PM/backend Python 子进程使用 `-X utf8`，父进程按 UTF-8 解码并替换非法诊断字节，避免中文代码页将错误输出转成未分类的 `UnicodeDecodeError`。替换后的输出仍须通过精确 JSON/返回码与 backend 判定；未知结果、源码摘要不符和事务结果不确定继续拒绝，不因解码成功视为安装成功。
+
+`source_digest` 表示受检源码字节与选定清单不符。正式 setup 会显式传入选择的 family/sources；无参数调用内部 helper 的旧默认清单不能证明正式路径选错。请保留实际 CLI、导入包版本/路径、Hermes commit、选定 family 和脱敏错误，不删除 marker 或改写摘要清单绕过检查。#497 的原机正式 `source_digest` 仍未独立复现。
+
+运行时没有 pip 且需要离线安装时，使用与目标版本一致的预构建 `.whl`，将 `HFC_INSTALL_SPEC` 指向该 wheel 的准确路径；源码目录或 VCS spec 仍需构建工具，不能替代预构建 wheel。无需为此改动受管 Hermes 源码或公共 Python 依赖。

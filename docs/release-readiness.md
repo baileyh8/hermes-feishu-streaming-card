@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.20`（#512 Docker 多 profile 修复）。PR 完整矩阵、主线精确提交 CI、tag 门禁、普通 wheel 安装/恢复、公开 tag 安装及资产校验在发布前逐项完成并回填；真实 Gateway/model 与飞书客户端验收单独记录。见[发行说明](release-notes-v5.0.20.md)。
+本分支目标版本为 `5.0.21`（#518 完成事件归属 / #497 子进程编码）。PR 完整矩阵、主线精确提交 CI、tag 门禁、普通 wheel 安装/恢复、公开 tag 安装及资产校验在发布前逐项完成并回填；真实 Gateway/model 与飞书客户端验收单独记录。见[发行说明](release-notes-v5.0.21.md)。
 
 ## v5.0.16 历史记录
 

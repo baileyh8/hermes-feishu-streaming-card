@@ -1426,3 +1426,137 @@ def test_v0230_settlement_new_task_hfc_handoff(mode, monkeypatch):
         assert result["native_sends"] == 0
         assert result["hfc_finish"] == 1
         assert result["waiter_done"] is True
+
+
+def test_issue518_v0230_provider_route_patch_executes_real_usage_shape():
+    """Pinned v0.23.0 source: exact AST hit, real exec, idempotence and restore."""
+    import textwrap
+
+    from hermes_feishu_card.install import provider_route
+
+    root = _pinned_root()
+    source = (root / "gateway/run_turn_runner.py").read_text()
+    patched = provider_route.apply_provider_route_patch(source)
+    assert patched != source
+    assert patched.count("HERMES_FEISHU_CARD_PROVIDER_SCOPED_USAGE_BEGIN") == 1
+    assert provider_route.apply_provider_route_patch(patched) == patched
+    assert provider_route.remove_provider_route_patch(patched) == source
+    compile(patched, str(root / "gateway/run_turn_runner.py"), "exec")
+
+    corrupt = patched.replace("    _hfc_route = None", "    raise", 1)
+    with pytest.raises(ValueError, match="modified provider"):
+        provider_route.remove_provider_route_patch(corrupt)
+
+    provider_drift = source.replace(
+        '"provider": getattr(agent, "provider", None) if agent else None,',
+        '"provider": "unknown",',
+        1,
+    )
+    assert provider_route.apply_provider_route_patch(provider_drift) == provider_drift
+    model_drift = source.replace(
+        '"model": getattr(agent, "model", None) if agent else None,',
+        '"model": agent.model,',
+        1,
+    )
+    assert provider_route.apply_provider_route_patch(model_drift) == model_drift
+
+    lines = patched.splitlines(keepends=True)
+    start = next(i for i, line in enumerate(lines) if line.strip() == "usage = {")
+    end = next(
+        i for i in range(start, len(lines))
+        if lines[i].strip() == "# HERMES_FEISHU_CARD_PROVIDER_SCOPED_USAGE_END"
+    )
+    block = textwrap.dedent("".join(lines[start:end + 1]))
+    wrapped = (
+        "def _probe(agent, result, has_comp, comp, _LEDGER_PASSTHROUGH_KEYS):\n"
+        + textwrap.indent(block, "    ")
+        + "    return usage\n"
+    )
+    namespace = {}
+    exec(compile(wrapped, "<v0230-usage-probe>", "exec"), namespace)
+
+    agent = SimpleNamespace(
+        model="primary-model",
+        provider="primary",
+        session_prompt_tokens=11,
+        session_completion_tokens=22,
+        context_compressor=SimpleNamespace(last_prompt_tokens=33, context_length=444),
+        _provider_fallback_route=("gpt-6-astra", "openai-codex"),
+        _provider_fallback_active=True,
+    )
+    result = {"provider": "primary", "turn_exit_reason": "stop", "total_tokens": 33}
+    ledger_keys = (
+        "estimated_cost_usd", "cost_status", "cost_source", "cache_read_tokens",
+        "cache_write_tokens", "reasoning_tokens", "total_tokens", "provider",
+        "turn_exit_reason", "service_tier",
+    )
+    usage = namespace["_probe"](
+        agent, result, True, agent.context_compressor, ledger_keys
+    )
+    assert usage["model"] == "gpt-6-astra"
+    assert usage["provider"] == "openai-codex"
+
+    unknown_agent = SimpleNamespace(
+        model="primary-model",
+        provider="openai-codex",
+        session_prompt_tokens=11,
+        session_completion_tokens=22,
+        context_compressor=SimpleNamespace(last_prompt_tokens=33, context_length=444),
+        _provider_fallback_route=None,
+        _provider_fallback_active=True,
+    )
+    unknown_usage = namespace["_probe"](
+        unknown_agent, result, True, unknown_agent.context_compressor, ledger_keys
+    )
+    assert unknown_usage["provider"] == ""
+
+
+def test_issue518_v0230_provider_route_exception_does_not_authorize_stale_usage(monkeypatch):
+    """A failing route helper must clear the old qualified label and provider."""
+    import textwrap
+
+    from hermes_feishu_card import hook_runtime
+    from hermes_feishu_card.install import provider_route
+
+    root = _pinned_root()
+    source = (root / "gateway/run_turn_runner.py").read_text()
+    patched = provider_route.apply_provider_route_patch(source)
+    lines = patched.splitlines(keepends=True)
+    start = next(i for i, line in enumerate(lines) if line.strip() == "usage = {")
+    end = next(
+        i for i in range(start, len(lines))
+        if lines[i].strip() == "# HERMES_FEISHU_CARD_PROVIDER_SCOPED_USAGE_END"
+    )
+    block = textwrap.dedent("".join(lines[start:end + 1]))
+    wrapped = (
+        "def _probe(agent, result, has_comp, comp, _LEDGER_PASSTHROUGH_KEYS):\n"
+        + textwrap.indent(block, "    ")
+        + "    return usage\n"
+    )
+    namespace = {}
+    exec(compile(wrapped, "<v0230-usage-exception-probe>", "exec"), namespace)
+
+    def broken(_agent):
+        raise RuntimeError("route helper unavailable")
+
+    monkeypatch.setattr(hook_runtime, "effective_response_route", broken)
+    agent = SimpleNamespace(
+        model="openai-codex/gpt-6-astra",
+        provider="openai-codex",
+        session_prompt_tokens=11,
+        session_completion_tokens=22,
+        context_compressor=SimpleNamespace(last_prompt_tokens=33, context_length=444),
+        _provider_fallback_route=None,
+        _provider_fallback_active=False,
+    )
+    result = {"provider": "openai-codex", "turn_exit_reason": "stop", "total_tokens": 33}
+    ledger_keys = (
+        "estimated_cost_usd", "cost_status", "cost_source", "cache_read_tokens",
+        "cache_write_tokens", "reasoning_tokens", "total_tokens", "provider",
+        "turn_exit_reason", "service_tier",
+    )
+    usage = namespace["_probe"](
+        agent, result, True, agent.context_compressor, ledger_keys
+    )
+    assert usage["provider"] == ""
+    assert usage["model"] == "gpt-6-astra"

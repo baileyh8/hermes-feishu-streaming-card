@@ -698,6 +698,8 @@ def _run_official_enable(binding: HermesRuntimeBinding) -> int:
             [
                 str(binding.runtime_python),
                 "-I",
+                "-X",
+                "utf8",
                 "-c",
                 _OFFICIAL_ENABLE_BOOTSTRAP,
                 str(binding.checkout_root),
@@ -848,6 +850,8 @@ def _official_probe_interpreter(binding: HermesRuntimeBinding) -> Path | None:
             [
                 str(binding.runtime_python),
                 "-I",
+                "-X",
+                "utf8",
                 "-c",
                 _OFFICIAL_ENABLE_RESOLVE_SCRIPT,
                 str(binding.checkout_root),
@@ -907,6 +911,8 @@ def _official_enable_visibility_note(binding: HermesRuntimeBinding) -> str | Non
             [
                 str(probe_python),
                 "-I",
+                "-X",
+                "utf8",
                 "-c",
                 _OFFICIAL_ENABLE_PROBE_SCRIPT,
                 str(binding.checkout_root),
@@ -1281,12 +1287,14 @@ def _probe_runtime_identity(launcher: Path) -> dict[str, object]:
     )
     try:
         completed = subprocess.run(
-            [str(launcher), "-I", "-B", "-c", code],
+            [str(launcher), "-I", "-B", "-X", "utf8", "-c", code],
             cwd=str(launcher.parents[2]),
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=20,
             env=isolated_child_env(launcher.parents[2], include_path=True),
         )
@@ -1354,12 +1362,14 @@ print(json.dumps({
 '''
     try:
         completed = subprocess.run(
-            [str(binding.runtime_python), "-I", "-B", "-c", code],
+            [str(binding.runtime_python), "-I", "-B", "-X", "utf8", "-c", code],
             cwd=str(binding.checkout_root),
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             env=isolated_child_env(binding.hermes_home, include_path=True),
         )
