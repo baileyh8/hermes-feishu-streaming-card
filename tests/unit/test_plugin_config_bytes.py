@@ -435,7 +435,7 @@ def test_git_audit_accepts_only_the_exact_bound_windows_argv(tmp_path):
     assert not (home / "continued").exists()
 
 
-@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230"])
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230", "pm-0231"])
 def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path, family):
     """A real child must not resume after an upstream catch disables profiling."""
     import subprocess
