@@ -89,7 +89,7 @@ def test_shadow_acl_refuses_source_or_callable_drift(shadow_acl, drift):
     assert acl._grant is before
 
 
-@pytest.mark.parametrize("family", ["pm-0225", "pm-0226", "pm-0227", "pm-0230"])
+@pytest.mark.parametrize("family", ["pm-0225", "pm-0226", "pm-0227", "pm-0230", "pm-0231"])
 @pytest.mark.parametrize("name", ["_grant_with_pywin32", "_grant_with_icacls", "_whoami_sid"])
 def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, name, family):
     from hermes_feishu_card.install import plugin_config_bytes as planner
@@ -103,8 +103,8 @@ def test_shadow_acl_profile_guard_cannot_be_caught_or_disable_itself(tmp_path, n
     guard = planner._CHILD.split("for name,digest in request['sources'].items():", 1)[0]
     # Exercise the Windows branch on every host, in a fresh real child only.
     guard = guard.replace(
-        "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230')",
-        "request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230')",
+        "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231')",
+        "request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231')",
     )
     probe = guard + (
         "\nscope={'__name__':'hermes_dir_acl','sentinel':home/'entered'}\n"
@@ -435,7 +435,7 @@ def test_git_audit_accepts_only_the_exact_bound_windows_argv(tmp_path):
     assert not (home / "continued").exists()
 
 
-@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230"])
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230", "pm-0231"])
 def test_profile_guard_hard_stops_caught_forbidden_call(tmp_path, family):
     """A real child must not resume after an upstream catch disables profiling."""
     import subprocess
@@ -551,3 +551,96 @@ def test_0226_home_rejects_a_different_runtime(tmp_path, monkeypatch):
     with pytest.raises(writer.ConfigBytesRefused) as error:
         writer.resolve_0226_home(tmp_path, second)
     assert error.value.code == 'backend-runtime-mismatch'
+
+
+def test_verify_0226_admission_selects_config_version_by_family(tmp_path, monkeypatch):
+    """pm-0231 sources require stamp 53; equal-content copies must not enable it."""
+    import copy as copy_module
+    from hermes_feishu_card.install import plugin_config_bytes as planner
+
+    root = tmp_path / "hermes"
+    root.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+
+    config_bytes = b"plugins: {}\n_config_version: {version}\n"
+
+    class _FakeIO:
+        def __init__(self, version):
+            self.version = version
+
+        def read_file_state(self, path, **kwargs):
+            stamp = ("52" if type(self.version) is int and self.version == 52 else
+                     "53" if type(self.version) is int and self.version == 53 else
+                     repr(self.version))
+            return None, config_bytes.replace(b"{version}", stamp.encode()), None
+
+    fake = _FakeIO(52)
+    monkeypatch.setattr(
+        "hermes_feishu_card.install.posix_transaction.read_file_state",
+        fake.read_file_state,
+    )
+    captured = {}
+
+    def _fake_backend(root, python, home, *, sources=None):
+        captured["sources"] = sources
+        return object()
+
+    monkeypatch.setattr(
+        "hermes_feishu_card.install.config_backend_0226.verify_file_backend",
+        _fake_backend,
+    )
+    monkeypatch.setattr(
+        planner, "resolve_0226_home", lambda root, python: home, raising=False
+    )
+
+    # Default (None sources): 52 accepted, 53 refused.
+    fake.version = 52
+    planner.verify_0226_admission(root, Path("/usr/bin/python3"), home)
+    assert captured["sources"] is None
+    fake.version = 53
+    with pytest.raises(planner.ConfigBytesRefused) as caught:
+        planner.verify_0226_admission(root, Path("/usr/bin/python3"), home)
+    assert caught.value.code == "upstream-migration-required"
+
+    # The exact pm-0231 mapping: 53 accepted, 52 refused.
+    fake.version = 53
+    planner.verify_0226_admission(
+        root, Path("/usr/bin/python3"), home, sources=planner.FAMILIES["pm-0231"]
+    )
+    assert captured["sources"] == planner.FAMILIES["pm-0231"]
+    fake.version = 52
+    with pytest.raises(planner.ConfigBytesRefused):
+        planner.verify_0226_admission(
+            root, Path("/usr/bin/python3"), home, sources=planner.FAMILIES["pm-0231"]
+        )
+
+    # An equal-content copy of the 0231 mapping satisfies dict equality but the
+    # file/source proof still runs against the disk; the version gate matches.
+    equal_copy = copy_module.deepcopy(planner.FAMILIES["pm-0231"])
+    fake.version = 53
+    planner.verify_0226_admission(
+        root, Path("/usr/bin/python3"), home, sources=equal_copy
+    )
+
+    # An unknown mapping keeps the historical 52 requirement.
+    fake.version = 53
+    unknown = dict(planner.FAMILIES["pm-0231"])
+    unknown["hermes_cli/unknown_extra.py"] = "0" * 64
+    with pytest.raises(planner.ConfigBytesRefused):
+        planner.verify_0226_admission(
+            root, Path("/usr/bin/python3"), home, sources=unknown
+        )
+
+    # Non-integer and float stamps are refused in both modes.
+    fake.version = 53.0
+    with pytest.raises(planner.ConfigBytesRefused):
+        planner.verify_0226_admission(
+            root, Path("/usr/bin/python3"), home, sources=planner.FAMILIES["pm-0231"]
+        )
+    fake.version = 52
+    with pytest.raises(planner.ConfigBytesRefused):
+        planner.verify_0226_admission(
+            root, Path("/usr/bin/python3"), home,
+            sources=planner.FAMILIES["pm-0231"],
+        )

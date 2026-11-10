@@ -9,6 +9,20 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_v0231_source_contracts_run_in_pinned_upstream_gate():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    step = next(step for step in jobs["upstream-shards"]["steps"]
+                if step.get("name") == "Verify pinned upstream install, plugin, rate and PM contracts")
+    assert step["env"]["HFC_REQUIRE_0231_PIN"] == "1"
+    assert step["env"]["HFC_UPSTREAM_0231_ROOT"].endswith("/.upstream/0231")
+    assert step["env"]["HFC_CONFIG_WRITER_0231_ROOT"].endswith("/.upstream/0231")
+    assert {
+        "tests/integration/test_v0231_admission_sources.py",
+        "tests/integration/test_v0231_admission_topology.py",
+        "tests/integration/test_v0231_writer_family.py",
+    } <= set(step["run"].split())
+
+
 def test_official_image_gate_covers_real_install_and_bytecode_states():
     workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())
     job = workflow["jobs"]["official-image-acceptance"]
@@ -19,12 +33,14 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     identities = {(case["image"], case["pyc_mode"]) for case in cases}
     assert len(identities) == len(cases)
     assert {image for image, _ in identities} == {
-        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0"
+        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0", "v0.23.1"
     }
     assert ("v0.22.5", "preserved") in identities
     assert ("v0.22.5", "cleared") in identities
     assert ("v0.23.0", "preserved") in identities
     assert ("v0.23.0", "cleared") in identities
+    assert ("v0.23.1", "preserved") in identities
+    assert ("v0.23.1", "cleared") in identities
     assert any(case["legacy"] for case in cases)
     assert "matrix.pyc_mode" in job["name"]
     windows = workflow["jobs"]["pytest-windows"]
@@ -206,6 +222,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         ".upstream/issue471_9b904": "9b904dcc22c23fe8b82834339bbdd96495072e59",
         ".upstream/0227": "b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
         ".upstream/0230": "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
+        ".upstream/0231": "3b421578588243f920886e6fe79a6faa87ea026e",
         **{
             f".upstream/background_{baseline}": evidence["commit"]
             for baseline, evidence in json.loads(
@@ -256,8 +273,8 @@ def test_official_actions_are_sha_pinned_to_node24_capable_releases():
         "actions/setup-python": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0",
         "actions/upload-artifact": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
         "actions/download-artifact": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
-        "github/codeql-action/init": "9b3254085494b55a0f7c4c2b3d2d52cc712ce370",
-        "github/codeql-action/analyze": "9b3254085494b55a0f7c4c2b3d2d52cc712ce370",
+        "github/codeql-action/init": "33d7b85da1a04171e211befe2c739303b9a4c066",
+        "github/codeql-action/analyze": "33d7b85da1a04171e211befe2c739303b9a4c066",
     }
     workflow_paths = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
 

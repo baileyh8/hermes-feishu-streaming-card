@@ -34,6 +34,12 @@ V5.0.7 新增独立 `issue456_0225` 来源，固定提交 `bf0203a794a07aac3ff76
 
 Issue #463 的 `native-windows-463` job 在 Python 3.12/3.14 上运行真实 Windows 字节 I/O、portable restore、PM dependency 和固定未改 family 的 v0.22.5 官方 enable。checkout 使用进程级 `GIT_CONFIG_COUNT=1`、`GIT_CONFIG_KEY_0=core.autocrlf`、`GIT_CONFIG_VALUE_0=false`，不修改 runner 的 global Git 配置；源码、wheel、runtime 和临时路径由 PowerShell/Python 写入 `GITHUB_ENV` 为 Windows 原生绝对路径，随后读回两个固定 SHA、普通 wheel 的每个包资源及 `direct_url.json` 摘要。该 job 的结果才是原生 Windows 验收证据；本机 POSIX 的 handle 语义模拟只证明事务控制流。
 
+## Hermes v0.23.1 精确兼容验证
+
+#520 固定 `3b421578588243f920886e6fe79a6faa87ea026e`。固定上游矩阵显式运行 `test_v0231_admission_sources.py`、`test_v0231_admission_topology.py` 与 `test_v0231_writer_family.py`，提供 `HFC_UPSTREAM_0231_ROOT` / `HFC_REQUIRE_0231_PIN=1` / `HFC_CONFIG_WRITER_0231_ROOT`。普通 full 中的 fixture skip 不构成该版本验收；preflight 会清理这些上游变量，须使用 CI 固定矩阵或记录过隔离环境的等价入口。
+
+官方 v0.23.1 镜像保留和清除 bytecode 两种状态分别核验，并由上游真实迁移到 schema53，不能手改stamp。来源和精确 tag / digest 绑定，未知或不匹配的 image/source 在执行迁移前拒绝。`latest_stable` 仍表示历史 v0.22.4 固定基线，不代表滚动 stable。实际 Gateway/model 与客户端验收另记。
+
 ## Hermes v0.23.0 精确兼容验证
 
 #497 固定 `2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19`，不替换 v0.22.5/v0.22.7 历史来源。CI 通过 `HFC_UPSTREAM_0230_ROOT` 与 `HFC_REQUIRE_0230_PIN=1` 验证 wrapper、admission 源码/绑定与漂移拒绝；`HFC_CONFIG_WRITER_0230_ROOT` 供 writer、普通 wheel 和 PM 安装事务使用。官方 v0.23.0 镜像以 digest 固定，分别验证 preserved/cleared 字节码状态。

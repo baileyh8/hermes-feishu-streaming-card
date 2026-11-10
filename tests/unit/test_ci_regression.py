@@ -500,6 +500,65 @@ def test_case(case):
         verify(reports, 2)
 
 
+def test_progress_file_tracks_running_node_and_stays_out_of_report_evidence(tmp_path):
+    (tmp_path / "test_nodes.py").write_text('''
+import time
+import pytest
+@pytest.mark.parametrize("case", range(6))
+def test_case(case):
+    if case == 2:
+        time.sleep(2)
+''')
+    report = tmp_path / "shard-0.json"
+    progress = tmp_path / "shard-0.progress"
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTEST_ADDOPTS="")
+    result = subprocess.run([
+        sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "tools.ci_shard",
+        "--hfc-shard-index", "0", "--hfc-shard-count", "1",
+        "--hfc-shard-report", str(report), "--hfc-progress-report", str(progress),
+        "test_nodes.py",
+    ], check=False, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0
+    payload = json.loads(progress.read_text())
+    assert payload["schema"] == 1 and payload["kind"] == "progress"
+    # The file retains the last observed node after the run completes.
+    assert payload["node"].endswith("[5]")
+    # remaining counts the last node whose teardown has not completed yet.
+    assert payload["ordinal"] == 6 and payload["remaining"] == 1
+    final = json.loads(report.read_text())
+    assert sorted(final["completed"]) == sorted(final["selected"])
+    # The diagnostics file name must not match the report glob used by ci_shard
+    # verify consumers or ci_run report collection.
+    assert list(tmp_path.glob("shard-*.json")) != [progress]
+    assert sorted(path.name for path in tmp_path.glob("shard-*.json")) == ["shard-0.json"]
+
+
+def test_killed_worker_leaves_progress_evidence_without_final_report(tmp_path):
+    (tmp_path / "test_nodes.py").write_text('''
+import os, signal, time
+import pytest
+def test_case():
+    time.sleep(2)
+    os.kill(os.getpid(), signal.SIGKILL)
+''')
+    report = tmp_path / "shard-0.json"
+    progress = tmp_path / "shard-0.progress"
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTEST_ADDOPTS="")
+    result = subprocess.run([
+        sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "tools.ci_shard",
+        "--hfc-shard-index", "0", "--hfc-shard-count", "1",
+        "--hfc-shard-report", str(report), "--hfc-progress-report", str(progress),
+        "test_nodes.py",
+    ], check=False, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode != 0
+    assert progress.exists(), "killed worker must retain its current-node evidence"
+    payload = json.loads(progress.read_text())
+    assert payload["node"] == "test_nodes.py::test_case"
+    assert not report.exists(), "no final shard report may exist for a killed worker"
+    with pytest.raises(ValueError, match="missing or duplicate shard|not a shard report"):
+        verify([json.loads(progress.read_text())], 1)
+
+
 @pytest.mark.parametrize(
     "mode,slices,versions",
     [

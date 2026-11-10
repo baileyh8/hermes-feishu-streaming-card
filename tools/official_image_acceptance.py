@@ -130,14 +130,28 @@ IMAGE_SPECS: dict[str, ImageSpec] = {
         "sha256:0dd31821db01611eaeedc44743260336c2d72bff47b9117b06313b29ca85ad76",
         1120150106,
     ),
+    "v0.23.1": ImageSpec(
+        "v0.23.1",
+        "3b421578588243f920886e6fe79a6faa87ea026e",
+        "sha256:276d44685c65c0cb2a25f190b63c65c8906f9dc76486fb1c05ae71b5826bda08",
+        "sha256:1a355ebc8981a4b72a28f4e47e347ba4f0f172b43dc876e5768d175a07c67b22",
+        1120826950,
+    ),
 }
 
 # Images whose official writer admission requires the upstream config schema
 # to be migrated from FULL_SEED. The seed itself stays at version 50; the
-# official docker_config_migrate script performs the real 50 -> 52 upgrade.
-CONFIG_MIGRATION_SOURCE_SHAS = frozenset({IMAGE_SPECS["v0.23.0"].source_sha})
+# official docker_config_migrate script performs the real upgrade to the
+# pinned image's own schema version (v0.23.0: 50 -> 52, v0.23.1: 50 -> 53).
+CONFIG_MIGRATION_TARGETS = {
+    IMAGE_SPECS["v0.23.0"].source_sha: 52,
+    IMAGE_SPECS["v0.23.1"].source_sha: 53,
+}
+CONFIG_MIGRATION_SOURCE_SHAS = frozenset(CONFIG_MIGRATION_TARGETS)
 MIN_MIGRATED_CONFIG_VERSION = 52
 
+# Historical admission floor; active migrations must hit the exact
+# per-image target in CONFIG_MIGRATION_TARGETS.
 _OFFICIAL_CONFIG_MIGRATE_CODE = r'''
 import json, sys
 from pathlib import Path
@@ -547,8 +561,35 @@ def _baseline_image_requires_config_migration() -> bool:
     )
 
 
+def _migration_image_binding() -> tuple[str, int]:
+    """Resolve the migration target from the pinned image identity.
+
+    Unknown pinned tags, unknown source SHAs and tag/source mismatches are
+    rejected before the migration subprocess runs; only images with a
+    reviewed target pass.
+    """
+    tag = os.environ.get("HFC_IMAGE_TAG", "")
+    spec = IMAGE_SPECS.get(tag)
+    source_sha = os.environ.get("HFC_IMAGE_SOURCE_SHA", "")
+    if spec is None:
+        raise AcceptanceFailure(
+            "official config migration requires a pinned image tag"
+        )
+    if source_sha != spec.source_sha:
+        raise AcceptanceFailure(
+            "official config migration image source does not match the pin"
+        )
+    target = CONFIG_MIGRATION_TARGETS.get(spec.source_sha)
+    if target is None:
+        raise AcceptanceFailure(
+            "official config migration has no reviewed schema target for this image"
+        )
+    return spec.tag, target
+
+
 def _officially_migrate_baseline_config(evidence: Path) -> dict[str, Any]:
     """Run the pinned upstream Docker config migration on FULL_SEED."""
+    image_tag, expected_stamp = _migration_image_binding()
     result = _run_command(
         [
             str(_base_python()), "-B", "-I", "-c",
@@ -573,7 +614,7 @@ def _officially_migrate_baseline_config(evidence: Path) -> dict[str, Any]:
     if (
         type(stamp) is not int or type(latest) is not int or type(default) is not int
         or stamp != latest or latest != default
-        or stamp < MIN_MIGRATED_CONFIG_VERSION
+        or stamp != expected_stamp
     ):
         raise AcceptanceFailure("official config migration did not reach the reviewed schema")
     if _config_mapping().get("_config_version") != stamp:
@@ -581,6 +622,8 @@ def _officially_migrate_baseline_config(evidence: Path) -> dict[str, Any]:
     digest = _snapshot_config(evidence, "config-after-official-migrate")
     report = {
         "source": "scripts/docker_config_migrate.py",
+        "image_tag": image_tag,
+        "expected_stamp": expected_stamp,
         "stamp": stamp,
         "latest": latest,
         "default": default,

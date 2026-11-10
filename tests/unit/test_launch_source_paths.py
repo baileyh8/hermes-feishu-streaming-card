@@ -61,6 +61,7 @@ def test_every_writer_family_has_a_launch_source_contract():
     base = {"hermes_cli/main.py", "hermes_cli/__init__.py"}
     extra = {
         "pm-0230": {"hermes_cli/cpu_profile.py", "hermes_cli/main_dashboard.py"},
+        "pm-0231": {"hermes_cli/cpu_profile.py", "hermes_cli/main_dashboard.py"},
     }
     for family, sources in planner.LAUNCH_SOURCES.items():
         assert base <= set(sources), family

@@ -35,6 +35,7 @@ from .base_contracts import (
     _parse_exact_base_content,
 )
 from .ast_contracts import (
+    find_slash_confirm_register,
     _body_location,
     _is_docstring_expr,
     _leading_whitespace,
@@ -1006,24 +1007,16 @@ def _apply_slash_confirm_patch(content: str) -> str:
             return content
         return "".join(lines[:begin_index] + expected + lines[end_index + 1 :])
 
-    tree = _parse_content(content)
-    func = _find_async_function(tree, "_request_slash_confirm")
-    if func is None:
+    statement = find_slash_confirm_register(content)
+    if statement is None:
         return content
     lines = content.splitlines(keepends=True)
-    start = max(func.lineno - 1, 0)
-    end = getattr(func, "end_lineno", None)
-    if end is None:
-        end = len(lines)
-    anchor = "_slash_confirm_mod.register(session_key, confirm_id, command, handler)"
-    for index in range(start, min(end, len(lines))):
-        if _strip_line_ending(lines[index]).strip() != anchor:
-            continue
-        indent = _leading_whitespace(_strip_line_ending(lines[index]))
-        newline = _line_ending(lines[index]) or _detect_newline(content)
-        hook = _render_slash_confirm_hook_block(indent, newline)
-        return "".join(lines[: index + 1] + hook + lines[index + 1 :])
-    return content
+    index = statement.end_lineno
+    assert index is not None
+    indent = _leading_whitespace(_strip_line_ending(lines[statement.lineno - 1]))
+    newline = _line_ending(lines[index - 1]) or _detect_newline(content)
+    hook = _render_slash_confirm_hook_block(indent, newline)
+    return "".join(lines[:index] + hook + lines[index:])
 
 
 def _apply_command_card_adapter_patch(content: str) -> str:

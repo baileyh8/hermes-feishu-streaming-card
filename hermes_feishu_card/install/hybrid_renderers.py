@@ -5,6 +5,7 @@ from dataclasses import replace
 from collections.abc import Callable
 
 from .patch_descriptors import PatchDescriptorRegistry, PatchGroupDescriptor
+from .ast_contracts import find_slash_confirm_register
 
 
 _REVISION = "fixed-tag-v2026.8.3-r1"
@@ -830,21 +831,11 @@ def _render_approval_round_trip(content: bytes, descriptor: PatchGroupDescriptor
 
 def _render_slash_confirm(content: bytes, descriptor: PatchGroupDescriptor) -> bytes:
     text, newline = _decode(content)
-    anchor = "_slash_confirm_mod.register(session_key, confirm_id, command, handler)"
-    function = next(
-        node
-        for node in ast.walk(ast.parse(text))
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_request_slash_confirm"
-    )
-    lines = text.splitlines()
-    line = lines[
-        next(
-            index
-            for index in range(function.lineno - 1, function.end_lineno or function.lineno)
-            if lines[index].strip() == anchor
-        )
-    ]
-    indent = _indent(line)
+    statement = find_slash_confirm_register(text)
+    if statement is None or statement.end_lineno is None:
+        raise ValueError("slash confirm register contract changed")
+    lines = text.splitlines(keepends=True)
+    indent = _indent(lines[statement.lineno - 1])
     register_fragment, resolve_fragment = descriptor.fragments
     register_block = _marker_block(
         register_fragment,
@@ -892,13 +883,10 @@ def _render_slash_confirm(content: bytes, descriptor: PatchGroupDescriptor) -> b
         ),
         newline,
     )
-    return _insert_in_function(
-        content,
-        function_name="_request_slash_confirm",
-        anchor=anchor,
-        block=register_block + resolve_block,
-        before=False,
-    )
+    lines.insert(statement.end_lineno, register_block + resolve_block)
+    rendered = "".join(lines)
+    compile(rendered, "<hybrid-fixed-tag>", "exec")
+    return rendered.encode("utf-8")
 
 
 def _render_subagent_parent_identity(

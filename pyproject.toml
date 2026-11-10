@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.21"
+version = "5.0.22"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,7 +32,7 @@ test = [
   "tomli>=1.1.0; python_version < '3.11'",
 ]
 quality = [
-  "ruff==0.17.3; python_version >= '3.10'",
+  "ruff==0.17.4; python_version >= '3.10'",
   "mypy==2.4.1; python_version >= '3.10'",
 ]
 
@@ -86,6 +86,7 @@ include = [
   "hermes_feishu_card/install/config_backend_0226.py",
   "hermes_feishu_card/install/_writer_0226.py",
   "hermes_feishu_card/install/_writer_0230.py",
+  "hermes_feishu_card/install/_writer_0231.py",
   "hermes_feishu_card/install/legacy_observer.py",
   "hermes_feishu_card/install/legacy_9b904.py",
   "hermes_feishu_card/install/legacy_9b904_contract.py",
@@ -156,6 +157,7 @@ files = [
   "hermes_feishu_card/install/config_backend_0226.py",
   "hermes_feishu_card/install/_writer_0226.py",
   "hermes_feishu_card/install/_writer_0230.py",
+  "hermes_feishu_card/install/_writer_0231.py",
   "hermes_feishu_card/install/legacy_observer.py",
   "hermes_feishu_card/install/legacy_9b904.py",
   "hermes_feishu_card/install/legacy_9b904_contract.py",

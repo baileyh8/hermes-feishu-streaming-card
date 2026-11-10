@@ -387,8 +387,10 @@ def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | No
         CORE_HASHES,
         CORE_HASHES_0227,
         CORE_HASHES_0230,
+        CORE_HASHES_0231,
         SOURCE_HASHES_0227,
         SOURCE_HASHES_0230,
+        SOURCE_HASHES_0231,
         source_bytes,
     )
     if hashes == CORE_HASHES and source_bytes(root) is None:
@@ -396,6 +398,8 @@ def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | No
     if hashes == CORE_HASHES_0227 and source_bytes(root, SOURCE_HASHES_0227) is None:
         return False, "unsupported-source"
     if hashes == CORE_HASHES_0230 and source_bytes(root, SOURCE_HASHES_0230) is None:
+        return False, "unsupported-source"
+    if hashes == CORE_HASHES_0231 and source_bytes(root, SOURCE_HASHES_0231) is None:
         return False, "unsupported-source"
     return True, "verified-source-cohort"
 

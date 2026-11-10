@@ -21,9 +21,9 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [What’s new in V5](#whats-new-in-v5) · [Upgrade from V4.x](#upgrade-from-v4x-to-v5) · [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.21; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.21.en.md).
+**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.22; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.22.en.md).
 
-Once published, download v5.0.21 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.21).
+Once published, download v5.0.22 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.22).
 
 ## What's new in V5
 
@@ -48,6 +48,8 @@ card:
 ```
 
 This combination starts with the process panel collapsed and keeps it available after completion. The `task` preset itself expands the panel by default; the second line explicitly selects collapse. Upgrading does not switch `classic`, `focused` or `detailed` to `task`.
+
+V5.0.22 adds exact Hermes v0.23.1 compatibility and config-schema-53 installation checks (#520), preserving source-drift rejection and managed recovery. Reviewed slash-confirm requester-authority calls use an exact AST anchor; this does not make arbitrary main builds supported. See the [release notes](docs/release-notes-v5.0.22.en.md).
 
 V5.0.21 carries the actual turn model/provider into completion events for eligible Codex subscription usage, and makes Python subprocess output decoding explicit on Windows PM paths (#518/#497). The reported Windows `source_digest` refusal remains under investigation; exact source verification is retained. See the [release notes](docs/release-notes-v5.0.21.en.md) for evidence and limits.
 
@@ -129,7 +131,7 @@ These are real historical screenshots, not a claim that every detail matches V5.
 **Keep your existing bot.** Reuse the actual Hermes directory, configuration, credentials and profile. Example paths are not substitutes for your split-HOME, Docker or multi-instance layout.
 
 1. Record current HFC/Hermes versions and service managers. Back up configuration, `.env` and installer recovery material. After tasks finish, stop Gateway, Desktop and sidecar through their existing managers.
-2. Pin the installer to `v5.0.21` and supply the same configuration and credentials paths. Run it only after that tag is published. The installer checks the provenance and compatibility of the old installation.
+2. Pin the installer to `v5.0.22` and supply the same configuration and credentials paths. Run it only after that tag is published. The installer checks the provenance and compatibility of the old installation.
 3. If diagnostics require restoring old hooks first, use the official `restore` command they provide, then reinstall. Stop on unknown source drift; never edit installed `gateway/run.py` or delete manifests/backups to bypass checks.
 4. Opt into the task layout with the two fields above if desired. Keep credentials, routing, native-table settings and other reading preferences from your existing configuration.
 5. Restore the original service managers and restart Gateway/Desktop as directed. Check `status`, `doctor --explain` and `card-config --running`, then send a real message to verify the card and footer.
@@ -140,7 +142,7 @@ macOS / Linux example—replace these paths with those used by your current inst
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.21/install.sh | bash -s -- --version v5.0.21 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.22/install.sh | bash -s -- --version v5.0.22 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 See the **[V4.x → V5 upgrade guide](docs/upgrade-v4-to-v5.en.md)** for Windows, Docker, split HOME, verification and rollback. Updating HFC is separate from updating Hermes; Feishu `/update` is not the plugin-version upgrade command.
@@ -176,7 +178,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.21
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.22
 bash install-docker.sh
 ```
 
@@ -311,6 +313,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v5.0.22](docs/release-notes-v5.0.22.en.md) | Exact Hermes v0.23.1 compatibility, installation and CI diagnostics |
 | [v5.0.21](docs/release-notes-v5.0.21.en.md) | Codex completion attribution and Windows subprocess encoding |
 | [v5.0.20](docs/release-notes-v5.0.20.en.md) | Official Docker multiplex profile-root recognition |
 | [v5.0.19](docs/release-notes-v5.0.19.en.md) | Sticky-profile enable target and Windows NTFS signature fixes |
@@ -320,11 +323,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.14](docs/release-notes-v5.0.14.en.md) | Per-turn rate correlation and verified Hermes compatibility |
 | [v5.0.13](docs/release-notes-v5.0.13.en.md) | Native completion isolation and model-picker repair |
 | [v5.0.12](docs/release-notes-v5.0.12.en.md) | Feishu-only source anchor and bounded completion source matching |
-| [v5.0.10](docs/release-notes-v5.0.10.en.md) | Verified asynchronous completion, single-use terminal acknowledgement and owned-config recovery |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V5.0.22: thanks to [Lite-G](https://github.com/Lite-G) for the main-anchor evidence in [#520](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/520), [ywarmy](https://github.com/ywarmy) for v0.23.1 stable source and installation analysis, and Dependabot for #516/#517. Issue evidence is separate from code authorship; original commits and historical credits are retained.
 
 - V5.0.21: thanks to [github-liu](https://github.com/github-liu) for the completion/quota evidence in [#518](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/518), and [DMarshall0114](https://github.com/DMarshall0114) for the Windows installation, encoding and retest evidence in [#497](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/497). Issue evidence is separate from code authorship; historical credits are retained.
 

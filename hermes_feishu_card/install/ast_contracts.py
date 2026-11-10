@@ -477,3 +477,49 @@ def _is_docstring_expr(node: Any) -> bool:
         and isinstance(cast(ast.Constant, node.value).value, str)
     )
 
+
+def find_slash_confirm_register(content: str) -> ast.Expr | None:
+    """Find the sole reviewed register statement without rewriting authority.
+
+    Only a direct statement in the unique async handler is an insertion seam.
+    Unknown arguments, nested calls and same-line statements remain unsupported.
+    This shape predicate does not establish a trusted upstream source cohort.
+    """
+    functions = [node for node in ast.walk(ast.parse(content))
+                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                 and node.name == "_request_slash_confirm"]
+    if len(functions) != 1 or not isinstance(functions[0], ast.AsyncFunctionDef):
+        return None
+    function = functions[0]
+    calls = [node for node in ast.walk(function)
+             if isinstance(node, ast.Call)
+             and _same_expression(node.func, "_slash_confirm_mod.register")]
+    if len(calls) != 1:
+        return None
+    call = calls[0]
+    if (len(call.args) != 4 or not all(
+        _same_expression(actual, expected) for actual, expected in zip(
+            call.args, ("session_key", "confirm_id", "command", "handler")))):
+        return None
+    if call.keywords:
+        authority = (
+            "prompt_authority(str(event.sender_id() or ''), "
+            "str(actor.user_name or ''), str(getattr(source, 'chat_type', None) or ''))"
+        )
+        if (len(call.keywords) != 1 or call.keywords[0].arg != "authority"
+                or not _same_expression(call.keywords[0].value, authority)):
+            return None
+    statements = [node for node in function.body
+                  if isinstance(node, ast.Expr) and node.value is call]
+    if len(statements) != 1:
+        return None
+    statement = statements[0]
+    if statement.end_lineno is None or statement.end_col_offset is None:
+        return None
+    lines = content.splitlines()
+    prefix = lines[statement.lineno - 1].encode("utf-8")[:statement.col_offset]
+    suffix = lines[statement.end_lineno - 1].encode("utf-8")[statement.end_col_offset:]
+    if prefix.strip() or (suffix.strip() and not suffix.lstrip().startswith(b"#")):
+        return None
+    return statement
+

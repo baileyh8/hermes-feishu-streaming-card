@@ -37,6 +37,7 @@ ROOTS = {
     "pm-0226": ("HFC_CONFIG_WRITER_0226_ROOT", "f0d94882e89ab8d4098b5bb2f166adfb9ee0a0ab"),
     "pm-0227": ("HFC_CONFIG_WRITER_0227_ROOT", "b200f5bc60e31588ba2cb60e288029c4a54ba5fa"),
     "pm-0230": ("HFC_CONFIG_WRITER_0230_ROOT", "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19"),
+    "pm-0231": ("HFC_CONFIG_WRITER_0231_ROOT", "3b421578588243f920886e6fe79a6faa87ea026e"),
     "pm-main-4e58": ("HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "4e58c721c8cf9b51c46636ea84ea6a5cb540880a"),
 }
 EXPECTED_FAMILIES = {"reported-cf4": "pm-0223", "rc2": "pm-0223"}
@@ -585,7 +586,7 @@ def test_official_failure_diagnostic_redacts_real_child_output(capsys, missing):
     for selection in ("fresh", "already", "disabled-canonical", "explicit-values")
 ] + [
     (family, "fresh", outcome)
-    for family in ("pm-0221", "pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230")
+    for family in ("pm-0221", "pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230", "pm-0231")
     for outcome in ("nonzero", "exception", "journal")
 ])
 def test_private_plan_equals_real_official_writer_and_exact_restore(
@@ -631,7 +632,9 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     disabled = "[keep-disabled, hermes_feishu_card]"
     if selection == "disabled-canonical":
         disabled = "[keep-disabled, hermes_feishu_card, hermes-feishu-card]"
-    version = 52 if family in ("pm-0226", "pm-0227", "pm-0230") else (50 if family in {"fixed", "pm"} else 51)
+    version = (53 if family == "pm-0231" else
+               52 if family in ("pm-0226", "pm-0227", "pm-0230") else
+               (50 if family in {"fixed", "pm"} else 51))
     original = (
         f"# preserve exact original bytes\r\nplugins:\r\n  enabled: {enabled}\r\n"
         f"  disabled: {disabled}\r\n  isolation: in_process\r\n"
@@ -1100,7 +1103,7 @@ def test_pm_0225_each_changed_source_drift_refuses_before_child(
     assert not list(state.iterdir())
 
 
-@pytest.mark.parametrize("family", ["pm-0221", "pm-0224", "pm-0225", "pm-0226", "pm-0230"])
+@pytest.mark.parametrize("family", ["pm-0221", "pm-0224", "pm-0225", "pm-0226", "pm-0230", "pm-0231"])
 @pytest.mark.parametrize("changed", ["hermes_cli/main.py", "hermes_cli/__init__.py"])
 def test_launch_source_drift_refuses_before_official_child(tmp_path, monkeypatch, family, changed):
     variable, _ = ROOTS[family]
@@ -1326,7 +1329,7 @@ def test_local_source_guard_is_private_child_and_new_family_only(
     assert subprocess.run([sys.executable, "-I", "-c", "pass"], timeout=10).returncode == 0
 
 
-@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230"])
+@pytest.mark.parametrize("family", ["pm-0224", "pm-0225", "pm-0226", "pm-0227", "pm-0230", "pm-0231"])
 def test_private_new_family_compiles_verified_source_instead_of_cached_code(tmp_path, family):
     import py_compile
 
@@ -1392,9 +1395,9 @@ def test_pm_0225_shadow_acl_uses_real_failure_path_without_success_cache(tmp_pat
     # Execute the complete production guard and ACL binding in a real subprocess.
     # Force only adapter admission on non-Windows hosts; upstream stays unmodified.
     child = plugin_config_bytes._CHILD.split("migrate_on_boot=request.get", 1)[0]
-    guard = "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230')"
+    guard = "sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231')"
     assert child.count(guard) == 2, "production ACL audit/binding anchors changed"
-    child = child.replace(guard, "request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230')")
+    child = child.replace(guard, "request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231')")
     child += r'''
 acl=sys.modules['hermes_dir_acl']
 assert acl._grant is _refuse_shadow_acl_grant

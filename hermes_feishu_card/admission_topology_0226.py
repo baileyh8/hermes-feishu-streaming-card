@@ -100,6 +100,45 @@ LEGACY_EXPECTED_RENDERED_HASHES_0230 = {
 }
 CORE_HASHES_0230 = {name: SOURCE_HASHES_0230[name] for name in (
     "gateway.session_ingress", "gateway.session_authority")}
+# v0.23.1 (3b42157858) drifts 17 of the 31 closure files while the admission
+# functions, the Base extraction seam and the settlement/delivery topology
+# stay byte-compatible (issue #520). The whole-file set pins the exact stable
+# tag bytes; unknown main builds still fail the whole-file cohort check.
+SOURCE_HASHES_0231 = {
+    "gateway.platforms.base": "8f5813ace60349909b00ade69fc04015059f4a6d8f12db12906de99468339919",
+    "gateway.platforms.event": "7ddf46f25469700c8d63f00e47cffa5a04efffa2230612fa7295e6e48265550f",
+    "gateway.session_ingress": "a7d7b2b575a85248da4a9a465779b6069293fd88aeaec3a2ceccd9a016013993",
+    "gateway.session_authority": "ec45262a22582fe3a94f99f9b7d73f94a251c52e792dbf9992710baa419fe2c3",
+    "gateway.session_producer_lifecycle": "e948b9cb02aac2e169abee70c6b2ffc04dc0edeeb22f4b3b9748ee9890ee56e3",
+    "gateway.platforms.base_post_delivery": "89471cd5ff6daf8001cab6d95321b1284a81b5db4943ca3e866fe21361d79206",
+    "gateway.run_turn_followup_ack": "f45f7b93d091ecb57f30d80e18d08bca0aa7aae92a7bb796ae9ce4b499852283",
+    "gateway.session_settlement_recovery": "f33174eafa49c4ec5fe7dcf18fa70c8ed9fb8e232de86a1fb3ae66c36f1bf312",
+    "gateway.session_runtime_workers": "1a77ffe9685daab40b0a04a1d48b1cee664c079bec90bfca4ea446bb29bb4267",
+    "gateway.session_results": "0c00cb67eba6322b34c801604c29bab360832dfded5c15b3c0d69bc592145bb2",
+    "gateway.session_queued_controls": "0c4e6a7054a891c5a625d4ce4940c2257555d75ac217ab8db6ce2302052ef903",
+    "gateway.session_ingress_media": "860e3cf09dcbc7732430778037d0ad6ad68ec0ca6eabb88f1b67f483f08653e2",
+    "gateway.session_retirement": "84eab1445ae3d0bd24c45325ea44f141434aa5e8d951c3ed7a6b870a7c948658",
+    "gateway.session_contract": "624f45de8dcf2537266614ac14eaf98150ad6ed82ac3167f30f6f463733e7a41",
+    "gateway.bot_loop_guard": "bef2b671488f0b6a26713647ae832026d2fae4fdb4d689e2968839e3fb15e621",
+    "gateway.bot_peer_notices": "671e75da3ff3c6fb8af43f9cfa4b4ec8c67f8e3fe605f6b4b7b888481897b9d6",
+    "gateway.authz_mixin": "221fc6c0aea9241492481127f766e424ef2f36d278dfe57fbdd7ab13bfd42c43",
+    "gateway.run_turn_persistence": "421a6e53664e91fcd7850908651a8ffdeef9d8b9b16a5883650a907459a94bfa",
+    "gateway.run_turn": "32de792e49dbe085fca9ce17cf75e522a7ef67dcc375bd465e274127f089e333",
+    "hermes_state_runtime": "6bbcc688799d3ea784545b5227d20e07f8b5ce8f26fcf545825bc8a60462ee3f",
+    "gateway.run": "680c3c2cea322293f10ed52dd5a98546128a971623bad2d03c0e53052c649fb2",
+    "gateway.run_background": "18fdb6a7fe408361544eca51d15659ec868d02876abce6866bc139bc454ff27f",
+    "gateway.run_turn_prepare": "63fdc7cbdf694e7b7a22b309dd99f131b23adf0e606e107c608d895b2a24edda",
+    "gateway.run_turn_hygiene": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
+    "gateway.run_turn_runner": "76a97f48cc5f769c84991644957e0e9d64c4be60dbd0774ec7457e740da253fb",
+    "gateway.run_inbound": "8113f9fc356f18c6eeaf985e1e523a09826933dea2b81ed227461b9f559dae39",
+    "gateway.run_busy": "0cda08c818b0b23bd6cf784073688fbf5ee05015d95feb5ecd8c90775a0c7f2e",
+    "gateway.run_startup": "51e47a16005c7ae68f190499c5998e3fffeb1c4df07a9ccdee2bec1012fd6884",
+    "gateway.run_notifications": "09566558ee1f967c90f62871c992db2e5922c062bdb534167e55257bdf65b003",
+    "cron.scheduler": "f9ceb83475ba1e7518f43ef99116662b28acb3b39316d18908c0c5dc4fd43e97",
+    "cron.scheduler_delivery": "ee4010c0b19e8fe71e22dc8cb82fddb70653e8583833066768199bba3de80573",
+}
+CORE_HASHES_0231 = {name: SOURCE_HASHES_0231[name] for name in (
+    "gateway.session_ingress", "gateway.session_authority")}
 # Exact rendered bytes produced by decomposed_ownership.render for the pinned
 # clean v0.23.0 sources and HFC 5.0.17. A full installer render is too costly
 # on a terminal admission request; the project test proves these hashes are
@@ -121,7 +160,24 @@ EXPECTED_RENDERED_HASHES_0230 = {
     "cron/scheduler_delivery.py": "09ed28e78e0230c87070c3159f669155a13050405e162d9817a312196c0ad4ce",
     "gateway/platforms/base.py": "fbec459568bc66d231514ea172fe10f127a5861197043760769d2cf9552cb9e3",
 }
-TOPOLOGY_HASHES = (SOURCE_HASHES, SOURCE_HASHES_0227, SOURCE_HASHES_0230)
+EXPECTED_RENDERED_HASHES_0231 = {
+    "cron/scheduler.py": "f9ceb83475ba1e7518f43ef99116662b28acb3b39316d18908c0c5dc4fd43e97",
+    "cron/scheduler_delivery.py": "e6d39a796c3c1323f0f4feb66cc033ed567a3814cb9bf523772cd70cbcf6be1a",
+    "gateway/platforms/base.py": "d28fc2cc7ef2aed64846c2193d8d553f16f0049d5319e0acb7b4fc184e46edc0",
+    "gateway/run.py": "680c3c2cea322293f10ed52dd5a98546128a971623bad2d03c0e53052c649fb2",
+    "gateway/run_background.py": "18fdb6a7fe408361544eca51d15659ec868d02876abce6866bc139bc454ff27f",
+    "gateway/run_busy.py": "f719aa55835dcff95fcea079d6359d8589916636480df21840fd0229f870774b",
+    "gateway/run_inbound.py": "971d77238832d34371a4abcb5873712342949f959756b4a9847d6e838d8fa7f4",
+    "gateway/run_notifications.py": "e156bced1c28743477f6c405aa833f40b9ef5836ac258a7b1705ec6b7a056c71",
+    "gateway/run_startup.py": "b3d0bb622929a25a6aa9324ede42cf42f16948acf53f8a047bccec66068292fd",
+    "gateway/run_turn.py": "1c085aa8f86ef99b99fe59dfbe2cb92ee7da311dd21a6547c03be290728b7264",
+    "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
+    "gateway/run_turn_persistence.py": "bb77aae0da9cc392a5d7df294c10806c7434eff26acc419696209fe5cb12c0e6",
+    "gateway/run_turn_prepare.py": "63fdc7cbdf694e7b7a22b309dd99f131b23adf0e606e107c608d895b2a24edda",
+    "gateway/run_turn_runner.py": "15d7c781b00484737743a6fc288c1f2c52230ab4b013345d5de5157ca9d54aaf",
+}
+TOPOLOGY_HASHES = (SOURCE_HASHES, SOURCE_HASHES_0227, SOURCE_HASHES_0230,
+                   SOURCE_HASHES_0231)
 _FUNCTIONS = {
     "gateway.platforms.base": ("_split_post_delivery_entry",
                                "BasePlatformAdapter.send_typing", "BasePlatformAdapter.on_processing_start"),
@@ -206,6 +262,9 @@ DECORATED_0230 = _DECORATED
 SYNC_DECORATED_0230 = frozenset({
     ("gateway.session_ingress_media", "capture_lease"),
 })
+FUNCTIONS_0231 = FUNCTIONS_0230
+DECORATED_0231 = DECORATED_0230
+SYNC_DECORATED_0231 = SYNC_DECORATED_0230
 # These modules are imported lazily by the pinned settlement path. Their source
 # bytes are always checked; loaded bindings are checked as soon as they exist.
 OPTIONAL_MODULES_0230 = frozenset({
@@ -234,6 +293,7 @@ OPTIONAL_MODULES_0230 = frozenset({
     "cron.scheduler",
     "cron.scheduler_delivery",
 })
+OPTIONAL_MODULES_0231 = OPTIONAL_MODULES_0230
 
 
 _MISSING_DEFAULT = object()
@@ -308,12 +368,17 @@ def _remember_owned_removal(key: tuple[str, str], original: bytes) -> None:
             _OWNED_REMOVAL_CACHE.popitem(last=False)
 
 
-def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
+def _read_023_set_sources(
+    root: Path,
+    source_hashes: dict[str, str],
+    expected_rendered: tuple[dict[str, str], ...],
+) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
     """Verify clean or strictly owned rendered sources, and return both forms.
 
-    Installed v0.23.0 Gateway files carry HFC-owned hook blocks. Their exact
+    Installed v0.23.0+ Gateway files carry HFC-owned hook blocks. Their exact
     owner removal must reproduce the pinned clean bytes, while their expected
     rendered bytes are the only source that can describe loaded function code.
+    Every whole-file set is matched exactly; mixed or foreign bytes fail.
     """
     from .install import decomposed_ownership
     from .install.source_layout import DECOMPOSED_SOURCE_TARGETS
@@ -322,11 +387,11 @@ def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] 
     installed: dict[str, bytes] = {}
     owned = {
         name: _module_path(name)
-        for name in SOURCE_HASHES_0230
+        for name in source_hashes
         if _module_path(name) in DECOMPOSED_SOURCE_TARGETS
     }
     try:
-        for name, digest in SOURCE_HASHES_0230.items():
+        for name, digest in source_hashes.items():
             path = root / _module_path(name)
             before = path.lstat()
             limit = (
@@ -357,31 +422,29 @@ def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] 
                 _remember_owned_removal(key, original)
             originals[name] = original
             installed[name] = raw
-        if any(installed[name] != originals[name] for name in SOURCE_HASHES_0230
+        if any(installed[name] != originals[name] for name in source_hashes
                if name not in owned):
             return None
         if all(installed[name] == originals[name] for name in owned):
             return originals, originals
+        # Clean sources returned above. Installed hooks must match one exact
+        # published whole-file set for the pinned stable; mixed or foreign
+        # bytes match neither set.
         if _HFC_VERSION != RENDER_VERSION_0230:
             return None
-        # Clean sources returned above. Installed hooks must match one exact
-        # published whole-file set; mixed or foreign bytes match neither.
         if not any(
             set(owned.values()) == set(expected)
             and all(
                 sha256(installed[name]).hexdigest() == expected[owned[name]]
                 for name in owned
             )
-            for expected in (
-                EXPECTED_RENDERED_HASHES_0230,
-                LEGACY_EXPECTED_RENDERED_HASHES_0230,
-            )
+            for expected in expected_rendered
         ):
             return None
         code_source = {
             name: (installed[name] if name in owned
                    else originals[name])
-            for name in SOURCE_HASHES_0230
+            for name in source_hashes
         }
         return originals, code_source
     except (OSError, UnicodeError, ValueError, SyntaxError, TypeError):
@@ -391,7 +454,18 @@ def _read_0230_sources(root: Path) -> tuple[dict[str, bytes], dict[str, bytes]] 
 def source_bytes_0230(
     root: Path,
 ) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
-    return _read_0230_sources(root)
+    return _read_023_set_sources(
+        root, SOURCE_HASHES_0230,
+        (EXPECTED_RENDERED_HASHES_0230, LEGACY_EXPECTED_RENDERED_HASHES_0230),
+    )
+
+
+def source_bytes_0231(
+    root: Path,
+) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
+    return _read_023_set_sources(
+        root, SOURCE_HASHES_0231, (EXPECTED_RENDERED_HASHES_0231,),
+    )
 
 
 def _function_node(source: bytes | str, qualified: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
@@ -497,7 +571,10 @@ def source_bytes(
     root: Path, expected: dict[str, str] | None = None
 ) -> dict[str, bytes] | None:
     if expected == SOURCE_HASHES_0230:
-        pair = _read_0230_sources(root)
+        pair = source_bytes_0230(root)
+        return None if pair is None else pair[0]
+    if expected == SOURCE_HASHES_0231:
+        pair = source_bytes_0231(root)
         return None if pair is None else pair[0]
     try:
         result = {}
@@ -566,6 +643,11 @@ def verified(
         if pair is None:
             return False
         sources, code_sources = pair
+    elif expected == SOURCE_HASHES_0231:
+        pair = source_bytes_0231(root)
+        if pair is None:
+            return False
+        sources, code_sources = pair
     else:
         legacy_sources = source_bytes(root, expected)
         if legacy_sources is None:
@@ -575,7 +657,9 @@ def verified(
     functions = _FUNCTIONS if functions is None else functions
     decorated = _DECORATED if decorated is None else decorated
     sync_decorated = (
-        SYNC_DECORATED_0230 if expected == SOURCE_HASHES_0230 else frozenset()
+        SYNC_DECORATED_0230 if expected == SOURCE_HASHES_0230
+        else SYNC_DECORATED_0231 if expected == SOURCE_HASHES_0231
+        else frozenset()
     )
     modules = {"gateway.session_ingress": ingress, "gateway.session_authority": authority}
     try:
@@ -628,7 +712,7 @@ def verified(
                             _compiled_code(compiled, function_name, owner or None))):
                     return False
         lifecycle = modules["gateway.session_producer_lifecycle"]
-        if expected == SOURCE_HASHES_0230:
+        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231):
             settlement = modules.get("gateway.session_settlement_recovery")
             workers = modules.get("gateway.session_runtime_workers")
             contract = modules.get("gateway.session_contract")
