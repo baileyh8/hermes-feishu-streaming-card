@@ -529,7 +529,7 @@ def test_case(case):
     assert sorted(final["completed"]) == sorted(final["selected"])
     # The diagnostics file name must not match the report glob used by ci_shard
     # verify consumers or ci_run report collection.
-    assert not list(tmp_path.glob("shard-*.json")) == [progress]
+    assert list(tmp_path.glob("shard-*.json")) != [progress]
     assert sorted(path.name for path in tmp_path.glob("shard-*.json")) == ["shard-0.json"]
 
 
