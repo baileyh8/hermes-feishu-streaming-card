@@ -6,11 +6,13 @@ are replaced. A gate verifies the disjoint union, including parameterized cases.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import math
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,7 @@ def pytest_addoption(parser):
     group.addoption("--hfc-shard-count", type=int, default=1)
     group.addoption("--hfc-shard-report")
     group.addoption("--hfc-shard-profile", choices=("full", "upstream"), default="full")
+    group.addoption("--hfc-progress-report")
 
 
 @pytest.hookimpl(trylast=True)
@@ -81,12 +84,16 @@ def pytest_collection_modifyitems(config, items):
     excluded = [item for item in items if item.nodeid not in selected]
     items[:] = [item for item in items if item.nodeid in selected]
     config.hfc_shard = {
-        "schema": 1, "index": index, "count": count, "profile": profile,
+        "schema": 1, "kind": "shard", "index": index, "count": count, "profile": profile,
         "collection_count": len(nodes), "collection_sha256": digest(nodes),
         "selected": sorted(selected), "estimated_seconds": loads[index],
         "completed": [],
     }
+    progress_path = config.getoption("--hfc-progress-report")
     config.pluginmanager.register(_Completion(config.hfc_shard), "hfc-shard-completion")
+    if progress_path:
+        config.pluginmanager.register(
+            _Progress(config.hfc_shard, Path(progress_path)), "hfc-shard-progress")
     config.hook.pytest_deselected(items=excluded)
 
 
@@ -97,6 +104,39 @@ class _Completion:
     def pytest_runtest_logreport(self, report):
         if report.when == "teardown":
             self.report["completed"].append(report.nodeid)
+
+
+class _Progress:
+    """Bounded crash evidence: the current node, ordinal and wall clock.
+
+    Written atomically to a dedicated diagnostics file that no aggregator
+    reads; the final report JSON remains the only completion evidence and
+    verify() still requires every selected node to finish exactly once.
+    """
+
+    def __init__(self, shard_report, path):
+        self.report = shard_report
+        self.path = path
+        self.started = time.monotonic()
+
+    def pytest_runtest_logstart(self, nodeid, location):
+        payload = json.dumps({
+            "schema": 1,
+            "kind": "progress",
+            "index": self.report["index"],
+            "count": self.report["count"],
+            "profile": self.report["profile"],
+            "collection_sha256": self.report["collection_sha256"],
+            "node": nodeid,
+            "ordinal": len(self.report["completed"]) + 1,
+            "remaining": len(self.report["selected"]) - len(self.report["completed"]),
+            "elapsed_seconds": round(time.monotonic() - self.started, 2),
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }, indent=2) + "\n"
+        # Atomic replace so a killed worker never leaves a half-written file.
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, self.path)
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -111,6 +151,9 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def verify(reports, count, expected_commit=None, expected_python=None, expected_platform=None):
+    for report in reports:
+        if report.get("kind", "shard") != "shard" or "collection_count" not in report:
+            raise ValueError("not a shard report: progress diagnostics are not evidence")
     if len(reports) != count or {r["index"] for r in reports} != set(range(count)):
         raise ValueError("missing or duplicate shard")
     collections = {(r["collection_count"], r["collection_sha256"]) for r in reports}

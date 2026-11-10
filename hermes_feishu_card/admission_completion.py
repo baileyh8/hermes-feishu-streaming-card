@@ -28,11 +28,16 @@ from .admission_topology_0226 import (
     CORE_HASHES as _V0226_CORE_HASHES,
     CORE_HASHES_0227 as _V0227_CORE_HASHES,
     CORE_HASHES_0230 as _V0230_CORE_HASHES,
+    CORE_HASHES_0231 as _V0231_CORE_HASHES,
     DECORATED_0230 as _V0230_DECORATED,
+    DECORATED_0231 as _V0231_DECORATED,
     FUNCTIONS_0230 as _V0230_FUNCTIONS,
+    FUNCTIONS_0231 as _V0231_FUNCTIONS,
     OPTIONAL_MODULES_0230 as _V0230_OPTIONAL_MODULES,
+    OPTIONAL_MODULES_0231 as _V0231_OPTIONAL_MODULES,
     SOURCE_HASHES_0227 as _V0227_SOURCE_HASHES,
     SOURCE_HASHES_0230 as _V0230_SOURCE_HASHES,
+    SOURCE_HASHES_0231 as _V0231_SOURCE_HASHES,
 )
 
 # Public provenance names for pinned-source contract tests.
@@ -79,6 +84,11 @@ SOURCE_COHORTS += (_V0227_CORE_HASHES,)
 # topology and adds the bot-loop guard. Its whole-file closure is verified at
 # detection time and its loaded helpers are bound again at runtime.
 SOURCE_COHORTS += (_V0230_CORE_HASHES,)
+# v0.23.1 (3b42157858) drifts 17 of the 31 closure files while the admission
+# functions, the Base extraction seam and the settlement/delivery topology
+# stay byte-compatible (issue #520). Its own whole-file closure and loaded
+# bindings are verified through the same 0.23 topology contract as 0.23.0.
+SOURCE_COHORTS += (_V0231_CORE_HASHES,)
 
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -233,6 +243,15 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
             functions=_V0230_FUNCTIONS,
             decorated=_V0230_DECORATED,
             optional_modules=_V0230_OPTIONAL_MODULES,
+        ):
+            return None
+    elif _V0231_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(
+            root, modules[0], modules[1], _V0231_SOURCE_HASHES,
+            functions=_V0231_FUNCTIONS,
+            decorated=_V0231_DECORATED,
+            optional_modules=_V0231_OPTIONAL_MODULES,
         ):
             return None
     return modules[0], modules[1]

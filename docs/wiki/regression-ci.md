@@ -24,7 +24,7 @@
 
 Hermes 3.12/3.13 兼容矩阵各拆十二片，由三个 runner 各运行四个进程。公开仓库的 Ubuntu runner 有 4 核、macOS arm64 有 3 核，硬件基准见[官方资源规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories)；macOS 每台限制两个测试进程，为重复源码解析和安装测试留出 CPU 余量，不增加付费 runner。原来的逐源码安装恢复、官方 plugin 启用/配置字节、loader、rate 与 PM generation 检查分别进入用例集合，不再在单个进程中依次等待。固定上游 SHA、摘要校验、普通 wheel 和真实子进程边界保留。
 
-上游源码清单由 `tools/upstream_fixtures.json` 保留原有十九个路径与完整 commit。每个 runner 通过 `tools/ci_prepare_upstream.py` 一次批量 fetch 到新建的私有 bare Git store，再创建原路径的 detached worktree；逐项核对 HEAD、工作区、共同 Git 目录及干净状态。固定标签 fixture 仍单独核验。整个步骤要求独占 workspace，未知既有目标或缓存、链接及无法检查的元数据会在写入前拒绝；失败保留本次现场，不删除未知目录。
+上游源码清单由 `tools/upstream_fixtures.json` 保留历史路径与完整 commit，并追加独立的 v0.23.1 固定来源。每个 runner 通过 `tools/ci_prepare_upstream.py` 一次批量 fetch 到新建的私有 bare Git store，再创建原路径的 detached worktree；逐项核对 HEAD、工作区、共同 Git 目录及干净状态。固定标签 fixture 仍单独核验。整个步骤要求独占 workspace，未知既有目标或缓存、链接及无法检查的元数据会在写入前拒绝；失败保留本次现场，不删除未知目录。
 
 [CI 41696713164](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/41696713164) 的原串行十九次 checkout 曾消耗 15–24 分钟，导致 25 分钟 job 预算不足；单次恢复仍出现相同准备开销，因此改准备流程。所有源码 pin、环境变量、测试集合、用例超时、job 上限与结果完整性检查保留。批量准备的真实耗时和完整通过状态须以采用该流程的新 CI 为准，不由本地 Git 小样本推断。
 
@@ -61,3 +61,7 @@ full 权重改用本轮已完成 JUnit 的跨版本逐用例最大值，仅登�
 按新权重离线重分配，十二片的最长估计为 971.9 秒，另加 fixture、clone、安装和上传时间；八片仍约 1457.9 秒，准备余量不足。十六片约 729.0 秒，但 full workflow 会由原 42 个 job 增至 54 个；十二片只增至 48 个，其中 Linux producer 从 12 个增至 18 个。GitHub 20 job 并发限制下，还必须计算排队和重复准备成本。两 worker 没有本轮 hosted runner 的实测对照；沿用四 worker 的观测耗时作保守估计时，同为十二片需要 36 个 Linux producer，不能声称 worker 减半就使单片耗时减半。本轮工件未记录 CPU 数，不能据此认定具体 CPU 争用倍数。选择十二片/四 worker 是较小的调度变更；上述负载都是估算，尚不代表新 CI 通过或整轮达到 20 分钟目标。
 
 Linux 准备预算依据本轮全部 12 个 producer 的 GitHub job/step 时戳：测试步骤前耗时 15–30 秒，步骤后最多 6 秒。42 个已完成片中，worker 总耗时减 JUnit 用例总耗时最多 35.772 秒；7 个最终成功 job 的测试步骤耗时减最慢 worker 最多 2.330 秒。四项独立最大值保守相加为 74.102 秒，新调度预留 120 秒准备及非 JUnit 预算，留约 46 秒余量；最长片估计加预算约 1091.9 秒。该预算不含 job 启动前排队，不沿用 upstream 的 300 秒环境准备预算，也不是新一轮实测。
+
+### v5.0.22 当前节点诊断
+
+worker 在独立 `.progress` 文件原子记录当前 node、顺序、剩余数与耗时，进程被取消时可留下最后进入的节点。它不与最终 `.json` 报告混用，不能证明用例完成；完整并集、每例一次和实际 commit 门禁仍由最终报告核验。#516 旧日志不足以证明精确卡点或 Ruff 因果，本版不盲增超时、不跳用例，也不宣称根因或20分钟目标已达成。

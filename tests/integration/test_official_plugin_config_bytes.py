@@ -631,7 +631,9 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     disabled = "[keep-disabled, hermes_feishu_card]"
     if selection == "disabled-canonical":
         disabled = "[keep-disabled, hermes_feishu_card, hermes-feishu-card]"
-    version = 52 if family in ("pm-0226", "pm-0227", "pm-0230") else (50 if family in {"fixed", "pm"} else 51)
+    version = (53 if family == "pm-0231" else
+               52 if family in ("pm-0226", "pm-0227", "pm-0230") else
+               (50 if family in {"fixed", "pm"} else 51))
     original = (
         f"# preserve exact original bytes\r\nplugins:\r\n  enabled: {enabled}\r\n"
         f"  disabled: {disabled}\r\n  isolation: in_process\r\n"

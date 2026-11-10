@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.21` (#518 completion attribution / #497 subprocess encoding). Full PR/main/tag CI, ordinary-wheel install/restore, public tag installation and asset verification are completed and recorded here before release; real Gateway/model and Feishu-client acceptance is recorded separately. See the [release notes](release-notes-v5.0.21.en.md).
+This branch targets `5.0.22` (#520 exact v0.23.1 compatibility, config53 and slash-confirm anchor; #516/#517 maintenance). Independent wheel/install/restore, full PR/main/tag CI, official images and public install/assets are recorded individually before publication. Actual Gateway/model and Feishu-client acceptance remain separate. See the [release notes](release-notes-v5.0.22.en.md).
 
 ## v5.0.16 historical record
 

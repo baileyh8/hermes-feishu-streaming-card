@@ -50,6 +50,7 @@ def test_image_matrix_is_pinned_and_includes_0222():
         "v0.22.4",
         "v0.22.5",
         "v0.23.0",
+        "v0.23.1",
     }
     for spec in acceptance.IMAGE_SPECS.values():
         assert spec.reference.startswith("nousresearch/hermes-agent@sha256:")
@@ -185,8 +186,12 @@ def test_baseline_migrates_pinned_0230_seed_before_install(tmp_path, monkeypatch
     assert calls == ["seed", "migrate", "register"]
 
 
-def test_config_migration_required_only_for_pinned_0230(monkeypatch):
+def test_config_migration_required_only_for_pinned_0230_and_0231(monkeypatch):
+    """Pinned tag or matching source SHA requires migration; legacy tags do not."""
     monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.0")
+    monkeypatch.delenv("HFC_IMAGE_SOURCE_SHA", raising=False)
+    assert acceptance._baseline_image_requires_config_migration()
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.1")
     monkeypatch.delenv("HFC_IMAGE_SOURCE_SHA", raising=False)
     assert acceptance._baseline_image_requires_config_migration()
     monkeypatch.setenv("HFC_IMAGE_TAG", "v0.22.5")
@@ -196,6 +201,102 @@ def test_config_migration_required_only_for_pinned_0230(monkeypatch):
         "HFC_IMAGE_SOURCE_SHA", acceptance.IMAGE_SPECS["v0.23.0"].source_sha
     )
     assert acceptance._baseline_image_requires_config_migration()
+
+
+def test_0231_config_migration_requires_the_pinned_schema_53(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(tmp_path / "hermes"))
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(
+        acceptance,
+        "_clean_container_env",
+        lambda: {"HOME": str(home), "HERMES_HOME": str(home)},
+    )
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.1")
+    monkeypatch.setenv(
+        "HFC_IMAGE_SOURCE_SHA",
+        acceptance.IMAGE_SPECS["v0.23.1"].source_sha,
+    )
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0,
+            stdout='{"default": 53, "latest": 53, "stamp": 53}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(acceptance, "_run_command", fake_run)
+    monkeypatch.setattr(acceptance, "_write_log", lambda *a, **k: None)
+    monkeypatch.setattr(acceptance, "_config_mapping", lambda: {"_config_version": 53})
+    monkeypatch.setattr(acceptance, "_snapshot_config", lambda *a, **k: "c" * 64)
+    report = acceptance._officially_migrate_baseline_config(tmp_path / "evidence")
+    assert report["expected_stamp"] == 53
+    assert report["stamp"] == 53
+
+    monkeypatch.setattr(
+        acceptance, "_run_command",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0,
+            stdout='{"default": 52, "latest": 52, "stamp": 52}\n',
+            stderr="",
+        ),
+    )
+    with pytest.raises(acceptance.AcceptanceFailure, match="reviewed schema"):
+        acceptance._officially_migrate_baseline_config(tmp_path / "evidence2")
+
+    monkeypatch.setattr(
+        acceptance, "_run_command",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command, 0,
+            stdout='{"default": 54, "latest": 54, "stamp": 54}\n',
+            stderr="",
+        ),
+    )
+    with pytest.raises(acceptance.AcceptanceFailure, match="reviewed schema"):
+        acceptance._officially_migrate_baseline_config(tmp_path / "evidence3")
+
+
+def test_config_migration_binding_rejects_unknown_or_mismatched_image(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(acceptance, "HERMES_ROOT", str(tmp_path / "hermes"))
+    monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
+    monkeypatch.setattr(
+        acceptance,
+        "_clean_container_env",
+        lambda: {"HOME": str(home), "HERMES_HOME": str(home)},
+    )
+    monkeypatch.setattr(acceptance, "_write_log", lambda *a, **k: None)
+    commands = []
+
+    def unexpected_run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(acceptance, "_run_command", unexpected_run)
+
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v9.9.9")
+    monkeypatch.setenv(
+        "HFC_IMAGE_SOURCE_SHA",
+        acceptance.IMAGE_SPECS["v0.23.1"].source_sha,
+    )
+    with pytest.raises(acceptance.AcceptanceFailure, match="pinned image tag"):
+        acceptance._officially_migrate_baseline_config(tmp_path / "evidence-unknown")
+
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.1")
+    monkeypatch.setenv(
+        "HFC_IMAGE_SOURCE_SHA",
+        acceptance.IMAGE_SPECS["v0.23.0"].source_sha,
+    )
+    with pytest.raises(acceptance.AcceptanceFailure, match="does not match the pin"):
+        acceptance._officially_migrate_baseline_config(tmp_path / "evidence-mismatch")
+
+    assert commands == []
 
 
 def test_official_config_migration_runs_pinned_upstream_script(tmp_path, monkeypatch):
@@ -208,6 +309,11 @@ def test_official_config_migration_runs_pinned_upstream_script(tmp_path, monkeyp
     (home / "config.yaml").write_bytes(acceptance.FULL_SEED)
     monkeypatch.setattr(acceptance, "HERMES_ROOT", str(root))
     monkeypatch.setattr(acceptance, "HERMES_HOME", str(home))
+    monkeypatch.setenv("HFC_IMAGE_TAG", "v0.23.0")
+    monkeypatch.setenv(
+        "HFC_IMAGE_SOURCE_SHA",
+        acceptance.IMAGE_SPECS["v0.23.0"].source_sha,
+    )
     monkeypatch.setattr(acceptance, "_base_python", lambda: Path("/base/python"))
     monkeypatch.setattr(
         acceptance,

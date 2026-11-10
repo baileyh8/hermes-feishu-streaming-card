@@ -26,7 +26,9 @@ FORWARD = {
     "HFC_CONFIG_WRITER_PM_MAIN_ROOT", "HFC_CONFIG_WRITER_CF4_ROOT",
     "HFC_CONFIG_WRITER_RC2_ROOT", "HFC_CONFIG_WRITER_0221_ROOT", "HFC_CONFIG_WRITER_0224_ROOT",
     "HFC_CONFIG_WRITER_0225_ROOT", "HFC_CONFIG_WRITER_0226_ROOT", "HFC_CONFIG_WRITER_0227_ROOT",
-    "HFC_CONFIG_WRITER_0230_ROOT", "HFC_UPSTREAM_0230_ROOT", "HFC_REQUIRE_0230_PIN",
+    "HFC_CONFIG_WRITER_0230_ROOT", "HFC_CONFIG_WRITER_0231_ROOT",
+    "HFC_UPSTREAM_0230_ROOT", "HFC_UPSTREAM_0231_ROOT", "HFC_REQUIRE_0230_PIN",
+    "HFC_REQUIRE_0231_PIN",
     "HFC_REQUIRE_0226_PIN", "HFC_REQUIRE_PM_ROOT_ENTRYPOINT",
     "HFC_CONFIG_WRITER_MAIN_4E58_ROOT", "HFC_REQUIRE_PM_GENERATION", "HFC_REQUIRE_PM_REBIND",
     "HFC_REQUIRE_ISSUE471_PIN",
@@ -88,6 +90,7 @@ def run_worker(index, args, targets, fixture):
         "--hfc-shard-index", str(index), "--hfc-shard-count", str(args.shards),
         "--hfc-shard-profile", args.profile,
         "--hfc-shard-report", str(args.results / f"{stem}.json"),
+        "--hfc-progress-report", str(args.results / f"{stem}.progress"),
         "--basetemp", str(private / "pytest"), "--junitxml", str(args.results / f"{stem}.xml"),
         "--durations=20", "--durations-min=1.0", *targets,
     ]

@@ -74,7 +74,8 @@
       "tests/unit/test_launch_source_paths.py",
       "tests/unit/test_native_rate_scope.py",
       "tests/unit/test_config_backend_0226.py",
-      "tests/unit/test_managed_pm_upgrade.py"
+      "tests/unit/test_managed_pm_upgrade.py",
+      "tests/unit/test_slash_confirm_authority.py"
     ],
     "process": [
       "tests/unit/test_process.py",
@@ -260,6 +261,9 @@
       "tests/integration/test_v0230_admission_sources.py",
       "tests/integration/test_v0227_writer_family.py",
       "tests/integration/test_v0230_writer_family.py",
+      "tests/integration/test_v0231_admission_sources.py",
+      "tests/integration/test_v0231_writer_family.py",
+      "tests/integration/test_v0231_admission_topology.py",
       "tests/integration/test_v0230_wheel_install_restore.py"
     ],
     "install_transactions": [
@@ -823,10 +827,35 @@
       "install",
       "install_transactions"
     ],
+    "hermes_feishu_card/install/_writer_0231.py": [
+      "install",
+      "install_transactions"
+    ],
     "tests/fixtures/hermes_v0230_writer_family.json": [
       "upstream"
     ],
+    "tests/fixtures/hermes_v0231_sources.json": [
+      "upstream"
+    ],
+    "tests/fixtures/hermes_v0231_writer_family.json": [
+      "upstream"
+    ],
     "tests/integration/test_v0230_writer_family.py": [
+      "upstream",
+      "install",
+      "install_transactions"
+    ],
+    "tests/integration/test_v0231_writer_family.py": [
+      "upstream",
+      "install",
+      "install_transactions"
+    ],
+    "tests/integration/test_v0231_admission_sources.py": [
+      "upstream",
+      "install",
+      "install_transactions"
+    ],
+    "tests/integration/test_v0231_admission_topology.py": [
       "upstream",
       "install",
       "install_transactions"
@@ -845,6 +874,9 @@
       "routing",
       "runtime",
       "delivery"
+    ],
+    "tests/unit/test_slash_confirm_authority.py": [
+      "install"
     ]
   }
 }

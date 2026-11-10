@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_ref:
-        description: "Full annotated release tag ref, for example refs/tags/v4.2.8"
+        description: "Full annotated release tag ref, for example refs/tags/v5.0.22"
         required: true
         type: string
 

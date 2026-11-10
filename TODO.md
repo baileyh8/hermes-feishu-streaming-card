@@ -2,7 +2,14 @@
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
-## V5.0.21
+## V5.0.22
+
+- #520：精确 v0.23.1 cohort、writer/launch、schema53 与 slash-confirm AST；未知 main 来源保留拒绝。
+- #516/#517：Ruff/CodeQL 维护原提交，当前测试节点诊断；旧超时根因不作无证据结论。#510 保留历史基线并补当前 stable 覆盖。
+- 独立 QA、完整 PR/main/tag、普通 wheel 安装恢复、官方镜像与公开安装/资产逐项验收后发布，边界见[发行说明](docs/release-notes-v5.0.22.md)。
+- #521 repin 独立评审；#513 仍有失败门禁及视觉方向待验，不在本轮兼容补丁内。
+
+## V5.0.21（2026-11-09 已发布）
 
 - #518：沿实际本轮结果补齐 model/provider 与 Codex 额度归属，验证 fallback、未知/冲突和跨 profile 隔离。
 - #497：正式 setup 的 family/sources 传递核验；修复可复现的子进程输出解码问题。报告者原机 source_digest 原因未独立复现。

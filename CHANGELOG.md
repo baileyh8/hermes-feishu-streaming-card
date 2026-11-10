@@ -1,5 +1,12 @@
 # Changelog
 
+## v5.0.22 — 2026-11-11
+
+- Add exact Hermes v0.23.1 admission/topology and PM writer/launch cohorts with schema-53 installation admission (#520). Preserve whole-file source proofs, live bindings, earlier rendered ownership and reversible recovery.
+- Recognize only reviewed slash-confirm AST signatures, preserving the upstream requester-authority expression; unknown source cohorts remain refused.
+- Retain Ruff 0.17.4 and CodeQL v4.39.3 maintenance commits (#516/#517), explicitly run v0.23.1 pinned-source and official-image gates, and clarify the historical v0.22.4 `latest_stable` baseline (#510).
+- Add bounded atomic current-node CI diagnostics without treating them as completion reports. The earlier timeout root cause remains undetermined.
+
 ## v5.0.21 — 2026-11-09
 
 - Carry authoritative per-turn model/provider metadata into completion events for Codex subscription-usage display (#518), including coherent fallback route capture on the pinned Hermes v0.23.0 result path. Unknown, conflicting or mixed-route attribution remains hidden, and optional quota-query exceptions no longer strand the terminal card. Keep exact v5.0.20 and current installed-hook source proofs for reversible upgrades; mixed or foreign bytes remain refused.

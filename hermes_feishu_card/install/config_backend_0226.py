@@ -344,7 +344,12 @@ def verify_file_backend(
     root: Path, python: Path, home: Path,
     *, sources: Mapping[str, str] | None = None,
 ) -> BackendProof:
-    """Audit env layers and execute child probe across both PM and enable scopes."""
+    """Audit env layers and execute child probe across both PM and enable scopes.
+
+    ``sources`` pins the child-probe exec allowlist. Explicit callers always
+    pass the verified writer family (issue #520: pm-0231 differs from the
+    0226 default); None keeps the historical 0226 family only.
+    """
     root = Path(os.path.abspath(os.fspath(root)))
     python = Path(os.path.abspath(os.fspath(python)))
     home = Path(os.path.abspath(os.fspath(home)))
