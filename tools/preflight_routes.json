@@ -31,7 +31,9 @@
       "tests/unit/test_observations.py",
       "tests/unit/test_display_redaction.py",
       "tests/unit/test_existing_owner_projection.py",
-      "tests/unit/test_plugin_turn_metrics.py"
+      "tests/unit/test_plugin_turn_metrics.py",
+      "tests/unit/test_card_segmentation.py",
+      "tests/unit/test_render_segmented.py"
     ],
     "config": [
       "tests/unit/test_config.py",
@@ -869,6 +871,9 @@
       "upstream",
       "install",
       "install_transactions"
+    ],
+    "hermes_feishu_card/card_segmentation.py": [
+      "render"
     ],
     "hermes_feishu_card/profile_root.py": [
       "routing",

@@ -85,10 +85,10 @@ async def deliver_terminal(
         if not is_current():
             return TerminalDeliveryOutcome(False, superseded=True)
     recovery = None
-    if plan.disposition == "card":
+    if plan.disposition in {"card", "segmented"}:
         if updated:
             owner.terminal_delivery_state = "delivered"
-        elif owner.terminal_delivery_state == "pending":
+        elif plan.disposition == "card" and owner.terminal_delivery_state == "pending":
             owner.terminal_delivery_state = "recovering"
             recovery = await transport.recover(plan)
             if not is_current():

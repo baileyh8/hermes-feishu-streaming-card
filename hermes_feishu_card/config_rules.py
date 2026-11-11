@@ -64,6 +64,7 @@ READING_FIELDS = (
     "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
     "table_overflow_mode",
     "native_tables",
+    "over_limit",
     "timeline_order", "timeline_tools_per_reasoning", "thinking_body_tail_chars",
     "width_mode", "text_sizes", "footer_fields", "interaction_mode", "streaming_mode",
 )
@@ -136,6 +137,11 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "max_tool_result_chars": 600,
         "table_overflow_mode": "compact",
         "native_tables": False,
+        # Over-limit terminal strategy: "native" keeps the limit handoff
+        # (placeholder card + full native message); "segmented" opts into a
+        # main card plus bounded continuation cards, falling back to the same
+        # handoff whenever a segment cannot be planned or delivered.
+        "over_limit": "native",
         "completion_notify": {
             "enabled": False,
             # Seconds a turn must last before the completion notification is
@@ -187,6 +193,7 @@ CARD_TEXT_SIZE_DEFAULTS = {
 }
 CARD_TEXT_SIZE_DEVICE_KEYS = frozenset({"default", "pc", "mobile"})
 CARD_TABLE_OVERFLOW_MODES = frozenset({"compact", "truncate"})
+CARD_OVER_LIMIT_MODES = frozenset({"native", "segmented"})
 SERVICE_MANAGER_VALUES = frozenset(
     {"auto", "systemd-user", "systemd-system", "detached"}
 )
@@ -234,6 +241,17 @@ def normalize_table_overflow_mode(
     normalized = value.strip().lower()
     if normalized not in CARD_TABLE_OVERFLOW_MODES:
         raise ValueError(f"{path} must be compact or truncate")
+    return normalized
+
+
+def normalize_over_limit_mode(
+    value: object, *, path: str = "card.over_limit"
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{path} must be native or segmented")
+    normalized = value.strip().lower()
+    if normalized not in CARD_OVER_LIMIT_MODES:
+        raise ValueError(f"{path} must be native or segmented")
     return normalized
 
 
@@ -552,6 +570,10 @@ def normalize_card_config(value: object, *, path: str) -> None:
     if "tool_activity" in value:
         value["tool_activity"] = normalize_tool_activity(
             value["tool_activity"], path=f"{path}.tool_activity"
+        )
+    if "over_limit" in value:
+        value["over_limit"] = normalize_over_limit_mode(
+            value["over_limit"], path=f"{path}.over_limit"
         )
     if "native_tables" in value:
         value["native_tables"] = normalize_boolean(

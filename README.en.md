@@ -231,6 +231,8 @@ service:
 
 `card.native_tables` (default `false`) renders body Markdown tables as the card's native `table` element, so column widths follow the content and `row_height: auto` wraps a long cell instead of clipping it. Tables that cannot be represented natively, and cards that would exceed the safe budget because of the richer payload, fall back to the Markdown layout. See [body tables](docs/user-guide.en.md#body-tables).
 
+`card.over_limit` (default `native`) picks the strategy when a terminal answer still exceeds the safe card budget after every in-card degradation: `native` keeps the existing limit handoff (placeholder card plus the full answer as a native message); `segmented` delivers a main card (lead, statistics, collapsible process panel) followed by a few numbered continuation cards ("续 i/N", each verified in limit) at terminal time — a bounded continuation for the "one card is not enough, a document is too heavy" middle band, capped so longer content keeps its document/native delivery instead of flooding the chat. Streaming still updates a single live card, and any segment that cannot be planned or delivered falls back to the same native handoff — no silent truncation.
+
 Place `.env` beside the config:
 
 ```dotenv

@@ -8,12 +8,13 @@ import math
 import re
 import time as _time
 from collections.abc import Mapping
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from .display_redaction import (
     KEY_VALUE_SECRET_RE, SECRET_FLAG_RE, URL_SECRET_RE, redact_tool_detail,
 )
 from .card_limits import CardLimitInspection, inspect_card_limits
+from .card_segmentation import DEFAULT_LEAD_BYTES, plan_terminal_segments
 from .card_timeline import TERMINAL_TOOL_STATUSES
 from .approval_receipts import has_confirmed_approval_receipt
 from .config_rules import card_width_config
@@ -68,11 +69,15 @@ _TOOL_DURATION_LINE_RE = re.compile(r"^耗时:\s*(.+?)\s*$")
 @dataclass(frozen=True)
 class CardRenderResult:
     card: Dict[str, Any]
-    disposition: Literal["card", "deferred_native", "native"]
+    disposition: Literal["card", "deferred_native", "native", "segmented"]
     inspection: CardLimitInspection
     table_overflow: TableOverflowResult
     limit_reason: str = ""
     primary_text: str = ""
+    # Opt-in over-limit terminal segmentation (card.over_limit): continuation
+    # cards delivered after the main card, each verified in limit. Empty for
+    # every other disposition.
+    segments: Tuple[Dict[str, Any], ...] = ()
 
 
 def _spinner_text(label: str = "生成中") -> str:
@@ -111,6 +116,7 @@ def render_card(
     width_mode: str = "default",
     presentation: str = "classic",
     native_tables: bool = False,
+    over_limit: str = "native",
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -139,6 +145,7 @@ def render_card(
         width_mode=width_mode,
         presentation=presentation,
         native_tables=native_tables,
+        over_limit=over_limit,
     ).card
 
 
@@ -169,6 +176,7 @@ def render_card_result(
     width_mode: str = "default",
     presentation: str = "classic",
     native_tables: bool = False,
+    over_limit: str = "native",
 ) -> CardRenderResult:
     if presentation == "task" and session.status == "failed" and session.terminal_reasoning_notice:
         # This source marker comes from the terminal event, never a text match.
@@ -264,6 +272,20 @@ def render_card_result(
         )
 
     terminal = session.status in {"completed", "failed"}
+    if terminal and over_limit == "segmented":
+        # Opt-in over-limit terminal segmentation. Any infeasible plan (or a
+        # card that cannot be verified in limit) falls through to the same
+        # native limit handoff below: content completeness beats a partial
+        # segmented delivery.
+        segmented = _render_segmented_result(
+            session,
+            render_options=render_options,
+            primary_text=primary_text,
+            limit_reason=inspection.primary_reason,
+            table_overflow=table_overflow,
+        )
+        if segmented is not None:
+            return segmented
     disposition: Literal["deferred_native", "native"] = (
         "native" if terminal else "deferred_native"
     )
@@ -939,6 +961,118 @@ def render_terminal_limit_handoff_card(
     """Render the fixed, answer-free terminal handoff used for repair retries."""
 
     return _render_limit_handoff_card(title=title, terminal=True, width_mode=width_mode)
+
+
+_SEGMENTED_NOTE_TEMPLATE = "📄 **正文较长**：以上为开头部分，其余内容将以 {count} 张续卡随后发出。"
+
+
+def _render_continuation_card(
+    *,
+    title: str,
+    index: int,
+    total: int,
+    text: str,
+    template: str,
+    width_mode: str = "default",
+) -> Dict[str, Any]:
+    """Render one numbered continuation card for segmented terminal delivery."""
+    configured_title = (
+        title.strip()
+        if isinstance(title, str) and title.strip()
+        else DEFAULT_TITLE
+    )
+    card_title = f"{configured_title}（续 {index}/{total}）"
+    if len(card_title) > 80:
+        card_title = card_title[:79].rstrip() + "…"
+    return {
+        "schema": "2.0",
+        "config": {
+            **card_width_config(width_mode),
+            "summary": {"content": f"{configured_title} 续卡 {index}/{total}"},
+        },
+        "header": {
+            "template": template,
+            "title": {"tag": "plain_text", "content": card_title},
+        },
+        "body": {
+            "elements": [
+                {"tag": "markdown", "element_id": f"main_content_{index}", "content": text},
+                {"tag": "hr", "element_id": "segment_divider"},
+                {
+                    "tag": "markdown",
+                    "element_id": "footer",
+                    "content": f"续卡 {index}/{total}",
+                    "text_size": "x-small",
+                },
+            ]
+        },
+    }
+
+
+def _render_segmented_result(
+    session: CardSession,
+    *,
+    render_options: Mapping[str, Any],
+    primary_text: str,
+    limit_reason: str,
+    table_overflow: TableOverflowResult,
+) -> Optional[CardRenderResult]:
+    """Plan and render the opt-in segmented terminal delivery (issue #511).
+
+    The main card keeps the ordinary terminal layout (status header, footer
+    statistics, collapsible process panel) with the answer reduced to a bounded
+    lead plus a continuation note; each continuation card carries whole content
+    blocks. Returns None whenever any planned card cannot be verified within
+    the card limits so the caller keeps the native limit handoff.
+    """
+    if not primary_text:
+        return None
+    raw_options = dict(render_options)
+    title = raw_options.get("title") or DEFAULT_TITLE
+    width_mode = raw_options.get("width_mode") or "default"
+    status = _render_status(
+        session, status_config=raw_options.get("status_config")
+    )
+    lead_bytes = DEFAULT_LEAD_BYTES
+    while True:
+        plan = plan_terminal_segments(primary_text, lead_bytes=lead_bytes)
+        if plan is None:
+            return None
+        note = _SEGMENTED_NOTE_TEMPLATE.format(count=len(plan.segments))
+        lead_text = f"{plan.lead_text}\n\n---\n\n{note}" if plan.lead_text else note
+        main_session = copy.copy(session)
+        main_session.answer_text = lead_text
+        main_card = _render_card_unchecked(main_session, **raw_options)
+        main_inspection = inspect_card_limits(main_card)
+        if main_inspection.safe:
+            break
+        if lead_bytes <= 0:
+            # Even a note-only main card overflows (auxiliary panels alone
+            # exceed the budget); segmentation cannot apply.
+            return None
+        lead_bytes = 0 if lead_bytes // 4 == 0 else lead_bytes // 4
+    continuation_cards = tuple(
+        _render_continuation_card(
+            title=title,
+            index=index,
+            total=len(plan.segments),
+            text=text,
+            template=status["template"],
+            width_mode=width_mode,
+        )
+        for index, text in enumerate(plan.segments, start=1)
+    )
+    if not all(inspect_card_limits(card).safe for card in continuation_cards):
+        return None
+    return CardRenderResult(
+        card=main_card,
+        disposition="segmented",
+        inspection=main_inspection,
+        table_overflow=table_overflow,
+        limit_reason=limit_reason,
+        primary_text=primary_text,
+        segments=continuation_cards,
+    )
 
 
 def _render_status(

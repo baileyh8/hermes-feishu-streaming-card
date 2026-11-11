@@ -114,7 +114,12 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
             "max_tool_result_chars": 600,
             "table_overflow_mode": "compact",
             "native_tables": False,
+<<<<<<< HEAD
             "completion_notify": {"enabled": False, "min_duration_seconds": 0},
+=======
+            "over_limit": "native",
+            "completion_notify": {"enabled": False, "min_duration_seconds": 0},
+>>>>>>> pr-513
             # UNSET by default: resolving helpers fall back to the legacy
             # ``mentions_in_cards`` key and then to enabled.
             "interaction_mentions": None,
@@ -360,7 +365,12 @@ card:
         "max_tool_result_chars": 600,
         "table_overflow_mode": "compact",
         "native_tables": False,
+<<<<<<< HEAD
         "completion_notify": {"enabled": False, "min_duration_seconds": 0},
+=======
+        "over_limit": "native",
+        "completion_notify": {"enabled": False, "min_duration_seconds": 0},
+>>>>>>> pr-513
         "interaction_mentions": None,
         "footer_fields": [
             "duration",

@@ -39,6 +39,7 @@ Edit `card:` in the actual file selected with `--config` during installation. St
 | Footer | `footer_fields`, `text_sizes.footer` | Only available measurements; subscription quota requires an attributed GPT / openai-codex turn |
 | Width and type sizes | `width_mode`, `text_sizes` including pc / mobile | No pixel-height control; wrapping is client-controlled |
 | Long tables | `table_overflow_mode` | compact preserves later tables as field lists; truncate retains table truncation |
+| Over-limit answers | `over_limit` | `native` (default) keeps the limit handoff; `segmented` delivers a terminal main card plus numbered continuation cards, falling back to the native handoff on any failure |
 | Body tables | `native_tables` | Native `table` elements for body tables (column width + auto row height); default `false` keeps Markdown |
 | Completion notification | `completion_notify.enabled`, `placement`, `mention`, `min_duration_seconds` | Off by default; an edited card mention does not guarantee push delivery; `min_duration_seconds` keeps short turns quiet |
 | Attachment summary | Appears with attachments | No separate hide switch |

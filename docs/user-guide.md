@@ -39,6 +39,7 @@ V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文
 | 页脚统计 | `footer_fields` 决定字段和顺序；`text_sizes.footer` | 数据必须有真实来源；订阅额度只在可归属的 GPT / openai-codex 轮次显示 |
 | 宽度与字号 | `width_mode`、`text_sizes`（支持 pc / mobile） | 不设置像素高度，实际折行由客户端决定 |
 | 超长表格 | `table_overflow_mode` | `compact` 保留为字段列表；`truncate` 沿用表格截断策略 |
+| 超长正文 | `over_limit` | `native`（默认）保持 limit handoff；`segmented` 终态主卡＋编号续卡，失败回退 native handoff |
 | 正文表格 | `native_tables` | 开启后正文表格用原生 `table` 组件（列宽 + 自动行高）；默认 `false` 保持 Markdown 布局 |
 | 完成提醒 | `completion_notify.enabled`、`placement`、`mention`、`min_duration_seconds` | 默认关闭；编辑卡片里的 @ 不保证推送通知；`min_duration_seconds` 让短轮次保持安静 |
 | 附件摘要 | 随附件出现 | 没有独立隐藏开关 |

@@ -35,7 +35,21 @@ def project_existing_owner(
     if live is not None:
         inspection = inspect_card_limits(live)
         if inspection.safe:
-            return replace(result, card=live, disposition="card", inspection=inspection, limit_reason="")
+            return replace(result, card=live, disposition="card", inspection=inspection, limit_reason="", segments=())
+    if result.disposition == "segmented":
+        # Segmented continuation cards require the schema-2.0 dialect; a
+        # legacy owner keeps the single-card native limit handoff.
+        placeholder = _render_limit_handoff_card(title=title(), terminal=terminal)
+        bounded = legacy_owner_body(receipt, placeholder)
+        if not inspect_card_limits(bounded).safe:
+            # Do not trim a question or accepted decision to fit the new answer.
+            bounded = deepcopy(receipt)
+        return replace(
+            result,
+            card=bounded,
+            segments=(),
+            disposition="native" if terminal else "deferred_native",
+        )
     fallback_title = title()
     primary = result.primary_text if result.disposition == "card" else None
     card = legacy_owner_body(receipt, result.card, primary)
