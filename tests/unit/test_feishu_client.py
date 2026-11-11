@@ -335,3 +335,53 @@ async def test_request_json_bypasses_proxy_for_local_endpoint(monkeypatch, base_
     captured = await _captured_session_kwargs(monkeypatch, base_url=base_url)
 
     assert captured.get("trust_env") is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_id_caches_success_and_retries_failures(monkeypatch):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+    fail = [True]
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append(path)
+        if fail[0]:
+            raise RuntimeError("timeout")
+        return {"code": 0, "data": {"user": {"open_id": "ou_resolved"}}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    assert await client.resolve_open_id("u_tenant") == ""
+    fail[0] = False
+    assert await client.resolve_open_id("u_tenant") == "ou_resolved"
+    assert await client.resolve_open_id("u_tenant") == "ou_resolved"
+    assert len(calls) == 2
+    assert await client.resolve_open_id("ou_passthrough") == "ou_passthrough"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_send_text_without_reply_anchor_falls_back_to_the_chat(monkeypatch):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append((method, path, params, json_body))
+        return {"code": 0, "data": {"message_id": "om_text"}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    # A topic id alone cannot address the reply API; deliver to the chat.
+    await client.send_text_message("oc_abc", "hello", thread_id="omt_topic")
+    assert calls == [
+        ("POST", "/im/v1/messages", {"receive_id_type": "chat_id"},
+         {"receive_id": "oc_abc", "msg_type": "text", "content": json.dumps({"text": "hello"})})
+    ]
