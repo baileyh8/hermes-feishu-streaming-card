@@ -5916,6 +5916,47 @@ class _AppTerminalTransport:
         )
 
 
+def _completion_notify_elapsed_seconds(session: CardSession) -> float:
+    """Seconds this turn actually took, for the completion-notify time gate.
+
+    Prefer the turn's own measurement (``message.completed.data.duration``,
+    recorded on ``session.duration``). Hermes omits it on some terminal paths
+    (resumed sessions, some interrupted/queued completions), and a long turn
+    with ``duration == 0`` would otherwise be indistinguishable from a
+    three-second one and get silently skipped -- the exact opposite of what a
+    minimum-duration gate is for. Fall back to the age of the session record;
+    a new ``CardSession`` is built per turn and its ``created_at`` matches the
+    measured duration to within a few hundred milliseconds.
+    """
+    duration = session.duration
+    if not isinstance(duration, bool) and isinstance(duration, (int, float)):
+        if math.isfinite(duration) and duration > 0:
+            return float(duration)
+    created_at = session.created_at
+    if not isinstance(created_at, bool) and isinstance(created_at, (int, float)):
+        if math.isfinite(created_at) and created_at > 0:
+            elapsed = time.time() - float(created_at)
+            if math.isfinite(elapsed) and elapsed > 0:
+                return elapsed
+    return 0.0
+
+
+def _completion_notify_meets_threshold(
+    session: CardSession, notify_config: dict[str, Any]
+) -> bool:
+    """Apply ``completion_notify.min_duration_seconds`` (absent/0 = no gate)."""
+    raw_threshold = notify_config.get("min_duration_seconds", 0)
+    if raw_threshold is None:
+        return True
+    try:
+        threshold = float(raw_threshold)
+    except (TypeError, ValueError):
+        return True
+    if not math.isfinite(threshold) or threshold <= 0:
+        return True
+    return _completion_notify_elapsed_seconds(session) >= threshold
+
+
 async def _maybe_send_completion_notify(
     app: web.Application,
     session_key: str,
@@ -5950,6 +5991,11 @@ async def _maybe_send_completion_notify(
     ):
         return
     if notify_config.get("placement", "message") == "card":
+        session.completion_notify_state = "sent"
+        return
+    if not _completion_notify_meets_threshold(session, notify_config):
+        # Short turn: no push. Record the decision so a replayed
+        # ``message.completed`` for the same turn cannot notify later.
         session.completion_notify_state = "sent"
         return
     bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)

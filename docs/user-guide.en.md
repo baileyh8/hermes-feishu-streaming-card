@@ -40,7 +40,7 @@ Edit `card:` in the actual file selected with `--config` during installation. St
 | Width and type sizes | `width_mode`, `text_sizes` including pc / mobile | No pixel-height control; wrapping is client-controlled |
 | Long tables | `table_overflow_mode` | compact preserves later tables as field lists; truncate retains table truncation |
 | Body tables | `native_tables` | Native `table` elements for body tables (column width + auto row height); default `false` keeps Markdown |
-| Completion notification | `completion_notify.enabled`, `placement`, `mention` | Off by default; an edited card mention does not guarantee push delivery |
+| Completion notification | `completion_notify.enabled`, `placement`, `mention`, `min_duration_seconds` | Off by default; an edited card mention does not guarantee push delivery; `min_duration_seconds` keeps short turns quiet |
 | Attachment summary | Appears with attachments | No separate hide switch |
 | Native replies in a chat | `bindings.native_chats` | Changes delivery, not appearance |
 | Group chats default to native | `bindings.default_delivery.group: native` | Set `p2p: card` separately; `card_chats` lists exceptions |
@@ -131,9 +131,12 @@ card:
   completion_notify:
     enabled: true
     mention: false
+    min_duration_seconds: 60
 ```
 
 `mentions_in_cards: false` is the master off switch and overrides every per-kind and completion mention setting. With completion mentions disabled, sender-less system/background work can still send a plain completion notification.
+
+Once enabled, the completion notification fires for every chat turn. Set `completion_notify.min_duration_seconds` to be interrupted only when a long task finishes: turns shorter than that many seconds send nothing, including when a `message.completed` event is replayed. `0` (the default) keeps notifying on every turn. The gate prefers the turn duration Hermes reports and falls back to the session record's actual age, so resumed or interrupted terminal paths are not mistaken for short turns and silently skipped.
 
 ## V4.2.0 Safe Private-Chat Updates
 
