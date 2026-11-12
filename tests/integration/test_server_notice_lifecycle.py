@@ -370,7 +370,10 @@ async def test_update_uses_actual_message_owner_and_isolated_profile_and_topic()
 async def test_completion_notification_waits_for_success_and_keeps_the_receipt():
     app, clients = app_with_clients()
     fake = clients["work", "alpha"]
-    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed")
+    # The turn ran inside the topic with a valid reply anchor: the thread
+    # intent is legal and the notice must deliver inside the thread.
+    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
+                          reply_to_message_id="om_user_message")
     app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
     app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
         "completion_notify": {"enabled": True, "mention": False},
@@ -416,6 +419,7 @@ async def test_completion_notify_resolves_mention_from_tenant_user_id():
 
     fake.resolve_open_id = resolve
     session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
+                          reply_to_message_id="om_user_message",
                           sender_user_id="u_tenant")
     app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
     app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
@@ -433,7 +437,8 @@ async def test_completion_notify_sends_without_mention_when_identity_missing():
     """An unresolvable mention must not swallow the completion notification."""
     app, clients = app_with_clients()
     fake = clients["work", "alpha"]
-    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed")
+    session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
+                          reply_to_message_id="om_user_message")
     app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
     app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
         "completion_notify": {"enabled": True, "mention": True},
