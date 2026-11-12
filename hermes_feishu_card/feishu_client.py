@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -27,6 +28,9 @@ _RETRYABLE_HTTP_STATUSES = {429, 502, 503, 504}
 _SEND_MAX_ATTEMPTS = 3
 _SEND_RETRY_DELAYS_SECONDS = (0.4, 1.2)
 _MAX_RETRY_AFTER_SECONDS = 2.0
+# Bound on the tenant user_id -> open_id memo (see FeishuClient.resolve_open_id).
+_OPEN_ID_CACHE_MAX = 512
+_FEISHU_OPEN_ID_RE = re.compile(r"ou_[A-Za-z0-9_-]{1,128}")
 _sleep = asyncio.sleep
 
 
@@ -139,6 +143,9 @@ class FeishuClient:
         self._trust_env = not _should_bypass_proxy(config.base_url)
         self._tenant_access_token: str | None = None
         self._tenant_access_token_expires_at = 0.0
+        # tenant user_id -> app open_id ("" = looked up, unknown). One entry per
+        # distinct requester; bounded so a long-lived sidecar cannot grow it.
+        self._open_id_cache: dict[str, str] = {}
         from .cardkit import CardKitTransport
         self.cardkit = CardKitTransport(self)
 
@@ -478,6 +485,44 @@ class FeishuClient:
         self._tenant_access_token = token
         self._tenant_access_token_expires_at = now + max(0, expire - 60)
         return token
+
+    async def resolve_open_id(self, user_id: str) -> str:
+        """Map a tenant user_id to the app-scoped open_id ("" when unknown).
+
+        A mention needs ``ou_`` while newer gateway events only carry the
+        tenant id, so the completion notice resolves it once and caches the
+        answer. Failures are non-fatal: the caller sends without the mention.
+        """
+        key = user_id.strip() if isinstance(user_id, str) else ""
+        if not key:
+            return ""
+        if key.startswith("ou_"):
+            return key
+        cached = self._open_id_cache.get(key)
+        if cached is not None:
+            return cached
+        if len(self._open_id_cache) >= _OPEN_ID_CACHE_MAX:
+            self._open_id_cache.clear()
+        open_id = ""
+        try:
+            token = await self._tenant_token()
+            body = await self._request_json(
+                "GET",
+                f"/contact/v3/users/{quote(key, safe='')}",
+                token=token,
+                params={"user_id_type": "user_id"},
+            )
+            user = (body.get("data") or {}).get("user")
+            candidate = user.get("open_id") if isinstance(user, dict) else None
+            if isinstance(candidate, str) and _FEISHU_OPEN_ID_RE.fullmatch(candidate):
+                open_id = candidate
+        except Exception:
+            open_id = ""
+        if open_id:
+            # Failures stay uncached: a timeout or 429 must not pin the
+            # requester as permanently unmentionable for this process.
+            self._open_id_cache[key] = open_id
+        return open_id
 
     async def _request_json(
         self,

@@ -39,8 +39,9 @@ V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文
 | 页脚统计 | `footer_fields` 决定字段和顺序；`text_sizes.footer` | 数据必须有真实来源；订阅额度只在可归属的 GPT / openai-codex 轮次显示 |
 | 宽度与字号 | `width_mode`、`text_sizes`（支持 pc / mobile） | 不设置像素高度，实际折行由客户端决定 |
 | 超长表格 | `table_overflow_mode` | `compact` 保留为字段列表；`truncate` 沿用表格截断策略 |
+| 超长正文 | `over_limit` | `native`（默认）保持 limit handoff；`segmented` 终态主卡＋编号续卡，失败回退 native handoff |
 | 正文表格 | `native_tables` | 开启后正文表格用原生 `table` 组件（列宽 + 自动行高）；默认 `false` 保持 Markdown 布局 |
-| 完成提醒 | `completion_notify.enabled`、`placement`、`mention` | 默认关闭；编辑卡片里的 @ 不保证推送通知 |
+| 完成提醒 | `completion_notify.enabled`、`placement`、`mention`、`min_duration_seconds` | 默认关闭；编辑卡片里的 @ 不保证推送通知；`min_duration_seconds` 让短轮次保持安静 |
 | 附件摘要 | 随附件出现 | 没有独立隐藏开关 |
 | 整个聊天不用卡片 | `bindings.native_chats` | 属于投递选择，回到 Hermes 原生回复 |
 | 群聊默认不发卡片 | `bindings.default_delivery.group: native` | 私聊可单独设 `p2p: card`；`card_chats` 列举例外群 |
@@ -131,9 +132,12 @@ card:
   completion_notify:
     enabled: true
     mention: false
+    min_duration_seconds: 60
 ```
 
 `mentions_in_cards: false` 是总关闭开关；它会覆盖所有 per-kind 与 completion mention 设置。关闭 completion mention 后，无 sender 的系统/后台任务仍可发送普通完成通知。
+
+启用后的完成通知默认每条 chat 轮次都会推送。只想在长任务结束时被打断时，设置 `completion_notify.min_duration_seconds`：低于该时长（秒）的轮次不发通知，也不会在 `message.completed` 重放时补发；`0`（默认）保持原来的每条都推送。时长优先取 Hermes 上报的本轮耗时，缺失时用会话记录的实际存活时间，避免续接或中断收尾的轮次被误判为短轮。
 
 ## V4.2.0 飞书私聊安全升级
 
@@ -614,7 +618,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下示例固定 `v5.0.22`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.22.md)。
+以下示例固定 `v5.0.23`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.23.md)。
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 
@@ -623,7 +627,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v5.0.22`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v5.0.23`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -631,7 +635,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.22
+export HFC_VERSION=v5.0.23
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

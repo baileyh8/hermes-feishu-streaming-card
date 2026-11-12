@@ -24,6 +24,7 @@ from aiohttp import web
 from .runtime_ownership import runtime_target_identity, python_executable_identity
 from .bots import RouteResult
 from .card_limits import inspect_card_limits
+from .completion_notification import elapsed_seconds, meets_threshold
 from .config import load_config, resolve_operations_hermes_root
 from .config_rules import (
     card_width_config, card_completion_mention_enabled,
@@ -3977,6 +3978,8 @@ def _hfc_monitor_lines(request: web.Request, event: SidecarEvent) -> list[str]:
         "table_truncations",
         "card_limit_deferrals",
         "card_native_handoffs",
+        "card_segmented_deliveries",
+        "card_segmented_fallbacks",
         "card_limit_json_bytes",
         "card_limit_elements",
         "card_limit_tables",
@@ -5035,6 +5038,82 @@ async def _apply_event_locked_inner(
                 message_id = str(delivery.message_id)
                 feishu_message_ids[session_key] = message_id
                 message_bot_ids[session_key] = route.bot_id
+                if (
+                    event_is_terminal
+                    and render_result.disposition == "segmented"
+                    and render_result.segments
+                ):
+                    # A card-less terminal turn still delivers every
+                    # continuation card before the response commits. Any
+                    # failure keeps the native handoff: the just-sent main
+                    # card becomes the placeholder and the gateway carries
+                    # the full answer, so content never goes missing.
+                    segments_delivered = await _send_segment_cards(
+                        request.app,
+                        chat_id=event.chat_id,
+                        segments=render_result.segments,
+                        session_key=session_key,
+                        bot_id=route.bot_id,
+                        thread_id=_thread_id_for_event(event) or None,
+                        reply_to_message_id=_reply_to_message_id_for_event(event) or None,
+                        reply_in_thread=_reply_in_thread_for_event(event),
+                        profile_id=_policy_profile_id(event),
+                    )
+                    if segments_delivered:
+                        session.terminal_disposition = "segmented"
+                        session.terminal_limit_reason = render_result.limit_reason
+                    else:
+                        metrics.card_segmented_fallbacks += 1
+                        fallback_result = _segmented_fallback_result(
+                            request.app, session, render_result, session_key=session_key
+                        )
+                        await _update_card_for_app(
+                            request.app, message_id, fallback_result.card, route.bot_id,
+                            is_current=lambda: (
+                                request.app[SESSIONS_KEY].get(session_key) is session
+                            ),
+                        )
+                        handoff_record, handoff_created = _begin_native_handoff(
+                            request.app,
+                            handoff_identity,
+                            feishu_message_id=message_id,
+                            bot_id=route.bot_id,
+                            event_created_at=incoming_event.created_at,
+                            generation=handoff_generation,
+                            ack_capable=_native_handoff_ack_capable(
+                                request.app, handoff_metadata, incoming_event
+                            ),
+                            obligation_key=str(
+                                handoff_metadata.get("obligation_key") or ""
+                            ),
+                            content_hash=str(
+                                handoff_metadata.get("content_hash") or ""
+                            ),
+                            plan_fingerprint=str(
+                                handoff_metadata.get("plan_fingerprint") or ""
+                            ),
+                            route=str(handoff_metadata.get("route") or ""),
+                            target_hash=str(
+                                handoff_metadata.get("target_hash") or ""
+                            ),
+                            provisional_uuid_seed=str(
+                                handoff_metadata.get("provisional_uuid_seed") or ""
+                            ),
+                        )
+                        if handoff_record is None:
+                            metrics.events_rejected += 1
+                            return web.json_response(
+                                {"ok": False, "error": "native handoff state unavailable"},
+                                status=503,
+                            ), None
+                        session.terminal_handoff_record = handoff_record
+                        session.terminal_disposition = "native"
+                        session.terminal_limit_reason = fallback_result.limit_reason
+                        if not handoff_created and handoff_record.descriptor() is None:
+                            metrics.events_applied += 1
+                        return _native_disposition_response(
+                            handoff_record, duplicate=not handoff_created
+                        ), None
                 if render_result.card.get("schema") != "2.0":
                     session.legacy_owner_receipt = static_legacy_receipt(render_result.card)
                 if _is_heartbeat_notice(event):
@@ -5137,7 +5216,7 @@ async def _apply_event_locked_inner(
         and event_is_terminal
         and session.status in {"completed", "failed"}
     )
-    if terminal_already_handled and session.terminal_disposition == "native":
+    if terminal_already_handled and session.terminal_disposition in {"native", "segmented"}:
         metrics.events_applied += 1
         return web.json_response({"ok": True, "applied": True}), None
     if terminal_already_handled:
@@ -5156,6 +5235,41 @@ async def _apply_event_locked_inner(
             render_result = _render_session_card_result_for_app(request.app, session)
         if event.event != "interaction.requested":
             render_result = _existing_owner_render_result(request.app, session, render_result, session_key=session_key)
+        if event_is_terminal and render_result.disposition == "segmented":
+            # Opt-in over-limit terminal segmentation (card.over_limit). The
+            # main card and every continuation card were verified in limit at
+            # render time; deliver them inside the turn so the event response
+            # still decides between segmented cards and the native handoff.
+            if not feishu_message_id:
+                # No live card exists to carry the lead and statistics.
+                metrics.card_segmented_fallbacks += 1
+                render_result = _segmented_fallback_result(
+                    request.app, session, render_result, session_key=session_key
+                )
+            else:
+                delivered = False
+                try:
+                    delivered = await _deliver_segmented_terminal(
+                        request,
+                        session_key,
+                        session,
+                        render_result,
+                        feishu_message_id=feishu_message_id,
+                        bot_id=message_bot_ids.get(session_key),
+                        event=event,
+                    )
+                except Exception:
+                    # A segmented attempt must never lose content: fall back
+                    # to the native handoff on any unexpected failure.
+                    delivered = False
+                if delivered:
+                    session.terminal_disposition = "segmented"
+                    session.terminal_limit_reason = render_result.limit_reason
+                else:
+                    metrics.card_segmented_fallbacks += 1
+                    render_result = _segmented_fallback_result(
+                        request.app, session, render_result, session_key=session_key
+                    )
         if event_is_terminal and render_result.disposition == "native":
             handoff_record, handoff_created = _begin_native_handoff(
                 request.app,
@@ -5564,7 +5678,7 @@ async def _apply_event_locked_inner(
                 updated
                 and is_terminal
                 and event.event == "message.completed"
-                and render_result.disposition == "card"
+                and render_result.disposition in {"card", "segmented"}
             ):
                 await _maybe_send_completion_notify(
                     request.app,
@@ -5687,6 +5801,107 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
             bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
             navigation=delivery.navigation,
         )
+
+
+async def _send_segment_cards(
+    app: web.Application,
+    *,
+    chat_id: str,
+    segments: tuple[dict[str, Any], ...],
+    session_key: str,
+    bot_id: str | None,
+    thread_id: str | None,
+    reply_to_message_id: str | None,
+    reply_in_thread: bool,
+    profile_id: str | None,
+) -> bool:
+    """Send continuation cards in order; False on the first failed delivery.
+
+    Deterministic delivery keys mean a redelivered terminal event cannot
+    duplicate cards the platform already accepted.
+    """
+    for index, segment_card in enumerate(segments, start=1):
+        delivery = await _send_card_for_app(
+            app, chat_id, segment_card, bot_id,
+            thread_id=thread_id,
+            reply_to_message_id=reply_to_message_id,
+            reply_in_thread=reply_in_thread,
+            delivery_key=f"{session_key}:segment:{index}",
+            delivery_kind="chat",
+            profile_id=profile_id,
+        )
+        if not delivery.delivered:
+            app[DIAGNOSTICS_KEY]["last_segmented_delivery"] = (
+                f"segment_{index}_{delivery.outcome}"
+            )
+            return False
+    app[DIAGNOSTICS_KEY]["last_segmented_delivery"] = "delivered"
+    return True
+
+
+async def _deliver_segmented_terminal(
+    request: web.Request,
+    session_key: str,
+    session: CardSession,
+    render_result: CardRenderResult,
+    *,
+    feishu_message_id: str,
+    bot_id: str | None,
+    event: SidecarEvent,
+) -> bool:
+    """Patch the terminal main card, then send every continuation card.
+
+    Called under the turn lock after the render decision and before the event
+    response commits the disposition. Any failed or uncertain step returns
+    False so the coordinator falls back to the existing native handoff:
+    content completeness beats a partially segmented delivery.
+    """
+    app = request.app
+    old_animation = app[CARD_ANIMATION_TASKS_KEY].pop(session_key, None)
+    if old_animation is not None:
+        old_animation.cancel()
+        await asyncio.gather(old_animation, return_exceptions=True)
+    updated = await _update_card_for_app(
+        app, feishu_message_id, render_result.card, bot_id,
+        is_current=lambda: app[SESSIONS_KEY].get(session_key) is session,
+    )
+    if not updated:
+        app[DIAGNOSTICS_KEY]["last_segmented_delivery"] = "main_card_update_failed"
+        return False
+    return await _send_segment_cards(
+        app,
+        chat_id=session.chat_id,
+        segments=render_result.segments,
+        session_key=session_key,
+        bot_id=bot_id,
+        thread_id=_thread_id_for_event(event) or None,
+        reply_to_message_id=session.reply_to_message_id or None,
+        reply_in_thread=session.reply_in_thread,
+        profile_id=None,
+    )
+
+
+def _segmented_fallback_result(
+    app: web.Application,
+    session: CardSession,
+    render_result: CardRenderResult,
+    *,
+    session_key: str,
+) -> CardRenderResult:
+    """Keep the native limit handoff when segmented delivery is unavailable."""
+    _, card_config, configured_title, _ = _session_card_render_context(
+        app, session, session_key=session_key
+    )
+    terminal = session.status in {"completed", "failed"}
+    return replace(
+        render_result,
+        card=render_terminal_limit_handoff_card(
+            title=configured_title,
+            width_mode=card_config.get("width_mode", "default"),
+        ),
+        segments=(),
+        disposition="native" if terminal else "deferred_native",
+    )
 
 
 def _render_static_display_card(app, snapshot, *, session_key, note, display_state):
@@ -5916,6 +6131,34 @@ class _AppTerminalTransport:
         )
 
 
+def _completion_notify_elapsed_seconds(session: CardSession) -> float:
+    """Seconds this turn actually took, for the completion-notify time gate.
+
+    Prefer the turn's own measurement (``message.completed.data.duration``,
+    recorded on ``session.duration``). Hermes omits it on some terminal paths
+    (resumed sessions, some interrupted/queued completions), and a long turn
+    with ``duration == 0`` would otherwise be indistinguishable from a
+    three-second one and get silently skipped -- the exact opposite of what a
+    minimum-duration gate is for. Fall back to the age of the session record;
+    a new ``CardSession`` is built per turn and its ``created_at`` matches the
+    measured duration to within a few hundred milliseconds.
+
+    Pure clock semantics live in completion_notification.elapsed_seconds;
+    this wrapper keeps the session-facing call sites stable.
+    """
+    return elapsed_seconds(session.duration, session.created_at)
+
+
+def _completion_notify_meets_threshold(
+    session: CardSession, notify_config: dict[str, Any]
+) -> bool:
+    """Apply ``completion_notify.min_duration_seconds`` (absent/0 = no gate)."""
+    return meets_threshold(
+        _completion_notify_elapsed_seconds(session),
+        notify_config.get("min_duration_seconds", 0),
+    )
+
+
 async def _maybe_send_completion_notify(
     app: web.Application,
     session_key: str,
@@ -5928,11 +6171,10 @@ async def _maybe_send_completion_notify(
         if type(card_config) is dict
         else None
     )
-    # The @ mention is optional: when disabled (completion_notify.mention=false
-    # or the global mentions_in_cards off switch), the plain completion
-    # notification must be sent even without a (valid) sender open_id --
-    # system/background turns have no requester to mention. Only when the
-    # mention is enabled do we require and validate the sender open_id.
+    # The @ mention is optional: the notification itself must be sent even when
+    # no mention target resolves. System/background turns have no requester to
+    # mention, and newer gateway events carry only the tenant user_id, so the
+    # open_id is resolved below and a failed lookup must not swallow the notice.
     mention_enabled = card_completion_mention_enabled(card_config)
     if (
         type(notify_config) is not dict
@@ -5940,16 +6182,21 @@ async def _maybe_send_completion_notify(
         or session.status != "completed"
         or session.delivery_kind != "chat"
         or session.completion_notify_state != "idle"
-        or (
-            mention_enabled
-            and re.fullmatch(
-                r"ou_[A-Za-z0-9_-]{1,128}", session.sender_open_id
-            )
-            is None
-        )
+        # A claimed-but-invalid sender is a spoof signal: send nothing at all.
+        or session.sender_open_id_rejected
     ):
         return
+    # Synthetic turns (background-process completions, queue markers) carry a
+    # composite ["completion", ...] id and no requester: never send a completion
+    # notice for them, or a topic turn @s twice (in the topic and in the chat).
+    if _is_synthetic_turn(session):
+        return
     if notify_config.get("placement", "message") == "card":
+        session.completion_notify_state = "sent"
+        return
+    if not _completion_notify_meets_threshold(session, notify_config):
+        # Short turn: no push. Record the decision so a replayed
+        # ``message.completed`` for the same turn cannot notify later.
         session.completion_notify_state = "sent"
         return
     bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
@@ -5961,10 +6208,9 @@ async def _maybe_send_completion_notify(
     session.completion_notify_state = "sending"
     duration_text = _format_duration(session.duration) if session.duration > 0 else ""
     suffix = f"（用时 {duration_text}）" if duration_text else ""
+    mention_open_id = await _completion_mention_open_id(client, session) if mention_enabled else ""
     mention_prefix = (
-        f'<at user_id="{session.sender_open_id}"></at> '
-        if mention_enabled
-        else ""
+        f'<at user_id="{mention_open_id}"></at> ' if mention_open_id else ""
     )
     text = f"{mention_prefix}✅ 本轮回复结束{suffix}"
     notice_scope = _restart_notice_scope(
@@ -5974,9 +6220,25 @@ async def _maybe_send_completion_notify(
     )
     notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     try:
+        thread_id = _thread_id_for_event(event)
+        reply_to_message_id = session.reply_to_message_id or ""
+        if (thread_id or session.reply_in_thread) and not reply_to_message_id:
+            # docs/wiki/feishu-acceptance.md: an explicit thread intent
+            # without a reply anchor must not fall back to a top-level
+            # chat send. Keep the notice unsent with a redacted
+            # classification; a replayed terminal keeps the retry window.
+            app[DIAGNOSTICS_KEY]["last_route_error"] = (
+                "CompletionNotifyThreadAnchorMissing"
+            )
+            session.completion_notify_state = "idle"
+            logger.warning(
+                "completion notify skipped: %s",
+                "CompletionNotifyThreadAnchorMissing",
+            )
+            return
         send_kwargs: dict[str, Any] = {
-            "thread_id": _thread_id_for_event(event) or None,
-            "reply_to_message_id": session.reply_to_message_id or None,
+            "thread_id": thread_id or None,
+            "reply_to_message_id": reply_to_message_id or None,
         }
         if session.reply_in_thread:
             send_kwargs["reply_in_thread"] = True
@@ -5999,6 +6261,26 @@ async def _maybe_send_completion_notify(
         _diagnostic_id_hash(session.sender_open_id, domain="completion-sender"),
         _diagnostic_id_hash(session_key, domain="completion-session"),
     )
+
+
+def _is_synthetic_turn(session: CardSession) -> bool:
+    """Queue/process-completion turns carry a JSON-array id, not a Feishu one."""
+    message_id = session.message_id
+    return isinstance(message_id, str) and message_id.lstrip().startswith("[")
+
+
+async def _completion_mention_open_id(client: Any, session: CardSession) -> str:
+    """Resolve the requester's open_id; "" means send the notice unmentioned."""
+    if re.fullmatch(r"ou_[A-Za-z0-9_-]{1,128}", session.sender_open_id):
+        return session.sender_open_id
+    resolver: Any = getattr(client, "resolve_open_id", None)
+    if not callable(resolver):
+        return ""
+    try:
+        resolved = await resolver(session.sender_user_id)
+    except Exception:
+        return ""
+    return resolved if isinstance(resolved, str) else ""
 
 
 def _post_terminal_cleanup(
@@ -6991,6 +7273,8 @@ def _record_card_render_decision(
         metrics.card_limit_deferrals += 1
     elif result.disposition == "native":
         metrics.card_native_handoffs += 1
+    elif result.disposition == "segmented":
+        metrics.card_segmented_deliveries += 1
     for violation in result.inspection.violations:
         if violation == "json_bytes":
             metrics.card_limit_json_bytes += 1

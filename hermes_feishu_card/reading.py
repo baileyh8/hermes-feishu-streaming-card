@@ -190,7 +190,7 @@ def explain_reading_config(
     for key in ("show_reasoning", "stream_thinking_to_body", "hide_completed_tool_activity",
                 "tool_activity",
                 "timeline_expanded", "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
-                "native_tables"):
+                "native_tables", "over_limit"):
         resolved[key] = options[key]
     terminal_policy = (
         "unsuccessful_only" if resolved["hide_completed_tool_activity"] else

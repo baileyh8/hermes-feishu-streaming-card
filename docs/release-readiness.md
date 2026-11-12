@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.22`（#520 v0.23.1 精确兼容、config53 与 slash-confirm 锚点；#516/#517 维护）。独立 wheel/安装恢复、完整 PR/main/tag CI、官方镜像和公开安装/资产验收逐项记录后发布。真实 Gateway/model 与飞书客户端验收另记，不由 CI 替代。见[发行说明](release-notes-v5.0.22.md)。
+本分支目标版本为 `5.0.23`（#502 完成通知最短时长、#508 身份路由与 anchor 守卫、#513 分段投递）。独立 wheel/安装恢复、完整 PR/main/tag CI、官方镜像和公开安装/资产验收逐项记录后发布。真实 Gateway/model 与飞书客户端验收另记，不由 CI 替代。见[发行说明](release-notes-v5.0.23.md)。
 
 ## v5.0.16 历史记录
 

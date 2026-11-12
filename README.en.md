@@ -21,9 +21,9 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [What’s new in V5](#whats-new-in-v5) · [Upgrade from V4.x](#upgrade-from-v4x-to-v5) · [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.22; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.22.en.md).
+**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.23; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.23.en.md).
 
-Once published, download v5.0.22 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.22).
+Once published, download v5.0.23 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.23).
 
 ## What's new in V5
 
@@ -178,7 +178,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.22
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.23
 bash install-docker.sh
 ```
 
@@ -230,6 +230,8 @@ service:
 `card.width_mode` supports `default`, `compact`, and `fill` (adaptive chat-window width) for JSON 2.0 cards. The default preserves existing layout; profile/bot overrides are supported, and explicit `default` resets an inherited mode. JSON 1.0 approval cards are unchanged; clients control final dimensions. See [card width configuration](docs/user-guide.en.md#card-width).
 
 `card.native_tables` (default `false`) renders body Markdown tables as the card's native `table` element, so column widths follow the content and `row_height: auto` wraps a long cell instead of clipping it. Tables that cannot be represented natively, and cards that would exceed the safe budget because of the richer payload, fall back to the Markdown layout. See [body tables](docs/user-guide.en.md#body-tables).
+
+`card.over_limit` (default `native`) picks the strategy when a terminal answer still exceeds the safe card budget after every in-card degradation: `native` keeps the existing limit handoff (placeholder card plus the full answer as a native message); `segmented` delivers a main card (lead, statistics, collapsible process panel) followed by a few numbered continuation cards ("续 i/N", each verified in limit) at terminal time — a bounded continuation for the "one card is not enough, a document is too heavy" middle band, capped so longer content keeps its document/native delivery instead of flooding the chat. Streaming still updates a single live card, and any segment that cannot be planned or delivered falls back to the same native handoff — no silent truncation.
 
 Place `.env` beside the config:
 
@@ -313,6 +315,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v5.0.23](docs/release-notes-v5.0.23.en.md) | Completion-notification threshold, sender identity routing and bounded segmentation |
 | [v5.0.22](docs/release-notes-v5.0.22.en.md) | Exact Hermes v0.23.1 compatibility, installation and CI diagnostics |
 | [v5.0.21](docs/release-notes-v5.0.21.en.md) | Codex completion attribution and Windows subprocess encoding |
 | [v5.0.20](docs/release-notes-v5.0.20.en.md) | Official Docker multiplex profile-root recognition |
@@ -322,11 +325,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.15](docs/release-notes-v5.0.15.en.md) | Live tool activity, chat-scoped controls, v0.22.7 cohort and convergent managed upgrades |
 | [v5.0.14](docs/release-notes-v5.0.14.en.md) | Per-turn rate correlation and verified Hermes compatibility |
 | [v5.0.13](docs/release-notes-v5.0.13.en.md) | Native completion isolation and model-picker repair |
-| [v5.0.12](docs/release-notes-v5.0.12.en.md) | Feishu-only source anchor and bounded completion source matching |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V5.0.23: [tidytorch](https://github.com/tidytorch) contributed bounded segmented delivery in [#513](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/513) (4 original commits), [Cassius0924](https://github.com/Cassius0924) the mention-fallback identity routing in [#508](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/508) (4 original commits), and [jackwude](https://github.com/jackwude) the notification minimum-duration gate in [#502](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/502). Original commit authorship is preserved; historical credits remain intact.
 
 - V5.0.22: thanks to [Lite-G](https://github.com/Lite-G) for the main-anchor evidence in [#520](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/520), [ywarmy](https://github.com/ywarmy) for v0.23.1 stable source and installation analysis, and Dependabot for #516/#517. Issue evidence is separate from code authorship; original commits and historical credits are retained.
 

@@ -39,8 +39,9 @@ Edit `card:` in the actual file selected with `--config` during installation. St
 | Footer | `footer_fields`, `text_sizes.footer` | Only available measurements; subscription quota requires an attributed GPT / openai-codex turn |
 | Width and type sizes | `width_mode`, `text_sizes` including pc / mobile | No pixel-height control; wrapping is client-controlled |
 | Long tables | `table_overflow_mode` | compact preserves later tables as field lists; truncate retains table truncation |
+| Over-limit answers | `over_limit` | `native` (default) keeps the limit handoff; `segmented` delivers a terminal main card plus numbered continuation cards, falling back to the native handoff on any failure |
 | Body tables | `native_tables` | Native `table` elements for body tables (column width + auto row height); default `false` keeps Markdown |
-| Completion notification | `completion_notify.enabled`, `placement`, `mention` | Off by default; an edited card mention does not guarantee push delivery |
+| Completion notification | `completion_notify.enabled`, `placement`, `mention`, `min_duration_seconds` | Off by default; an edited card mention does not guarantee push delivery; `min_duration_seconds` keeps short turns quiet |
 | Attachment summary | Appears with attachments | No separate hide switch |
 | Native replies in a chat | `bindings.native_chats` | Changes delivery, not appearance |
 | Group chats default to native | `bindings.default_delivery.group: native` | Set `p2p: card` separately; `card_chats` lists exceptions |
@@ -131,9 +132,12 @@ card:
   completion_notify:
     enabled: true
     mention: false
+    min_duration_seconds: 60
 ```
 
 `mentions_in_cards: false` is the master off switch and overrides every per-kind and completion mention setting. With completion mentions disabled, sender-less system/background work can still send a plain completion notification.
+
+Once enabled, the completion notification fires for every chat turn. Set `completion_notify.min_duration_seconds` to be interrupted only when a long task finishes: turns shorter than that many seconds send nothing, including when a `message.completed` event is replayed. `0` (the default) keeps notifying on every turn. The gate prefers the turn duration Hermes reports and falls back to the session record's actual age, so resumed or interrupted terminal paths are not mistaken for short turns and silently skipped.
 
 ## V4.2.0 Safe Private-Chat Updates
 
@@ -584,21 +588,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v5.0.22`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.22.en.md) for validation boundaries.
+Examples pin `v5.0.23`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.23.en.md) for validation boundaries.
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v5.0.22`.
+The Compose example defaults `HFC_VERSION` to `v5.0.23`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.22
+export HFC_VERSION=v5.0.23
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

@@ -6,6 +6,7 @@ import pytest
 from hermes_feishu_card.card_limits import CardLimitExceeded, serialize_card_json
 
 from hermes_feishu_card.feishu_client import (
+    _OPEN_ID_CACHE_MAX,
     FeishuAPIError,
     FeishuClient,
     FeishuClientConfig,
@@ -335,3 +336,186 @@ async def test_request_json_bypasses_proxy_for_local_endpoint(monkeypatch, base_
     captured = await _captured_session_kwargs(monkeypatch, base_url=base_url)
 
     assert captured.get("trust_env") is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_id_caches_success_and_retries_failures(monkeypatch):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+    fail = [True]
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append(path)
+        if fail[0]:
+            raise RuntimeError("timeout")
+        return {"code": 0, "data": {"user": {"open_id": "ou_resolved"}}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    assert await client.resolve_open_id("u_tenant") == ""
+    fail[0] = False
+    assert await client.resolve_open_id("u_tenant") == "ou_resolved"
+    assert await client.resolve_open_id("u_tenant") == "ou_resolved"
+    assert len(calls) == 2
+    assert await client.resolve_open_id("ou_passthrough") == "ou_passthrough"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_id", ["", "   ", 123, None])
+async def test_resolve_open_id_rejects_invalid_keys_without_io(monkeypatch, user_id):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+
+    async def fake_request(method, path, **kwargs):
+        calls.append(path)
+        return {"code": 0, "data": {"user": {"open_id": "ou_resolved"}}}
+
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    # Only the request hook is patched: any token fetch would also land here,
+    # so an empty result with zero calls proves no I/O of any kind happened.
+    assert await client.resolve_open_id(user_id) == ""
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_id_strips_surrounding_whitespace(monkeypatch):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append(path)
+        return {"code": 0, "data": {"user": {"open_id": "ou_resolved"}}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    assert await client.resolve_open_id("  u_tenant  ") == "ou_resolved"
+    assert calls == ["/contact/v3/users/u_tenant"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_id_user_not_found_stays_uncached(monkeypatch):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+    fail = [True]
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append(path)
+        if fail[0]:
+            raise FeishuAPIError(
+                "Feishu API HTTP failure", status_code=404, retryable=False
+            )
+        return {"code": 0, "data": {"user": {"open_id": "ou_resolved"}}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    # A definitive "user not found" is not cached either: retrying costs one
+    # API call per notice, while caching "" would pin a member created after
+    # the first notice (or a lookup-order bug) as permanently unmentionable.
+    assert await client.resolve_open_id("u_tenant") == ""
+    assert await client.resolve_open_id("u_tenant") == ""
+    assert len(calls) == 2
+    fail[0] = False
+    assert await client.resolve_open_id("u_tenant") == "ou_resolved"
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"code": 0, "data": {"user": None}},
+        {"code": 0, "data": {"user": {"open_id": "not-an-open-id"}}},
+        {"code": 99991663, "msg": "permission denied"},
+    ],
+)
+async def test_resolve_open_id_ignores_malformed_or_denied_responses(
+    monkeypatch, body
+):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append(path)
+        return body
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    assert await client.resolve_open_id("u_tenant") == ""
+    assert await client.resolve_open_id("u_tenant") == ""
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_open_id_clears_cache_when_full(monkeypatch):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    calls = []
+
+    async def fake_token():
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        calls.append(path)
+        return {"code": 0, "data": {"user": {"open_id": "ou_new"}}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    # One entry per distinct requester; at the cap the memo clears wholesale
+    # instead of growing unbounded in a long-lived sidecar process.
+    for index in range(_OPEN_ID_CACHE_MAX):
+        client._open_id_cache[f"u_{index}"] = f"ou_{index}"
+    assert await client.resolve_open_id("u_fresh") == "ou_new"
+    assert client._open_id_cache == {"u_fresh": "ou_new"}
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_to_message_id", [None, "", "   ", 123])
+async def test_send_text_rejects_thread_request_without_valid_reply_anchor(
+    monkeypatch, reply_to_message_id
+):
+    client = FeishuClient(FeishuClientConfig(app_id="cli_a", app_secret="sec"))
+    token_calls = []
+    api_calls = []
+
+    async def fake_token():
+        token_calls.append(1)
+        return "tenant-token"
+
+    async def fake_request(method, path, *, token=None, params=None, json_body=None):
+        api_calls.append((method, path))
+        return {"code": 0, "data": {"message_id": "om_text"}}
+
+    monkeypatch.setattr(client, "_tenant_token", fake_token)
+    monkeypatch.setattr(client, "_request_json", fake_request)
+
+    with pytest.raises(ValueError, match="reply_to_message_id"):
+        await client.send_text_message(
+            "oc_abc",
+            "thread completion notice",
+            thread_id="omt_topic",
+            reply_to_message_id=reply_to_message_id,
+            reply_in_thread=True,
+        )
+
+    # The guard fires before any I/O: no token fetch, no HTTP request.
+    assert token_calls == []
+    assert api_calls == []

@@ -15,7 +15,9 @@
       "tests/unit/test_observed_rate_identity.py",
       "tests/unit/test_native_rate_scope.py",
       "tests/unit/test_profile_root.py",
-      "tests/unit/test_512_authority_profile_matches.py"
+      "tests/unit/test_512_authority_profile_matches.py",
+      "tests/unit/test_completion_notification.py",
+      "tests/integration/test_server_segmented.py"
     ],
     "render": [
       "tests/unit/test_render.py",
@@ -31,7 +33,10 @@
       "tests/unit/test_observations.py",
       "tests/unit/test_display_redaction.py",
       "tests/unit/test_existing_owner_projection.py",
-      "tests/unit/test_plugin_turn_metrics.py"
+      "tests/unit/test_plugin_turn_metrics.py",
+      "tests/unit/test_card_segmentation.py",
+      "tests/unit/test_render_segmented.py",
+      "tests/integration/test_server_segmented.py"
     ],
     "config": [
       "tests/unit/test_config.py",
@@ -40,7 +45,8 @@
       "tests/unit/test_config_rules.py",
       "tests/unit/test_tool_activity_mode.py",
       "tests/unit/test_chat_card_overrides.py",
-      "tests/unit/test_chat_scoped_delivery.py"
+      "tests/unit/test_chat_scoped_delivery.py",
+      "tests/unit/test_config_over_limit.py"
     ],
     "install": [
       "tests/unit/test_patcher.py",
@@ -870,6 +876,9 @@
       "install",
       "install_transactions"
     ],
+    "hermes_feishu_card/card_segmentation.py": [
+      "render"
+    ],
     "hermes_feishu_card/profile_root.py": [
       "routing",
       "runtime",
@@ -877,6 +886,9 @@
     ],
     "tests/unit/test_slash_confirm_authority.py": [
       "install"
+    ],
+    "hermes_feishu_card/completion_notification.py": [
+      "runtime"
     ]
   }
 }

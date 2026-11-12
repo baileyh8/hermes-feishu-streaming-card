@@ -15,9 +15,9 @@
 
 [V5 新变化](#v5-新变化) · [从 V4x 升级](#从-v4x-升级到-v5) · [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.22；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.22.md)。
+**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.23；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.23.md)。
 
-v5.0.22 正式发布后，安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.22) 为准。
+v5.0.23 正式发布后，安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.23) 为准。
 
 ## V5 新变化
 
@@ -172,7 +172,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.22
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.23
 bash install-docker.sh
 ```
 
@@ -224,6 +224,8 @@ service:
 `card.width_mode` 支持 `default`、`compact`、`fill`（自适应聊天窗口宽度），仅作用于 JSON 2.0 卡片；默认保持原布局，支持 profile/bot 覆盖，显式 `default` 可重置继承值。JSON 1.0 审批卡不变，最终尺寸仍由客户端决定。详见[卡片宽度配置](docs/user-guide.md#卡片宽度)。
 
 `card.native_tables`（默认 `false`）把正文 Markdown 表格渲染成飞书卡片原生 `table` 组件：列宽按内容计算，`row_height: auto` 让长内容换行而不是被单元格末尾省略。无法用原生组件表示的表格、以及因此超出卡片预算的整卡，都会回退到 Markdown 布局。详见[正文表格](docs/user-guide.md#正文表格)。
+
+`card.over_limit`（默认 `native`）决定终态答案在所有卡内降级后仍超出安全预算时的策略：`native` 保持既有 limit handoff（占位卡＋全文走 Hermes 原生消息）；`segmented` 在终态投递主卡（开头正文＋统计＋可折叠过程面板）后追加**少量**编号续卡（「续 i/N」，每张都经预算校验），定位是「一张卡装不下、出文档又太重」的中间段，张数有硬上限——超长内容保持 native handoff，由文档/原生投递承载全文而不是刷屏。流式期间仍是单张实时卡；任一续卡切分不可行或投递失败时整体回退既有 native handoff，不产生静默截断。
 
 配置同目录的 `.env`：
 
@@ -307,6 +309,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.23](docs/release-notes-v5.0.23.md) | 完成通知最短时长、sender 身份路由与有界分段 |
 | [v5.0.22](docs/release-notes-v5.0.22.md) | Hermes v0.23.1 精确兼容、安装与 CI 诊断 |
 | [v5.0.21](docs/release-notes-v5.0.21.md) | Codex 完成事件归属与 Windows 子进程编码 |
 | [v5.0.20](docs/release-notes-v5.0.20.md) | 官方 Docker 多 profile 数据根识别修复 |
@@ -316,11 +319,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.15](docs/release-notes-v5.0.15.md) | 进行中工具信息、按会话控制、v0.22.7 兼容与受管升级收敛 |
 | [v5.0.14](docs/release-notes-v5.0.14.md) | 逐轮速率关联与已核验 Hermes 兼容 |
 | [v5.0.13](docs/release-notes-v5.0.13.md) | 非飞书终局隔离与模型选择卡修复 |
-| [v5.0.12](docs/release-notes-v5.0.12.md) | Feishu 专用锚点与受限完成来源比较 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V5.0.23：[tidytorch](https://github.com/tidytorch) 提交 [#513](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/513) 的有界分段投递（4 个原提交），[Cassius0924](https://github.com/Cassius0924) 提交 [#508](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/508) 的 mention fallback 身份路由（4 个原提交），[jackwude](https://github.com/jackwude) 提交 [#502](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/502) 的通知最短时长门槛。原提交作者身份保留，历史贡献记录完整。
 
 - V5.0.22：感谢 [Lite-G](https://github.com/Lite-G) 提供 [#520](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/520) 的 main 锚点证据，[ywarmy](https://github.com/ywarmy) 补充 v0.23.1 stable 字节与安装分析；Dependabot 提供 #516/#517 维护提交。问题证据与代码作者分开记录，原提交与历史贡献保留。
 

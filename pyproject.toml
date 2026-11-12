@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.22"
+version = "5.0.23"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -68,6 +68,7 @@ target-version = "py39"
 include = [
   "hermes_feishu_card/cli_reports.py",
   "hermes_feishu_card/card_view.py",
+  "hermes_feishu_card/card_segmentation.py",
   "hermes_feishu_card/display_redaction.py",
   "hermes_feishu_card/event_rules.py",
   "hermes_feishu_card/transient_notices.py",
@@ -81,6 +82,7 @@ include = [
   "hermes_feishu_card/turn_events.py",
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
+  "hermes_feishu_card/completion_notification.py",
   "hermes_feishu_card/native_rate_scope.py",
   "hermes_feishu_card/install/rate_scope.py",
   "hermes_feishu_card/install/config_backend_0226.py",
@@ -139,6 +141,7 @@ python_version = "3.12"
 files = [
   "hermes_feishu_card/cli_reports.py",
   "hermes_feishu_card/card_view.py",
+  "hermes_feishu_card/card_segmentation.py",
   "hermes_feishu_card/display_redaction.py",
   "hermes_feishu_card/event_rules.py",
   "hermes_feishu_card/transient_notices.py",
@@ -152,6 +155,7 @@ files = [
   "hermes_feishu_card/turn_events.py",
   "hermes_feishu_card/turn_metrics.py",
   "hermes_feishu_card/observed_rate.py",
+  "hermes_feishu_card/completion_notification.py",
   "hermes_feishu_card/native_rate_scope.py",
   "hermes_feishu_card/install/rate_scope.py",
   "hermes_feishu_card/install/config_backend_0226.py",
