@@ -190,6 +190,7 @@ PM 回滚可能为旧包重新生成运行环境。注册栈恢复后，须凭�
 | 改动 | 先跑 | 发布前还要跑 |
 |---|---|---|
 | runtime event 抽取、topic、notice | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_server.py -q` | `python -m pytest -q` |
+| 完成通知时钟 / 终态分段 | `python -m pytest tests/unit/test_completion_notification.py tests/unit/test_config_over_limit.py tests/integration/test_server_segmented.py -q` | 精确提交完整 CI + 相关真实 Feishu API / 客户端验收 |
 | Lark WebSocket handler / command-card callback | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_feishu_sdk_compat.py -q` | Python 3.11 + `lark-oapi==1.6.8` + `websockets==15.0.1` CI、真实 Feishu 稳定性 smoke、`python -m pytest -q` |
 | `/resume` / `/model` 原生 picker | `python -m pytest tests/unit/test_hook_runtime.py tests/unit/test_patcher.py tests/integration/test_cli_install.py -q` | 真实 Feishu 私聊、群聊、topic smoke + `python -m pytest -q` |
 | 群聊路由诊断 / 工具详情 | `python -m pytest tests/unit/test_bots.py tests/unit/test_session.py tests/unit/test_render.py tests/integration/test_server.py -q` | `python -m pytest -q` |

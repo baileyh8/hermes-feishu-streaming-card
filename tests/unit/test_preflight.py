@@ -85,6 +85,26 @@ def test_task_presentation_and_rules_changes_select_their_contract_tests():
             "tests/unit/test_session_store.py"} <= set(targets)
 
 
+@pytest.mark.parametrize(("source", "group", "required"), [
+    ("hermes_feishu_card/completion_notification.py", "runtime", {
+        "tests/unit/test_completion_notification.py",
+    }),
+    ("hermes_feishu_card/card_segmentation.py", "render", {
+        "tests/unit/test_card_segmentation.py",
+        "tests/unit/test_render_segmented.py",
+        "tests/integration/test_server_segmented.py",
+    }),
+    ("hermes_feishu_card/config_rules.py", "config", {
+        "tests/unit/test_config_over_limit.py",
+    }),
+])
+def test_completion_and_segmentation_changes_select_their_contracts(source, group, required):
+    targets, groups, unknown = preflight.select_targets([source], [])
+    assert unknown == 0
+    assert group in groups
+    assert required <= set(targets)
+
+
 def test_every_active_runtime_file_has_an_explicit_test_route():
     """A new module must name a contract suite before focused CI can select it."""
     for path in (preflight.ROOT / "hermes_feishu_card").rglob("*.py"):
