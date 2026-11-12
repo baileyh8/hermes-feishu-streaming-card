@@ -7,7 +7,14 @@
 - #520：精确 v0.23.1 cohort、writer/launch、schema53 与 slash-confirm AST；未知 main 来源保留拒绝。
 - #516/#517：Ruff/CodeQL 维护原提交，当前测试节点诊断；旧超时根因不作无证据结论。#510 保留历史基线并补当前 stable 覆盖。
 - 独立 QA、完整 PR/main/tag、普通 wheel 安装恢复、官方镜像与公开安装/资产逐项验收后发布，边界见[发行说明](docs/release-notes-v5.0.22.md)。
-- #521 repin 独立评审；#513 仍有失败门禁及视觉方向待验，不在本轮兼容补丁内。
+- #521 repin 独立评审。#513 曾在本轮兼容补丁外，现随 V5.0.23 与 #502/#508 一并合入（见下节）；其真实多端视觉与平台验收按 V5.0.23 剩余验收执行。
+
+## V5.0.23
+
+- #502：`completion_notify.min_duration_seconds` 短轮静默与时长缺失回退；`enabled` 默认关闭，门槛只作用于单独 message 通知。
+- #508：完成通知按 sender 身份路由（tenant user_id 解析 open_id、合成轮不发、伪造 open_id 抑制；话题缺回复锚点保持不发，无 top-level 兜底）。
+- #513：`card.over_limit: segmented` 有界分段（总卡数 ≤5 且含主卡、整节断卡、失败回退 native handoff；已发续卡允许与全文回退并存，delivery_key 只防终态重投重复）。
+- 剩余验收：真实多端（桌面/Android/iOS）视觉、真实飞书 smoke、普通 wheel/安装恢复与完整 CI 待冻结提交后执行；未完成前不记为通过。
 
 ## V5.0.21（2026-11-09 已发布）
 

@@ -15,9 +15,9 @@
 
 [V5 新变化](#v5-新变化) · [从 V4x 升级](#从-v4x-升级到-v5) · [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.22；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.22.md)。
+**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.23；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.23.md)。
 
-v5.0.22 正式发布后，安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.22) 为准。
+v5.0.23 正式发布后，安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.23) 为准。
 
 ## V5 新变化
 
@@ -309,6 +309,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.23](docs/release-notes-v5.0.23.md) | 完成通知最短时长、sender 身份路由与有界分段 |
 | [v5.0.22](docs/release-notes-v5.0.22.md) | Hermes v0.23.1 精确兼容、安装与 CI 诊断 |
 | [v5.0.21](docs/release-notes-v5.0.21.md) | Codex 完成事件归属与 Windows 子进程编码 |
 | [v5.0.20](docs/release-notes-v5.0.20.md) | 官方 Docker 多 profile 数据根识别修复 |
@@ -323,6 +324,8 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V5.0.23：[tidytorch](https://github.com/tidytorch) 提交 [#513](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/513) 的有界分段投递（4 个原提交），[Cassius0924](https://github.com/Cassius0924) 提交 [#508](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/508) 的 mention fallback 身份路由（4 个原提交），[jackwude](https://github.com/jackwude) 提交 [#502](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/502) 的通知最短时长门槛。原提交作者身份保留，历史贡献记录完整。
 
 - V5.0.22：感谢 [Lite-G](https://github.com/Lite-G) 提供 [#520](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/520) 的 main 锚点证据，[ywarmy](https://github.com/ywarmy) 补充 v0.23.1 stable 字节与安装分析；Dependabot 提供 #516/#517 维护提交。问题证据与代码作者分开记录，原提交与历史贡献保留。
 

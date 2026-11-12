@@ -394,10 +394,7 @@ class FeishuClient:
         if (thread_id or reply_in_thread) and (
             not isinstance(reply_to_message_id, str) or not reply_to_message_id.strip()
         ):
-            # Feishu can only place a message inside a topic by replying to an
-            # anchor. Without one, deliver to the chat rather than dropping it.
-            thread_id = None
-            reply_in_thread = False
+            raise ValueError("reply_to_message_id is required for thread placement")
 
         token = await self._tenant_token()
         content = json.dumps({"text": text}, ensure_ascii=False)

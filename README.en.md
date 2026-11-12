@@ -21,9 +21,9 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [What’s new in V5](#whats-new-in-v5) · [Upgrade from V4.x](#upgrade-from-v4x-to-v5) · [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.22; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.22.en.md).
+**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.23; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.23.en.md).
 
-Once published, download v5.0.22 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.22).
+Once published, download v5.0.23 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.23).
 
 ## What's new in V5
 
@@ -315,6 +315,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v5.0.23](docs/release-notes-v5.0.23.en.md) | Completion-notification threshold, sender identity routing and bounded segmentation |
 | [v5.0.22](docs/release-notes-v5.0.22.en.md) | Exact Hermes v0.23.1 compatibility, installation and CI diagnostics |
 | [v5.0.21](docs/release-notes-v5.0.21.en.md) | Codex completion attribution and Windows subprocess encoding |
 | [v5.0.20](docs/release-notes-v5.0.20.en.md) | Official Docker multiplex profile-root recognition |
@@ -329,6 +330,8 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V5.0.23: [tidytorch](https://github.com/tidytorch) contributed bounded segmented delivery in [#513](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/513) (4 original commits), [Cassius0924](https://github.com/Cassius0924) the mention-fallback identity routing in [#508](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/508) (4 original commits), and [jackwude](https://github.com/jackwude) the notification minimum-duration gate in [#502](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/502). Original commit authorship is preserved; historical credits remain intact.
 
 - V5.0.22: thanks to [Lite-G](https://github.com/Lite-G) for the main-anchor evidence in [#520](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/520), [ywarmy](https://github.com/ywarmy) for v0.23.1 stable source and installation analysis, and Dependabot for #516/#517. Issue evidence is separate from code authorship; original commits and historical credits are retained.
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.23 — 2026-11-12
+
+- Add `completion_notify.min_duration_seconds` (#502, jackwude): when a standalone completion notification is enabled, turns shorter than the threshold stay quiet and a replayed `message.completed` cannot re-notify later. The turn duration prefers the value Hermes reports and falls back to the session record's actual age when the report is missing. `completion_notify.enabled` still defaults to `false`; `min_duration_seconds: 0` (default) means no duration filtering, not a default push on every turn.
+- Route standalone completion notifications by sender identity (#508, Cassius0924): when newer gateway events carry only the tenant `user_id`, resolve the mention target's `open_id` through the contact API and cache successful lookups; failed lookups are not cached and the notice still sends unmentioned. Synthetic turns (background-process and queue completions) never notify, and a claimed-but-invalid sender id is treated as a spoof signal and sends nothing. Topic placement keeps the strict guard: a thread notification without a reply anchor is not sent as a top-level fallback.
+- Add opt-in `card.over_limit: segmented` terminal delivery (#513, tidytorch, refs #511): when a terminal answer still exceeds the safe card budget after every in-card degradation, deliver a bounded main card plus numbered continuation cards with a hard cap of five cards in total (main card included). Segments break at section boundaries, each segment is verified against the card budget, and any failed or infeasible plan falls back to the existing native full-text handoff; already-sent continuation cards may coexist with that native fallback. Deterministic delivery keys prevent duplicate cards when the same terminal event is redelivered; they do not claim permanent exactly-once delivery. Streaming still updates a single live card.
+
 ## v5.0.22 — 2026-11-11
 
 - Add exact Hermes v0.23.1 admission/topology and PM writer/launch cohorts with schema-53 installation admission (#520). Preserve whole-file source proofs, live bindings, earlier rendered ownership and reversible recovery.

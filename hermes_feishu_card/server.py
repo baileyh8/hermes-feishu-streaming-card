@@ -24,6 +24,7 @@ from aiohttp import web
 from .runtime_ownership import runtime_target_identity, python_executable_identity
 from .bots import RouteResult
 from .card_limits import inspect_card_limits
+from .completion_notification import elapsed_seconds, meets_threshold
 from .config import load_config, resolve_operations_hermes_root
 from .config_rules import (
     card_width_config, card_completion_mention_enabled,
@@ -6141,34 +6142,21 @@ def _completion_notify_elapsed_seconds(session: CardSession) -> float:
     minimum-duration gate is for. Fall back to the age of the session record;
     a new ``CardSession`` is built per turn and its ``created_at`` matches the
     measured duration to within a few hundred milliseconds.
+
+    Pure clock semantics live in completion_notification.elapsed_seconds;
+    this wrapper keeps the session-facing call sites stable.
     """
-    duration = session.duration
-    if not isinstance(duration, bool) and isinstance(duration, (int, float)):
-        if math.isfinite(duration) and duration > 0:
-            return float(duration)
-    created_at = session.created_at
-    if not isinstance(created_at, bool) and isinstance(created_at, (int, float)):
-        if math.isfinite(created_at) and created_at > 0:
-            elapsed = time.time() - float(created_at)
-            if math.isfinite(elapsed) and elapsed > 0:
-                return elapsed
-    return 0.0
+    return elapsed_seconds(session.duration, session.created_at)
 
 
 def _completion_notify_meets_threshold(
     session: CardSession, notify_config: dict[str, Any]
 ) -> bool:
     """Apply ``completion_notify.min_duration_seconds`` (absent/0 = no gate)."""
-    raw_threshold = notify_config.get("min_duration_seconds", 0)
-    if raw_threshold is None:
-        return True
-    try:
-        threshold = float(raw_threshold)
-    except (TypeError, ValueError):
-        return True
-    if not math.isfinite(threshold) or threshold <= 0:
-        return True
-    return _completion_notify_elapsed_seconds(session) >= threshold
+    return meets_threshold(
+        _completion_notify_elapsed_seconds(session),
+        notify_config.get("min_duration_seconds", 0),
+    )
 
 
 async def _maybe_send_completion_notify(
@@ -6232,9 +6220,25 @@ async def _maybe_send_completion_notify(
     )
     notice_snapshot = _restart_notice_snapshot(app, notice_scope)
     try:
+        thread_id = _thread_id_for_event(event)
+        reply_to_message_id = session.reply_to_message_id or ""
+        if (thread_id or session.reply_in_thread) and not reply_to_message_id:
+            # docs/wiki/feishu-acceptance.md: an explicit thread intent
+            # without a reply anchor must not fall back to a top-level
+            # chat send. Keep the notice unsent with a redacted
+            # classification; a replayed terminal keeps the retry window.
+            app[DIAGNOSTICS_KEY]["last_route_error"] = (
+                "CompletionNotifyThreadAnchorMissing"
+            )
+            session.completion_notify_state = "idle"
+            logger.warning(
+                "completion notify skipped: %s",
+                "CompletionNotifyThreadAnchorMissing",
+            )
+            return
         send_kwargs: dict[str, Any] = {
-            "thread_id": _thread_id_for_event(event) or None,
-            "reply_to_message_id": session.reply_to_message_id or None,
+            "thread_id": thread_id or None,
+            "reply_to_message_id": reply_to_message_id or None,
         }
         if session.reply_in_thread:
             send_kwargs["reply_in_thread"] = True

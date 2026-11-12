@@ -8545,7 +8545,8 @@ async def test_completion_notify_sends_plain_without_sender_when_mention_disable
     tmp_path,
 ):
     """mention=false must send the plain completion notify even without a
-    sender_open_id (system/background turns have no requester to @)."""
+    sender_open_id (system/background turns have no requester to @); the
+    plain text still lands inside the topic via the reply anchor."""
     feishu_client = FakeFeishuClient()
     app = create_app(
         feishu_client,
@@ -8563,7 +8564,7 @@ async def test_completion_notify_sends_plain_without_sender_when_mention_disable
                 0,
                 {
                     # No sender_open_id: system / background turn.
-                    "reply_to_message_id": "",
+                    "reply_to_message_id": "om_user_message",
                 },
                 thread_id="omt_thread",
             ),
@@ -8581,12 +8582,77 @@ async def test_completion_notify_sends_plain_without_sender_when_mention_disable
         assert first.status == 200
         assert replay.status == 200
         assert feishu_client.texts == [
-            ("oc_abc", "✅ 本轮回复结束", "omt_thread", None)
+            ("oc_abc", "✅ 本轮回复结束", "omt_thread", "om_user_message")
         ]
         session = app[SESSIONS_KEY]["hermes-message-1"]
         assert session.completion_notify_state == "sent"
     finally:
         await test_client.close()
+
+
+async def test_completion_notify_thread_intent_without_anchor_never_sends_top_level(
+    tmp_path,
+):
+    """An explicit thread intent (event thread_id or reply_in_thread) without a
+    reply anchor must not fall back to a top-level chat send.
+
+    A thread_id-only turn still delivers its card (the card create path
+    resolves or starts a topic), but the completion notice itself stays
+    unsent with a redacted refusal (docs/wiki/feishu-acceptance.md). A
+    reply_in_thread turn is refused earlier by the card guard, so its
+    session never reaches the notify path.
+    """
+    feishu_client = FakeFeishuClient()
+    app = create_app(
+        feishu_client,
+        card_config={"completion_notify": {"placement": "message", "enabled": True, "mention": False}},
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff-state"),
+    )
+    server = TestServer(app)
+    test_client = TestClient(server)
+    await test_client.start_server()
+    try:
+        # A whitespace thread_id is not a thread id at all (thread_id_for_event
+        # returns None without an omt_/om_ prefix), so it carries no thread
+        # intent and the plain chat send is correct; only a real thread id or
+        # an explicit reply_in_thread flag refuses the top-level fallback.
+        for label, thread_value in (("event-thread", "omt_thread"),):
+            message_key = f"hermes-anchorless-{label}"
+            started = await test_client.post(
+                "/events",
+                json=event_payload(
+                    "message.started",
+                    0,
+                    {},
+                    message_id=message_key,
+                    thread_id=thread_value,
+                ),
+            )
+            assert started.status == 200
+            completed = await test_client.post(
+                "/events",
+                json=event_payload(
+                    "message.completed",
+                    1,
+                    {},
+                    message_id=message_key,
+                    thread_id=thread_value,
+                ),
+            )
+            assert completed.status == 200
+            session = app[SESSIONS_KEY][message_key]
+            assert session.completion_notify_state == "idle", label
+        # The reply_in_thread card refusal is covered by
+        # test_message_started_does_not_fall_back_to_top_level_without_thread_anchor;
+        # its session never reaches the notify path (no card, no notify).
+        assert feishu_client.texts == []
+        assert app[sidecar_server.DIAGNOSTICS_KEY][
+            "last_route_error"
+        ] == "CompletionNotifyThreadAnchorMissing"
+    finally:
+        await test_client.close()
+
+
 
 
 async def test_completion_notify_rejects_invalid_sender_when_mention_enabled(
