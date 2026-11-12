@@ -178,7 +178,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.22
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.23
 bash install-docker.sh
 ```
 
@@ -325,7 +325,6 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.15](docs/release-notes-v5.0.15.en.md) | Live tool activity, chat-scoped controls, v0.22.7 cohort and convergent managed upgrades |
 | [v5.0.14](docs/release-notes-v5.0.14.en.md) | Per-turn rate correlation and verified Hermes compatibility |
 | [v5.0.13](docs/release-notes-v5.0.13.en.md) | Native completion isolation and model-picker repair |
-| [v5.0.12](docs/release-notes-v5.0.12.en.md) | Feishu-only source anchor and bounded completion source matching |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 

@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.22` (#520 exact v0.23.1 compatibility, config53 and slash-confirm anchor; #516/#517 maintenance). Independent wheel/install/restore, full PR/main/tag CI, official images and public install/assets are recorded individually before publication. Actual Gateway/model and Feishu-client acceptance remain separate. See the [release notes](release-notes-v5.0.22.en.md).
+This branch targets `5.0.23` (#502 completion-notify minimum duration, #508 identity routing and anchor guards, #513 segmented delivery). Independent wheel/install/restore, full PR/main/tag CI, official images and public install/assets are recorded individually before publication. Actual Gateway/model and Feishu-client acceptance remain separate. See the [release notes](release-notes-v5.0.23.en.md).
 
 ## v5.0.16 historical record
 

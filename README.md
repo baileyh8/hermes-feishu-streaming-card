@@ -172,7 +172,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.22
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.23
 bash install-docker.sh
 ```
 
@@ -319,7 +319,6 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.15](docs/release-notes-v5.0.15.md) | 进行中工具信息、按会话控制、v0.22.7 兼容与受管升级收敛 |
 | [v5.0.14](docs/release-notes-v5.0.14.md) | 逐轮速率关联与已核验 Hermes 兼容 |
 | [v5.0.13](docs/release-notes-v5.0.13.md) | 非飞书终局隔离与模型选择卡修复 |
-| [v5.0.12](docs/release-notes-v5.0.12.md) | Feishu 专用锚点与受限完成来源比较 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
