@@ -2,6 +2,7 @@
   "schema_version": 1,
   "groups": {
     "runtime": [
+      "tests/unit/test_approval_rule_producer.py",
       "tests/unit/test_hook_runtime.py",
       "tests/unit/test_issue_478_model_picker.py",
       "tests/integration/test_server.py",
@@ -20,6 +21,8 @@
       "tests/integration/test_server_segmented.py"
     ],
     "render": [
+      "tests/unit/test_approval_rule_hints.py",
+      "tests/unit/test_approval_rule_producer.py",
       "tests/unit/test_render.py",
       "tests/unit/test_session.py",
       "tests/unit/test_native_tables.py",
@@ -304,6 +307,9 @@
     "hermes_feishu_card/approval_receipts.py": [
       "storage",
       "appearance"
+    ],
+    "hermes_feishu_card/approval_rule_hints.py": [
+      "render"
     ],
     "hermes_feishu_card/bots.py": [
       "routing"
