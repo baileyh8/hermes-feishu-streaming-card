@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-This branch targets `5.0.24` (#524 explicit-HOME recovery checks and PM recovery order, #525 opt-in native approval-rule hints). The #526 environment has not been independently reproduced and is not claimed resolved. Independent wheel/install/restore, full PR/main/tag CI, official images and public install/assets are recorded before publication. Gateway/model and Feishu-client evidence remain separate. See the [release notes](release-notes-v5.0.24.en.md).
+This branch targets `5.0.24` (#524 explicit-HOME recovery checks and PM recovery order, #525 opt-in native approval-rule hints). The #526 environment has not been independently reproduced and is not claimed resolved. Acceptance scope and evidence entry points live in the [release notes](release-notes-v5.0.24.en.md) and on the [v5.0.24 GitHub release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24); the release does not publish before the pending gates pass. Gateway/model and Feishu-client evidence remain separate.
 
 ## v5.0.16 historical record
 

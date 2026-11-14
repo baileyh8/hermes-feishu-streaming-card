@@ -9,9 +9,14 @@
 
 报告为 Windows 上 HFC v5.0.22 / Hermes v0.23.1 的真实 Gateway 私聊无卡。目前正文缺少所引错误的完整日志与实际安装策略。精确 v0.23.1 源码/拓扑通过只能证明能力检测，不能证明真实首卡已投递。原环境故障尚未独立复现，不能把本候选写成已解决该报告。
 
-## 验收状态
+## 验收范围与证据
 
-这是候选源码说明，尚未公开发布。精确冻结提交的完整 CI、普通 wheel 与真实子进程、PM 安装恢复、真实 Feishu API、桌面及移动客户端验收在完成后分别记录；未完成项保留为未验证。源码测试、平台 API、客户端显示与实际 Gateway/model 执行是不同证据，不能互相替代。
+- 普通 wheel 的 165 个内容文件与已审 Git 版本一致；非 editable 子进程正确加载 5.0.24。
+- 真实 Feishu API 投递 8 张合成审批卡，macOS 飞书桌面检查默认关闭、已知规则、未知 key 不回显、完整长命令与 SmartDENY 两选项。测试未执行命令或提交授权；8 张消息最终均核对归属后撤回，正式配置保持原样。
+- [候选完整 CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/43556419366) 与 [CodeQL](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/43556419380) 已通过。实际测试的 PR 合并快照与已审候选 tree 一致；PM v0.22.4/v0.22.5 的 repair→rebind→reinstall→restore 用例在普通上游与 uv 0.13.5 两路均实际通过，无跳过。
+- Bailey 明确限定本轮发布范围：Android/iOS 视觉与展开、真实授权点击、实际 Gateway/model 审批回合记为**未验证**。#526 原环境尚未独立复现，不宣称修复。
+
+最终 main/tag 完整 CI、公开普通安装及发行资产均通过后发布，证据汇总见 [v5.0.24 GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24)。源码测试、平台 API、客户端显示与 Gateway/model 执行分别记录。
 
 ## 贡献记录
 
