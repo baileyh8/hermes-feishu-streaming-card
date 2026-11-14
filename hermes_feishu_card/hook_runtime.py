@@ -3360,6 +3360,16 @@ def build_interaction_event(
     payload = build_event("interaction.requested", event_locals)
     if payload is not None and kind == "approval" and local_vars.get("_hfc_pause_approval") is True:
         payload["data"]["pause_on_timeout"] = True
+    if payload is not None and kind == "approval":
+        # Display metadata must never interfere with the original approval.
+        try:
+            from .approval_rule_hints import bounded_native_rule_keys
+
+            keys = bounded_native_rule_keys(local_vars.get("_hfc_approval_rule_keys"))
+            if keys:
+                payload["data"]["approval_rule_keys"] = keys
+        except Exception:
+            pass
     return payload
 
 
@@ -9019,6 +9029,16 @@ def request_approval_choice_from_hermes_locals(
         context = local_vars.get("_hfc_turn_ctx") or local_vars.get("ctx")
         current = getattr(context, "_run_still_current", None)
     approval_locals = dict(local_vars)
+    approval_locals.pop("_hfc_approval_rule_keys", None)
+    try:
+        from .approval_rule_hints import bounded_native_rule_keys
+
+        native_keys = approval_data.get("pattern_keys", [approval_data.get("pattern_key")])
+        keys = bounded_native_rule_keys(native_keys)
+        if keys:
+            approval_locals["_hfc_approval_rule_keys"] = keys
+    except Exception:
+        pass
     if callable(current):
         request_id = approval_data.get("request_id")
         pending_probe = None

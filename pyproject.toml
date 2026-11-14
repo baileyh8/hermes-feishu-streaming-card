@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-feishu-streaming-card"
-version = "5.0.23"
+version = "5.0.24"
 description = "Hermes Gateway Feishu streaming card sidecar plugin"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -68,6 +68,7 @@ target-version = "py39"
 include = [
   "hermes_feishu_card/cli_reports.py",
   "hermes_feishu_card/card_view.py",
+  "hermes_feishu_card/approval_rule_hints.py",
   "hermes_feishu_card/card_segmentation.py",
   "hermes_feishu_card/display_redaction.py",
   "hermes_feishu_card/event_rules.py",
@@ -141,6 +142,7 @@ python_version = "3.12"
 files = [
   "hermes_feishu_card/cli_reports.py",
   "hermes_feishu_card/card_view.py",
+  "hermes_feishu_card/approval_rule_hints.py",
   "hermes_feishu_card/card_segmentation.py",
   "hermes_feishu_card/display_redaction.py",
   "hermes_feishu_card/event_rules.py",

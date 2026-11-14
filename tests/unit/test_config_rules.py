@@ -124,3 +124,21 @@ def test_rules_import_only_the_standard_library():
 def test_native_chat_validation_rejects_non_list_sequence():
     with pytest.raises(ValueError, match='must be an array of exact chat ids'):
         rules.normalize_native_chats(('oc_synthetic',))
+
+def test_approval_rule_hints_default_false_and_boolean_normalized():
+    assert rules.DEFAULT_CONFIG['card']['approval_rule_hints'] is False
+    card = {'approval_rule_hints': True}
+    rules.normalize_card_config(card, path='card')
+    assert card['approval_rule_hints'] is True
+    card = {'approval_rule_hints': 'off'}
+    rules.normalize_card_config(card, path='card')
+    assert card['approval_rule_hints'] is False
+    with pytest.raises(ValueError):
+        rules.normalize_card_config({'approval_rule_hints': 'maybe'}, path='card')
+
+
+def test_render_options_expose_approval_rule_hints_default_false():
+    from hermes_feishu_card.render_options import card_render_options
+    assert card_render_options({})['approval_rule_hints'] is False
+    assert card_render_options({'approval_rule_hints': True})['approval_rule_hints'] is True
+    assert card_render_options({'approval_rule_hints': 0})['approval_rule_hints'] is False

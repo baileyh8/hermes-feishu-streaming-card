@@ -15,9 +15,9 @@
 
 [V5 新变化](#v5-新变化) · [从 V4x 升级](#从-v4x-升级到-v5) · [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.23；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.23.md)。
+**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.24；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.24.md)。
 
-v5.0.23 正式发布后，安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.23) 为准。
+v5.0.24 正式发布后，安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24) 为准。
 
 ## V5 新变化
 
@@ -172,7 +172,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.23
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.24
 bash install-docker.sh
 ```
 
@@ -309,6 +309,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.24](docs/release-notes-v5.0.24.md) | PM 恢复 HOME 校验、恢复顺序与默认关闭的原生审批规则提示 |
 | [v5.0.23](docs/release-notes-v5.0.23.md) | 完成通知最短时长、sender 身份路由与有界分段 |
 | [v5.0.22](docs/release-notes-v5.0.22.md) | Hermes v0.23.1 精确兼容、安装与 CI 诊断 |
 | [v5.0.21](docs/release-notes-v5.0.21.md) | Codex 完成事件归属与 Windows 子进程编码 |
@@ -318,11 +319,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.16](docs/release-notes-v5.0.16.md) | 安装诊断与 #462 可定位失败 |
 | [v5.0.15](docs/release-notes-v5.0.15.md) | 进行中工具信息、按会话控制、v0.22.7 兼容与受管升级收敛 |
 | [v5.0.14](docs/release-notes-v5.0.14.md) | 逐轮速率关联与已核验 Hermes 兼容 |
-| [v5.0.13](docs/release-notes-v5.0.13.md) | 非飞书终局隔离与模型选择卡修复 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
+
+- V5.0.24：感谢 [lvanwei180-lvan](https://github.com/lvanwei180-lvan) 提供 [#524](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/524) 的 PM 重建现场，[jackwude](https://github.com/jackwude) 提出 [#525](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/525) 审批提示建议，[nmtlcxb](https://github.com/nmtlcxb) 提供 [#526](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/526) 的 Windows 回合反馈。问题证据、建议与代码作者分开记录，历史署名保留。
 
 - V5.0.23：[tidytorch](https://github.com/tidytorch) 提交 [#513](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/513) 的有界分段投递（4 个原提交），[Cassius0924](https://github.com/Cassius0924) 提交 [#508](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/508) 的 mention fallback 身份路由（4 个原提交），[jackwude](https://github.com/jackwude) 提交 [#502](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/502) 的通知最短时长门槛。原提交作者身份保留，历史贡献记录完整。
 

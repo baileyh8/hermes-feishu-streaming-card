@@ -7,6 +7,7 @@ remain real. No Gateway, platform API or production HOME participates.
 import json
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -147,6 +148,42 @@ for action in (lambda:legacy_observer.prepare(binding),lambda:legacy_observer.re
 ''', stage="strict-default-refusal")
     assert marker.read_bytes() == marker_a
     assert (home / "config.yaml").read_bytes() == config_a
+    # #524 combines a replaced PM generation with hooks reset by an updater.
+    # The retired generation belongs to this completed private test process;
+    # never remove a PM path outside the test's isolated HOME/checkout tree.
+    assert first.resolve().is_relative_to(tmp_path.resolve())
+    assert second.resolve().is_relative_to(tmp_path.resolve())
+    assert first != second
+    try:
+        retired_metadata = first.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        assert stat.S_ISDIR(retired_metadata.st_mode)
+        assert retired_metadata.st_uid == os.getuid()
+        shutil.rmtree(first)
+    target = "gateway/run_turn_runner.py"
+    upgraded = before[target] + b"\n# simulated upstream source replacement (#524)\n"
+    (root / target).write_bytes(upgraded)
+    before[target] = upgraded
+    _run(python_b, root, home, r'''
+import sys
+from pathlib import Path
+from hermes_feishu_card import cli
+from hermes_feishu_card.install import decomposed_ownership,legacy_observer
+root=Path(sys.argv[1]);home=Path.home()
+assert decomposed_ownership._inspect(root)[3]=='stale_unpatched'
+marker=root/legacy_observer.MARKER
+original_marker=marker.read_bytes();config=(home/'config.yaml').read_bytes()
+assert cli.main(['integrity','rebind-legacy','--hermes-dir',str(root),'--hermes-home',str(home)])==1
+assert marker.read_bytes()==original_marker and (home/'config.yaml').read_bytes()==config
+target=root/'gateway/run_turn_runner.py';reset_source=target.read_bytes()
+assert cli.main(['repair','--hermes-dir',str(root),'--hermes-home',str(home/'wrong-home'),'--accept-hermes-upgrade','--yes'])==1
+assert target.read_bytes()==reset_source and marker.read_bytes()==original_marker
+assert cli.main(['repair','--hermes-dir',str(root),'--hermes-home',str(home),'--accept-hermes-upgrade','--yes'])==0
+assert decomposed_ownership._inspect(root)[3]=='installed'
+assert marker.read_bytes()==original_marker and (home/'config.yaml').read_bytes()==config
+''', stage="source-repair-before-rebind")
     rebind = r'''
 import sys
 from pathlib import Path

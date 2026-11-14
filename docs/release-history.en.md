@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v5.0.13](release-notes-v5.0.13.en.md) | Native completion isolation and model-picker repair |
 | [v5.0.10](release-notes-v5.0.10.en.md) | Verified asynchronous completion, single-use terminal acknowledgement and owned-config recovery |
 | [v5.0.11](release-notes-v5.0.11.en.md) | Pinned Hermes main admission and first display-policy ownership checks |
 | [v5.0.12](release-notes-v5.0.12.en.md) | Feishu-only source anchor and bounded completion source matching |

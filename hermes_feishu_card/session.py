@@ -4,6 +4,8 @@ from .observations import TurnObservation
 from .turn_metrics import RATE_MIN_OUTPUT_TOKENS, completion_output_rate, metric_count
 
 from dataclasses import dataclass, field, replace
+
+from .approval_rule_hints import bounded_native_rule_keys
 from copy import deepcopy
 import json
 import math
@@ -126,6 +128,10 @@ class InteractionState:
     feishu_message_id: str = ""
     # Set only after an explicit successful PATCH of the complete standalone receipt.
     receipt_fingerprint: str = ""
+    # Bounded native approval rule keys supplied by the producer event
+    # (display-only). Excluded from checkpoints; old checkpoints simply lack
+    # the hint and restore unchanged behavior.
+    approval_rule_keys: list[str] = field(default_factory=list)
 
     def __deepcopy__(self, memo: dict[int, object]) -> "InteractionState":
         admission = self.runtime_admission
@@ -781,6 +787,7 @@ def _interaction_from_event_data(
         if type(runtime_admission) is dict
         else None
     )
+    raw_rule_keys = data.get("approval_rule_keys")
     return InteractionState(
         interaction_id=interaction_id,
         kind=kind,
@@ -788,6 +795,7 @@ def _interaction_from_event_data(
         description=str(data.get("description") or "").strip(),
         options=_interaction_options(data.get("options")),
         callback_token=str(data.get("callback_token") or secrets.token_urlsafe(16)),
+        approval_rule_keys=bounded_native_rule_keys(raw_rule_keys),
         multi_select=bool(data.get("multi_select", False)),
         allow_custom_input=allow_custom_input,
         timeout_seconds=_safe_timeout_seconds(data.get("timeout_seconds")),

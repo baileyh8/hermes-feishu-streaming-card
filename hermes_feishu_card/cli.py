@@ -4066,6 +4066,24 @@ def _run_install_core(args: argparse.Namespace, registrations, observer_state=No
             observer_state["observer_precondition"] = observer_precondition
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if (isinstance(exc, legacy_handoff.HandoffRefused)
+                and str(exc) == "legacy_observer_runtime_binding_changed"):
+            command = ["hermes-feishu-card", "repair", "--hermes-dir", str(detection.root)]
+            if getattr(args, "hermes_home", None) is not None:
+                command.extend(["--hermes-home", str(args.hermes_home)])
+            command.extend(["--accept-hermes-upgrade", "--yes"])
+            print("Observer ownership is preserved. Stop the verified Gateway/sidecar "
+                  "and config writers before recovery; do not delete protection records.",
+                  file=sys.stderr)
+            print("Source-only recovery (still verifies owned source/config evidence): "
+                  + shlex.join(command), file=sys.stderr)
+            print("Then preview integrity rebind-legacy against the current owned PM runtime. "
+                  "Missing/unverified runtime still refuses. Follow docs/wiki/pm-recovery.md "
+                  "before committing a rebind or acknowledging a review fence.", file=sys.stderr)
+        elif isinstance(exc, RuntimeBindingRefused):
+            print("The selected runtime could not be verified; preserve observer/protection "
+                  "records. Review docs/wiki/pm-recovery.md before recovering the PM runtime "
+                  "or rebinding ownership.", file=sys.stderr)
         return 1
 
     try:
@@ -4532,6 +4550,8 @@ def _run_repair(args: argparse.Namespace) -> int:
         _read_manifest(_manifest_path(detection.root))
         actions = _repair_install_state(
             detection,
+            hermes_home=(Path(args.hermes_home).expanduser()
+                         if getattr(args, "hermes_home", None) is not None else None),
             accept_hermes_upgrade=bool(
                 getattr(args, "accept_hermes_upgrade", False)
             ),
@@ -4708,11 +4728,15 @@ def _automatic_repair_available(detection: HermesDetection) -> bool:
 def _repair_install_state(
     detection: HermesDetection,
     *,
+    hermes_home: Path | None = None,
     dry_run: bool = False,
     accept_hermes_upgrade: bool = False,
 ) -> list[str]:
     from .install import legacy_observer
-    legacy_observer.inspect(detection.root)
+    if hermes_home is None:
+        legacy_observer.inspect(detection.root)
+    else:
+        legacy_observer.inspect(detection.root, home=hermes_home)
     plan = plan_recovery(
         detection,
         accept_hermes_upgrade=accept_hermes_upgrade,

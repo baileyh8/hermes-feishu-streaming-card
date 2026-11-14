@@ -27,6 +27,7 @@ from .session import (
 from .status import StatusConfig, resolve_display_status
 from .subscription_usage import uses_codex_subscription
 from .turn_metrics import retained_output_rate
+from .approval_rule_hints import approval_rule_hint_line
 from .card_view import TASK_TEXT_SIZE_DEFAULTS, task_presentation
 from .presentation import (
     apply_task_presentation, task_interaction_prompt,
@@ -117,6 +118,7 @@ def render_card(
     presentation: str = "classic",
     native_tables: bool = False,
     over_limit: str = "native",
+    approval_rule_hints: bool = False,
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -146,6 +148,7 @@ def render_card(
         presentation=presentation,
         native_tables=native_tables,
         over_limit=over_limit,
+        approval_rule_hints=approval_rule_hints,
     ).card
 
 
@@ -177,6 +180,7 @@ def render_card_result(
     presentation: str = "classic",
     native_tables: bool = False,
     over_limit: str = "native",
+    approval_rule_hints: bool = False,
 ) -> CardRenderResult:
     if presentation == "task" and session.status == "failed" and session.terminal_reasoning_notice:
         # This source marker comes from the terminal event, never a text match.
@@ -223,9 +227,17 @@ def render_card_result(
         width_mode=width_mode,
         presentation=presentation,
         native_tables=native_tables,
+        approval_rule_hints=approval_rule_hints,
     )
     card = _render_card_unchecked(session, **render_options)
     inspection = inspect_card_limits(card)
+    if approval_rule_hints and not inspection.safe:
+        # Optional labels must never displace the original authorization scope
+        # or turn an otherwise deliverable approval into a native handoff.
+        # Keep hints disabled in every subsequent budget/degradation probe.
+        render_options["approval_rule_hints"] = False
+        card = _render_card_unchecked(session, **render_options)
+        inspection = inspect_card_limits(card)
     # Only opt-in live reasoning is expendable. Never shrink answers or the
     # auxiliary timeline, and always inspect the complete serialized card.
     if (not inspection.safe and type(thinking_body_tail_chars) is int
@@ -329,6 +341,7 @@ def _render_card_unchecked(
     width_mode: str = "default",
     presentation: str = "classic",
     native_tables: bool = False,
+    approval_rule_hints: bool = False,
 ) -> Dict[str, Any]:
     if presentation == "task":
         text_sizes = {**TASK_TEXT_SIZE_DEFAULTS, **dict(text_sizes or {})}
@@ -474,6 +487,7 @@ def _render_card_unchecked(
             interaction_mode=interaction_mode,
             mentions_enabled=mentions_enabled,
             presentation=presentation,
+            approval_rule_hints=approval_rule_hints,
         )
     )
     if attachment_summary and not pending_approval:
@@ -579,6 +593,7 @@ def _render_card_unchecked(
                 session, header=header,
                 profile_id=_normalize_interaction_profile_id(interaction_profile_id),
                 mentions_enabled=mentions_enabled,
+                approval_rule_hints=approval_rule_hints,
             )
         card = _render_legacy_callback_card(
             session,
@@ -586,6 +601,7 @@ def _render_card_unchecked(
             profile_id=_normalize_interaction_profile_id(interaction_profile_id),
             mentions_enabled=mentions_enabled,
             presentation=presentation,
+            approval_rule_hints=approval_rule_hints,
         )
     if presentation == "task":
         card = apply_task_presentation(
@@ -681,6 +697,7 @@ def _render_legacy_callback_card(
     profile_id: str,
     mentions_enabled: bool = True,
     presentation: str = "classic",
+    approval_rule_hints: bool = False,
 ) -> Dict[str, Any]:
     """Render an interaction on Feishu's server-callback card rail.
 
@@ -695,7 +712,7 @@ def _render_legacy_callback_card(
 
     elements: list[Dict[str, Any]] = []
     if interaction.status == "completed":
-        elements.extend(_interaction_review_elements(interaction, presentation=presentation))
+        elements.extend(_interaction_review_elements(interaction, presentation=presentation, approval_rule_hints=approval_rule_hints))
         choice = interaction.choice_label or interaction.choice or "已完成"
         user = f" by {interaction.user_name}" if interaction.user_name else ""
         elements.append(
@@ -707,7 +724,7 @@ def _render_legacy_callback_card(
             "elements": elements,
         }
     if interaction.status == "paused":
-        elements.extend(_interaction_review_elements(interaction, presentation=presentation))
+        elements.extend(_interaction_review_elements(interaction, presentation=presentation, approval_rule_hints=approval_rule_hints))
         elements.append({"tag": "markdown", "content": interaction.error})
         elements.append({"tag": "action", "actions": [{
             "tag": "button", "type": "primary",
@@ -720,7 +737,7 @@ def _render_legacy_callback_card(
                 "header": {"template": "orange", "title": {"tag": "plain_text", "content": "任务已暂停，等待审批"}},
                 "elements": elements}
     if interaction.status != "pending":
-        elements.extend(_interaction_review_elements(interaction, presentation=presentation))
+        elements.extend(_interaction_review_elements(interaction, presentation=presentation, approval_rule_hints=approval_rule_hints))
         elements.append(
             {
                 "tag": "markdown",
@@ -745,6 +762,13 @@ def _render_legacy_callback_card(
     description = mask_approval_scope(normalize_stream_text(interaction.description).strip())
     if description:
         elements.append({"tag": "markdown", "content": description})
+    if (interaction.status == "pending" and interaction.kind == "approval"
+            and approval_rule_hints):
+        hint = approval_rule_hint_line(interaction.approval_rule_keys)
+        if hint:
+            # Legacy schema-1 rail: existing markdown rows carry no element_id;
+            # do not introduce unverified attributes there.
+            elements.append({"tag": "markdown", "content": hint})
 
     # These task buttons use the same complete-label predicate as presentation.
     # Omit only our generated list, never matching prompt/description content.
@@ -1406,6 +1430,7 @@ def _render_interaction_elements(
     interaction_mode: str = "callback",
     mentions_enabled: bool = True,
     presentation: str = "classic",
+    approval_rule_hints: bool = False,
 ) -> list[Dict[str, Any]]:
     interaction = session.active_interaction
     if interaction is None:
@@ -1454,6 +1479,17 @@ def _render_interaction_elements(
                 "content": mask_approval_scope(interaction.description),
             }
         )
+    if (interaction.status == "pending" and interaction.kind == "approval"
+            and approval_rule_hints):
+        hint = approval_rule_hint_line(interaction.approval_rule_keys)
+        if hint:
+            elements.append(
+                {
+                    "tag": "markdown",
+                    "element_id": "approval_rule_hint",
+                    "content": hint,
+                }
+            )
     if interaction.status == "pending" and _normalize_interaction_mode(interaction_mode) == "text":
         choice_lines = [
             f"{index}. {option.label}"
@@ -1542,7 +1578,7 @@ def _render_interaction_elements(
         choice = interaction.choice_label or interaction.choice or "已完成"
         user = f" by {interaction.user_name}" if interaction.user_name else ""
         content = f"已选择：{choice}{user}"
-        for index, element in enumerate(_interaction_review_elements(interaction, presentation=presentation)):
+        for index, element in enumerate(_interaction_review_elements(interaction, presentation=presentation, approval_rule_hints=approval_rule_hints)):
             elements.append(dict(element, element_id=f"interaction_review_{index}"))
         elements.append({
             "tag": "markdown", "element_id": "interaction_result",
@@ -1551,7 +1587,7 @@ def _render_interaction_elements(
         return elements
 
     content = interaction.error or "交互请求失败"
-    elements.extend(_interaction_review_elements(interaction, presentation=presentation))
+    elements.extend(_interaction_review_elements(interaction, presentation=presentation, approval_rule_hints=approval_rule_hints))
     elements.append(
         {
             "tag": "markdown",
@@ -1619,7 +1655,10 @@ def mask_approval_scope(text: str) -> str:
     return KEY_VALUE_SECRET_RE.sub(rf"\1{_APPROVAL_SCOPE_REDACTED}", masked)
 
 
-def _interaction_review_elements(interaction: Any, *, presentation: str = "classic") -> list[Dict[str, Any]]:
+def _interaction_review_elements(
+    interaction: Any, *, presentation: str = "classic",
+    approval_rule_hints: bool = False,
+) -> list[Dict[str, Any]]:
     # Mobile has no hover: keep the original question, the full operation scope and the options in
     # the card body after submission/expiry, without retaining callback credentials. An approval
     # must stay auditable afterwards — what was asked, what was chosen, and what would run — so the
@@ -1639,6 +1678,10 @@ def _interaction_review_elements(interaction: Any, *, presentation: str = "class
             }
         )
     elements.extend(_interaction_option_descriptions(interaction))
+    if approval_rule_hints and interaction.kind == "approval":
+        hint = approval_rule_hint_line(getattr(interaction, "approval_rule_keys", None))
+        if hint:
+            elements.append({"tag": "markdown", "content": hint})
     return elements
 
 

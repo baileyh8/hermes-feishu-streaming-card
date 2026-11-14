@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.13](release-notes-v5.0.13.md) | 非飞书终局隔离与模型选择卡修复 |
 | [v5.0.10](release-notes-v5.0.10.md) | 异步完成交接、终局单次确认与配置归属恢复 |
 | [v5.0.11](release-notes-v5.0.11.md) | 固定 Hermes main admission 与首个展示策略的归属核验 |
 | [v5.0.12](release-notes-v5.0.12.md) | Feishu 专用锚点与受限完成来源比较 |
