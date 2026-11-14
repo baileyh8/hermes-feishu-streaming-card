@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.24 — 2026-11-14
+
+- Enforce the explicit Hermes HOME binding before repairing legacy observer source (#524). Document source repair before observer rebinding for a PM rebuild combined with reset hooks; preserve marker, config, member/wheel and review-fence ownership checks. Runtime-binding refusals now point to that reviewed recovery order instead of encouraging repeated install attempts.
+- Add opt-in `card.approval_rule_hints` (default `false`, #525). Display bounded Chinese labels for native Hermes pattern keys inline below the complete command and before the original controls. Unknown keys are never echoed. HFC does not parse commands, predict complete effects or recommend an approval choice; optional hints are removed first under the final card budget.
+- #526 remains under investigation: the reported Windows Gateway failure has not yet been independently reproduced. Existing source/topology checks do not establish successful first-card delivery.
+
 ## v5.0.23 — 2026-11-12
 
 - Add `completion_notify.min_duration_seconds` (#502, jackwude): when a standalone completion notification is enabled, turns shorter than the threshold stay quiet and a replayed `message.completed` cannot re-notify later. The turn duration prefers the value Hermes reports and falls back to the session record's actual age when the report is missing. `completion_notify.enabled` still defaults to `false`; `min_duration_seconds: 0` (default) means no duration filtering, not a default push on every turn.

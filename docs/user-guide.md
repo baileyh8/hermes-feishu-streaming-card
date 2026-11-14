@@ -35,7 +35,7 @@ V3.8.2 起，最终答案保留在主内容区，pre-tool answer 会按“正文
 | 正文工具行 | `hide_completed_tool_activity` | 隐藏结束轮次的正文工具行，不删除时间线或次数；task 另保留失败/中断说明 |
 | 思考与工具面板 | `show_reasoning`、`reasoning_format`、`timeline_expanded`、`timeline_order` | 关闭 show_reasoning 会隐藏整个思考/工具区域；面板标题不能自定义 |
 | 过程信息密度 | `max_reasoning_chars`、`max_timeline_items`、`timeline_tools_per_reasoning` | 受整卡容量约束，不是无限历史；不裁剪最终答案 |
-| 审批与澄清 | `interaction_mode`、`mentions_in_cards`、`interaction_mentions` | 问题和权限由 Hermes 决定；显示设置不会恢复过期授权 |
+| 审批与澄清 | `interaction_mode`、`mentions_in_cards`、`interaction_mentions`、`approval_rule_hints` | 问题和权限由 Hermes 决定；显示设置不会恢复过期授权 |
 | 页脚统计 | `footer_fields` 决定字段和顺序；`text_sizes.footer` | 数据必须有真实来源；订阅额度只在可归属的 GPT / openai-codex 轮次显示 |
 | 宽度与字号 | `width_mode`、`text_sizes`（支持 pc / mobile） | 不设置像素高度，实际折行由客户端决定 |
 | 超长表格 | `table_overflow_mode` | `compact` 保留为字段列表；`truncate` 沿用表格截断策略 |
@@ -136,6 +136,21 @@ card:
 ```
 
 `mentions_in_cards: false` 是总关闭开关；它会覆盖所有 per-kind 与 completion mention 设置。关闭 completion mention 后，无 sender 的系统/后台任务仍可发送普通完成通知。
+
+### 审批卡原生规则提示（默认关闭）
+
+`card.approval_rule_hints` 默认 `false`。开启后，审批卡在完整命令下方、按钮上方追加一行「Hermes 原生审批规则提示」，只翻译 Hermes 自己已命中的审批规则类别（如「递归删除文件」），标题即注明这不是完整影响判断。
+
+- 数据只来自 Hermes 审批事件里的原生规则键（`pattern_keys`，缺省时单个 `pattern_key`），HFC 不解析命令、不推断路径或全部副作用、不推荐任何按钮。
+- 命中键超出已知清单或来自插件/代码执行等动态规则时，统一显示「原生规则名未知」，绝不回显原始键值，也不会把命令说成只读或无害。
+- 该行是可牺牲的展示增强：与其他内容组合超出整卡预算时优先丢弃，完整命令、按钮与原授权流程不变；渲染异常同样静默省略，原卡照常显示。
+
+```yaml
+card:
+  approval_rule_hints: true
+```
+
+修改后用 `card-config` 检查并重启 sidecar；该开关只影响新发出的审批卡，历史卡不重画。
 
 启用后的完成通知默认每条 chat 轮次都会推送。只想在长任务结束时被打断时，设置 `completion_notify.min_duration_seconds`：低于该时长（秒）的轮次不发通知，也不会在 `message.completed` 重放时补发；`0`（默认）保持原来的每条都推送。时长优先取 Hermes 上报的本轮耗时，缺失时用会话记录的实际存活时间，避免续接或中断收尾的轮次被误判为短轮。
 
@@ -618,7 +633,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下示例固定 `v5.0.23`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.23.md)。
+以下示例固定 `v5.0.24`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.24.md)。
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 
@@ -627,7 +642,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v5.0.23`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v5.0.24`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -635,7 +650,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.23
+export HFC_VERSION=v5.0.24
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

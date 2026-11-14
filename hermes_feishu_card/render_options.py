@@ -41,6 +41,7 @@ def card_render_options(config: Mapping[str, Any]) -> dict[str, Any]:
         for key, default in (
             ("show_reasoning", True), ("stream_thinking_to_body", True),
             ("hide_completed_tool_activity", False), ("timeline_expanded", False),
+            ("approval_rule_hints", False),
         )
     }
     result.update({

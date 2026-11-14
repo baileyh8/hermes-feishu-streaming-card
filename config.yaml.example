@@ -1,4 +1,4 @@
-# Hermes Feishu Streaming Card V5.0.23 sidecar configuration
+# Hermes Feishu Streaming Card V5.0.24 sidecar configuration
 # Copy to a local path and fill credentials from your environment or secret store.
 # Default config path: ~/.hermes_feishu_card/config.yaml
 
@@ -142,6 +142,9 @@ card:
   # interaction_mentions:
   #   clarify: true
   #   approval: true
+  # Optional native approval-rule category hints below the complete command.
+  # Does not interpret command effects or recommend an approval choice.
+  approval_rule_hints: false
   # Optional role-based CardKit text sizes. Roles: body, reasoning, tool,
   # notice, footer. Values may be scalar or default/pc/mobile mappings.
   # Width mode is configured above; final layout is controlled by Feishu/Lark.

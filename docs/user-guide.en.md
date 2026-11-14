@@ -35,7 +35,7 @@ Edit `card:` in the actual file selected with `--config` during installation. St
 | Body tool activity | `hide_completed_tool_activity` | Hides terminal body tool rows, not timeline or counts; task retains failure/interruption explanations |
 | Reasoning / tool panel | `show_reasoning`, `reasoning_format`, `timeline_expanded`, `timeline_order` | Disabling show_reasoning hides the whole reasoning/tool area; panel title is fixed |
 | Process density | `max_reasoning_chars`, `max_timeline_items`, `timeline_tools_per_reasoning` | Whole-card budgets still apply; final answers are not clipped by these controls |
-| Approval / clarification | `interaction_mode`, `mentions_in_cards`, `interaction_mentions` | Hermes owns questions and permissions; expired authorization stays expired |
+| Approval / clarification | `interaction_mode`, `mentions_in_cards`, `interaction_mentions`, `approval_rule_hints` | Hermes owns questions and permissions; expired authorization stays expired |
 | Footer | `footer_fields`, `text_sizes.footer` | Only available measurements; subscription quota requires an attributed GPT / openai-codex turn |
 | Width and type sizes | `width_mode`, `text_sizes` including pc / mobile | No pixel-height control; wrapping is client-controlled |
 | Long tables | `table_overflow_mode` | compact preserves later tables as field lists; truncate retains table truncation |
@@ -136,6 +136,21 @@ card:
 ```
 
 `mentions_in_cards: false` is the master off switch and overrides every per-kind and completion mention setting. With completion mentions disabled, sender-less system/background work can still send a plain completion notification.
+
+### Native approval rule hints (off by default)
+
+`card.approval_rule_hints` defaults to `false`. When enabled, the approval card adds one line below the full command and above the buttons: "Hermes native approval rule hints", translating only the rule categories Hermes itself already matched (for example "recursive delete"). The label states that this is not a full impact assessment.
+
+- The data comes only from the native rule keys in the Hermes approval event (`pattern_keys`, falling back to a single `pattern_key`). HFC never parses the command, infers paths or the full effect, or recommends any button.
+- Keys outside the known table, including plugin or code-execution dynamic rules, render as one shared "rule name unknown" phrase. Raw keys are never echoed, and the command is never described as read-only or harmless.
+- The line is an expendable display enhancement: when combined with other content it would exceed the card budget, it is dropped first. The full command, buttons and the original approval flow stay unchanged; rendering errors omit the line silently.
+
+```yaml
+card:
+  approval_rule_hints: true
+```
+
+Validate with `card-config` and restart the sidecar; the switch affects only newly delivered approval cards. Historical cards are not redrawn.
 
 Once enabled, the completion notification fires for every chat turn. Set `completion_notify.min_duration_seconds` to be interrupted only when a long task finishes: turns shorter than that many seconds send nothing, including when a `message.completed` event is replayed. `0` (the default) keeps notifying on every turn. The gate prefers the turn duration Hermes reports and falls back to the session record's actual age, so resumed or interrupted terminal paths are not mistaken for short turns and silently skipped.
 
@@ -588,21 +603,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v5.0.23`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.23.en.md) for validation boundaries.
+Examples pin `v5.0.24`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.24.en.md) for validation boundaries.
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v5.0.23`.
+The Compose example defaults `HFC_VERSION` to `v5.0.24`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.23
+export HFC_VERSION=v5.0.24
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 

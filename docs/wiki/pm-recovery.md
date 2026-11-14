@@ -1,6 +1,25 @@
 # PM 运行环境迁移与 wheel 来源恢复
 
-本页描述当前 509 候选的 PM 恢复行为（#458/#459/#462）。`integrity rebind-legacy` 与受控 restore 的命令基线来自 v5.0.8；schema 1 flat wheel 接纳、精确旧声明校验和 ack 固定类别是当前 509 候选新增行为。v5.0.8 只支持其已发布布局，不包含这些新增项；v5.0.7 不包含 `integrity rebind-legacy`。
+## PM 重建与源码重置同时发生（#524）
+
+旧 PM generation 消失时，observer 记录仍可能绑定旧 Python；Hermes 更新又可能把受管 hook 重置。普通 `install/setup` 会先拒绝 observer runtime identity 变化，而 `rebind-legacy` 要求源码已是 `installed`。这两个拒绝都应保留，不能靠删除 marker、fence 或 service 记录解除。
+
+对于 **decomposed legacy observer**，先按实际服务管理器停止已核实归属的 Gateway、sidecar 与配置写入器，保存当前配置、marker、manifest、备份和 journal。使用可运行的当前 management CLI，并指定同一 checkout/HOME：
+
+```bash
+hermes-feishu-card repair --hermes-dir /actual/hermes --hermes-home /actual/home --accept-hermes-upgrade --yes
+hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-home /actual/home
+```
+
+第一条只修复已经证明归属的源码状态，不重建 PM runtime、不删除 observer 记录，也不重启 Gateway。显式 `--hermes-home` 必须与记录绑定一致；证据损坏、配置漂移或未知源码继续拒绝。第二条只读预览，仍要求当前 PM generation、原 owned member、wheel 资源和 entry point 的真实证明。当前 selected runtime 也不存在或不可检查时，先按 Hermes 自身的 PM 恢复流程恢复它；HFC 不将“旧路径不存在”当作新运行时可信的证明。不要在重绑前单独升级受旧 member 记录约束的 wheel。
+
+只有预览为 `ready`，才为同一条 `rebind-legacy` 命令加 `--yes` 提交。若仍有 review fence，随后按本页的 `acknowledge-review` 流程核对当前 plan、已停止的 sidecar 和精确旧 target；保留 CAS 与 `--rebind-target` 要求。完成这些步骤后再升级/安装 HFC、启动服务并做新回合验收。schema-3 adoption、未知运行时和 Windows 重绑仍遵守各自原有门禁，不由这份顺序说明扩大支持范围。
+
+隔离回归已覆盖旧 runtime 缺失、真实 observer/preimage、源码重置后的 `stale_unpatched → installed`、显式错 HOME 拒绝与原配置/marker 不变。该证据不等于报告者原机、PM 真实代际重建、服务恢复或 Gateway/model 回合已经验收。
+
+## 历史命令与来源基线
+
+以下保留 #509 交付时的 PM 恢复边界（#458/#459/#462）。`integrity rebind-legacy` 与受控 restore 的命令基线来自 v5.0.8；schema 1 flat wheel 接纳、精确旧声明校验和 ack 固定类别随 #509 扩展。v5.0.8 只支持其已发布布局，不包含这些新增项；v5.0.7 不包含 `integrity rebind-legacy`。
 
 ## 先区分管理 CLI、runtime 与 member
 

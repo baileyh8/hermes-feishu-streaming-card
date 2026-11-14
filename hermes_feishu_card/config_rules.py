@@ -154,6 +154,10 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         # and then to enabled. Injecting an explicit default mapping here
         # would shadow ``mentions_in_cards: false`` after the config merge.
         "interaction_mentions": None,
+        # Native approval rule-hint line (issue #525): display Hermes's own
+        # canonical pattern-key categories below the command. Default OFF; the
+        # sidecar renders bounded Chinese labels only, never raw unknown keys.
+        "approval_rule_hints": False,
         "footer_fields": [
             "duration",
             "model",
@@ -604,6 +608,10 @@ def normalize_card_config(value: object, *, path: str) -> None:
     if "mentions_in_cards" in value and value["mentions_in_cards"] is not None:
         value["mentions_in_cards"] = normalize_boolean(
             value["mentions_in_cards"], f"{path}.mentions_in_cards"
+        )
+    if "approval_rule_hints" in value and value["approval_rule_hints"] is not None:
+        value["approval_rule_hints"] = normalize_boolean(
+            value["approval_rule_hints"], f"{path}.approval_rule_hints"
         )
     if "interaction_mentions" in value and value["interaction_mentions"] is not None:
         raw_mentions = value["interaction_mentions"]
