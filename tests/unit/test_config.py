@@ -115,6 +115,7 @@ def test_load_config_missing_file_returns_defaults(tmp_path):
             "table_overflow_mode": "compact",
             "native_tables": False,
             "over_limit": "native",
+            "approval_rule_hints": False,
             "completion_notify": {"enabled": False, "min_duration_seconds": 0},
             # UNSET by default: resolving helpers fall back to the legacy
             # ``mentions_in_cards`` key and then to enabled.
@@ -362,6 +363,7 @@ card:
         "table_overflow_mode": "compact",
         "native_tables": False,
         "over_limit": "native",
+        "approval_rule_hints": False,
         "completion_notify": {"enabled": False, "min_duration_seconds": 0},
         "interaction_mentions": None,
         "footer_fields": [
