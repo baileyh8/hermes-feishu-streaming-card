@@ -2,7 +2,7 @@
 
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
-本分支目标版本为 `5.0.24`（#524 显式 HOME 恢复校验与 PM 恢复顺序、#525 默认关闭的原生审批规则提示）。#526 原环境尚未独立复现，不声称本版解决。独立 wheel/安装恢复、完整 PR/main/tag CI、官方镜像和公开安装/资产验收逐项记录后发布。真实 Gateway/model 与飞书客户端验收另记，不由 CI 替代。见[发行说明](release-notes-v5.0.24.md)。
+本分支目标版本为 `5.0.24`（#524 显式 HOME 恢复校验与 PM 恢复顺序、#525 默认关闭的原生审批规则提示）。#526 原环境尚未独立复现，不声称本版解决。验收范围与证据入口见[发行说明](release-notes-v5.0.24.md)与 [v5.0.24 GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24)；未完成门禁通过前不发布。真实 Gateway/model 与飞书客户端验收另记，不由 CI 替代。
 
 ## v5.0.16 历史记录
 
