@@ -2290,15 +2290,17 @@ async def test_observed_legacy_rate_survives_authority_handoff_and_ack_failure(
         assert harness.staged == [True]
         assert len(previews) == 1 and "rate" not in previews[0]["data"]
         assert takes == [("physical-session", "observed-turn")]
-        assert len(attempts) == 1
+        expected_attempts = 2 if post_failure else 1
+        assert len(attempts) == expected_attempts
+        assert all(payload == attempts[0] for payload in attempts)
         assert attempts[0]["event"] == "message.completed"
         assert [url for url, _ in requests] == (
-            ["http://127.0.0.1:1/events", "http://127.0.0.1:1/native-handoff/recover"]
-            if post_failure else ["http://127.0.0.1:1/events"]
+            ["http://127.0.0.1:1/events"] * expected_attempts
+            + (["http://127.0.0.1:1/native-handoff/recover"] if post_failure else [])
         )
         if post_failure:
             handoff = attempts[0]["data"]["native_handoff"]
-            recovery_payload = requests[1][1]
+            recovery_payload = requests[-1][1]
             assert recovery_payload == {
                 "protocol": "hfc-native-handoff-recovery-v2",
                 **{key: handoff[key] for key in (

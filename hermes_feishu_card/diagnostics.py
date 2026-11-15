@@ -547,7 +547,7 @@ def _card_safe_report(data: dict[str, object]) -> dict[str, object]:
                 "severity": finding["severity"],
                 "code": finding["code"],
                 "message": finding["message"],
-                "next_step": "",
+                "next_step": finding["actions"][0] if finding["actions"] else "",
             }
             for finding in findings
         ],
@@ -1479,6 +1479,18 @@ def _card_safe_runtime(value: object) -> dict[str, object]:
     return result
 
 
+_CARD_FINDING_EXPLANATIONS = {
+    "install_state_clean": {
+        "message": "No existing Hermes Feishu hook install state was found.",
+        "action": "No hook install state was found; anchors and streaming status do not prove the producer is active. Run setup with the intended Hermes root, HOME and config, then restart the gateway.",
+    },
+    "install_state_installed": {
+        "message": "Existing hook install state is complete and consistent.",
+        "action": "No install-state action is required.",
+    },
+}
+
+
 def _card_safe_findings(value: object) -> list[dict[str, object]]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -1489,13 +1501,24 @@ def _card_safe_findings(value: object) -> list[dict[str, object]]:
         if code not in _CARD_FINDING_CODES:
             code = "diagnostic_finding"
         severity = _safe_enum(data.get("severity"), {"error", "info", "warning"}, "warning")
+        # Fixed safe explanations for informational install-state findings:
+        # these two codes carry no local identity, so the shared projection
+        # can keep their meaning instead of the generic attention notice.
+        # Everything else keeps the generic text: its original message may
+        # embed local paths or other redacted facts.
+        explanation = _CARD_FINDING_EXPLANATIONS.get(code)
+        if explanation is None:
+            explanation = {
+                "message": "Diagnostic finding requires attention.",
+                "action": "",
+            }
         findings.append(
             {
                 "code": code,
                 "severity": severity,
-                "message": "Diagnostic finding requires attention.",
+                "message": explanation["message"],
                 "impact": "",
-                "actions": [],
+                "actions": ([explanation["action"]] if explanation["action"] else []),
             }
         )
     return findings

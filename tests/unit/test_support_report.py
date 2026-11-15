@@ -123,3 +123,80 @@ def test_write_failure_retains_only_private_partial_file(tmp_path, monkeypatch):
     assert "PRIVATE_SENTINEL" not in target.read_text()
     if os.name != "nt":
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_projection_keeps_fixed_safe_meaning_for_install_state_findings():
+    """The shared card-safe projection must keep the fixed meaning of the
+    two informational install-state codes (they carry no local identity)
+    instead of collapsing everything to the generic attention notice."""
+    clean = {
+        "severity": "info",
+        "code": "install_state_clean",
+        "message": "No existing Hermes Feishu hook install state was found.",
+        "next_step": "Run install --hermes-dir PATH --yes when ready to patch Hermes.",
+    }
+    installed = {
+        "severity": "info",
+        "code": "install_state_installed",
+        "message": "Existing hook install state is complete and consistent.",
+        "next_step": "No install-state action is required.",
+    }
+    drifting = {
+        "severity": "warning",
+        "code": "current_hash_mismatch",
+        "message": f"hash mismatch at {os.sep}private{os.sep}path",
+    }
+    report = support_report.build_support_report({
+        "status": "ok",
+        "install_state": {"status": "clean"},
+        "recommendations": [clean, installed, drifting],
+    })
+    findings = report["diagnostics"]["findings"]
+    recommendations = report["diagnostics"]["recommendations"]
+    assert findings[0] == {
+        "code": "install_state_clean",
+        "severity": "info",
+        "message": "No existing Hermes Feishu hook install state was found.",
+        "impact": "",
+        "actions": [
+            "No hook install state was found; anchors and streaming status do not prove the producer is active. Run setup with the intended Hermes root, HOME and config, then restart the gateway.",
+        ],
+    }
+    assert findings[1]["message"] == "Existing hook install state is complete and consistent."
+    assert findings[1]["actions"] == ["No install-state action is required."]
+    assert findings[2]["code"] == "current_hash_mismatch"
+    assert findings[2]["message"] == "Diagnostic finding requires attention."
+    assert findings[2]["actions"] == []
+    serialized = support_report.serialize_support_report(report)
+    for private_value in ("private", "patch Hermes"):
+        assert private_value not in serialized
+    assert recommendations[0]["message"] == findings[0]["message"]
+    assert recommendations[0]["next_step"] == findings[0]["actions"][0]
+
+
+def test_projection_never_echoes_private_values_from_known_code_findings():
+    # Known-code findings may arrive with arbitrary raw values attached;
+    # the shared projection must emit only the fixed safe constants.
+    poisoned = [
+        {
+            "severity": "info",
+            "code": "install_state_clean",
+            "message": "PRIVATE_SENTINEL message",
+            "next_step": "PRIVATE_SENTINEL next_step",
+        },
+        {
+            "severity": "info",
+            "code": "install_state_installed",
+            "message": "PRIVATE_SENTINEL installed",
+        },
+    ]
+    report = support_report.build_support_report({
+        "status": "ok",
+        "install_state": {"status": "clean"},
+        "recommendations": poisoned,
+    })
+    findings = report["diagnostics"]["findings"]
+    assert findings[0]["message"] == "No existing Hermes Feishu hook install state was found."
+    assert all("PRIVATE_SENTINEL" not in part for part in findings[0]["actions"])
+    assert findings[1]["message"] == "Existing hook install state is complete and consistent."
+    assert "PRIVATE_SENTINEL" not in support_report.serialize_support_report(report)

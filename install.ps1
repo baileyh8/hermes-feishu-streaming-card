@@ -193,10 +193,33 @@ function Read-PlainSecret {
 
 function Ensure-HfcCredentials {
     if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
-        $probe = 'import sys; from hermes_feishu_card.config import load_config; from hermes_feishu_card.cli import _has_feishu_credentials; c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or "default"; ps=c.get("profiles"); p=next(iter(ps)) if ps and p=="default" and p not in ps and sys.argv[4]!="1" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)'
+        # Windows PowerShell 5.1 strips embedded double quotes when a string
+        # is passed to a native command, so the legacy inline "python -c"
+        # probe reached Python as c.get(profiles) and died with a NameError
+        # (not a syntax error) before setup could run. Evidence: reporter
+        # reproduction 6890948853 (two consecutive runs); real PS 5.1
+        # verification happens in the Windows CI job. An exclusively created
+        # temporary file keeps every quote intact on PS 5.1 and PS 7 alike;
+        # the credential decision inside the probe is unchanged.
+        $probeFile = [IO.Path]::GetTempFileName()
         $probeProfile = if ($ProfileId) { $ProfileId } else { "default" }
-        & $PythonBin -c $probe $ConfigPath $EnvFile $probeProfile ([int]$ProfileIdExplicit) *> $null
-        if ($LASTEXITCODE -eq 0) { return }
+        try {
+            Set-Content -LiteralPath $probeFile -Value @'
+import sys
+from hermes_feishu_card.config import load_config
+from hermes_feishu_card.cli import _has_feishu_credentials
+
+c = load_config(sys.argv[1], env_file=sys.argv[2])
+p = sys.argv[3] or "default"
+ps = c.get("profiles")
+p = next(iter(ps)) if ps and p == "default" and p not in ps and sys.argv[4] != "1" else p
+sys.exit(0 if _has_feishu_credentials(c, p) else 1)
+'@ -Encoding ascii
+            & $PythonBin $probeFile $ConfigPath $EnvFile $probeProfile ([int]$ProfileIdExplicit) *> $null
+            if ($LASTEXITCODE -eq 0) { return }
+        } finally {
+            Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
+        }
     }
     if ($env:FEISHU_APP_ID -and $env:FEISHU_APP_SECRET) {
         Set-HfcEnvValue "FEISHU_APP_ID" $env:FEISHU_APP_ID

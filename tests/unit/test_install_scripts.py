@@ -1658,6 +1658,216 @@ exit 0
     return path
 
 
+def _install_ps1_probe_function_lines():
+    # Extract the actual Ensure-HfcCredentials text from install.ps1; the
+    # harness must run the production function, not a re-implementation.
+    lines = (ROOT / "install.ps1").read_text(encoding="utf-8").splitlines()
+    start = lines.index("function Ensure-HfcCredentials {")
+    depth = 0
+    for index in range(start, len(lines)):
+        depth += lines[index].count("{") - lines[index].count("}")
+        if depth == 0:
+            return lines[start : index + 1]
+    raise AssertionError("Ensure-HfcCredentials block not found in install.ps1")
+
+
+# Verified verbatim against the pre-fix installer via
+# git show 5be60a087f3114899c5312a4d92969373984c0df:install.ps1 (lines 196-198).
+# Frozen constants: the negative control must run the exact historical
+# legacy inline probe, not a paraphrase; no git access is needed at runtime.
+LEGACY_PROBE_ASSIGNMENT = (
+    "        $probe = 'import sys; from hermes_feishu_card.config import load_config; "
+    "from hermes_feishu_card.cli import _has_feishu_credentials; "
+    "c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or \"default\"; "
+    "ps=c.get(\"profiles\"); p=next(iter(ps)) if ps and p==\"default\" and p not in ps "
+    "and sys.argv[4]!=\"1\" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)'"
+)
+LEGACY_PROBE_INVOCATION = (
+    "        & $PythonBin -c $probe $ConfigPath $EnvFile $probeProfile "
+    "([int]$ProfileIdExplicit) *> $null"
+)
+
+
+def _probe_harness_script(*, legacy_inline: bool) -> str:
+    if legacy_inline:
+        # Negative control only: run the frozen historical inline probe and
+        # surface the otherwise-swallowed stderr through try/catch so the
+        # harness can print the full synthetic error. Production code keeps
+        # *> $null exactly as shipped.
+        function_lines = [
+            "function Ensure-HfcCredentials {",
+            "    if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {",
+            LEGACY_PROBE_ASSIGNMENT,
+            "        $probeProfile = if ($ProfileId) { $ProfileId } else { \"default\" }",
+            "        try {",
+            "            & $PythonBin -c $probe $ConfigPath $EnvFile $probeProfile ([int]$ProfileIdExplicit) 2>&1 | Out-String | ForEach-Object { $HFC_LEGACY_ERR = $_ }",
+            "        } catch {",
+            "            $HFC_LEGACY_ERR = $_ | Out-String",
+            "        }",
+            "        if ($LASTEXITCODE -eq 0) { return }",
+            "        Write-Output \"HFC_LEGACY_PROBE_FAILED\"",
+            "        if ($HFC_LEGACY_ERR) { Write-Output (\"HFC_LEGACY_PROBE_STDERR \" + $HFC_LEGACY_ERR) }",
+            "        exit $LASTEXITCODE",
+            "    }",
+            "}",
+        ]
+    else:
+        function_lines = _install_ps1_probe_function_lines()
+    return "\n".join(
+        [
+            "$ErrorActionPreference = 'Continue'" if legacy_inline else "$ErrorActionPreference = 'Stop'",
+            "if ($env:HFC_TEST_EXPECT_PSMAJOR -and "
+            "$PSVersionTable.PSVersion.Major -ne [int]$env:HFC_TEST_EXPECT_PSMAJOR) {",
+            "    Write-Error 'HFC_WRONG_PSVERSION'",
+            "    exit 45",
+            "}",
+            "$PythonBin = $env:HFC_TEST_PYTHON",
+            "$ConfigPath = $env:HFC_CONFIG",
+            "$EnvFile = $env:HFC_ENV_FILE",
+            "$ProfileId = ''",
+            "$ProfileIdExplicit = $false",
+            "",
+            *function_lines,
+            "",
+            "function Fail {",
+            "    param([string]$Message)",
+            "    Write-Error ('HFC_POISON_FAIL ' + $Message)",
+            "    exit 40",
+            "}",
+            "",
+            "function Set-HfcEnvValue {",
+            "    param([string]$Key, [string]$Value)",
+            "    Write-Error ('HFC_POISON_SET ' + $Key)",
+            "    exit 41",
+            "}",
+            "",
+            "function Write-HfcLog {",
+            "    param([string]$Message)",
+            "    Write-Error ('HFC_POISON_LOG ' + $Message)",
+            "    exit 42",
+            "}",
+            "",
+            "Ensure-HfcCredentials",
+            "exit 0",
+        ]
+    )
+
+
+def _powershell_engine_params():
+    engines = []
+    if shutil.which("pwsh"):
+        engines.append(pytest.param(("pwsh", 7), id="pwsh-ps7"))
+    if sys.platform == "win32":
+        if shutil.which("powershell") is None:
+            raise AssertionError(
+                "Windows runners must provide powershell.exe (PS 5.1) to "
+                "verify the installer probe contract"
+            )
+        engines.append(pytest.param(("powershell", 5), id="powershell-ps51"))
+    return engines
+
+
+
+def _run_probe_harness(tmp_path, engine_name, engine_major, *, legacy_inline):
+    config_path = tmp_path / "配 置.yaml"
+    config_path.write_text(
+        "feishu:\n"
+        "  app_id: probe 空格 配置\n"
+        "  app_secret: 秘密 密钥测试\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "数据 目录" / ".env"
+    env_file.parent.mkdir(parents=True)
+    scratch = tmp_path / "hfc scratch 临时"
+    scratch.mkdir()
+    harness = tmp_path / "probe-harness.ps1"
+    harness.write_text(
+        _probe_harness_script(legacy_inline=legacy_inline), encoding="utf-8"
+    )
+    env = os.environ.copy()
+    for key in (
+        "FEISHU_APP_ID",
+        "FEISHU_APP_SECRET",
+        "FEISHU_CONNECTION_MODE",
+        "FEISHU_HOME_CHANNEL",
+        "HERMES_FEISHU_CARD_PROFILE_ID",
+        "HERMES_FEISHU_CARD_EVENT_URL",
+        "HFC_CONFIG",
+        "HFC_ENV_FILE",
+        "HFC_VERSION",
+        "HFC_NO_REPAIR",
+        "HERMES_DIR",
+        "HERMES_HOME",
+        "PYTHON",
+    ):
+        env.pop(key, None)
+    env.update(
+        {
+            "HFC_TEST_PYTHON": sys.executable,
+            "HFC_TEST_EXPECT_PSMAJOR": str(engine_major),
+            "HFC_CONFIG": str(config_path),
+            "HFC_ENV_FILE": str(env_file),
+            "HFC_NO_PROMPT": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONPATH": str(ROOT) + os.pathsep + env.get("PYTHONPATH", ""),
+            "TEMP": str(scratch),
+            "TMP": str(scratch),
+        }
+    )
+    result = subprocess.run(
+        [engine_name, "-NoProfile", "-File", str(harness)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    return result, scratch, config_path, env_file
+
+
+@pytest.mark.parametrize("engine", _powershell_engine_params())
+def test_powershell_credential_probe_returns_without_poisoned_helpers(engine, tmp_path):
+    """Run the actual Ensure-HfcCredentials under real PowerShell with
+    poisoned helpers: only a successful probe may return; any helper call
+    or nonzero probe must fail the test instead of being skipped."""
+    engine_name, engine_major = engine
+    result, scratch, config_path, env_file = _run_probe_harness(
+        tmp_path, engine_name, engine_major, legacy_inline=False
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, f"exit={result.returncode}\n{output}"
+    assert "HFC_POISON" not in output
+    for private_value in (
+        "probe 空格 配置",
+        "秘密 密钥测试",
+        str(config_path),
+        str(env_file),
+    ):
+        assert private_value not in output
+    assert list(scratch.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows PowerShell 5.1 is only available on Windows runners",
+)
+def test_powershell_credential_probe_legacy_inline_code_nameerror(tmp_path):
+    """Negative control: the historical inline python -c probe loses its
+    embedded double quotes on PS 5.1 and dies with a NameError instead of
+    checking credentials (reporter reproduction 6890948853)."""
+    if shutil.which("powershell") is None:
+        pytest.fail("Windows runners must provide powershell.exe (PS 5.1)")
+    result, _scratch, _config_path, _env_file = _run_probe_harness(
+        tmp_path, "powershell", 5, legacy_inline=True
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, f"exit={result.returncode}\n{output}"
+    assert "NameError: name" in output
+    assert "profiles" in output
+
+
+
 @pytest.mark.parametrize("script_name", ["install.sh", "install-docker.sh"])
 @pytest.mark.parametrize("inherited_profile", ["", "default", "ai-secretary"])
 def test_named_only_installers_use_config_credentials_without_pinning_profile(script_name, inherited_profile, tmp_path):
@@ -1692,7 +1902,7 @@ def test_powershell_preserves_implicit_profile_and_checks_config_credentials():
     assert '$ProfileIdExplicit = $PSBoundParameters.ContainsKey("ProfileId")' in script
     assert 'if ($ProfileIdExplicit)' in script
     assert '$ProfileId = if ($ProfileId) { $ProfileId } else { "default" }' not in script
-    assert '_has_feishu_credentials(c,p)' in script
+    assert '_has_feishu_credentials(c, p)' in script
     assert 'if ($LASTEXITCODE -eq 0) { return }' in script
 
 

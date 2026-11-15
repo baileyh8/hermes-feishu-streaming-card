@@ -5,6 +5,9 @@ on:
     paths:
       - tools/diagnostics/issue526/**
       - .github/workflows/issue526-repro.yml
+      - install.ps1
+      - hermes_feishu_card/diagnostics.py
+      - hermes_feishu_card/hook_runtime.py
 
 permissions:
   contents: read

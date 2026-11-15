@@ -21,9 +21,9 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [What’s new in V5](#whats-new-in-v5) · [Upgrade from V4.x](#upgrade-from-v4x-to-v5) · [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.24; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.24.en.md).
+**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.25; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.25.en.md).
 
-Once published, download v5.0.24 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24).
+Download v5.0.25 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.25).
 
 ## What's new in V5
 
@@ -178,7 +178,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.24
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.25
 bash install-docker.sh
 ```
 
@@ -315,6 +315,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v5.0.25](docs/release-notes-v5.0.25.en.md) | Bounded terminal ACK reconciliation, Windows 5.1 credential probe and installation diagnostics |
 | [v5.0.24](docs/release-notes-v5.0.24.en.md) | PM recovery HOME checks, recovery order and opt-in native approval-rule hints |
 | [v5.0.23](docs/release-notes-v5.0.23.en.md) | Completion-notification threshold, sender identity routing and bounded segmentation |
 | [v5.0.22](docs/release-notes-v5.0.22.en.md) | Exact Hermes v0.23.1 compatibility, installation and CI diagnostics |
@@ -324,11 +325,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.18](docs/release-notes-v5.0.18.en.md) | Hermes v0.23.0 completion, admission and PM installation compatibility |
 | [v5.0.16](docs/release-notes-v5.0.16.en.md) | Install diagnostics and diagnosable #462 failures |
 | [v5.0.15](docs/release-notes-v5.0.15.en.md) | Live tool activity, chat-scoped controls, v0.22.7 cohort and convergent managed upgrades |
-| [v5.0.14](docs/release-notes-v5.0.14.en.md) | Per-turn rate correlation and verified Hermes compatibility |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
+
+- V5.0.25: Thanks to [leavrcn](https://github.com/leavrcn) for the terminal duplicate-delivery timeline in [#529](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/529), and [nmtlcxb](https://github.com/nmtlcxb) for Windows recovery and PowerShell 5.1 evidence in [#526](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/526). Issue evidence is distinct from code authorship; all historical credits remain.
 
 - V5.0.24: Thanks to [lvanwei180-lvan](https://github.com/lvanwei180-lvan) for the PM-rebuild report in [#524](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/524), [jackwude](https://github.com/jackwude) for the approval-hint proposal in [#525](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/525), and [nmtlcxb](https://github.com/nmtlcxb) for the Windows turn report in [#526](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/526). Issue evidence and suggestions are distinct from code authorship; historical credits remain.
 

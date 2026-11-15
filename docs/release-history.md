@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.14](release-notes-v5.0.14.md) | 逐轮速率关联与已核验 Hermes 兼容 |
 | [v5.0.13](release-notes-v5.0.13.md) | 非飞书终局隔离与模型选择卡修复 |
 | [v5.0.10](release-notes-v5.0.10.md) | 异步完成交接、终局单次确认与配置归属恢复 |
 | [v5.0.11](release-notes-v5.0.11.md) | 固定 Hermes main admission 与首个展示策略的归属核验 |

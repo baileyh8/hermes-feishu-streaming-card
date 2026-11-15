@@ -1,11 +1,17 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
-## V5.0.24 候选
+## V5.0.25
+
+- #529：终局已应用但回执丢失的路径经独立复现后修复；有界同事件重放、取消与未知结果的原生回退分别覆盖。
+- #526：报告者执行 setup 并重启后现场恢复；本轮修复 Windows 5.1 探针与脱敏报告的安装状态说明。
+- 本地回归、普通 wheel/子进程与三组真实飞书 API 已有证据；精确 CI、Windows、发行资产与客户端验收记录见 [PR #530](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/530) 和 [发行说明](docs/release-notes-v5.0.25.md)。
+
+## V5.0.24（2026-11-14 已发布）
 
 - #524：显式 HOME 在源码 repair 前校验；补齐受管源码先修复、observer 再重绑的顺序，保护记录和 runtime/wheel 证明保留。
 - #525：A 行内原生规则提示，`card.approval_rule_hints: false` 为默认；不增加命令解释或放行建议。
 - #526：原环境尚未复现，补精确 producer 回归和脱敏补证要求；不把拓扑绿灯写成真实投递已恢复。
-- 发行门禁、普通包与真实平台验收待本候选冻结后补齐；当前不声称已发布。
+- 发行门禁、普通包和已限定的真实平台验收见 [v5.0.24 发行说明](docs/release-notes-v5.0.24.md)。
 
 架构重构、体验升级、迁移和验收统一跟踪于[完整执行计划](docs/plans/2026-10-13-refactor-upgrade.md)。实现与验收按计划逐项登记；发行范围和验证限制以对应发行说明为准。
 
