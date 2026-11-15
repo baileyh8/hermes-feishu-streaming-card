@@ -110,9 +110,12 @@ class SidecarStub(BaseHTTPRequestHandler):
             RECEIPT["policy_queries"].append({"layer": "policy-query", "body": parsed, "sig": bool(sig_headers)})
             self._reply({"ok": True, "disposition": "card", "ttl_ms": 500})
         elif self.path.endswith("/events"):
-            RECEIPT["events"].append({"layer": "event-post", "sig": bool(sig_headers), "event": parsed.get("event"), "message_id": parsed.get("message_id"),
+            data = parsed.get("data") if isinstance(parsed.get("data"), dict) else {}
+            RECEIPT["events"].append({"layer": "event-post", "sig": bool(sig_headers), "event": parsed.get("event"), "turn_id": parsed.get("turn_id"), "message_id": parsed.get("message_id"),
                                       "chat_id": parsed.get("chat_id"), "sequence": parsed.get("sequence"),
                                       "created_at": parsed.get("created_at"),
+                                      "answer": data.get("answer"), "delta_text": data.get("text"),
+                                      "notice_kind": data.get("notice_kind"),
                                       "data_keys": sorted(parsed.get("data", {}).keys()) if isinstance(parsed.get("data"), dict) else None})
             self._reply({"ok": True, "applied": True})
         elif "native-handoff" in self.path:
@@ -389,13 +392,27 @@ async def async_main():
     ac_checkpoint("emit_wrapped")
     async def inject(message_id, text):
         await adapter._handle_message_event_data(make_feishu_event(message_id, text))
-    await inject(RUN_NONCE + "-dm-001", "stage2 first dm")
-    started = await wait_until(lambda: any((e.get("event") == "message.started") for e in RECEIPT["events"]), 20)
-    await asyncio.sleep(2)
-    await inject(RUN_NONCE + "-dm-002", "stage2 second dm")
-    completed2 = await wait_until(lambda: len([e for e in RECEIPT["events"] if e.get("event") == "message.completed"]) >= 2, 20)
-    await asyncio.sleep(2)
-    stage("turns", started and completed2, "hook_calls=" + str(len(RECEIPT["hook_calls"])) + " events=" + str(len(RECEIPT["events"])) + " policy=" + str(len(RECEIPT["policy_queries"])))
+    def settled(message_id):
+        terminal = any(e.get("event") == "message.completed" and e.get("message_id") == message_id
+                       for e in RECEIPT["events"])
+        rows = authority.db._read_all(
+            "SELECT status, outcome FROM session_admissions WHERE request_id=?", (message_id,))
+        return (terminal and len(rows) == 1 and rows[0]["status"] == "terminal"
+                and rows[0]["outcome"] == "completed" and not adapter._active_sessions
+                and not any(not task.done() for task in adapter._session_tasks.values()))
+
+    # Each input must start a distinct idle turn. A fixed sleep after started
+    # accidentally exercised busy-input admission on the cold Windows runtime.
+    first_id, second_id = RUN_NONCE + "-dm-001", RUN_NONCE + "-dm-002"
+    await inject(first_id, "stage2 first dm")
+    first_settled = await wait_until(lambda: settled(first_id), 20)
+    second_settled = False
+    if first_settled:
+        await inject(second_id, "stage2 second dm")
+        second_settled = await wait_until(lambda: settled(second_id), 20)
+    else:
+        RECEIPT["errors"].append("first native turn did not settle; second input withheld")
+    stage("turns", first_settled and second_settled, "hook_calls=" + str(len(RECEIPT["hook_calls"])) + " events=" + str(len(RECEIPT["events"])) + " policy=" + str(len(RECEIPT["policy_queries"])))
     ac_checkpoint("turns")
     try:
         rows = [dict(r) for r in authority.db._read_all("SELECT seq, admission_id, target_session_id, status, outcome, generation, request_id FROM session_admissions")]
@@ -426,7 +443,7 @@ async def async_main():
         pass
     model_srv.shutdown()
     sidecar_srv.shutdown()
-    passed = started and completed2 and bool(RECEIPT["handoff_modes"]) and all(m == "handoff" for m in RECEIPT["handoff_modes"])
+    passed = first_settled and second_settled and bool(RECEIPT["handoff_modes"]) and all(m == "handoff" for m in RECEIPT["handoff_modes"])
     return 0 if passed else 1
 
 

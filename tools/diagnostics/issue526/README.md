@@ -20,8 +20,12 @@ wheel provenance. `--hfc-source` is explicitly a development-source control.
 Do not combine these two evidence levels.
 
 Expected evidence: two unique DM IDs, real SessionAuthority claims, `handoff`,
-completed durable admission rows, and `started` / `delta` / `completed` sequences
-0 / 1 / 2 for each ID. The ordinary wheel workflow records package version,
+completed durable admission rows, and one contiguous event stream starting at 0
+with `started`, answer deltas and `completed` for each canonical turn. Supported
+`system.notice` events consume their normal sequence positions; both the combined
+delta text and final answer must equal the fake model reply. The second input
+waits for the first native admission and adapter task to finish, so this does not
+exercise busy-input coalescing. The ordinary wheel workflow records package version,
 import origin, resource hashes and archive provenance before each run.
 
 Keep failure logs before rerunning. Retain only the acceptance JSON, per-run

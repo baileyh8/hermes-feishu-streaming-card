@@ -109,15 +109,26 @@ def main() -> int:
                   "no_recorded_errors": not receipt["errors"],
                   "native_loader": receipt["files"].get("feishu_adapter_loader_module") == "hermes_plugins.platforms__feishu.adapter"}
         for mid in starts:
-            events = [e for e in receipt["events"] if e.get("message_id") == mid]
+            events = [e for e in receipt["events"] if (e.get("turn_id") or e.get("message_id")) == mid]
+            names = [e["event"] for e in events]
             rows = [r for r in receipt["admissions"] if isinstance(r, dict) and r.get("request_id") == mid]
             hooks = [h for h in receipt["hook_calls"] if h["event_name"] == "message.started" and h.get("identity", {}).get("event_message_id") == mid]
-            checks[mid] = ([e["event"] for e in events] == ["message.started", "answer.delta", "message.completed"]
-                and [e["sequence"] for e in events] == [0, 1, 2]
+            # system.notice is a supported turn event and consumes a sequence.
+            # Require one complete, contiguous stream and the exact fake answer;
+            # a valid native status notice must not become a false test failure.
+            checks[mid] = (bool(events) and names[0] == "message.started" and names[-1] == "message.completed"
+                and names.count("message.started") == names.count("message.completed") == 1
+                and "answer.delta" in names
+                and set(names) <= {"message.started", "answer.delta", "system.notice", "message.completed"}
+                and [e["sequence"] for e in events] == list(range(len(events)))
+                and events[-1].get("answer") == "fixture reply"
+                and "".join(e.get("delta_text") or "" for e in events if e["event"] == "answer.delta") == "fixture reply"
                 and len(rows) == 1 and rows[0]["status"] == "terminal" and rows[0]["outcome"] == "completed"
                 and len(hooks) == 1 and hooks[0]["admission_mode"] == "handoff" and hooks[0]["result"] is True
                 and hooks[0]["identity"].get("authority_runner_is_runner") is True
                 and hooks[0]["identity"].get("live_task_running") is True
+                and hooks[0]["identity"].get("owner_session_id") == rows[0]["target_session_id"]
+                and hooks[0]["identity"].get("owner_generation") == rows[0]["generation"]
                 and hooks[0]["identity"].get("owner_generation") == hooks[0]["identity"].get("executing_generation"))
         result = {"passed": code == 0 and all(checks.values()), "checks": checks,
                   "hfc_version": hfc.__version__, "hfc_origin": str(origin), "python": sys.version,
