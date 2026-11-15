@@ -304,6 +304,30 @@ def _install_layer_trace(adapter, runner):
 
 RUN_NONCE = "run" + str(int(time.time() * 1000))
 
+def prepare_transport_secret():
+    os.environ["HERMES_FEISHU_CARD_STATE_DIR"] = str(CHILD / "hfc-state")
+    (CHILD / "hfc-state").mkdir(parents=True, exist_ok=True)
+    os.chmod(CHILD / "hfc-state", 0o700)
+    from hermes_feishu_card.operations_transport import ensure_transport_root_secret
+    secret = ensure_transport_root_secret()
+    stage("transport_secret", secret is not None, "bytes=" + str(len(secret or b"")))
+
+
+def plugin_bootstrap_snapshot():
+    runtime_module = sys.modules.get("hermes_feishu_card.hermes_plugin_runtime")
+    if runtime_module is None:
+        return {"module_loaded": False, "active": False}
+    from hermes_feishu_card.install.legacy_observer import process_observer_mode
+    bootstrap = runtime_module._PRODUCTION_BOOTSTRAP
+    active = runtime_module._ACTIVE_RUNTIME
+    return {"module_loaded": True, "active": active is not None,
+            "observe_only": getattr(active, "observe_only", None),
+            "observer_mode": process_observer_mode(),
+            "registration_complete": bool(bootstrap is not None and bootstrap.gate.registration_complete),
+            "hooks": sorted(bootstrap.gate.registered_hooks) if bootstrap is not None else [],
+            "listener": active.runtime_interaction_listener_snapshot() if active is not None else None}
+
+
 async def async_main():
     env_ok = not any(k.lower().endswith("_proxy") and k.lower() != "no_proxy" for k in os.environ)
     stage("env_clean", env_ok, json.dumps(env_proof()))
@@ -336,20 +360,22 @@ async def async_main():
         "compression:\n  enabled: false\n"
         "database:\n  journal_mode: delete\n"
     )
+    activate_plugin = os.environ.get("HFC526_ACTIVATE_HFC_PLUGIN") == "1"
+    if activate_plugin:
+        config_text += "plugins:\n  enabled: [hermes-feishu-card, platforms/feishu]\n"
     (HOME / "config.yaml").write_text(config_text)
     import logging
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    if activate_plugin:
+        prepare_transport_secret()
+        from hermes_cli.plugins import discover_plugins
+        discover_plugins()
+        RECEIPT["plugin_bootstrap_before_gateway"] = plugin_bootstrap_snapshot()
     import gateway.run as gateway_run
     import gateway.session_ingress
     import gateway.session_authority
     stage("imports", True, json.dumps({"gateway_run": gateway_run.__file__, "session_ingress": gateway.session_ingress.__file__, "session_authority": gateway.session_authority.__file__, "python": sys.version.split()[0]}))
-    # Transport root secret exactly like a real install (0600 file in private state dir).
-    os.environ["HERMES_FEISHU_CARD_STATE_DIR"] = str(CHILD / "hfc-state")
-    (CHILD / "hfc-state").mkdir(parents=True, exist_ok=True)
-    os.chmod(CHILD / "hfc-state", 0o700)
-    from hermes_feishu_card.operations_transport import ensure_transport_root_secret
-    root_secret = ensure_transport_root_secret()
-    stage("transport_secret", root_secret is not None, "bytes=" + str(len(root_secret or b'')))
+    prepare_transport_secret()
     import hermes_feishu_card.hook_runtime as hook_runtime
     from hermes_feishu_card import admission_completion as ac
     stage("hfc_import", True, json.dumps({"hook_runtime": hook_runtime.__file__, "admission_completion": ac.__file__, "verified_topology": ac._verified() is not None}))
@@ -424,6 +450,8 @@ async def async_main():
     RECEIPT["generation_calls"] = generation_calls
     RECEIPT["hook_call_count"] = len(RECEIPT["hook_calls"])
     RECEIPT["handoff_modes"] = [c.get("admission_mode") for c in RECEIPT["hook_calls"]]
+    if activate_plugin:
+        RECEIPT["plugin_bootstrap_after_turns"] = plugin_bootstrap_snapshot()
     RECEIPT["env_proof"] = env_proof()
     _loader_mod = sys.modules.get("hermes_plugins.platforms__feishu.adapter")
     RECEIPT["files"] = {

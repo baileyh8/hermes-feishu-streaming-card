@@ -5,8 +5,12 @@ with an ordinarily installed HFC wheel. Feishu input is synthetic; the model and
 sidecar are loopback HTTP stubs. It does not establish real Feishu delivery,
 client visuals, the PM launcher, or the state of an existing Gateway process.
 It is a control experiment, not a reproduction or fix of the reporter incident.
-It exercises managed producer hooks and Feishu plugin registration; it does not
-validate HFC plugin activation, observer records or startup callback registration.
+It exercises managed producer hooks and Feishu plugin registration. The optional
+`--enable-hfc-plugin` also activates HFC through the real plugin loader before
+importing Gateway, verifies its Hybrid bootstrap and callback registration, and
+closes the temporary loopback listener afterward. The private configuration has
+no installed observer marker; official PM/observer installation and an existing
+Gateway's activation state remain outside this control.
 
 Run with Python 3.14 and the Hermes SDK dependencies in an isolated environment.
 `probe.py --help` lists the paths. `--upstream-root` must be a clean Git checkout

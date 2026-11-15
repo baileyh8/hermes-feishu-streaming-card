@@ -92,7 +92,7 @@ jobs:
           result.write_text(json.dumps({"version": hfc.__version__, "origin": hfc.__file__, "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(), "resources": len(resources), "python": sys.version}, indent=2), encoding="utf-8")
           '@ | & $python -I -B - $wheel $site "$evidence/provenance-$version.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            & $python -I -B $probe --upstream-root $source --expected-package-root $site --output "$evidence/$version" *> "$evidence/$version.log"
+            & $python -I -B $probe --upstream-root $source --expected-package-root $site --enable-hfc-plugin --output "$evidence/$version" *> "$evidence/$version.log"
             $probeExit = $LASTEXITCODE
             if ($probeExit -ne 0) {
               Get-Content "$evidence/$version.log" -Tail 100

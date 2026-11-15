@@ -28,6 +28,7 @@ def main() -> int:
     parser.add_argument("--managed-root", type=Path)
     parser.add_argument("--hfc-source", type=Path, help="Development mode only; omit for an installed wheel")
     parser.add_argument("--expected-package-root", type=Path, help="Required in installed-wheel mode")
+    parser.add_argument("--enable-hfc-plugin", action="store_true", help="Explicit private plugin activation before importing Gateway")
     parser.add_argument("--output", type=Path, required=True, help="New, empty task-owned directory")
     args = parser.parse_args()
     upstream = args.upstream_root.resolve()
@@ -86,7 +87,8 @@ def main() -> int:
         name = "plugins/platforms/feishu/plugin.yaml"
         (managed / name).write_bytes(git(upstream, "show", f"HEAD:{name}"))
     os.environ.update(HFC526_SOURCE_OR_EMPTY=str(source), HFC526_EMPTY_TESTLIBS=str(output / "empty-testlibs"),
-                      HFC526_MANAGED_ROOT=str(managed), HFC526_OUTPUT_ROOT=str(output))
+                      HFC526_MANAGED_ROOT=str(managed), HFC526_OUTPUT_ROOT=str(output),
+                      HFC526_ACTIVATE_HFC_PLUGIN="1" if args.enable_hfc_plugin else "0")
     spec = importlib.util.spec_from_file_location("hfc526_portable_driver", Path(__file__).with_name("driver.py"))
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -108,6 +110,12 @@ def main() -> int:
                   "model_requests": len(receipt["model_requests"]) >= 2,
                   "no_recorded_errors": not receipt["errors"],
                   "native_loader": receipt["files"].get("feishu_adapter_loader_module") == "hermes_plugins.platforms__feishu.adapter"}
+        if args.enable_hfc_plugin:
+            for phase in ["plugin_bootstrap_before_gateway", "plugin_bootstrap_after_turns"]:
+                state = receipt.get(phase, {})
+                checks[phase] = (state.get("active") is True and state.get("registration_complete") is True
+                    and state.get("observer_mode") == "hybrid" and state.get("observe_only") is False
+                    and state.get("listener", {}).get("accepting") is True)
         for mid in starts:
             events = [e for e in receipt["events"] if (e.get("turn_id") or e.get("message_id")) == mid]
             names = [e["event"] for e in events]
@@ -133,20 +141,26 @@ def main() -> int:
         result = {"passed": code == 0 and all(checks.values()), "checks": checks,
                   "hfc_version": hfc.__version__, "hfc_origin": str(origin), "python": sys.version,
                   "platform": sys.platform, "upstream_pin": PIN,
+                  "explicit_hfc_plugin": args.enable_hfc_plugin,
                   "scope": "real native inbound/admission; synthetic Feishu input; loopback model/sidecar stubs; no cloud/client/PM-launcher proof",
                   "package_mode": "development source" if args.hfc_source else "installed package (provenance separately required)"}
         (output / "ACCEPTANCE.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(result))
         return 0 if result["passed"] else 1
     finally:
-        for server in servers:
-            server.shutdown()
-            server.server_close()
         try:
-            from gateway.runtime_ownership import process_ownership
-            process_ownership.close()
-        except Exception:
-            pass
+            runtime_module = sys.modules.get("hermes_feishu_card.hermes_plugin_runtime")
+            if runtime_module is not None:
+                runtime_module._close_process_plugin_runtime()
+        finally:
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+            try:
+                from gateway.runtime_ownership import process_ownership
+                process_ownership.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
