@@ -1,0 +1,107 @@
+name: Issue 526 Windows native-entry control
+
+on:
+  pull_request:
+    paths:
+      - tools/diagnostics/issue526/**
+      - .github/workflows/issue526-repro.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows-314:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 3b421578588243f920886e6fe79a6faa87ea026e # v0.23.1
+          path: .upstream/issue526
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: baileyh8/hermes-feishu-streaming-card
+          ref: 0b5a53e0d1d873ee552ca030b05125b443fc0b38 # HFC v5.0.22
+          path: .baseline-hfc22
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14.9"
+      - name: Install pinned SDK dependencies for the exercised path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @'
+          from pathlib import Path
+          import re, subprocess, sys, tomllib
+          project = tomllib.loads(Path(".upstream/issue526/pyproject.toml").read_text(encoding="utf-8"))["project"]
+          # Browser and document extraction are not used by this synthetic text turn.
+          omitted = {"browser-harness", "firecrawl-anydoc"}
+          deps = [d for d in project["dependencies"] if re.split(r"[<>=!~ @;\[]", d, maxsplit=1)[0].lower() not in omitted]
+          deps += project["optional-dependencies"]["feishu"]
+          subprocess.run([sys.executable, "-m", "pip", "install", *deps, "wheel", "setuptools", "aiohttp", "PyYAML"], check=True)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build ordinary baseline and current wheels
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          python -m pip wheel --no-deps --wheel-dir "$env:RUNNER_TEMP/hfc526-wheels-22" ./.baseline-hfc22
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip wheel --no-deps --wheel-dir "$env:RUNNER_TEMP/hfc526-wheels-current" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m venv --system-site-packages "$env:RUNNER_TEMP/hfc526-runtime"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Execute both wheels in real Windows child processes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $python = "$env:RUNNER_TEMP/hfc526-runtime/Scripts/python.exe"
+          $probe = "$env:GITHUB_WORKSPACE/tools/diagnostics/issue526/probe.py"
+          $source = "$env:GITHUB_WORKSPACE/.upstream/issue526"
+          $evidence = "$env:RUNNER_TEMP/hfc526-evidence"
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          foreach ($version in @("22", "current")) {
+            $wheel = Get-ChildItem -Path "$env:RUNNER_TEMP/hfc526-wheels-$version" -Filter "*.whl" | Select-Object -First 1 -ExpandProperty FullName
+            if (-not $wheel) { throw "ordinary wheel missing" }
+            & $python -m pip install --force-reinstall --no-deps $wheel
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $site = & $python -I -B -c "import sysconfig; print(sysconfig.get_path('purelib'))"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            @'
+          import hashlib, importlib.metadata as md, json, sys, zipfile
+          from pathlib import Path
+          import hermes_feishu_card as hfc
+          wheel, site, result = map(Path, sys.argv[1:])
+          assert Path(hfc.__file__).resolve().is_relative_to(site.resolve())
+          dist = md.distribution("hermes-feishu-streaming-card")
+          provenance = json.loads(dist.read_text("direct_url.json"))
+          assert not provenance.get("dir_info", {}).get("editable")
+          assert provenance["archive_info"]["hashes"]["sha256"] == hashlib.sha256(wheel.read_bytes()).hexdigest()
+          with zipfile.ZipFile(wheel) as archive:
+              resources = [n for n in archive.namelist() if n.startswith("hermes_feishu_card/") and not n.endswith("/")]
+              assert resources
+              for name in resources:
+                  assert (site / name).read_bytes() == archive.read(name), name
+          result.write_text(json.dumps({"version": hfc.__version__, "origin": hfc.__file__, "wheel_sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(), "resources": len(resources), "python": sys.version}, indent=2), encoding="utf-8")
+          '@ | & $python -I -B - $wheel $site "$evidence/provenance-$version.json"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $python -I -B $probe --upstream-root $source --expected-package-root $site --output "$evidence/$version" *> "$evidence/$version.log"
+            if ($LASTEXITCODE -ne 0) { Get-Content "$evidence/$version.log" -Tail 100; exit $LASTEXITCODE }
+          }
+      - name: Preserve diagnostics without private state or transport secrets
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue526-windows314
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/hfc526-evidence/*.log
+            ${{ runner.temp }}/hfc526-evidence/provenance-*.json
+            ${{ runner.temp }}/hfc526-evidence/*/ACCEPTANCE.json
+            ${{ runner.temp }}/hfc526-evidence/*/RUN*-RESULT.json
