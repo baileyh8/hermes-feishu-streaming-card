@@ -69,16 +69,20 @@ from test_session_authority_completion import (  # noqa: F401
 class CardCounterPort:
     """Sidecar Feishu I/O adapter that counts terminal card operations."""
 
-    def __init__(self):
+    def __init__(self, final_answer):
         self.card_sends = 0
         self.card_updates = 0
+        self.final_answer = final_answer
+        self.final_answer_updates = 0
 
     async def send_card(self, *a, **k):
         self.card_sends += 1
         return "om_issue529-card"
 
-    async def update_card_message(self, *a, **k):
+    async def update_card_message(self, message_id, card):
         self.card_updates += 1
+        if self.final_answer in json.dumps(card, ensure_ascii=False):
+            self.final_answer_updates += 1
 
     async def send_text_message(self, *a, **k):
         raise AssertionError("sidecar must not send raw text for a card turn")
@@ -92,7 +96,7 @@ class SidecarHarness:
         self.monkeypatch = monkeypatch
         self.harness_ns = harness_ns
         self.timeout_seconds = timeout_seconds
-        self.port = CardCounterPort()
+        self.port = CardCounterPort(harness_ns.body)
         self.app = None
         self.server = None
         self.url = ""
@@ -213,6 +217,14 @@ class SidecarHarness:
             async with client.post(self.url, json=payload) as response:
                 return response.status, await response.json()
 
+    async def wait_for_final_update(self):
+        # applied accepts delivery ownership; platform I/O may finish later.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 3
+        while not self.port.final_answer_updates and loop.time() < deadline:
+            await asyncio.sleep(0.01)
+        assert self.port.final_answer_updates == 1
+
     def sessions(self):
         return list(self.app[SESSIONS_KEY].values())
 
@@ -243,7 +255,7 @@ async def test_applied_terminal_suppresses_native(
         assert sidecar.trace["terminal_applied"] is True
         assert harness.native == []
         assert harness.ledger[-1] == ("final", "ingress-a", True)
-        assert sidecar.port.card_updates >= 1
+        await sidecar.wait_for_final_update()
     finally:
         await sidecar.stop()
 
@@ -284,6 +296,7 @@ async def test_first_terminal_response_lost_replay_still_reaches_plugin(
             " reached the plugin; a native body duplicate is the defect"
         )
         assert harness.ledger[-1] == ("final", "ingress-a", True)
+        await sidecar.wait_for_final_update()
     finally:
         await sidecar.stop()
 
@@ -334,6 +347,19 @@ async def test_explicit_ok_false_terminal_is_final_not_retried_into_success(
         event = Event()
         status, body = await sidecar.post_started(event)
         assert status == 200 and body["applied"] is True
+        progress = h.build_event("answer.delta", {
+            "event": event, "source": event.source,
+            "message_id": event.message_id, "text": "running progress marker",
+        })
+        async with ClientSession() as client:
+            async with client.post(sidecar.url, json=progress) as response:
+                assert response.status == 200
+                assert (await response.json())["applied"] is True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 3
+        while not sidecar.port.card_updates and loop.time() < deadline:
+            await asyncio.sleep(0.01)
+        assert sidecar.port.card_updates >= 1
         sidecar.trace["reject_terminal"] = True
         await deliver(harness, waiter=True, event=event, timeout=30)
         assert sidecar.trace["terminal_requests"] == 1, (
@@ -346,9 +372,8 @@ async def test_explicit_ok_false_terminal_is_final_not_retried_into_success(
         assert harness.native == ["complete answer"]
         assert harness.ledger[-1] == ("final", "ingress-a", True)
         assert all(s.status != "completed" for s in sidecar.sessions())
-        # message.started legitimately sends the first card; the refused
-        # terminal must not add a card update or text.
-        assert sidecar.port.card_updates == 0
+        # Accepted running output may PATCH; the refused final answer must not.
+        assert sidecar.port.final_answer_updates == 0
     finally:
         await sidecar.stop()
 
@@ -579,6 +604,7 @@ async def test_late_replay_of_terminal_after_settle_is_cached_not_reapplied(
         assert status == 200 and body["applied"] is True
         await deliver(harness, waiter=True, event=event, timeout=30)
         assert harness.native == [] and sidecar.trace["terminal_applied"] is True
+        await sidecar.wait_for_final_update()
         updates_after_first = sidecar.port.card_updates
         terminal_payload = sidecar.trace["last_terminal_payload"]
         assert terminal_payload["event"] == "message.completed"
