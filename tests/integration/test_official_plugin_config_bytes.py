@@ -45,7 +45,18 @@ EXPECTED_FAMILIES = {"reported-cf4": "pm-0223", "rc2": "pm-0223"}
 
 def _run_with_failure_diagnostic(run, *args, **kwargs):
     """Return the original result; never retry or disclose arbitrary output."""
-    result = run(*args, **kwargs)
+    try:
+        result = run(*args, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        stderr = exc.stderr or b""
+        if isinstance(stderr, str):
+            stderr = stderr.encode("utf-8", errors="replace")
+        print(json.dumps({
+            "official_enable_timeout_seconds": exc.timeout,
+            "stderr_bytes": len(stderr),
+            "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+        }, sort_keys=True), flush=True)
+        raise
     if result.returncode:
         stderr = result.stderr or b""
         if isinstance(stderr, str):
@@ -521,11 +532,19 @@ def official_enable_diagnostics(monkeypatch):
     def recorded(*args, **kwargs):
         command = args[0] if args else kwargs.get("args", ())
         if (
-            len(command) >= 9
-            and list(command[1:3]) == ["-I", "-c"]
-            and "hermes_cli.main" in command[3]
+            isinstance(command, (list, tuple))
+            and len(command) >= 11
+            and list(command[1:5]) == ["-I", "-X", "utf8", "-c"]
+            and command[5] == plugin._OFFICIAL_ENABLE_BOOTSTRAP
             and list(command[-4:]) == ["plugins", "enable", plugin.PLUGIN_KEY, "--no-allow-tool-override"]
         ):
+            # This contract measures the real writer's complete byte image,
+            # then injects a late failure. Under shared CI load the official
+            # PM/activation path can exhaust production's 30s before consent.
+            # Keep that production deadline and unknown-image guard unchanged;
+            # this private, offline fixture has one bounded 90s writer budget.
+            assert kwargs.get("timeout") == 30
+            kwargs["timeout"] = 90
             return _run_with_failure_diagnostic(original, *args, **kwargs)
         return original(*args, **kwargs)
 
@@ -577,6 +596,27 @@ def test_official_failure_diagnostic_redacts_real_child_output(capsys, missing):
         "missing_modules": ["cryptography.hazmat"] if missing else [],
         "stderr_bytes": len(stderr.encode()),
         "stderr_sha256": hashlib.sha256(stderr.encode()).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_official_timeout_diagnostic_preserves_exception_and_redacts_output(capsys, as_bytes):
+    secret = "SYNTHETIC-PRIVATE-TIMEOUT-SECRET"
+    stderr = secret.encode() if as_bytes else secret
+    failure = subprocess.TimeoutExpired([secret], 90, output=secret, stderr=stderr)
+
+    def timed_out(*args, **kwargs):
+        raise failure
+
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        _run_with_failure_diagnostic(timed_out)
+    assert caught.value is failure
+    output = capsys.readouterr().out
+    assert secret not in output
+    assert json.loads(output) == {
+        "official_enable_timeout_seconds": 90,
+        "stderr_bytes": len(secret.encode()),
+        "stderr_sha256": hashlib.sha256(secret.encode()).hexdigest(),
     }
 
 
@@ -702,24 +742,33 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
     assert not list(preimage.state_dir.glob("hfc-config-plan-*"))
     prepared_journal = preimage.journal_path.read_bytes()
     if failure is not None:
+        injection_reached = False
         with monkeypatch.context() as fault:
             if failure == "journal":
                 def fail_journal(*args, **kwargs):
+                    nonlocal injection_reached
+                    injection_reached = True
                     raise OSError("injected private journal failure")
                 fault.setattr(plugin, "_rewrite_private_journal", fail_journal)
                 expected_error = OSError
             else:
                 official = plugin._run_official_enable
                 def fail_after_real_enable(candidate):
+                    nonlocal injection_reached
                     assert official(candidate) == 0
                     assert candidate.config_path.read_bytes() == plan.postimage
+                    injection_reached = True
                     if failure == "exception":
                         raise OSError("injected failure after official write")
                     return 1
                 fault.setattr(plugin, "_run_official_enable", fail_after_real_enable)
                 expected_error = plugin.PluginConfigRefused
-            with pytest.raises(expected_error):
+            with pytest.raises(expected_error) as caught:
                 plugin.enable_plugin(binding, preimage)
+        assert injection_reached, "official writer failed before requested fault injection"
+        if failure == "exception":
+            assert isinstance(caught.value.__cause__, OSError)
+            assert str(caught.value.__cause__) == "injected failure after official write"
         assert (home / "config.yaml").read_bytes() == original
         assert preimage.backup_path.read_bytes() == original
         assert preimage.journal_path.read_bytes() == prepared_journal

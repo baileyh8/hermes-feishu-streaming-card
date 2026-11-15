@@ -2196,6 +2196,11 @@ async def stage_message_completed_from_hermes_locals_async(
             return False
         if admission_mode == "handoff":
             from .admission_completion import prepare
+            # Freeze the complete display-event identity before admission borrows
+            # the stage. All subsequent POSTs retain this exact body and ID.
+            if not any(payload.get(key) for key in ("event_id", "producer", "phase")):
+                payload.update(event_id="hfc-terminal:" + secrets.token_hex(16),
+                               producer="patch", phase="terminal")
             offer = prepare(local_vars, stage, _finish_admission_delivery)
             if offer is None:
                 return False
@@ -2762,6 +2767,23 @@ async def prepare_decomposed_base_final_delivery(
     return await prepare_exact_base_final_delivery(local_vars)
 
 
+async def _recover_terminal_with_remaining_budget(
+    stage: dict[str, Any], payload: dict[str, Any], *, event_url: str, timeout: float,
+) -> bool:
+    deadline = stage.get("_terminal_recovery_deadline")
+    budget = timeout if deadline is None else min(timeout, max(0.0, deadline - time.monotonic()))
+    if budget <= 0:
+        return False
+    try:
+        # Recovery installs the task-local native-handoff context. Await it in
+        # this Task; wrapping it in wait_for would hide that ContextVar update.
+        return await _recover_exact_terminal_native_handoff(
+            payload, event_url=event_url, timeout=budget
+        )
+    except asyncio.TimeoutError:
+        return False
+
+
 async def prepare_exact_base_final_delivery(
     local_vars: dict[str, Any],
 ) -> tuple[Any, str, Any, Any]:
@@ -2822,10 +2844,8 @@ async def prepare_exact_base_final_delivery(
         except Exception:
             diagnose_attempt(stage, "ack-transport-error")
             if ack_capable:
-                await _recover_exact_terminal_native_handoff(
-                    payload,
-                    event_url=event_url,
-                    timeout=timeout,
+                await _recover_terminal_with_remaining_budget(
+                    stage, payload, event_url=event_url, timeout=timeout
                 )
             return fallback
         applied = _event_was_applied(result, strict=True)
@@ -2849,10 +2869,8 @@ async def prepare_exact_base_final_delivery(
         if ack_capable and not applied:
             registered = _register_native_handoff_descriptor(payload, result)
             if not registered:
-                await _recover_exact_terminal_native_handoff(
-                    payload,
-                    event_url=event_url,
-                    timeout=timeout,
+                await _recover_terminal_with_remaining_budget(
+                    stage, payload, event_url=event_url, timeout=timeout
                 )
         if applied:
             if normal_reason:
@@ -2901,9 +2919,27 @@ async def _post_admission_terminal(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise asyncio.TimeoutError
-        result = await asyncio.wait_for(
-            _post_json_response(url, payload, remaining), timeout=remaining
-        )
+        try:
+            result = await asyncio.wait_for(
+                _post_json_response(url, payload, remaining), timeout=remaining
+            )
+        except Exception as exc:
+            # Python 3.9/3.10 asyncio.TimeoutError is not built-in TimeoutError.
+            if not (isinstance(exc, asyncio.TimeoutError) or _terminal_delivery_retryable(exc)):
+                raise
+            event_id = payload.get("event_id")
+            if not isinstance(event_id, str) or not event_id.strip():
+                raise
+            # The old failure path already allowed one further timeout for
+            # native recovery. Share it instead of adding a third allowance.
+            stage["_terminal_recovery_deadline"] = deadline + timeout
+            replay_budget = min(2.0, timeout / 2.0,
+                                max(0.0, deadline + timeout - time.monotonic()))
+            if replay_budget <= 0:
+                raise
+            result = await asyncio.wait_for(
+                _post_json_response(url, payload, replay_budget), timeout=replay_budget
+            )
         return result, attempt
     except BaseException:
         if attempt is not None:

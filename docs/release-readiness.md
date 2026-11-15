@@ -1,5 +1,10 @@
 # 发布准备说明
 
+## 当前候选
+
+本分支目标版本为 `5.0.25`：#529 终局确认丢失后的有界对账、#526 Windows PowerShell 5.1 凭据探针和安全安装状态解释。#526 报告者通过 setup 并重启 Gateway 已恢复；现场恢复与维护者复现、普通包验收分别记录。本地聚焦回归、普通 wheel/子进程及三组真实 API 验收已有独立证据；精确提交完整 CI、Windows 5.1/7、公开发行门禁与客户端范围以 PR #530 和 GitHub Release 的最终记录为准。见[发行说明](release-notes-v5.0.25.md)。
+
+## v5.0.24 历史记录
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
 本分支目标版本为 `5.0.24`（#524 显式 HOME 恢复校验与 PM 恢复顺序、#525 默认关闭的原生审批规则提示）。#526 原环境尚未独立复现，不声称本版解决。验收范围与证据入口见[发行说明](release-notes-v5.0.24.md)与 [v5.0.24 GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24)；未完成门禁通过前不发布。真实 Gateway/model 与飞书客户端验收另记，不由 CI 替代。

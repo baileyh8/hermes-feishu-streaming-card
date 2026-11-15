@@ -1,5 +1,10 @@
 # Release Readiness
 
+## Current candidate
+
+This branch targets `5.0.25`: #529 bounded reconciliation of a lost terminal acknowledgement, #526 Windows PowerShell 5.1 credential probe and safe installation-state explanations. The reporter restored #526 by running setup and restarting Gateway; field recovery is separate from maintainer reproduction and package acceptance. Local focused regression, ordinary-wheel child processes and three real API controls have separate evidence. Exact-commit full CI, Windows 5.1/7, public release gates and client scope follow the final PR #530 and GitHub Release records. See the [release notes](release-notes-v5.0.25.en.md).
+
+## v5.0.24 historical record
 [中文](release-readiness.md) | [English](release-readiness.en.md)
 
 This branch targets `5.0.24` (#524 explicit-HOME recovery checks and PM recovery order, #525 opt-in native approval-rule hints). The #526 environment has not been independently reproduced and is not claimed resolved. Acceptance scope and evidence entry points live in the [release notes](release-notes-v5.0.24.en.md) and on the [v5.0.24 GitHub release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.24); the release does not publish before the pending gates pass. Gateway/model and Feishu-client evidence remain separate.

@@ -1,5 +1,12 @@
 # Changelog
 
+## v5.0.25 — 2026-11-15
+
+- #529：针对已应用终局但 HTTP 确认丢失的重复投递路径，复用相同事件的有界幂等对账；原生失败回退与单次 ACK 身份绑定保留。
+- #526：Windows PowerShell 5.1 凭据探针避免嵌套引号经 native 参数解析丢失；脱敏诊断保留固定的“尚未安装 hook”解释与下一步。
+- #526 报告者执行 setup 并重启后已恢复；源码兼容、流式配置、安装状态与实际 Gateway 激活分别记录，不把隔离控制写成原机修复。
+- 源码、普通安装、真实平台、客户端及实际 Gateway/model 的证据分别记录；完整矩阵与公开安装仍作为发布门禁，全部确认不可达时保留原生答案。
+
 ## v5.0.24 — 2026-11-14
 
 - Enforce the explicit Hermes HOME binding before repairing legacy observer source (#524). Document source repair before observer rebinding for a PM rebuild combined with reset hooks; preserve marker, config, member/wheel and review-fence ownership checks. Runtime-binding refusals now point to that reviewed recovery order instead of encouraging repeated install attempts.

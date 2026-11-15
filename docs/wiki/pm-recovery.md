@@ -1,5 +1,11 @@
 # PM 运行环境迁移与 wheel 来源恢复
 
+## 首次安装与运行时激活（#526）
+
+`install_state_clean` 表示未发现已有的受管 hook 安装状态，不表示已安装或真实回合已激活。源码 anchors 受支持、`streaming.enabled` 为真、插件已启用和独立子进程探测通过，也不能代替 Gateway 当前进程的加载证据。先核对同一个 Hermes 根目录、HOME、HFC 配置和环境文件，再运行正常 `setup` 并按计划重启 Gateway；用新回合的事件计数和卡片投递核验。`repair` 只维护已有、可验证的安装，不代替首次安装；不要删除 manifest、备份或完整性保护标记。
+
+v5.0.25 的 PowerShell 凭据探针使用独占临时 Python 文件，避免 Windows PowerShell 5.1 对 `python -c` 内嵌双引号的 native 参数转换。保持原凭据/profile 判定与失败退出，`finally` 清除临时文件。PowerShell 5.1 与 7 的实际执行证据分开记录。脱敏报告只补充已知状态的固定说明和下一步，不公开原始诊断值或私有路径，不改变安装状态、退出码和修复保护。
+
 ## PM 重建与源码重置同时发生（#524）
 
 旧 PM generation 消失时，observer 记录仍可能绑定旧 Python；Hermes 更新又可能把受管 hook 重置。普通 `install/setup` 会先拒绝 observer runtime identity 变化，而 `rebind-legacy` 要求源码已是 `installed`。这两个拒绝都应保留，不能靠删除 marker、fence 或 service 记录解除。
