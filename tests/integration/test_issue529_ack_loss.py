@@ -47,23 +47,21 @@ from types import SimpleNamespace
 import pytest
 from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestServer
-
-from hermes_feishu_card import hook_runtime as h
-from hermes_feishu_card.server import SESSIONS_KEY, create_app
-from hermes_feishu_card.native_handoff import NativeHandoffStore
-
 from test_session_authority_completion import (  # noqa: F401
+    V0226_FIXTURE,
     Event,
     Source,
-    V0226_FIXTURE,
     deliver,
     harness,
 )
 
+from hermes_feishu_card import hook_runtime as h
+from hermes_feishu_card.native_handoff import NativeHandoffStore
+from hermes_feishu_card.server import SESSIONS_KEY, create_app
 
-# No pytest-timeout plugin: each test bounds itself (deliver timeout + shrunk
-# terminal retry budget) and the whole invocation runs under a subprocess
-# timeout enforced by the runner command.
+# Keep the production terminal timeout floor: claim/source validation also
+# consumes its budget. Faults close the connection immediately; no shortened
+# timeout is needed. Each deliver call has an explicit overall timeout.
 
 
 class CardCounterPort:
@@ -213,9 +211,8 @@ class SidecarHarness:
 
     async def post_started(self, event):
         payload = self.started_event(event)
-        async with ClientSession() as client:
-            async with client.post(self.url, json=payload) as response:
-                return response.status, await response.json()
+        async with ClientSession() as client, client.post(self.url, json=payload) as response:
+            return response.status, await response.json()
 
     async def wait_for_final_update(self):
         # applied accepts delivery ownership; platform I/O may finish later.
@@ -227,13 +224,6 @@ class SidecarHarness:
 
     def sessions(self):
         return list(self.app[SESSIONS_KEY].values())
-
-
-@pytest.fixture
-def retry_budget(monkeypatch):
-    """Shrink the terminal retry budget so scenarios stay inside 60s."""
-    monkeypatch.setattr(h, "TERMINAL_DELIVERY_RETRY_BUDGET_SECONDS", 8.0)
-    monkeypatch.setattr(h, "TERMINAL_DELIVERY_RETRY_DELAYS", (0.05, 0.1))
 
 
 @pytest.mark.parametrize(
@@ -264,16 +254,13 @@ async def test_applied_terminal_suppresses_native(
     "harness", [(V0226_FIXTURE, True)], ids=["0226-real-owner"], indirect=True,
 )
 async def test_first_terminal_response_lost_replay_still_reaches_plugin(
-    harness, monkeypatch, tmp_path, retry_budget  # noqa: F811
+    harness, monkeypatch, tmp_path  # noqa: F811
 ):
     """Scenario A (first-only loss): the handler applies the terminal, the
     first response is dropped, and the same-event replay still reaches the
     plugin through the sidecar cache. The card stays applied and NO native
     duplicate is sent. RED at the pre-fix baseline (native duplicate was
     observed there), GREEN with the integrated #529 fix."""
-    from hermes_feishu_card import hook_runtime as hr
-
-    monkeypatch.setattr(hr, "TERMINAL_TIMEOUT_SECONDS", 0.3)
     sidecar = SidecarHarness(tmp_path, monkeypatch, harness, timeout_seconds=0.3)
     await sidecar.start()
     try:
@@ -305,16 +292,13 @@ async def test_first_terminal_response_lost_replay_still_reaches_plugin(
     "harness", [(V0226_FIXTURE, True)], ids=["0226-real-owner"], indirect=True,
 )
 async def test_all_terminal_acks_unreachable_keeps_native_once(
-    harness, monkeypatch, tmp_path, retry_budget  # noqa: F811
+    harness, monkeypatch, tmp_path  # noqa: F811
 ):
     """Scenario B (all-ACK-unknown): every terminal response is lost.
     After bounded replay/recovery attempts, the plugin must send
     the native body exactly once and must not blindly suppress. This is
     the network-unknown boundary: card/native duplication is possible
     here and is NOT a fix target."""
-    from hermes_feishu_card import hook_runtime as hr
-
-    monkeypatch.setattr(hr, "TERMINAL_TIMEOUT_SECONDS", 0.3)
     sidecar = SidecarHarness(tmp_path, monkeypatch, harness, timeout_seconds=0.3)
     await sidecar.start()
     try:
@@ -338,7 +322,7 @@ async def test_all_terminal_acks_unreachable_keeps_native_once(
     "harness", [(V0226_FIXTURE, True)], ids=["0226-real-owner"], indirect=True,
 )
 async def test_explicit_ok_false_terminal_is_final_not_retried_into_success(
-    harness, monkeypatch, tmp_path, retry_budget  # noqa: F811
+    harness, monkeypatch, tmp_path  # noqa: F811
 ):
     """Real-HTTP 403 ok:false refusal before acceptance: native exactly once."""
     sidecar = SidecarHarness(tmp_path, monkeypatch, harness, timeout_seconds=0.3)
@@ -351,10 +335,9 @@ async def test_explicit_ok_false_terminal_is_final_not_retried_into_success(
             "event": event, "source": event.source,
             "message_id": event.message_id, "text": "running progress marker",
         })
-        async with ClientSession() as client:
-            async with client.post(sidecar.url, json=progress) as response:
-                assert response.status == 200
-                assert (await response.json())["applied"] is True
+        async with ClientSession() as client, client.post(sidecar.url, json=progress) as response:
+            assert response.status == 200
+            assert (await response.json())["applied"] is True
         loop = asyncio.get_running_loop()
         deadline = loop.time() + 3
         while not sidecar.port.card_updates and loop.time() < deadline:
@@ -384,7 +367,11 @@ async def test_explicit_ok_false_terminal_is_final_not_retried_into_success(
 async def test_invalidated_stage_cannot_consume_applied_ack(
     harness, monkeypatch, tmp_path  # noqa: F811
 ):
-    """Cancel path: a stage cleared mid-POST cannot consume the applied ACK."""
+    """Closing the shared completion mid-POST invalidates the returned ACK.
+
+    A ContextVar.set in a transport child only changes that child's context;
+    abort the original carrier so this tests real invalidation on all Pythons.
+    """
     sidecar = SidecarHarness(tmp_path, monkeypatch, harness, timeout_seconds=5)
     await sidecar.start()
     try:
@@ -393,9 +380,12 @@ async def test_invalidated_stage_cannot_consume_applied_ack(
         assert status == 200 and body["applied"] is True
 
         async def post_and_invalidate(url, payload, timeout):
+            if not url.endswith("/events"):
+                return {"ok": False}
             stage = h._HFC_EXACT_COMPLETION_STAGE.get()
             assert stage is not None
-            h._HFC_EXACT_COMPLETION_STAGE.set(None)
+            stage["_admission_claim"].abort()
+            assert not stage
             return {"ok": True, "applied": True}
 
         monkeypatch.setattr(h, "_post_json_response", post_and_invalidate)
@@ -546,14 +536,11 @@ async def test_spent_recovery_budget_skips_recover(
     "harness", [(V0226_FIXTURE, True)], ids=["0226-real-owner"], indirect=True,
 )
 async def test_retry_body_identity_and_single_replay(
-    harness, monkeypatch, tmp_path, retry_budget  # noqa: F811
+    harness, monkeypatch, tmp_path  # noqa: F811
 ):
     """Identity: the retried terminal body equals the first attempt body
     byte-for-byte (same frozen event_id) and the sidecar counts exactly one
     event_id replay (cache hit, no second card I/O)."""
-    from hermes_feishu_card import hook_runtime as hr
-
-    monkeypatch.setattr(hr, "TERMINAL_TIMEOUT_SECONDS", 0.3)
     sidecar = SidecarHarness(tmp_path, monkeypatch, harness, timeout_seconds=0.3)
     await sidecar.start()
     try:
@@ -608,9 +595,8 @@ async def test_late_replay_of_terminal_after_settle_is_cached_not_reapplied(
         updates_after_first = sidecar.port.card_updates
         terminal_payload = sidecar.trace["last_terminal_payload"]
         assert terminal_payload["event"] == "message.completed"
-        async with ClientSession() as client:
-            async with client.post(sidecar.url, json=terminal_payload) as response:
-                replay = await response.json()
+        async with ClientSession() as client, client.post(sidecar.url, json=terminal_payload) as response:
+            replay = await response.json()
         assert response.status == 200
         assert replay.get("ok") is True and replay.get("applied") is True
         assert all(s.status == "completed" for s in sidecar.sessions())
