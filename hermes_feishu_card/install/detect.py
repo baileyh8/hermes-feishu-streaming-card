@@ -205,6 +205,18 @@ def detect_hermes(root: str | Path) -> HermesDetection:
                 return result(False, error)
             gateway_sources[name] = source
 
+    peer_sources = {}
+    from .source_layout import DECOMPOSED_PEER_SOURCES
+    for name in DECOMPOSED_PEER_SOURCES:
+        path = hermes_root / name
+        if path.is_symlink():
+            return result(False, f"{name} must not be a symlink")
+        if path.exists():
+            source, error = _read_text(path, name)
+            if error:
+                return result(False, error)
+            peer_sources[name] = source
+
     cron_contents = ""
     cron_error = None
     for name in ("cron/scheduler.py", "cron/scheduler_delivery.py"):
@@ -253,13 +265,15 @@ def detect_hermes(root: str | Path) -> HermesDetection:
                 base_contents = originals["gateway/platforms/base.py"].decode("utf-8")
             except (OSError, ValueError, UnicodeError, KeyError):
                 return result(False, "decomposed ownership cannot be verified")
-    verified_ledger_signals = _has_exact_delivery_ledger_signals(base_contents)
+    verified_ledger_signals = _has_exact_delivery_ledger_signals(
+        base_contents, *peer_sources.values()
+    )
     base_required = decomposed or version_requires_base or verified_ledger_signals
     exact_base_delivery = False
     exact_base_error = ""
     if base_contents and base_error is None:
         exact_base_delivery, exact_base_error = _detect_exact_base_contract(
-            base_contents
+            base_contents, peer_sources=peer_sources
         )
     elif base_error is not None:
         exact_base_error = base_error
@@ -267,7 +281,7 @@ def detect_hermes(root: str | Path) -> HermesDetection:
         exact_base_error = "gateway/platforms/base.py missing for exact delivery contract"
 
     if decomposed:
-        capabilities, capability_locations, capability_error = _detect_layout_capabilities(gateway_sources, cron_contents, cron_py.relative_to(hermes_root).as_posix())
+        capabilities, capability_locations, capability_error = _detect_layout_capabilities(gateway_sources, cron_contents, cron_py.relative_to(hermes_root).as_posix(), peer_sources=peer_sources)
     else:
         capabilities, capability_error = _detect_capabilities(contents, cron_contents)
         capability_locations = {key: ((cron_py.relative_to(hermes_root).as_posix(),) if key == "cron_delivery" and _find_deliver_result_in_contents(cron_contents) else ("gateway/run.py",)) for key, found in capabilities.items() if found}
@@ -388,9 +402,11 @@ def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | No
         CORE_HASHES_0227,
         CORE_HASHES_0230,
         CORE_HASHES_0231,
+        CORE_HASHES_0232,
         SOURCE_HASHES_0227,
         SOURCE_HASHES_0230,
         SOURCE_HASHES_0231,
+        SOURCE_HASHES_0232,
         source_bytes,
     )
     if hashes == CORE_HASHES and source_bytes(root) is None:
@@ -401,12 +417,15 @@ def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | No
         return False, "unsupported-source"
     if hashes == CORE_HASHES_0231 and source_bytes(root, SOURCE_HASHES_0231) is None:
         return False, "unsupported-source"
+    if hashes == CORE_HASHES_0232 and source_bytes(root, SOURCE_HASHES_0232) is None:
+        return False, "unsupported-source"
     return True, "verified-source-cohort"
 
 
-def _has_exact_delivery_ledger_signals(contents: str) -> bool:
+def _has_exact_delivery_ledger_signals(contents: str, *extra: str) -> bool:
+    pool = "\n".join((contents, *extra))
     return all(
-        signal in contents
+        signal in pool
         for signal in (
             "compute_obligation_id",
             "record_obligation",
@@ -417,11 +436,11 @@ def _has_exact_delivery_ledger_signals(contents: str) -> bool:
     )
 
 
-def _detect_exact_base_contract(contents: str) -> tuple[bool, str]:
+def _detect_exact_base_contract(contents: str, peer_sources: dict[str, str] | None = None) -> tuple[bool, str]:
     try:
-        patched = apply_base_patch(contents)
-        original = remove_base_patch(patched)
-        if apply_base_patch(original) != patched:
+        patched = apply_base_patch(contents, peer_sources=peer_sources)
+        original = remove_base_patch(patched, peer_sources=peer_sources)
+        if apply_base_patch(original, peer_sources=peer_sources) != patched:
             return False, "gateway/platforms/base.py exact delivery patch is not reversible"
     except ValueError:
         return False, "gateway/platforms/base.py exact delivery anchors are unsupported"
@@ -969,14 +988,14 @@ def _is_hooks_emit(func: ast.expr) -> bool:
 _LAYOUT_MARKERS = patcher.DECOMPOSED_LAYOUT_MARKERS
 
 
-def _detect_layout_capabilities(sources, cron_contents, cron_target):
+def _detect_layout_capabilities(sources, cron_contents, cron_target, peer_sources=None):
     locations = {name: [] for name in (*_LAYOUT_MARKERS, "run_agent", "reply_context", "attachment_delivery", "cron_delivery")}
     errors = []
     for target, content in sources.items():
         try:
             clean = patcher.remove_patch(content)
             tree = ast.parse(clean)
-            rendered = patcher.apply_gateway_fragment(clean, target, completion_sources=sources)
+            rendered = patcher.apply_gateway_fragment(clean, target, completion_sources=sources, peer_sources=peer_sources)
             for name, marker in _LAYOUT_MARKERS.items():
                 if marker in rendered:
                     locations[name].append(target)

@@ -23,6 +23,7 @@ from .transaction_lock import (
 from .source_layout import (
     BACKUP_SUFFIX as BACKUP_SUFFIX, MANIFEST_NAME as MANIFEST_NAME,
     DECOMPOSED_MANIFEST_VERSION, DECOMPOSED_SOURCE_TARGETS,
+    read_peer_contract_sources,
 )
 from .manifest import validate_decomposed_manifest
 from . import posix_transaction as bound_io
@@ -309,6 +310,7 @@ def _apply_recovery_action(
     action: str,
     quarantine_sources: List[Tuple[Path, str]],
 ) -> None:
+    _peers = read_peer_contract_sources(detection.root)
     if action == "adopt_lenient_upgrade_source":
         cleaned_run = remove_patch_lenient(state.run_text)
         if cleaned_run == state.run_text:
@@ -321,7 +323,7 @@ def _apply_recovery_action(
                 quarantine_sources.append((detection.cron_py, state.cron_text))
             state.cron_text = cleaned_cron
         if state.base_text is not None:
-            cleaned_base = remove_base_patch_lenient(state.base_text)
+            cleaned_base = remove_base_patch_lenient(state.base_text, peer_sources=_peers)
             if cleaned_base != state.base_text and detection.base_py is not None:
                 quarantine_sources.append((detection.base_py, state.base_text))
             state.base_text = cleaned_base
@@ -374,12 +376,12 @@ def _apply_recovery_action(
             raise RecoveryRefused("Exact Base source is unavailable.")
         source = state.base_backup_text
         if source is None:
-            source = remove_base_patch(state.base_text)
-        state.base_text = apply_base_patch(source)
+            source = remove_base_patch(state.base_text, peer_sources=_peers)
+        state.base_text = apply_base_patch(source, peer_sources=_peers)
     elif action == "rebuild_base_backup":
         if state.base_text is None:
             raise RecoveryRefused("Exact Base source is unavailable.")
-        state.base_backup_text = remove_base_patch(state.base_text)
+        state.base_backup_text = remove_base_patch(state.base_text, peer_sources=_peers)
     elif action == "rebuild_manifest":
         pass
     elif action == "clear_stale_install_state":
@@ -394,6 +396,7 @@ def _apply_recovery_action(
 def _validate_recovery_state(
     detection: HermesDetection, state: _RecoveryState
 ) -> None:
+    _peers = read_peer_contract_sources(detection.root)
     try:
         ast.parse(state.run_text)
         unpatched = remove_patch(state.run_text)
@@ -434,18 +437,18 @@ def _validate_recovery_state(
 
         if state.base_text is not None:
             ast.parse(state.base_text)
-            base_unpatched = remove_base_patch(state.base_text)
+            base_unpatched = remove_base_patch(state.base_text, peer_sources=_peers)
             if state.clear_install_state:
                 if base_unpatched != state.base_text:
                     raise ValueError("owned exact Base patch remains")
             elif state.base_backup_text is not None:
                 ast.parse(state.base_backup_text)
-                if remove_base_patch(state.base_backup_text) != state.base_backup_text:
+                if remove_base_patch(state.base_backup_text, peer_sources=_peers) != state.base_backup_text:
                     raise ValueError("exact Base backup contains owned patch")
-                expected_base = apply_base_patch(state.base_backup_text)
+                expected_base = apply_base_patch(state.base_backup_text, peer_sources=_peers)
                 if (
                     state.base_text != expected_base
-                    or remove_base_patch(state.base_text) != state.base_backup_text
+                    or remove_base_patch(state.base_text, peer_sources=_peers) != state.base_backup_text
                 ):
                     raise ValueError(
                         "exact Base candidate does not match verified source"
@@ -552,6 +555,7 @@ def _render_manifest(
     state: _RecoveryState,
     previous_manifest: Optional[Dict[str, object]] = None,
 ) -> str:
+    _peers = read_peer_contract_sources(detection.root)
     if state.backup_text is None:
         raise RecoveryRefused("Gateway backup is required for the install manifest.")
     backup_path = detection.run_py.with_name(
@@ -583,7 +587,7 @@ def _render_manifest(
         and detection.base_py is not None
         and state.base_text is not None
         and state.base_backup_text is not None
-        and remove_base_patch(state.base_text) != state.base_text
+        and remove_base_patch(state.base_text, peer_sources=_peers) != state.base_text
     )
     if has_base:
         base_py = detection.base_py
@@ -1175,6 +1179,7 @@ def _classify_lenient_owned_upgrade(
     accept_hermes_upgrade: bool,
 ) -> Optional[RecoveryClassification]:
     """Accept carried-forward owned blocks only with explicit upgrade consent."""
+    _peers = read_peer_contract_sources(detection.root)
     if (
         not accept_hermes_upgrade
         or not detection.supported
@@ -1223,19 +1228,19 @@ def _classify_lenient_owned_upgrade(
     base_source = evidence.base_current_text
     if base_source is not None:
         try:
-            cleaned_base = remove_base_patch_lenient(base_source)
+            cleaned_base = remove_base_patch_lenient(base_source, peer_sources=_peers)
         except ValueError:
             return None
         if cleaned_base != base_source:
             base_manifest = _check_base_manifest(detection, evidence)
-            base_backup = _check_base_backup(evidence)
+            base_backup = _check_base_backup(evidence, peer_sources=_peers)
             if not (
                 base_manifest.valid
                 and base_manifest.backup_matches
                 and base_backup.valid
             ):
                 return None
-        if detection.base_required and _validate_base_reapplication(cleaned_base):
+        if detection.base_required and _validate_base_reapplication(cleaned_base, peer_sources=_peers):
             return None
 
     return _classification(
@@ -1254,6 +1259,7 @@ def _classify_base_evidence(
     *,
     accept_hermes_upgrade: bool,
 ) -> RecoveryClassification:
+    _peers = read_peer_contract_sources(detection.root)
     parts = _fingerprint_parts(detection, evidence)
     findings = []
     manifest = evidence.manifest
@@ -1285,7 +1291,7 @@ def _classify_base_evidence(
     has_patch = False
     if not marker_corrupt:
         try:
-            unpatched = remove_base_patch(current)
+            unpatched = remove_base_patch(current, peer_sources=_peers)
             has_patch = unpatched != current
         except ValueError:
             marker_corrupt = True
@@ -1294,7 +1300,7 @@ def _classify_base_evidence(
         if not detection.base_required:
             return _classification("clean", False, (), findings, parts)
         findings.append(_finding("base_install_state_incomplete", "error"))
-        reapply_error = _validate_base_reapplication(current)
+        reapply_error = _validate_base_reapplication(current, peer_sources=_peers)
         if reapply_error:
             findings.append(_finding("base_source_mismatch", "error"))
         can_extend_owned_install = gateway_state in {
@@ -1316,7 +1322,7 @@ def _classify_base_evidence(
         )
     checks = _check_base_manifest(detection, evidence)
     findings.extend(checks.findings)
-    backup_checks = _check_base_backup(evidence)
+    backup_checks = _check_base_backup(evidence, peer_sources=_peers)
     findings.extend(backup_checks.findings)
 
     if marker_corrupt:
@@ -1345,7 +1351,7 @@ def _classify_base_evidence(
         if backup_checks.valid and evidence.base_backup_text is not None:
             try:
                 candidate_matches = (
-                    apply_base_patch(evidence.base_backup_text) == current
+                    apply_base_patch(evidence.base_backup_text, peer_sources=_peers) == current
                     and unpatched == evidence.base_backup_text
                 )
             except ValueError:
@@ -1366,7 +1372,7 @@ def _classify_base_evidence(
     if not manifest_complete or not backup_checks.valid or not checks.valid:
         findings.append(_finding("base_install_state_incomplete", "error"))
         return _classification("owned_incomplete", False, (), findings, parts)
-    reapply_error = _validate_base_reapplication(current)
+    reapply_error = _validate_base_reapplication(current, peer_sources=_peers)
     source_matches = evidence.base_backup_text == current
     accepted_replacement = bool(
         accept_hermes_upgrade and detection.supported and not reapply_error
@@ -2210,7 +2216,7 @@ def _check_cron_backup(evidence: RecoveryEvidence) -> _BackupChecks:
     return _BackupChecks(True, ())
 
 
-def _check_base_backup(evidence: RecoveryEvidence) -> _BackupChecks:
+def _check_base_backup(evidence: RecoveryEvidence, peer_sources: dict[str, str] | None = None) -> _BackupChecks:
     if evidence.base_backup_sha256 == f"{_STATUS_PREFIX}symlink":
         return _BackupChecks(False, (_finding("base_backup_symlink_refused", "error"),))
     if evidence.base_backup_sha256 == f"{_STATUS_PREFIX}read_error":
@@ -2219,9 +2225,9 @@ def _check_base_backup(evidence: RecoveryEvidence) -> _BackupChecks:
         return _BackupChecks(False, ())
     try:
         ast.parse(evidence.base_backup_text)
-        if remove_base_patch(evidence.base_backup_text) != evidence.base_backup_text:
+        if remove_base_patch(evidence.base_backup_text, peer_sources=peer_sources) != evidence.base_backup_text:
             raise ValueError("owned exact Base patch in backup")
-        apply_base_patch(evidence.base_backup_text)
+        apply_base_patch(evidence.base_backup_text, peer_sources=peer_sources)
     except (SyntaxError, ValueError):
         return _BackupChecks(False, (_finding("base_backup_invalid", "error"),))
     return _BackupChecks(True, ())
@@ -2259,16 +2265,16 @@ def _validate_cron_reapplication(source_text: Optional[str]) -> str:
     return ""
 
 
-def _validate_base_reapplication(source_text: Optional[str]) -> str:
+def _validate_base_reapplication(source_text: Optional[str], peer_sources: dict[str, str] | None = None) -> str:
     if source_text is None:
         return "unsupported_anchors"
     try:
         ast.parse(source_text)
-        candidate = apply_base_patch(source_text)
+        candidate = apply_base_patch(source_text, peer_sources=peer_sources)
         if candidate == source_text:
             return "unsupported_anchors"
         ast.parse(candidate)
-        if remove_base_patch(candidate) != source_text:
+        if remove_base_patch(candidate, peer_sources=peer_sources) != source_text:
             return "marker_validation"
     except (SyntaxError, ValueError):
         return "unsupported_anchors"
@@ -2475,6 +2481,7 @@ def _read_cron_evidence(
 def _read_base_evidence(
     detection: HermesDetection,
 ) -> Tuple[Optional[str], str, Optional[str], str, str]:
+    _peers = read_peer_contract_sources(detection.root)
     base_py = detection.base_py
     if base_py is None:
         return None, "", None, "", ""
@@ -2500,7 +2507,7 @@ def _read_base_evidence(
         return None, "", backup_text, backup_sha256, "current_read_error"
     marker_error = ""
     try:
-        remove_base_patch(current_text)
+        remove_base_patch(current_text, peer_sources=_peers)
     except ValueError:
         marker_error = "corrupt_patch_markers"
     return (
@@ -2706,7 +2713,7 @@ def install_decomposed(detection, *, no_repair=False, expected_fingerprint=None,
         fresh = _plan_decomposed_recovery(detection, accept_hermes_upgrade=accept_hermes_upgrade)
         if fresh.fingerprint != decomposed_ownership._fingerprint(snapshot):
             raise ValueError("decomposed evidence changed before install")
-        rendered = rendered or decomposed_ownership.render(originals, detection.hook_strategy)
+        rendered = rendered or decomposed_ownership.render(originals, detection.hook_strategy, peer_sources=read_peer_contract_sources(detection.root))
         manifest = {
             "manifest_version": DECOMPOSED_MANIFEST_VERSION, "layout": "gateway-decomposed-v1",
             "integration_mode": "legacy-patch",

@@ -65,7 +65,7 @@ def test_v0231_pinned_checkout_is_supported():
     assert detection.capabilities["message_handler"] is True
     assert detection.capabilities["completion_return"] is True
     assert detection.capabilities["admission_completion"] is True
-    assert ac.SOURCE_COHORTS[-1] == topology.CORE_HASHES_0231
+    assert topology.CORE_HASHES_0231 in ac.SOURCE_COHORTS
     assert topology.source_bytes_0231(root) is not None
 
 

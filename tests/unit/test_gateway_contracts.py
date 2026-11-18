@@ -98,3 +98,112 @@ def test_unknown_pin_inheritance_is_rejected(internal):
     run = RUN.replace('source=source', 'source=_turn_source')
     with pytest.raises(ValueError, match='pinned source binding changed'):
         locate(PIN.replace('event.internal)', internal+')')+'\n'+run+'\n'+GUARD)
+
+
+SETUP_GUARD = '''
+async def run_preagent_setup(runner, event, source, quick_key: str, run_generation: int):
+    resolved = await runner._hmwa_resolve_session(event, source)
+    if resolved is None:
+        return None, None
+    source, session_entry, session_key = resolved
+    prepared, env_tokens = await runner._hmwa_prepare_turn(
+        event, source, session_entry, session_key, quick_key, run_generation,
+    )
+    hook_ctx = {"session_id": session_entry.session_id}
+    if not heartbeat_owner_is_current(runner, event, session_key):
+        return (source, session_entry, session_key, prepared, env_tokens, None, None), None
+    channel = runner._pinned_channel_inputs(
+        session_key, event.channel_prompt, source,
+        internal=event.internal or getattr(event, "inherit_channel_pin", False))
+    return (source, session_entry, session_key, prepared, env_tokens, hook_ctx, channel), None
+'''
+
+SETUP_HANDLER = '''
+async def _handle_message_with_agent(self, event, source, _quick_key, run_generation):
+    from gateway.run_turn_setup_guard import run_preagent_setup
+    setup, reply = await run_preagent_setup(self, event, source, _quick_key, run_generation)
+    if setup is None:
+        return reply
+    source, session_entry, session_key, prepared, _session_env_tokens, hook_ctx, channel = setup
+    if hook_ctx is None:
+        self._clear_session_env(_session_env_tokens)
+        return None
+    _turn_channel_prompt, _turn_source = channel
+    agent_result = await self._run_agent(
+        source=_turn_source, session_key=session_key, run_generation=run_generation,
+        event_message_id=self._reply_anchor_for_event(event),
+        channel_prompt=_turn_channel_prompt)
+    if not self._is_session_run_current(_quick_key, run_generation):
+        self._hmwa_discard_stale_result(source, _quick_key, run_generation)
+        return None
+'''
+
+
+def _setup_peers(guard=SETUP_GUARD):
+    return {'gateway/run_turn_setup_guard.py': guard}
+
+
+def locate_setup(handler_src=SETUP_HANDLER, guard=SETUP_GUARD):
+    tree = ast.parse(handler_src)
+    handler = tree.body[0]
+    lines = handler_src.splitlines(keepends=True)
+    return find_stale_interrupted_location(handler, lines, peer_sources=_setup_peers(guard))
+
+
+def test_setup_guard_channel_pin_is_accepted():
+    location = locate_setup()
+    assert location is not None
+    index, indent = location
+    assert index >= 0
+    assert indent
+
+
+@pytest.mark.parametrize('mutation', [
+    'other-setup',
+    'rebind-source',
+    'foreign-channel',
+    'drop-hook-guard',
+    'other-session-pin',
+    'missing-peer',
+    'unknown-internal',
+])
+def test_setup_guard_channel_pin_rejects_drift(mutation):
+    handler = SETUP_HANDLER
+    guard = SETUP_GUARD
+    peers = _setup_peers(guard)
+    if mutation == 'other-setup':
+        handler = handler.replace(
+            'run_preagent_setup(self, event, source, _quick_key, run_generation)',
+            'run_preagent_setup(self, event, other_source, _quick_key, run_generation)',
+        )
+    elif mutation == 'rebind-source':
+        handler = handler.replace(
+            '_turn_channel_prompt, _turn_source = channel',
+            '_turn_channel_prompt, _turn_source = channel\n    _turn_source = other',
+        )
+    elif mutation == 'foreign-channel':
+        handler = handler.replace(
+            '_turn_channel_prompt, _turn_source = channel',
+            '_turn_channel_prompt, _turn_source = other_channel',
+        )
+    elif mutation == 'drop-hook-guard':
+        handler = handler.replace(
+            '    if hook_ctx is None:\n        self._clear_session_env(_session_env_tokens)\n        return None\n',
+            '',
+        )
+    elif mutation == 'other-session-pin':
+        guard = guard.replace('session_key, event.channel_prompt, source,',
+                              'other_key, event.channel_prompt, source,')
+        peers = _setup_peers(guard)
+    elif mutation == 'missing-peer':
+        peers = {}
+    elif mutation == 'unknown-internal':
+        guard = guard.replace(
+            'internal=event.internal or getattr(event, "inherit_channel_pin", False)',
+            'internal=True',
+        )
+        peers = _setup_peers(guard)
+    tree = ast.parse(handler)
+    lines = handler.splitlines(keepends=True)
+    with pytest.raises(ValueError, match='pinned source binding changed'):
+        find_stale_interrupted_location(tree.body[0], lines, peer_sources=peers)

@@ -1,0 +1,286 @@
+"""Hermes v0.23.1 / v0.23.2 source-binding and approval notify contracts (#532).
+
+Exact upstream checkouts may be supplied with HFC_UPSTREAM_0231_ROOT and
+HFC_UPSTREAM_0232_ROOT. Negative controls use a private copy of the relevant
+sources and never mutate the pinned checkout.
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
+
+from hermes_feishu_card.install.detect import detect_hermes
+from hermes_feishu_card.install.patcher import _approval_callback_name, apply_gateway_fragment
+from hermes_feishu_card.install.source_layout import read_peer_contract_sources
+
+ENV_0231 = "HFC_UPSTREAM_0231_ROOT"
+ENV_0232 = "HFC_UPSTREAM_0232_ROOT"
+REQUIRE_ENV = "HFC_REQUIRE_0232_PIN"
+COMMIT_0231 = "3b421578588243f920886e6fe79a6faa87ea026e"
+COMMIT_0232 = "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+ANCHORS = (
+    "message_handler",
+    "tool_callback",
+    "answer_delta_callback",
+    "thinking_delta_callback",
+    "clarify_callback",
+    "approval_callback",
+)
+FILE_HASHES = {
+    "v0.23.1": {
+        "gateway/run_turn.py": "32de792e49dbe085fca9ce17cf75e522a7ef67dcc375bd465e274127f089e333",
+        "gateway/run_turn_runner.py": "76a97f48cc5f769c84991644957e0e9d64c4be60dbd0774ec7457e740da253fb",
+    },
+    "v0.23.2": {
+        "gateway/run_turn.py": "834c924b1b5b83816ba228800f4b2daff39d10e9ef046ba32f28f2133752284b",
+        "gateway/run_turn_runner.py": "c7d0ffc2bc87d128a854b29844397006bf1fef990454fae7c325de22c9e4b1b6",
+    },
+}
+
+
+def _pinned_root(env, commit, digest_key):
+    configured = os.environ.get(env)
+    if not configured:
+        if os.environ.get(REQUIRE_ENV) == "1":
+            pytest.fail(f"required {digest_key} pinned source missing")
+        pytest.skip(f"{digest_key} pinned source not supplied")
+    root = Path(configured)
+    found = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+    assert found == commit, (found, commit)
+    assert subprocess.check_output(["git", "-C", str(root), "status", "--porcelain"], text=True) == ""
+    for name, digest in FILE_HASHES[digest_key].items():
+        path = root / name
+        assert path.is_file(), name
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, name
+    return root
+
+
+def test_v0231_tag_stays_full_after_v0232_contract():
+    root = _pinned_root(ENV_0231, COMMIT_0231, "v0.23.1")
+    detection = detect_hermes(root)
+    assert detection.supported is True
+    assert detection.compatibility == "full", detection.reason
+    assert detection.reason == "supported"
+    for name in ANCHORS:
+        assert detection.capabilities[name] is True, name
+
+
+def test_v0232_tag_finds_documented_anchors_and_is_not_unsupported():
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    detection = detect_hermes(root)
+    assert "stale result pinned source binding changed" not in detection.reason
+    assert "extracted approval generation/notify contract changed" not in detection.reason
+    assert "missing decomposed anchors:" not in detection.reason
+    for name in ANCHORS:
+        assert detection.capabilities[name] is True, name
+    assert detection.supported is True
+    assert detection.compatibility == "full", detection.reason
+    assert detection.reason == "supported"
+    assert detection.capabilities["admission_completion"] is True
+    assert detection.capabilities["exact_base_delivery"] is True
+
+
+def test_v0232_runner_and_handler_apply_with_peer_contracts():
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    peers = read_peer_contract_sources(root)
+    sources = {
+        "gateway/run_turn.py": (root / "gateway/run_turn.py").read_text(encoding="utf-8"),
+        "gateway/run_turn_runner.py": (root / "gateway/run_turn_runner.py").read_text(encoding="utf-8"),
+    }
+    patched_turn = apply_gateway_fragment(
+        sources["gateway/run_turn.py"], "gateway/run_turn.py",
+        completion_sources=sources, peer_sources=peers,
+    )
+    patched_runner = apply_gateway_fragment(
+        sources["gateway/run_turn_runner.py"], "gateway/run_turn_runner.py",
+        completion_sources=sources, peer_sources=peers,
+    )
+    assert "HERMES_FEISHU_CARD_" in patched_turn
+    assert "HERMES_FEISHU_CARD_APPROVAL_PATCH_BEGIN" in patched_runner
+    assert _approval_callback_name(sources["gateway/run_turn_runner.py"], peer_sources=peers) == "_render_approval_sync"
+
+
+@pytest.mark.parametrize("mutation", ["foreign-source", "foreign-transport"])
+def test_v0232_private_copy_rejects_binding_drift(mutation, tmp_path):
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "mutated"
+    # Copy only the files detect reads plus peers, not the full checkout.
+    from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS, DECOMPOSED_PEER_SOURCES
+    names = (
+        *DECOMPOSED_SOURCE_TARGETS,
+        *DECOMPOSED_PEER_SOURCES,
+        "VERSION",
+        "hermes_cli/__init__.py",
+        "gateway/session_ingress.py",
+        "gateway/session_authority.py",
+    )
+    for name in names:
+        src = root / name
+        if src.is_file():
+            dest = copy / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+    if mutation == "foreign-source":
+        path = copy / "gateway/run_turn.py"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(
+            "_turn_channel_prompt, _turn_source = channel",
+            "_turn_channel_prompt, _turn_source = other_channel",
+        ), encoding="utf-8")
+    else:
+        path = copy / "gateway/run_turn_runner.py"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(
+            "register_gateway_notify(session_key, approval_transport(self))",
+            "register_gateway_notify(session_key, approval_transport(other))",
+        ), encoding="utf-8")
+    detection = detect_hermes(copy)
+    assert detection.supported is False
+    if mutation == "foreign-source":
+        assert detection.compatibility == "unsupported"
+        assert "stale result pinned source binding changed" in detection.reason
+        assert detection.capabilities["message_handler"] is False
+    else:
+        # Core message/completion anchors can remain; only the approval contract fails.
+        assert detection.compatibility != "full"
+        assert "extracted approval generation/notify contract changed" in detection.reason
+        assert detection.capabilities["approval_callback"] is False
+
+
+def _copy_detect_tree(root: Path, dest: Path) -> None:
+    from hermes_feishu_card.admission_topology_0226 import SOURCE_HASHES_0232
+    from hermes_feishu_card.install.source_layout import (
+        DECOMPOSED_PEER_SOURCES,
+        DECOMPOSED_SOURCE_TARGETS,
+    )
+    names = {
+        *DECOMPOSED_SOURCE_TARGETS,
+        *DECOMPOSED_PEER_SOURCES,
+        "VERSION",
+        "hermes_cli/__init__.py",
+        *(name.replace(".", "/") + ".py" for name in SOURCE_HASHES_0232),
+    }
+    for name in names:
+        src = root / name
+        if src.is_file():
+            target = dest / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+
+
+def test_v0232_private_copy_stays_full(tmp_path):
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "clean"
+    _copy_detect_tree(root, copy)
+    detection = detect_hermes(copy)
+    assert detection.supported is True
+    assert detection.compatibility == "full", detection.reason
+
+
+@pytest.mark.parametrize(
+    "mutation,target,old,new",
+    [
+        (
+            "foreign-ledger-session",
+            "gateway/platforms/base_delivery_ledger.py",
+            "compute_obligation_id(\n            session_key, str(_ledger_id or \"\"), text_content)",
+            "compute_obligation_id(\n            other_session, str(_ledger_id or \"\"), text_content)",
+        ),
+        (
+            "unconditional-stop-cancel",
+            "gateway/platforms/base_session_command.py",
+            "if adapter._authorization_check is None or getattr(event, \"_interrupt_accepted\", False) is True:",
+            "if True:",
+        ),
+        (
+            "footer-return-other-adapter",
+            "gateway/platforms/base.py",
+            "return footer_onto_photo_caption(self, _ExtractedResponse(text_content=text_content, images=images, media_files=media_files,",
+            "return footer_onto_photo_caption(other, _ExtractedResponse(text_content=text_content, images=images, media_files=media_files,",
+        ),
+    ],
+)
+def test_v0232_private_copy_rejects_delivery_and_stop_drift(mutation, target, old, new, tmp_path):
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / mutation
+    _copy_detect_tree(root, copy)
+    path = copy / target
+    text = path.read_text(encoding="utf-8")
+    assert old in text, mutation
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    detection = detect_hermes(copy)
+    assert detection.supported is False
+    assert detection.compatibility != "full", detection.reason
+    assert detection.capabilities["exact_base_delivery"] is False
+
+
+def test_v0232_missing_ledger_peer_is_rejected(tmp_path):
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "no-ledger"
+    _copy_detect_tree(root, copy)
+    (copy / "gateway/platforms/base_delivery_ledger.py").unlink()
+    detection = detect_hermes(copy)
+    assert detection.supported is False
+    assert detection.capabilities["exact_base_delivery"] is False
+
+
+def test_v0232_admission_rejects_per_file_hash_drift(tmp_path):
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "ingress-drift"
+    _copy_detect_tree(root, copy)
+    path = copy / "gateway/session_ingress.py"
+    path.write_bytes(path.read_bytes() + b"\n")
+    detection = detect_hermes(copy)
+    assert detection.capabilities["admission_completion"] is False
+    assert detection.compatibility == "partial", detection.reason
+    assert "admission completion unavailable: unsupported-source" in detection.reason
+
+
+
+def test_v0232_missing_dispatch_peer_is_rejected(tmp_path):
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "no-dispatch"
+    _copy_detect_tree(root, copy)
+    (copy / "gateway/platforms/base_session_command.py").unlink()
+    detection = detect_hermes(copy)
+    assert detection.supported is False
+    assert detection.capabilities["exact_base_delivery"] is False
+
+
+def test_v0232_base_patch_roundtrip_requires_peers_and_restores(tmp_path):
+    from hermes_feishu_card.install import decomposed_ownership, patcher, recovery
+
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "roundtrip"
+    _copy_detect_tree(root, copy)
+    peers = read_peer_contract_sources(copy)
+    original = (copy / "gateway/platforms/base.py").read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        patcher.apply_base_patch(original)
+    with pytest.raises(ValueError):
+        patcher.remove_base_patch_lenient(
+            patcher.apply_base_patch(original, peer_sources=peers)
+        )
+    patched = patcher.apply_base_patch(original, peer_sources=peers)
+    assert patched != original
+    assert patcher.apply_base_patch(patched, peer_sources=peers) == patched
+    assert patcher.remove_base_patch(patched, peer_sources=peers) == original
+    assert patcher.remove_base_patch_lenient(patched, peer_sources=peers) == original
+    compile(patched, "base.py", "exec")
+
+    from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
+    originals = {
+        name: (copy / name).read_bytes()
+        for name in DECOMPOSED_SOURCE_TARGETS
+        if (copy / name).is_file()
+    }
+    rendered = decomposed_ownership.render(originals, peer_sources=peers)
+    assert rendered["gateway/platforms/base.py"].decode("utf-8") == patched
+    detection = detect_hermes(copy)
+    assert detection.supported is True
+    assert recovery._validate_base_reapplication(original, peer_sources=peers) == ""

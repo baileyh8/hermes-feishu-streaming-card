@@ -1,4 +1,5 @@
 import ast
+from collections.abc import Mapping
 import re
 import textwrap
 
@@ -234,7 +235,7 @@ def apply_patch(
     return _apply_turn_callbacks(content, strategy=strategy)
 
 
-def _apply_turn_callbacks(content: str, *, strategy: str) -> str:
+def _apply_turn_callbacks(content: str, *, strategy: str, peer_sources=None) -> str:
     from .provider_route import apply_provider_route_patch
     content = apply_provider_route_patch(content)
     content = _apply_stable_tool_lifecycle_patch(content)
@@ -286,11 +287,11 @@ def _apply_turn_callbacks(content: str, *, strategy: str) -> str:
     content = _apply_clarify_patch(content)
     content = _apply_callback_patch(
         content,
-        callback_name=_approval_callback_name(content),
+        callback_name=_approval_callback_name(content, peer_sources=peer_sources),
         begin_marker=APPROVAL_PATCH_BEGIN,
         end_marker=APPROVAL_PATCH_END,
         renderer=(_render_generation_approval_hook_block
-                  if _approval_callback_name(content) == "_render_approval_sync"
+                  if _approval_callback_name(content, peer_sources=peer_sources) == "_render_approval_sync"
                   else _render_approval_hook_block),
         required_outer_names=(
             "source",
@@ -337,6 +338,7 @@ def apply_base_patch(
     content: str,
     *,
     integration_mode: str = "legacy-patch",
+    peer_sources: Mapping[str, str] | None = None,
 ) -> str:
     """Patch Hermes' exact final-delivery pipeline without reimplementing it.
 
@@ -347,10 +349,17 @@ def apply_base_patch(
     window or acknowledge content that Hermes never attempted to send.
     """
     _require_single_target_legacy_mode(integration_mode)
+    # Owned stop/admission hooks may rewrite extract/dispatch anchors
+    # used to locate delivery insertion points. Normalize to the
+    # reversible delivery-only form first; both removers are no-ops
+    # on clean sources.
+    content = stop_cancellation.remove(
+        admission_extraction.remove(content), peer_sources=peer_sources
+    )
     owned = _find_owned_exact_base_blocks(content, strict=True)
     tree = _parse_exact_base_content(content)
     lines = content.splitlines(keepends=True)
-    no_text_location, final_location = _find_exact_base_patch_locations(tree, lines)
+    no_text_location, final_location = _find_exact_base_patch_locations(tree, lines, peer_sources=peer_sources)
 
     if owned is not None:
         _validate_exact_base_owned_locations(
@@ -358,7 +367,7 @@ def apply_base_patch(
             no_text_location=no_text_location,
             final_location=final_location,
         )
-        return admission_extraction.apply(stop_cancellation.apply(content))
+        return admission_extraction.apply(stop_cancellation.apply(content, peer_sources=peer_sources))
 
     newline = _detect_newline(content)
     no_text_index, no_text_indent = no_text_location
@@ -381,19 +390,19 @@ def apply_base_patch(
     # block. Both anchors are guaranteed to belong to the same exact pipeline.
     for index, hook in sorted(((final_index, final_hook), (no_text_index, no_text_hook)), reverse=True):
         lines[index:index] = hook
-    return admission_extraction.apply(stop_cancellation.apply("".join(lines)))
+    return admission_extraction.apply(stop_cancellation.apply("".join(lines), peer_sources=peer_sources))
 
 
-def remove_base_patch(content: str) -> str:
+def remove_base_patch(content: str, *, peer_sources: Mapping[str, str] | None = None) -> str:
     """Strictly remove exact BasePlatformAdapter hooks owned by this project."""
-    content = stop_cancellation.remove(admission_extraction.remove(content))
+    content = stop_cancellation.remove(admission_extraction.remove(content), peer_sources=peer_sources)
     owned = _find_owned_exact_base_blocks(content, strict=True)
     if owned is None:
         return content
 
     tree = _parse_exact_base_content(content)
     lines = content.splitlines(keepends=True)
-    no_text_location, final_location = _find_exact_base_patch_locations(tree, lines)
+    no_text_location, final_location = _find_exact_base_patch_locations(tree, lines, peer_sources=peer_sources)
     _validate_exact_base_owned_locations(
         owned,
         no_text_location=no_text_location,
@@ -402,9 +411,9 @@ def remove_base_patch(content: str) -> str:
     return _remove_exact_base_blocks(content, owned)
 
 
-def remove_base_patch_lenient(content: str) -> str:
+def remove_base_patch_lenient(content: str, *, peer_sources: Mapping[str, str] | None = None) -> str:
     """Remove owned Base hooks while accepting older generated block bodies."""
-    content = stop_cancellation.remove(admission_extraction.remove(content))
+    content = stop_cancellation.remove(admission_extraction.remove(content), peer_sources=peer_sources)
     owned = _find_owned_exact_base_blocks(content, strict=False)
     if owned is None:
         return content
@@ -2511,13 +2520,14 @@ def _find_gateway_runner_method(tree, name: str):
     return None
 
 
-def _find_exact_base_patch_locations(tree, lines):
+def _find_exact_base_patch_locations(tree, lines, peer_sources=None):
     return find_base_patch_locations(
         tree, lines,
         owned_ledger_blocks=(
             "".join(_render_split_base_final_delivery_hook_block("", "\n")),
             "".join(_render_decomposed_split_base_final_hook_block("", "\n")),
         ),
+        peer_sources=peer_sources,
     )
 
 def _find_redelivery_startup_call(func):
@@ -4534,7 +4544,7 @@ DECOMPOSED_LAYOUT_MARKERS = {
 
 
 def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_013_plus",
-                           completion_sources=None) -> str:
+                           completion_sources=None, peer_sources=None) -> str:
     """Render one routed legacy fragment; never infer an integration mode."""
     if target not in ("gateway/run.py", *DECOMPOSED_GATEWAY_TARGETS):
         raise ValueError("unknown Gateway patch target")
@@ -4548,7 +4558,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
         if split_node is None:
             content = _apply_complete_patch(content, strategy=strategy)
         content = _apply_turn_timing_patch(content, validated_split=split_node is not None)
-        content = _apply_stale_interrupted_patch(content)
+        content = _apply_stale_interrupted_patch(content, peer_sources=peer_sources)
     elif split_node is not None:
         content = _apply_complete_patch(content, strategy=strategy,
                                         completion_sources=completion_sources, target=target)
@@ -4562,7 +4572,7 @@ def apply_gateway_fragment(content: str, target: str, *, strategy="gateway_run_0
                   _apply_slash_confirm_patch, _apply_command_card_startup_patch,
                   _apply_native_redelivery_patch, _apply_platform_notice_patch):
         content = apply(content)
-    return _apply_turn_callbacks(content, strategy=strategy)
+    return _apply_turn_callbacks(content, strategy=strategy, peer_sources=peer_sources)
 
 
 def _find_startup_boot_send(func):
@@ -4574,7 +4584,7 @@ def _find_startup_boot_send(func):
                  and _same_expression(node.value.value.func, "self._await_startup_boot_sends")), None)
 
 
-def _approval_callback_name(content):
+def _approval_callback_name(content, peer_sources=None):
     """The extracted renderer runs only AFTER Hermes' original generation check."""
     tree = _parse_content(remove_patch(content))
     runner = _find_turn_runner_node(tree)
@@ -4599,12 +4609,83 @@ def _approval_callback_name(content):
     calls = [n for n in ast.walk(runner) if isinstance(n, ast.Call)
              and _same_expression(n.func, "register_gateway_notify")]
     expected_call = ast.parse("register_gateway_notify(session_key, self._approval_notify_sync)").body[0].value
-    if (len(renderers) != 1 or len(notifiers) != 1
-            or ast.dump(notifiers[0]) != ast.dump(expected)
-            or not _binds_turn_context(renderers[0]) or len(calls) != 1
-            or ast.dump(calls[0]) != ast.dump(expected_call)):
-        raise ValueError("extracted approval generation/notify contract changed")
-    return "_render_approval_sync"
+    transport_call = ast.parse("register_gateway_notify(session_key, approval_transport(self))").body[0].value
+    notify_ok = (
+        len(renderers) == 1 and len(notifiers) == 1
+        and ast.dump(notifiers[0]) == ast.dump(expected)
+        and _binds_turn_context(renderers[0]) and len(calls) == 1
+    )
+    if notify_ok and ast.dump(calls[0]) == ast.dump(expected_call):
+        return "_render_approval_sync"
+    if notify_ok and ast.dump(calls[0]) == ast.dump(transport_call) and _approval_transport_is_verified(runner, peer_sources):
+        return "_render_approval_sync"
+    raise ValueError("extracted approval generation/notify contract changed")
+
+
+def _approval_transport_is_verified(runner, peer_sources) -> bool:
+    """Accept only the verified transport that still notifies via this turn."""
+    from .source_layout import DECOMPOSED_PEER_SOURCES
+    target = "gateway/run_turn_runner_approval_transport.py"
+    if target not in DECOMPOSED_PEER_SOURCES:
+        return False
+    imported = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "gateway.run_turn_runner_approval_transport"
+        and node.level == 0
+        and any(alias.name == "approval_transport" and alias.asname is None for alias in node.names)
+        for node in ast.walk(runner)
+    )
+    if not imported or not peer_sources or target not in peer_sources:
+        return False
+    try:
+        tree = ast.parse(peer_sources[target])
+    except SyntaxError:
+        return False
+    functions = [node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name == "approval_transport"]
+    if len(functions) != 1:
+        return False
+    expected = ast.parse(_VERIFIED_APPROVAL_TRANSPORT).body[0]
+    return ast.dump(functions[0]) == ast.dump(expected)
+
+
+_VERIFIED_APPROVAL_TRANSPORT = '''
+def approval_transport(turn):
+    from gateway.run_turn_progress import local_viewer_turn
+    from gateway.session_context import NON_MESSAGING_SESSION_SURFACES
+    from gateway.run_turn_runner import TurnRunner
+    # The closure below must not keep the finished turn alive: capture what it needs, not the turn.
+    ctx, runner = turn._ctx, getattr(turn, "_runner", None)
+    origin = TurnContext(
+        session_key=ctx.session_key, session_id=ctx.session_id, source=ctx.source,
+        _loop_for_step=ctx._loop_for_step, _status_chat_id=ctx._status_chat_id,
+        _status_thread_metadata=dict(ctx._status_thread_metadata or {}),
+        _status_adapter_pinned=ctx._status_adapter_pinned,
+        _status_adapter_resolver=ctx._status_adapter_resolver,
+        _run_still_current=lambda: True,
+    )
+    # No ``TurnRunner.__init__``: it binds the turn's canonical owner (authority + generation), which a
+    # background prompt must never use. ``_render_approval_sync`` reads only ``_ctx`` and ``_schedule``,
+    # and its timeout notice follows this context, so it fires even after a newer turn has started.
+    presenter = TurnRunner.__new__(TurnRunner)
+    presenter._runner, presenter._ctx = runner, origin
+
+    def notify(data):
+        turn._approval_notify_sync(data)
+
+    def background_notify(data):
+        if origin._status_adapter is None:
+            raise RuntimeError("Approval notification unavailable: no chat can show this prompt")
+        presenter._render_approval_sync(data, background=True)
+
+    # Only a chat platform can show a prompt once the turn is gone. API/webhook runs answer through
+    # their own run, and a local viewer's prompts ride the turn's canonical stream: publishing no
+    # transport there makes a later child request fail closed instead of parking where nobody looks.
+    platform = getattr(getattr(ctx.source, "platform", None), "value", "")
+    if str(platform or "") not in NON_MESSAGING_SESSION_SURFACES and not local_viewer_turn(turn):
+        notify.background_notify = background_notify
+    return notify
+'''
 
 
 def _split_completion_node(sources, target):
@@ -4799,14 +4880,14 @@ def _render_stale_interrupted_hook_block(indent, newline):
     ]
 
 
-def _apply_stale_interrupted_patch(content):
+def _apply_stale_interrupted_patch(content, peer_sources=None):
     """Observe only the exact discarded result; never infer stop from a command."""
     content = _remove_simple_owned_patch(
         content, STALE_INTERRUPTED_PATCH_BEGIN, STALE_INTERRUPTED_PATCH_END,
         _render_stale_interrupted_hook_block, "stale interrupted patch markers")
     lines = content.splitlines(keepends=True)
     location = find_stale_interrupted_location(
-        _find_handler_node(_parse_content(content)), lines,
+        _find_handler_node(_parse_content(content)), lines, peer_sources=peer_sources,
     )
     if location is None:
         return content
