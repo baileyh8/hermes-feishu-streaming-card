@@ -173,7 +173,7 @@ class TestCIPrepareUpstream(unittest.TestCase):
         manifest_file = ROOT / "tools/upstream_fixtures.json"
         self.assertTrue(manifest_file.exists())
         manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        self.assertEqual(len(manifest), 22)
+        self.assertEqual(len(manifest), 23)
         self.assertEqual(
             next(e["ref"] for e in manifest if e["path"] == ".upstream/0230"),
             "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
@@ -181,6 +181,10 @@ class TestCIPrepareUpstream(unittest.TestCase):
         self.assertEqual(
             next(e["ref"] for e in manifest if e["path"] == ".upstream/0231"),
             "3b421578588243f920886e6fe79a6faa87ea026e",
+        )
+        self.assertEqual(
+            next(e["ref"] for e in manifest if e["path"] == ".upstream/0232"),
+            "ae2a81ccc00e9b7c06301523e5bb09608397149c",
         )
         paths = [e["path"] for e in manifest]
         self.assertEqual(len(paths), len(set(paths)))

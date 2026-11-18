@@ -195,6 +195,8 @@ jobs:
           HFC_REQUIRE_0230_PIN: "1"
           HFC_UPSTREAM_0231_ROOT: "${{ github.workspace }}/.upstream/0231"
           HFC_REQUIRE_0231_PIN: "1"
+          HFC_UPSTREAM_0232_ROOT: "${{ github.workspace }}/.upstream/0232"
+          HFC_REQUIRE_0232_PIN: "1"
           # Fixed legacy baseline fixture: an exact v0.22.4 checkout retained as
           # the config-writer 0224 baseline; the name predates the v0.23.0
           # stable channel and does not track the current stable release.
@@ -234,6 +236,7 @@ jobs:
           HFC_CONFIG_WRITER_0227_ROOT: "${{ github.workspace }}/.upstream/0227"
           HFC_CONFIG_WRITER_0230_ROOT: "${{ github.workspace }}/.upstream/0230"
           HFC_CONFIG_WRITER_0231_ROOT: "${{ github.workspace }}/.upstream/0231"
+          HFC_CONFIG_WRITER_0232_ROOT: "${{ github.workspace }}/.upstream/0232"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -257,6 +260,8 @@ jobs:
           tests/integration/test_v0231_admission_sources.py
           tests/integration/test_v0231_admission_topology.py
           tests/integration/test_v0231_writer_family.py
+          tests/integration/test_v0232_source_binding.py
+          tests/integration/test_v0232_writer_family.py
           tests/integration/test_session_authority_completion.py::test_native_rate_identity_snapshot_matches_existing_pin
           tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate

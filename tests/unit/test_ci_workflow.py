@@ -23,6 +23,23 @@ def test_v0231_source_contracts_run_in_pinned_upstream_gate():
     } <= set(step["run"].split())
 
 
+def test_v0232_source_contracts_run_in_pinned_upstream_gate():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    step = next(step for step in jobs["upstream-shards"]["steps"]
+                if step.get("name") == "Verify pinned upstream install, plugin, rate and PM contracts")
+    assert step["env"]["HFC_REQUIRE_0232_PIN"] == "1"
+    assert step["env"]["HFC_UPSTREAM_0232_ROOT"].endswith("/.upstream/0232")
+    assert step["env"]["HFC_CONFIG_WRITER_0232_ROOT"].endswith("/.upstream/0232")
+    assert {
+        "tests/integration/test_v0232_source_binding.py",
+        "tests/integration/test_v0232_writer_family.py",
+    } <= set(step["run"].split())
+    from tools.ci_run import FORWARD
+    assert "HFC_CONFIG_WRITER_0232_ROOT" in FORWARD
+    assert "HFC_UPSTREAM_0232_ROOT" in FORWARD
+    assert "HFC_REQUIRE_0232_PIN" in FORWARD
+
+
 def test_official_image_gate_covers_real_install_and_bytecode_states():
     workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())
     job = workflow["jobs"]["official-image-acceptance"]
@@ -223,6 +240,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         ".upstream/0227": "b200f5bc60e31588ba2cb60e288029c4a54ba5fa",
         ".upstream/0230": "2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19",
         ".upstream/0231": "3b421578588243f920886e6fe79a6faa87ea026e",
+        ".upstream/0232": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
         **{
             f".upstream/background_{baseline}": evidence["commit"]
             for baseline, evidence in json.loads(
