@@ -221,7 +221,7 @@ EXPECTED_RENDERED_HASHES_0231 = {
 EXPECTED_RENDERED_HASHES_0232 = {
     "cron/scheduler.py": "16a04e47b6a117f1f6693e7eb74eb1cfbdc400902614572f74bc5e974144262b",
     "cron/scheduler_delivery.py": "25db18d93339eb062b0227223dac229094a75123e3036eb5eb2a1c08a58c3ef1",
-    "gateway/platforms/base.py": "39768a21ec92bc7361a9e7cbc7ff3300ce4ade910b609575f9788c1444199088",
+    "gateway/platforms/base.py": "1fa3aa63be24b331a73a50174460d9db59e1d82f7abe41e89ea3577f976d1d97",
     "gateway/run.py": "286925a9fb47f11c805eb0a7df67343821fb3305fda1ecea42bbad265e5e4c31",
     "gateway/run_background.py": "728fa3f938460e0f8eb984e7cf669dc9c09c794523e53d52c9e63f07c8ca26ad",
     "gateway/run_busy.py": "0545adfe78b4f2384a4135371b7a42744653b3a1af564b99b3f9d8d3d46cf896",

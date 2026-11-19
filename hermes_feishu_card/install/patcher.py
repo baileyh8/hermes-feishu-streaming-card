@@ -32,6 +32,8 @@ from .completion_contracts import (
 )
 
 from .base_contracts import (
+    DELEGATED_BASE_CAPTURE,
+    delegated_base_capture_location,
     find_base_patch_locations,
     _has_decomposed_base,
     _has_split_exact_base,
@@ -135,6 +137,8 @@ EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN = (
 EXACT_BASE_FINAL_DELIVERY_PATCH_END = (
     "# HERMES_FEISHU_CARD_EXACT_BASE_FINAL_DELIVERY_PATCH_END"
 )
+EXACT_BASE_CAPTURE_PATCH_BEGIN = "# HERMES_FEISHU_CARD_EXACT_BASE_CAPTURE_PATCH_BEGIN"
+EXACT_BASE_CAPTURE_PATCH_END = "# HERMES_FEISHU_CARD_EXACT_BASE_CAPTURE_PATCH_END"
 
 _HANDLER_NAME = "_handle_message_with_agent"
 _NO_FINAL_NEWLINE = "# HERMES_FEISHU_CARD_NO_FINAL_NEWLINE"
@@ -362,12 +366,14 @@ def apply_base_patch(
     tree = _parse_exact_base_content(content)
     lines = content.splitlines(keepends=True)
     no_text_location, final_location = _find_exact_base_patch_locations(tree, lines, peer_sources=peer_sources)
+    capture_location = delegated_base_capture_location(tree, lines)
 
     if owned is not None:
         _validate_exact_base_owned_locations(
             owned,
             no_text_location=no_text_location,
             final_location=final_location,
+            capture_location=capture_location,
         )
         return admission_extraction.apply(stop_cancellation.apply(content, peer_sources=peer_sources))
 
@@ -390,7 +396,11 @@ def apply_base_patch(
 
     # Insert bottom-up so the earlier location is not shifted by the later
     # block. Both anchors are guaranteed to belong to the same exact pipeline.
-    for index, hook in sorted(((final_index, final_hook), (no_text_index, no_text_hook)), reverse=True):
+    insertions = [(final_index, final_hook), (no_text_index, no_text_hook)]
+    if capture_location is not None:
+        index, indent = capture_location
+        insertions.append((index, _render_delegated_base_capture(indent, newline)))
+    for index, hook in sorted(insertions, reverse=True):
         lines[index:index] = hook
     return admission_extraction.apply(stop_cancellation.apply("".join(lines), peer_sources=peer_sources))
 
@@ -409,6 +419,7 @@ def remove_base_patch(content: str, *, peer_sources: Mapping[str, str] | None = 
         owned,
         no_text_location=no_text_location,
         final_location=final_location,
+        capture_location=delegated_base_capture_location(tree, lines),
     )
     return _remove_exact_base_blocks(content, owned)
 
@@ -2528,6 +2539,7 @@ def _find_exact_base_patch_locations(tree, lines, peer_sources=None):
         owned_ledger_blocks=(
             "".join(_render_split_base_final_delivery_hook_block("", "\n")),
             "".join(_render_decomposed_split_base_final_hook_block("", "\n")),
+            DELEGATED_BASE_CAPTURE,
         ),
         peer_sources=peer_sources,
     )
@@ -2707,7 +2719,10 @@ def _find_owned_exact_base_blocks(content: str, *, strict: bool):
         EXACT_BASE_FINAL_DELIVERY_PATCH_END,
         error_label,
     )
-    if no_text is None and final is None:
+    capture = _find_simple_marker_block(
+        content, EXACT_BASE_CAPTURE_PATCH_BEGIN, EXACT_BASE_CAPTURE_PATCH_END, error_label,
+    )
+    if no_text is None and final is None and capture is None:
         return None
     if no_text is None or final is None:
         raise ValueError("corrupt exact base patch markers")
@@ -2732,7 +2747,12 @@ def _find_owned_exact_base_blocks(content: str, *, strict: bool):
             _render_decomposed_split_base_final_hook_block(final_indent, final_newline),
         ):
             raise ValueError("corrupt exact base patch markers")
-    return no_text, final
+        if capture is not None:
+            indent = _leading_whitespace(_strip_line_ending(lines[capture[0]]))
+            newline = _line_ending(lines[capture[0]]) or _detect_newline(content)
+            if lines[capture[0] : capture[1] + 1] != _render_delegated_base_capture(indent, newline):
+                raise ValueError("corrupt exact base patch markers")
+    return (no_text, final) if capture is None else (no_text, final, capture)
 
 
 def _validate_exact_base_owned_locations(
@@ -2740,11 +2760,14 @@ def _validate_exact_base_owned_locations(
     *,
     no_text_location,
     final_location,
+    capture_location,
 ) -> None:
-    no_text, final = owned
+    no_text, final, *capture = owned
     if (
         no_text[1] + 1 != no_text_location[0]
         or final[1] + 1 != final_location[0]
+        or bool(capture) != (capture_location is not None)
+        or (capture and capture[0][1] + 1 != capture_location[0])
     ):
         raise ValueError("corrupt exact base patch markers")
 
@@ -2762,6 +2785,16 @@ def _exact_marker_line_index(lines, marker: str):
         if body == _leading_whitespace(body) + marker:
             return index
     return None
+
+
+def _render_delegated_base_capture(indent: str, newline: str) -> list[str]:
+    # The ledger callback reads text before the HFC hook and sends its returned
+    # text afterward. Declare the outer values before that first read.
+    return [
+        f"{indent}{EXACT_BASE_CAPTURE_PATCH_BEGIN}{newline}",
+        f"{indent}{DELEGATED_BASE_CAPTURE}{newline}",
+        f"{indent}{EXACT_BASE_CAPTURE_PATCH_END}{newline}",
+    ]
 
 
 def _render_hook_exception_handler(indent: str, newline: str):
@@ -4506,6 +4539,7 @@ LEGACY_TARGET_PATCH_ADAPTERS = (
         owned_markers=(
             (stop_cancellation.BEGIN, stop_cancellation.END),
             (EXACT_BASE_NO_TEXT_PATCH_BEGIN, EXACT_BASE_NO_TEXT_PATCH_END),
+            (EXACT_BASE_CAPTURE_PATCH_BEGIN, EXACT_BASE_CAPTURE_PATCH_END),
             (
                 EXACT_BASE_FINAL_DELIVERY_PATCH_BEGIN,
                 EXACT_BASE_FINAL_DELIVERY_PATCH_END,

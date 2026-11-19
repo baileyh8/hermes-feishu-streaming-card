@@ -687,6 +687,32 @@ def _is_delegated_ledger_bracket(ledger: ast.AsyncFunctionDef) -> bool:
     )
 
 
+DELEGATED_BASE_CAPTURE = "nonlocal text_content, reply_to, metadata"
+
+
+def delegated_base_capture_location(
+    tree: ast.Module, lines: list[str]
+) -> tuple[int, str] | None:
+    """Locate the first original statement of the verified ledger callback."""
+    for cls in tree.body:
+        if isinstance(cls, ast.ClassDef) and cls.name == "BasePlatformAdapter":
+            for method in cls.body:
+                if (
+                    isinstance(method, ast.AsyncFunctionDef)
+                    and method.name == "send_final_ledgered"
+                    and _is_delegated_ledger_bracket(method)
+                ):
+                    callback = _executable_statements(method)[0]
+                    assert isinstance(callback, ast.AsyncFunctionDef)
+                    statements = callback.body
+                    expected = ast.dump(ast.parse(DELEGATED_BASE_CAPTURE).body[0])
+                    if ast.dump(statements[0]) == expected:
+                        statements = statements[1:]
+                    index = statements[0].lineno - 1
+                    return index, _line_indent(lines, index)
+    return None
+
+
 def _executable_statements(func: ast.AST) -> list[ast.AST]:
     body = getattr(func, "body", [])
     if (

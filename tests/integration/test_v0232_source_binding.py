@@ -344,3 +344,79 @@ def test_v0232_base_patch_roundtrip_requires_peers_and_restores(tmp_path):
     detection = detect_hermes(copy)
     assert detection.supported is True
     assert recovery._validate_base_reapplication(original, peer_sources=peers) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hook_fails", [False, True])
+async def test_v0232_live_ledger_callback_keeps_original_closure_and_order(
+    monkeypatch, hook_fails,
+):
+    from logging import getLogger
+    from types import FunctionType, ModuleType, SimpleNamespace
+
+    from hermes_feishu_card import hook_runtime
+    from hermes_feishu_card.admission_completion import _compiled_code
+    from hermes_feishu_card.install.patcher import apply_base_patch
+
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    base_path = root / "gateway/platforms/base.py"
+    compiled = compile(
+        apply_base_patch(base_path.read_text(), peer_sources=read_peer_contract_sources(root)),
+        str(base_path), "exec",
+    )
+    peer = ModuleType("gateway.platforms.base_delivery_ledger")
+    peer_path = root / "gateway/platforms/base_delivery_ledger.py"
+    exec(compile(peer_path.read_bytes(), str(peer_path), "exec"), vars(peer))
+    monkeypatch.setitem(sys.modules, peer.__name__, peer)
+    base = ModuleType("gateway.platforms.base")
+    monkeypatch.setitem(sys.modules, base.__name__, base)
+    trace = []
+    base.ledger_bracket = peer.ledger_bracket
+    base.logger = getLogger(__name__)
+    base.stop_reply_clock = lambda *args: None
+
+    class BasePlatformAdapter:
+        name = "test"
+
+        def _final_delivery_adapter(self, source):
+            return self
+
+        async def _record_delivery_obligation(self, event, session_key, content, adapter, ephemeral):
+            trace.append(("record", content))
+            return "obligation"
+
+        async def _release_turn_marker(self, event):
+            trace.append(("release",))
+
+        async def _send_with_retry(self, **kwargs):
+            trace.append(("send", kwargs["content"], kwargs["reply_to"], kwargs["metadata"]))
+            return "result"
+
+        async def _finalize_delivery_obligation(self, obligation_id, result, event, adapter):
+            trace.append(("finalize", obligation_id, result))
+
+    base.BasePlatformAdapter = BasePlatformAdapter
+    for name in ("_process_message_background", "_send_final_text", "send_final_ledgered"):
+        code = _compiled_code(compiled, name, "BasePlatformAdapter")
+        setattr(BasePlatformAdapter, name, FunctionType(code, vars(base), name))
+    assert hook_runtime._exact_base_delivery_hook_available()
+
+    async def prepare(values):
+        trace.append(("hook", values["content"], values["obligation_id"]))
+        if hook_fails:
+            raise ValueError("sidecar unavailable")
+        return values["delivery_adapter"], "handoff", "new-reply", {"new": True}
+
+    monkeypatch.setattr(hook_runtime, "prepare_decomposed_base_final_delivery", prepare)
+    adapter = BasePlatformAdapter()
+    event = SimpleNamespace(source=SimpleNamespace(chat_id="test-chat"))
+    assert await adapter.send_final_ledgered(
+        event, "session", "answer", {}, reply_to="reply", is_ephemeral_response=False,
+    ) == ("result", adapter)
+    send = ("answer", "reply", {}) if hook_fails else ("handoff", "new-reply", {"new": True})
+    assert trace == [
+        ("record", "answer"), ("release",), ("hook", "answer", "obligation"),
+        ("send", *send), ("finalize", "obligation", "result"),
+    ]
+    base.ledger_bracket = object()
+    assert not hook_runtime._exact_base_delivery_hook_available()
