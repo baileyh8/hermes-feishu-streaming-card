@@ -9033,6 +9033,11 @@ def request_approval_choice_from_hermes_locals(
     interaction_id: str,
     timeout_seconds: float | None = None,
 ) -> str | None:
+    # The detached Hermes presenter has no live foreground turn to attach to.
+    # Preserve its dispatch-owned notification and original approval handle.
+    if local_vars.get("background") is True:
+        return None
+
     import html
 
     command = str(approval_data.get("command") or "").strip()

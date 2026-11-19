@@ -2,7 +2,7 @@
 
 本版解决 Hermes v0.23.2 被 HFC `doctor` 判为 `unsupported`、无法继续正常安装或升级的问题。兼容目标为官方源码 `ae2a81ccc00e9b7c06301523e5bb09608397149c`。 [#532](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/532)
 
-- 识别新版本拆出的回合来源绑定、审批通知 transport、终局交付账本和停止取消路径。沿用 Hermes 自己的审批授权与代际校验。
+- 识别新版本拆出的回合来源绑定、审批通知 transport、终局交付账本和停止取消路径。前台审批仍校验回合代际，跨回合的后台审批由 Hermes 原生通道投递。
 - 支持 schema 53 下的官方 PM 配置写入。恢复计划绑定只读契约文件的内容和存在状态。受管源码仍可逐字恢复。
 - CI 增加固定的 v0.23.2 官方镜像。Linux 的 Python 3.9 回归和解包检查使用 Ubuntu 24.04。开发工具 Ruff 升至 0.17.5。 [#531](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/531)
 
