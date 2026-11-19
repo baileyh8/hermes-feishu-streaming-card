@@ -581,15 +581,20 @@ def test_v0230_expected_defaults_match_exact_pinned_helpers():
     assert checked >= 14
 
 
-def _build_modules(root: Path, sources: dict[str, bytes]) -> dict[str, ModuleType]:
+def _build_modules(
+    root: Path, sources: dict[str, bytes], *,
+    functions=topology.FUNCTIONS_0230,
+    decorated=topology.DECORATED_0230,
+    sync_decorated=topology.SYNC_DECORATED_0230,
+) -> dict[str, ModuleType]:
     """Compile exact pinned functions into synthetic globals; no Hermes import."""
     modules = {}
-    for name in topology.SOURCE_HASHES_0230:
+    for name in sources:
         module = ModuleType(name)
         module.__file__ = str(root / (name.replace(".", "/") + ".py"))
         module._ANY_HEAD = object()
         modules[name] = module
-    for name, names in topology.FUNCTIONS_0230.items():
+    for name, names in functions.items():
         if name == "gateway.session_ingress":
             names = (
                 *names,
@@ -624,9 +629,9 @@ def _build_modules(root: Path, sources: dict[str, bytes]) -> dict[str, ModuleTyp
                 code, vars(module), function_name, expected[0] or None
             )
             function.__kwdefaults__ = expected[1] or None
-            if (name, qualified) in topology.DECORATED_0230:
+            if (name, qualified) in decorated:
                 function = contextlib.asynccontextmanager(function)
-            elif (name, qualified) in topology.SYNC_DECORATED_0230:
+            elif (name, qualified) in sync_decorated:
                 function = contextlib.contextmanager(function)
             if owner:
                 if not hasattr(module, owner):

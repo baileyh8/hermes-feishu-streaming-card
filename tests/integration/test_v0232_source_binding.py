@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -267,6 +268,33 @@ def test_v0232_install_plan_refuses_peer_drift_before_writing(tmp_path):
         recovery.install_decomposed(detection, expected_fingerprint=plan.fingerprint)
     assert not (copy / ".hermes_feishu_card_manifest").exists()
     assert not list(copy.rglob("*.hermes_feishu_card.bak"))
+
+
+def test_v0232_loaded_admission_verifies_native_contextmanager(tmp_path, monkeypatch):
+    from hermes_feishu_card import admission_completion, admission_topology_0226 as topology
+    from hermes_feishu_card.install import decomposed_ownership
+    from hermes_feishu_card.install.source_layout import DECOMPOSED_SOURCE_TARGETS
+    from test_v0230_admission_sources import _build_modules
+
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "installed"
+    _copy_detect_tree(root, copy)
+    originals = {name: (copy / name).read_bytes() for name in DECOMPOSED_SOURCE_TARGETS}
+    for name, rendered in decomposed_ownership.render(originals, peer_sources=read_peer_contract_sources(copy)).items():
+        (copy / name).write_bytes(rendered)
+    pair = topology.source_bytes_0232(copy)
+    assert pair is not None
+    modules = _build_modules(
+        copy, pair[1], functions=topology.FUNCTIONS_0232,
+        decorated=topology.DECORATED_0232,
+        sync_decorated=topology.SYNC_DECORATED_0231 | {("agent.runtime_scope", "bind_turn")},
+    )
+    for name, module in modules.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    assert admission_completion._verified() is not None
+    runtime_scope = modules["agent.runtime_scope"]
+    runtime_scope.bind_turn = runtime_scope.bind_turn.__wrapped__
+    assert admission_completion._verified() is None
 
 
 def test_v0232_base_patch_roundtrip_requires_peers_and_restores(tmp_path):

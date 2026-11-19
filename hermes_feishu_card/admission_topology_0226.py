@@ -361,7 +361,7 @@ FUNCTIONS_0232 = {
     "gateway.platforms.base_session_command": ("dispatch_active_session_command",),
 }
 DECORATED_0232 = DECORATED_0231
-SYNC_DECORATED_0232 = SYNC_DECORATED_0231
+SYNC_DECORATED_0232 = SYNC_DECORATED_0231 | {("agent.runtime_scope", "bind_turn")}
 OPTIONAL_MODULES_0232 = OPTIONAL_MODULES_0231 | frozenset({
     "agent.runtime_scope",
     "gateway.platforms.base_delivery_ledger",
