@@ -380,6 +380,7 @@ def _pm_post_enable_binding(
     """Bind a new receipt to the verified generation selected after official enable."""
     from . import legacy_rebind, pm_dependency
     from .plugin_config_bytes import verify_launch_sources
+    from .runtime_python import pm_managed_runtime_python
 
     if (type(registration) is not pm_dependency.Registration
             or registration.source_family != "pm-0232"
@@ -393,7 +394,7 @@ def _pm_post_enable_binding(
     selected = plugin.resolve_runtime_binding(
         checkout_root=binding.checkout_root, hermes_home=binding.hermes_home, profile_id=None,
     )
-    if plugin.pm_managed_runtime_python(
+    if pm_managed_runtime_python(
         binding.checkout_root, hermes_home=binding.hermes_home,
     ) != selected.runtime_python:
         raise ValueError("PM observer runtime is no longer selected")

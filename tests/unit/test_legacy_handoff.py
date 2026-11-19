@@ -144,7 +144,7 @@ def _restore_old_member(registration, precondition, monkeypatch):
 def test_initial_pm_observer_keeps_only_verified_post_enable_binding(
     tmp_path, monkeypatch, selection,
 ):
-    from hermes_feishu_card.install import plugin_config_bytes
+    from hermes_feishu_card.install import plugin_config_bytes, runtime_python
 
     precondition, new_binding, registration, marker, config = _setup(tmp_path, monkeypatch)
     old_binding = precondition.binding
@@ -152,7 +152,7 @@ def test_initial_pm_observer_keeps_only_verified_post_enable_binding(
     registration.post_python = old_binding.runtime_python
     monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", lambda *_args, **_kwargs: "pm-0232")
     monkeypatch.setattr(
-        legacy_observer.plugin, "pm_managed_runtime_python",
+        runtime_python, "pm_managed_runtime_python",
         lambda *_args, **_kwargs: (
             old_binding.runtime_python if selection == "stale-launcher" else new_binding.runtime_python
         ),
