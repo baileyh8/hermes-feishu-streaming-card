@@ -2121,7 +2121,28 @@ def _exact_base_delivery_hook_available() -> bool:
         }.issubset(send_names):
             return True
         ledger = getattr(BasePlatformAdapter, "send_final_ledgered", None)
-        ledger_names = set(getattr(getattr(ledger, "__code__", None), "co_names", ()))
+        ledger_code = getattr(ledger, "__code__", None)
+        ledger_names = set(getattr(ledger_code, "co_names", ()))
+        if decomposed and "send_final_ledgered" in send_names and "ledger_bracket" in ledger_names:
+            # v0.23.2 splits the ledger around a nested send callback. Check
+            # the hook in that callback and the live binding of its ledger.
+            from gateway.platforms.base_delivery_ledger import ledger_bracket
+
+            callback = next(
+                (code for code in ledger_code.co_consts
+                 if isinstance(code, CodeType) and code.co_name == "_send"),
+                None,
+            )
+            if (
+                callback is not None
+                and {"text_content", "reply_to", "metadata"}.issubset(callback.co_freevars)
+                and {"prepare_decomposed_base_final_delivery", "_send_with_retry"}.issubset(callback.co_names)
+                and ledger.__globals__.get("ledger_bracket") is ledger_bracket
+                and {"_record_delivery_obligation", "_finalize_delivery_obligation"}.issubset(
+                    ledger_bracket.__code__.co_names
+                )
+            ):
+                return True
         ledger_contract = {"_record_delivery_obligation", "_send_with_retry", "_finalize_delivery_obligation"}
         if not ledger_contract.issubset(ledger_names):
             _warn_stage_diagnostic("base-hook-unavailable")
@@ -9033,6 +9054,11 @@ def request_approval_choice_from_hermes_locals(
     interaction_id: str,
     timeout_seconds: float | None = None,
 ) -> str | None:
+    # The detached Hermes presenter has no live foreground turn to attach to.
+    # Preserve its dispatch-owned notification and original approval handle.
+    if local_vars.get("background") is True:
+        return None
+
     import html
 
     command = str(approval_data.get("command") or "").strip()

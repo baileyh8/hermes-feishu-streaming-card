@@ -1,5 +1,9 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V5.0.26
+
+- #532：核验 Hermes v0.23.2 源码检测、官方 PM 配置写入、普通 wheel 安装与恢复。发行验收以 [发行说明](docs/release-notes-v5.0.26.md) 和 GitHub Release 为准。
+
 ## V5.0.25
 
 - #529：终局已应用但回执丢失的路径经独立复现后修复；有界同事件重放、取消与未知结果的原生回退分别覆盖。

@@ -1954,6 +1954,18 @@ def test_approval_oversized_command_falls_back_before_request(monkeypatch):
     assert result is None
 
 
+def test_background_approval_keeps_hermes_notification(monkeypatch):
+    monkeypatch.setattr(
+        hook_runtime, "request_interaction_from_hermes_locals",
+        lambda *_args, **_kwargs: pytest.fail("background approval must stay native"),
+    )
+    assert hook_runtime.request_approval_choice_from_hermes_locals(
+        {"background": True, "_run_still_current": lambda: True},
+        {"command": "acceptance", "request_id": "background"},
+        interaction_id="background-approval",
+    ) is None
+
+
 def test_approval_command_cannot_hide_scope_in_markdown(monkeypatch):
     calls = []
     monkeypatch.setattr(hook_runtime, "request_interaction_from_hermes_locals", lambda _, **kwargs: calls.append(kwargs))

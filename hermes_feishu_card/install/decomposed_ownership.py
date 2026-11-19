@@ -16,6 +16,7 @@ from .source_layout import (
     BACKUP_SUFFIX, MANIFEST_NAME,
     DECOMPOSED_MANIFEST_VERSION as MANIFEST_VERSION,
     DECOMPOSED_SOURCE_TARGETS as SOURCE_TARGETS,
+    peer_contract_sources, read_peer_contract_bytes,
 )
 
 VERSION_TARGETS = ("VERSION", "hermes_cli/__init__.py", ".git/HEAD", ".git/packed-refs")
@@ -32,7 +33,7 @@ def is_managed(root: Path) -> bool:
 
 def _snapshot(root: Path) -> dict[str, bytes | None]:
     """Bind every candidate, including absence, so a new file invalidates a plan."""
-    result: dict[str, bytes | None] = {}
+    result = read_peer_contract_bytes(root)
     for name in (*SOURCE_TARGETS, *(n + BACKUP_SUFFIX for n in SOURCE_TARGETS),
                  MANIFEST_NAME, *VERSION_TARGETS):
         path = root / name
@@ -66,20 +67,22 @@ def _fingerprint(snapshot: Mapping[str, bytes | None]) -> str:
     return sha256(json.dumps(evidence).encode()).hexdigest()
 
 
-def render(sources: Mapping[str, bytes], strategy: str = "gateway_run_013_plus") -> dict[str, bytes]:
+def render(sources: Mapping[str, bytes], strategy: str = "gateway_run_013_plus",
+           peer_sources: Mapping[str, str] | None = None) -> dict[str, bytes]:
     rendered = {}
     completion_sources = {name: raw.decode("utf-8") for name, raw in sources.items()}
     for target, raw in sources.items():
         text = raw.decode("utf-8")
         if target == "gateway/platforms/base.py":
-            patched = patcher.apply_base_patch(text)
-            restored = patcher.remove_base_patch(patched)
+            patched = patcher.apply_base_patch(text, peer_sources=peer_sources)
+            restored = patcher.remove_base_patch(patched, peer_sources=peer_sources)
         elif target.startswith("cron/"):
             patched = patcher.apply_cron_patch(text)
             restored = patcher.remove_cron_patch(patched)
         else:
             patched = patcher.apply_gateway_fragment(text, target, strategy=strategy,
-                                                      completion_sources=completion_sources)
+                                                      completion_sources=completion_sources,
+                                                      peer_sources=peer_sources)
             restored = patcher.remove_patch(patched)
         compile(patched, target, "exec")
         if restored != text:
@@ -116,16 +119,17 @@ def verified_snapshot_provenance(root: Path) -> dict[str, Any]:
     if state != "installed":
         raise ValueError("integrity migration requires healthy decomposed ownership")
     assert rendered is not None  # installed inspection always renders hooks
+    peers = peer_contract_sources(snapshot)
     for name, raw in rendered.items():
-        if snapshot[name] != raw or _remove_target(name, raw) != originals[name]:
+        if snapshot[name] != raw or _remove_target(name, raw, peer_sources=peers) != originals[name]:
             raise ValueError("decomposed hook is not reversible")
     return snapshot_provenance(originals, rendered)
 
 
-def _remove_target(target: str, raw: bytes) -> bytes:
+def _remove_target(target: str, raw: bytes, peer_sources: dict[str, str] | None = None) -> bytes:
     text = raw.decode("utf-8")
     if target == "gateway/platforms/base.py":
-        return patcher.remove_base_patch(text).encode("utf-8")
+        return patcher.remove_base_patch(text, peer_sources=peer_sources).encode("utf-8")
     if target.startswith("cron/"):
         return patcher.remove_cron_patch(text).encode("utf-8")
     return patcher.remove_patch(text).encode("utf-8")
@@ -142,7 +146,7 @@ def _verified_reapplied_source(root: Path, target: str, raw: bytes, snapshot: Ma
         raise ValueError(f"{target}: source drift has no exact Git proof")
     git_root = git_evidence._exact_git_root(root)
     revision = head.decode("ascii")
-    original = _remove_target(target, raw)
+    original = _remove_target(target, raw, peer_sources=peer_contract_sources(snapshot))
     if (b"HERMES_FEISHU_CARD_" in original
             or original != git_evidence._git_blob(git_root, revision, target).encode("utf-8")
             or git_evidence._git_head(git_root) != revision):
@@ -208,6 +212,7 @@ def _legacy_upgrade_sources(snapshot: Mapping[str, bytes | None], sources: Mappi
 
 def _inspect(root: Path, *, render_hooks: bool = True) -> tuple[dict[str, bytes | None], dict[str, bytes], dict[str, bytes] | None, str]:
     snapshot = _snapshot(root)
+    peer_sources = peer_contract_sources(snapshot)
     sources = {name: raw for name in SOURCE_TARGETS if (raw := snapshot[name]) is not None}
     raw_manifest = snapshot[MANIFEST_NAME]
     if raw_manifest is None:
@@ -221,7 +226,7 @@ def _inspect(root: Path, *, render_hooks: bool = True) -> tuple[dict[str, bytes 
         raise ValueError("invalid decomposed ownership manifest")
     if manifest.get("manifest_version") != MANIFEST_VERSION:
         originals = _legacy_upgrade_sources(snapshot, sources, manifest)
-        return snapshot, originals, render(originals) if render_hooks else None, "stale_unpatched"
+        return snapshot, originals, render(originals, peer_sources=peer_sources) if render_hooks else None, "stale_unpatched"
     validate_manifest(manifest)
     owned_targets = set(manifest["targets"])
     added = set(sources) - owned_targets
@@ -262,9 +267,9 @@ def _inspect(root: Path, *, render_hooks: bool = True) -> tuple[dict[str, bytes 
             reapplied = True
     if replacements:
         originals = {**originals, **replacements}
-        rendered = render(originals) if render_hooks else None
+        rendered = render(originals, peer_sources=peer_sources) if render_hooks else None
         return snapshot, originals, rendered, "stale_reapplied" if reapplied else "stale_unpatched"
-    rendered = render(originals) if render_hooks else None
+    rendered = render(originals, peer_sources=peer_sources) if render_hooks else None
     renderer_changed = rendered is not None and any(
         sha256(raw).hexdigest() != manifest["targets"][target]["patched_sha256"]
         for target, raw in rendered.items())

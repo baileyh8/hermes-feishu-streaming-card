@@ -57,7 +57,7 @@ def available(root: Path) -> bool:
     raw = _read(root / "agent" / "turn_response_intake.py")
     if raw is None:
         return False
-    # v0.22.2 exact observation producer: bind the usage/timing expressions and
+    # Bind the usage/timing expressions and
     # helper signature/imports, rather than accepting the same keyword names
     # attached to unrelated values or an uncalled helper. Comments are irrelevant.
     try:
@@ -70,9 +70,12 @@ def available(root: Path) -> bool:
               and n.name == "normalize_model_response"]
     if len(helpers) != 1 or len(owners) != 1:
         return False
-    if _ast_sha256(helpers[0]) != (
-        "4620431faaa1e4fada26d16e8e80ee0cade75f75587cd4fa5f2f1a693025f05b"
-    ):
+    if _ast_sha256(helpers[0]) not in {
+        "4620431faaa1e4fada26d16e8e80ee0cade75f75587cd4fa5f2f1a693025f05b",
+        # v0.23.2 routes auxiliary forks to their own hook and preserves the
+        # main model-request observer's usage/timing and hook context.
+        "a303d4df31936cdc4bee4928579c0ee14a6cfcecc5f74220a567055c3053c616",
+    }:
         return False
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Name) and n.func.id == helpers[0].name]
@@ -362,15 +365,46 @@ class Registration:
         restore(self.binding.checkout_root, home=self.binding.hermes_home)
 
 
-def prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> Registration | None:
-    if adoption is not None:
+def prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None,
+            pm_registration: Any = None) -> Registration | None:
+    if adoption is not None or pm_registration is not None:
         from .transaction_lock import _root_lock
         with _root_lock(binding.checkout_root):
-            return _prepare(binding, adoption=adoption)
-    return _prepare(binding, adoption=None)
+            return _prepare(binding, adoption=adoption, pm_registration=pm_registration)
+    return _prepare(binding)
 
 
-def _prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> Registration | None:
+def _pm_post_enable_binding(
+    binding: plugin.HermesRuntimeBinding, registration: Any,
+) -> plugin.HermesRuntimeBinding:
+    """Bind a new receipt to the verified generation selected after official enable."""
+    from . import legacy_rebind, pm_dependency
+    from .plugin_config_bytes import verify_launch_sources
+    from .runtime_python import pm_managed_runtime_python
+
+    if (type(registration) is not pm_dependency.Registration
+            or registration.source_family != "pm-0232"
+            or registration.root != binding.checkout_root
+            or registration.home != binding.hermes_home
+            or registration.member != binding.hermes_home / "plugins" / pm_dependency.NAME
+            or registration.post_python != binding.runtime_python):
+        raise ValueError("PM observer registration does not match the opening runtime")
+    registration._assert_current()
+    verify_launch_sources(binding.checkout_root, family=registration.source_family)
+    selected = plugin.resolve_runtime_binding(
+        checkout_root=binding.checkout_root, hermes_home=binding.hermes_home, profile_id=None,
+    )
+    if pm_managed_runtime_python(
+        binding.checkout_root, hermes_home=binding.hermes_home,
+    ) != selected.runtime_python:
+        raise ValueError("PM observer runtime is no longer selected")
+    legacy_rebind._verify_runtime(selected)
+    registration._assert_current()
+    return selected
+
+
+def _prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None,
+             pm_registration: Any = None) -> Registration | None:
     existing = inspect(binding.checkout_root, home=binding.hermes_home)
     if existing is not None:
         if existing[0]["python_identity"] != binding.python_identity:
@@ -425,12 +459,13 @@ def _prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> R
             raise ValueError("official config postimage changed")
         validate_postimage()
         receipt = plugin_config_delta.make_receipt(plugin._read_private_backup(preimage), postimage)
+        selected = binding if pm_registration is None else _pm_post_enable_binding(binding, pm_registration)
         validate_postimage()
         current_journal = plugin.mark_plugin_config_installed(preimage, ownership, config_delta=receipt,
                                                               adapter=adapter)
         validate_postimage()
         raw = (json.dumps({"protocol": ADOPTION_PROTOCOL if adapter else PROTOCOL, "home": str(binding.hermes_home),
-                           "python_identity": binding.python_identity,
+                           "python_identity": selected.python_identity,
                            "plugin_config": ownership.sanitized(), "config_delta": receipt,
                            **({"adapter": adapter} if adapter else {})}, sort_keys=True) + "\n").encode()
         validate_postimage()
@@ -438,8 +473,15 @@ def _prepare(binding: plugin.HermesRuntimeBinding, *, adoption: Any = None) -> R
         marker_snapshot = io.read_path_snapshot(marker, ValueError, "legacy observer record changed")
         if marker_snapshot[2] != plugin._sha256(raw):
             raise ValueError("legacy observer record changed")
+        if pm_registration is not None:
+            current = plugin.resolve_runtime_binding(
+                checkout_root=selected.checkout_root, hermes_home=selected.hermes_home,
+                profile_id=None,
+            )
+            if current != selected:
+                raise ValueError("PM observer runtime changed during registration")
         validate_postimage()
-        return Registration(binding)
+        return Registration(selected)
     except plugin.PluginAdoptionUncertain:
         # The journal may already contain the no-op adoption evidence. Do not
         # replace its identity with the earlier prepared snapshot or hide cause.

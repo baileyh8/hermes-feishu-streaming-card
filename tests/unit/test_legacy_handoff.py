@@ -140,6 +140,37 @@ def _restore_old_member(registration, precondition, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("selection", ["verified", "stale-launcher", "unverified-wheel"])
+def test_initial_pm_observer_keeps_only_verified_post_enable_binding(
+    tmp_path, monkeypatch, selection,
+):
+    from hermes_feishu_card.install import plugin_config_bytes, runtime_python
+
+    precondition, new_binding, registration, marker, config = _setup(tmp_path, monkeypatch)
+    old_binding = precondition.binding
+    registration.source_family = "pm-0232"
+    registration.post_python = old_binding.runtime_python
+    monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", lambda *_args, **_kwargs: "pm-0232")
+    monkeypatch.setattr(
+        runtime_python, "pm_managed_runtime_python",
+        lambda *_args, **_kwargs: (
+            old_binding.runtime_python if selection == "stale-launcher" else new_binding.runtime_python
+        ),
+    )
+    if selection == "unverified-wheel":
+        def refuse_runtime(_):
+            raise legacy_rebind.RebindRefused("legacy_rebind_wheel_resources_unverified")
+        monkeypatch.setattr(legacy_rebind, "_verify_runtime", refuse_runtime)
+
+    if selection == "verified":
+        assert legacy_observer._pm_post_enable_binding(old_binding, registration) is new_binding
+    else:
+        with pytest.raises(ValueError, match="no longer selected|wheel_resources_unverified"):
+            legacy_observer._pm_post_enable_binding(old_binding, registration)
+    assert marker.read_bytes() == precondition.marker_raw
+    assert config.read_bytes() == b"plugins: {}\n"
+
+
 def test_apply_changes_only_marker_identity_and_rolls_back_exactly(tmp_path, monkeypatch):
     precondition, new_binding, registration, marker, config = _setup(tmp_path, monkeypatch)
     before = marker.read_bytes()

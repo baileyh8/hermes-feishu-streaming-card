@@ -4,6 +4,8 @@
 
 `install_state_clean` 表示未发现已有的受管 hook 安装状态，不表示已安装或真实回合已激活。源码 anchors 受支持、`streaming.enabled` 为真、插件已启用和独立子进程探测通过，也不能代替 Gateway 当前进程的加载证据。先核对同一个 Hermes 根目录、HOME、HFC 配置和环境文件，再运行正常 `setup` 并按计划重启 Gateway；用新回合的事件计数和卡片投递核验。`repair` 只维护已有、可验证的安装，不代替首次安装；不要删除 manifest、备份或完整性保护标记。
 
+v5.0.26 登记 Hermes v0.23.2（`ae2a81ccc0`）的 `pm-0232` 配置写入契约。该版本仍使用 schema 53。私有规划按固定摘要校验 `utils` 包与拆分后的配置模块。安装、修复和恢复计划同时校验只读契约文件的内容与存在状态。首次启用后若 PM 切换 generation，observer 收据绑定 PM 当前选中的运行时。写入前核对原依赖登记、wheel 和入口，最后复核运行时身份。已有收据的漂移仍走下文的恢复流程。
+
 v5.0.25 的 PowerShell 凭据探针使用独占临时 Python 文件，避免 Windows PowerShell 5.1 对 `python -c` 内嵌双引号的 native 参数转换。保持原凭据/profile 判定与失败退出，`finally` 清除临时文件。PowerShell 5.1 与 7 的实际执行证据分开记录。脱敏报告只补充已知状态的固定说明和下一步，不公开原始诊断值或私有路径，不改变安装状态、退出码和修复保护。
 
 ## PM 重建与源码重置同时发生（#524）

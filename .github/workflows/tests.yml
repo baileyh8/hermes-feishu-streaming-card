@@ -78,7 +78,8 @@ jobs:
   release-archive-safety:
     name: release-archive-safety (${{ matrix.os }})
     timeout-minutes: 25
-    runs-on: ${{ matrix.os }}
+    # Preserve the existing check names and use a runner with Python 3.9.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -195,6 +196,8 @@ jobs:
           HFC_REQUIRE_0230_PIN: "1"
           HFC_UPSTREAM_0231_ROOT: "${{ github.workspace }}/.upstream/0231"
           HFC_REQUIRE_0231_PIN: "1"
+          HFC_UPSTREAM_0232_ROOT: "${{ github.workspace }}/.upstream/0232"
+          HFC_REQUIRE_0232_PIN: "1"
           # Fixed legacy baseline fixture: an exact v0.22.4 checkout retained as
           # the config-writer 0224 baseline; the name predates the v0.23.0
           # stable channel and does not track the current stable release.
@@ -234,6 +237,7 @@ jobs:
           HFC_CONFIG_WRITER_0227_ROOT: "${{ github.workspace }}/.upstream/0227"
           HFC_CONFIG_WRITER_0230_ROOT: "${{ github.workspace }}/.upstream/0230"
           HFC_CONFIG_WRITER_0231_ROOT: "${{ github.workspace }}/.upstream/0231"
+          HFC_CONFIG_WRITER_0232_ROOT: "${{ github.workspace }}/.upstream/0232"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -257,6 +261,8 @@ jobs:
           tests/integration/test_v0231_admission_sources.py
           tests/integration/test_v0231_admission_topology.py
           tests/integration/test_v0231_writer_family.py
+          tests/integration/test_v0232_source_binding.py
+          tests/integration/test_v0232_writer_family.py
           tests/integration/test_session_authority_completion.py::test_native_rate_identity_snapshot_matches_existing_pin
           tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
@@ -410,7 +416,7 @@ jobs:
   pytest-shards:
     needs: [plan, fixed-hermes-fixture]
     timeout-minutes: 25
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.python-version == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.pytest_matrix) }}
@@ -747,7 +753,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.25
+          HFC_VERSION: v5.0.26
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
@@ -946,6 +952,12 @@ jobs:
             pyc_mode: preserved
             legacy: false
           - image: v0.23.1
+            pyc_mode: cleared
+            legacy: false
+          - image: v0.23.2
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.23.2
             pyc_mode: cleared
             legacy: false
     steps:

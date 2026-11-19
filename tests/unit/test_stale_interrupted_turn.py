@@ -205,7 +205,7 @@ def test_cli_upgrade_old_owned_hooks_and_uninstall_exactly(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "_ensure_hermes_feishu_sdk", lambda detection: None)
     args = ["install", "--hermes-dir", str(root), "--yes"]
     with monkeypatch.context() as old:
-        old.setattr(patcher, "_apply_stale_interrupted_patch", lambda source: source)
+        old.setattr(patcher, "_apply_stale_interrupted_patch", lambda source, peer_sources=None: source)
         assert cli.main(args) == 0
     target = root / "gateway/run_turn.py"
     assert patcher.STALE_INTERRUPTED_PATCH_BEGIN not in target.read_text()

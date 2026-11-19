@@ -2,6 +2,10 @@
 
 ## Current candidate
 
+This branch targets `5.0.26`. It adapts HFC installation and delivery to Hermes v0.23.2 (#532). The [release notes](release-notes-v5.0.26.en.md) and GitHub Release track CI, public package and field evidence separately.
+
+## v5.0.25
+
 This branch targets `5.0.25`: #529 bounded reconciliation of a lost terminal acknowledgement, #526 Windows PowerShell 5.1 credential probe and safe installation-state explanations. The reporter restored #526 by running setup and restarting Gateway; field recovery is separate from maintainer reproduction and package acceptance. Local focused regression, ordinary-wheel child processes and three real API controls have separate evidence. Exact-commit full CI, Windows 5.1/7, public release gates and client scope follow the final PR #530 and GitHub Release records. See the [release notes](release-notes-v5.0.25.en.md).
 
 ## v5.0.24 historical record

@@ -4142,8 +4142,12 @@ def _run_install_core(args: argparse.Namespace, registrations, observer_state=No
                 registrations.append(handoff)
                 observer_registration = None
             else:
-                observer_registration = (legacy_observer.prepare(binding, adoption=adoption)
-                                         if adoption is not None else legacy_observer.prepare(binding))
+                if adoption is not None:
+                    observer_registration = legacy_observer.prepare(binding, adoption=adoption)
+                elif getattr(registration, "source_family", None) == "pm-0232":
+                    observer_registration = legacy_observer.prepare(binding, pm_registration=registration)
+                else:
+                    observer_registration = legacy_observer.prepare(binding)
             if observer_registration is not None:
                 registrations.append(observer_registration)
     except (OSError, UnicodeError, ValueError) as exc:
