@@ -1,9 +1,8 @@
 """Frozen v0.23.2 source hashes for private writer and launch contracts.
 
 Pinned upstream tag: v0.23.2 (ae2a81ccc00e9b7c06301523e5bb09608397149c).
-utils.py split into the utils package; remaining writer files are the
-v0.23.1 closure with this tag's bytes. Plain dictionary constants only:
-never executes upstream code.
+The writer imports the utils package and the split config helpers.
+These constants bind the source used by the private planner.
 """
 from __future__ import annotations
 
@@ -36,16 +35,21 @@ FAMILY_SOURCES: dict[str, str] = {
     'hermes_cli/config.py': 'f356ce0175ea466425798f9e206e617958ca85a826b00d0bb05b9fc33d5a761b',
     'hermes_cli/config_backend.py': 'f7e277c54841a90101ae6a940fd988af334df73bae49a089704aae8b0a97b647',
     'hermes_cli/config_backups.py': 'e244de74c6ab933aa5c33172e446f188726333bce2622142fa2c8ca9ff67e115',
+    'hermes_cli/config_credential_values.py': '4b991fe853985585c0192d5843cbb8804792b59de9a9ed1c9a5866046f8fac61',
     'hermes_cli/config_defaults.py': '0123ecc01d589c849e80efbc6529ba6b6fa1b157bb83006acc195361977d82c7',
     'hermes_cli/config_defaults_auxiliary.py': '3991da172eda0f7a69415fac7e300cea09685e03ae6abc637d2c183de534ce3d',
     'hermes_cli/config_defaults_env.py': '8596fac9a370036fd6d96422cc23ee935557fbb4a044a353d09ffe86346b4893',
+    'hermes_cli/config_defaults_voice.py': '1421aeab36b3eb3b72d25e303700db7f53dc3320c9ed8cc62db7d0942eb4fc02',
     'hermes_cli/config_home.py': '7e797031fbe53c3686a305d72c226ed55afa8c0d31b3e4447d8ee06f9412046c',
     'hermes_cli/config_issues.py': '6c2ae9660d50df784e6ae4e6bcd65f5eee149ed975208dcbeca9f4ca6e610b58',
     'hermes_cli/config_migrations.py': '0e48c1c8135d946284fac6b21587a86674248aacf1454528f37da416e9380c45',
     'hermes_cli/config_migrations_browser.py': 'c41f342cb0c410b2cf6ccc3ac1cf30216985b0e5e32e76ae24ba8ff6ad06de1e',
+    'hermes_cli/config_model_section.py': 'e1f3dc341e9aaa94b7288b24a592b07ad159331eab520eaa66aaac0fb5a93f50',
     'hermes_cli/config_provider_env.py': '4e061298629381a03875d1cae5ea9bf429abca92f733b95ab445519effd75212',
     'hermes_cli/config_providers.py': '613c21a4844d1a79176e682da3f8ab5211f59385c203a733a37c8e670c799f4e',
     'hermes_cli/config_read_errors.py': '426c4076b2b7eb8b0c3aa7c518fbf6763f9566e172057a4149a44d24a251fcb0',
+    'hermes_cli/config_secret_display.py': '7461bf06889d5a8473b69d74686bdba2f41a14728c485ab362f095ff66f6fbe8',
+    'hermes_cli/config_set_scalars.py': '68c6a031782af38ce53da738a40ffd9395ad8be428f78271ac87b1fd6b9f8158',
     'hermes_cli/config_value_checks.py': 'ab7126ec07b17ed8a5e39f732634e2d6372c349c1627e8591ba2dc2d38cb9d68',
     'hermes_cli/config_version_stamp.py': '604640999a7627909541f8b5ecfa961d81c7c90fbf3f2e3ccd076b8717499b31',
     'hermes_cli/config_worker_save.py': 'a12df826b8d5b10c978ccaf45d59f11513852764b10eb07ace3d5a314c9a4f9b',

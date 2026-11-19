@@ -56,6 +56,8 @@ def test_verified_approval_transport_is_accepted():
     "skip-generation-check",
     "notify-other-method",
     "rewrite-transport-notify",
+    "rebind-at-call",
+    "rebind-in-peer",
     "drop-import",
 ])
 def test_approval_transport_rejects_drift(mutation):
@@ -77,6 +79,12 @@ def test_approval_transport_rejects_drift(mutation):
             "turn._approval_notify_sync(data)",
             "presenter._render_approval_sync(data)",
         )}
+    elif mutation == "rebind-at-call":
+        content = content.replace("        register_gateway_notify(",
+                                  "        approval_transport = other_transport\n"
+                                  "        register_gateway_notify(")
+    elif mutation == "rebind-in-peer":
+        peers = {TARGET: TRANSPORT + "\nTurnContext = OtherContext\n"}
     elif mutation == "drop-import":
         content = content.replace(
             "from gateway.run_turn_runner_approval_transport import approval_transport\n        ",

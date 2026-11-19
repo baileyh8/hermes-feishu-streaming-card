@@ -50,7 +50,7 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     identities = {(case["image"], case["pyc_mode"]) for case in cases}
     assert len(identities) == len(cases)
     assert {image for image, _ in identities} == {
-        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0", "v0.23.1"
+        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0", "v0.23.1", "v0.23.2"
     }
     assert ("v0.22.5", "preserved") in identities
     assert ("v0.22.5", "cleared") in identities
@@ -58,6 +58,8 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     assert ("v0.23.0", "cleared") in identities
     assert ("v0.23.1", "preserved") in identities
     assert ("v0.23.1", "cleared") in identities
+    assert ("v0.23.2", "preserved") in identities
+    assert ("v0.23.2", "cleared") in identities
     assert any(case["legacy"] for case in cases)
     assert "matrix.pyc_mode" in job["name"]
     windows = workflow["jobs"]["pytest-windows"]

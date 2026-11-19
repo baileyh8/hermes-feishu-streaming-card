@@ -65,6 +65,11 @@ def test_v0232_writer_and_launch_sources_are_exact():
     assert planner.FAMILIES["pm-0232"] == fixture["writer_files"]
     assert planner.LAUNCH_SOURCES["pm-0232"] == fixture["launch_files"]
     assert set(fixture["new_bound_sources"]) == {
+        "hermes_cli/config_credential_values.py",
+        "hermes_cli/config_defaults_voice.py",
+        "hermes_cli/config_model_section.py",
+        "hermes_cli/config_secret_display.py",
+        "hermes_cli/config_set_scalars.py",
         "utils/__init__.py",
         "utils/env.py",
         "utils/files.py",

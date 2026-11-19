@@ -78,7 +78,8 @@ jobs:
   release-archive-safety:
     name: release-archive-safety (${{ matrix.os }})
     timeout-minutes: 25
-    runs-on: ${{ matrix.os }}
+    # Preserve the existing check names and use a runner with Python 3.9.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -415,7 +416,7 @@ jobs:
   pytest-shards:
     needs: [plan, fixed-hermes-fixture]
     timeout-minutes: 25
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.python-version == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.pytest_matrix) }}
@@ -752,7 +753,7 @@ jobs:
         env:
           FEISHU_APP_ID: cli_test_only
           FEISHU_APP_SECRET: test_only_not_a_real_secret
-          HFC_VERSION: v5.0.25
+          HFC_VERSION: v5.0.26
         run: docker compose -f docker-compose.example.yml config --quiet
       - name: Start published Compose smoke topology
         run: >-
@@ -951,6 +952,12 @@ jobs:
             pyc_mode: preserved
             legacy: false
           - image: v0.23.1
+            pyc_mode: cleared
+            legacy: false
+          - image: v0.23.2
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.23.2
             pyc_mode: cleared
             legacy: false
     steps:

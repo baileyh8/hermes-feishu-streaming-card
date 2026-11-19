@@ -1017,16 +1017,20 @@ if request.get('boot_gate') and request.get('historical_migration') is None:
         for key,value in saved_env.items():
             if value is None: os.environ.pop(key,None)
             else: os.environ[key]=value
-providers=module('providers','providers/__init__.py')
-list_providers=providers.list_providers
 def no_setup_provider_metadata(*args,**kwargs):
     caller=sys._getframe(1)
     if caller.f_globals.get('__name__')=='hermes_cli.config' and caller.f_code.co_name=='_inject_profile_env_vars':
         raise RuntimeError('setup prompt metadata is excluded from byte planning')
     deny('provider-metadata','profile')
-providers.list_providers=no_setup_provider_metadata
-config=module('hermes_cli.config','hermes_cli/config.py')
-providers.list_providers=list_providers
+if request['family']=='pm-0232':
+    # This config defers descriptive provider metadata until first use.
+    config=module('hermes_cli.config','hermes_cli/config.py')
+else:
+    providers=module('providers','providers/__init__.py')
+    list_providers=providers.list_providers
+    providers.list_providers=no_setup_provider_metadata
+    config=module('hermes_cli.config','hermes_cli/config.py')
+    providers.list_providers=list_providers
 try:
     from hermes_cli.config_migrations import SUPPORT_FLOOR_VERSION
     current,latest=config.check_config_version()
@@ -1037,14 +1041,17 @@ try:
             deny('startup-migration-incomplete','migration')
 except Exception:
     deny('startup-migration-failed','migration')
-utils=module('utils','utils.py')
+utils_source='utils/__init__.py' if request['family']=='pm-0232' else 'utils.py'
+module('utils',utils_source)
 desired=request['desired']
-commands=module('hermes_cli.plugins_cmd','hermes_cli/plugins_cmd.py')
+fixed=request['family']=='fixed'
+grant=(module('hermes_cli.plugins_cmd','hermes_cli/plugins_cmd.py') if fixed else
+       module('hermes_cli.plugins_cmd_capabilities','hermes_cli/plugins_cmd_capabilities.py'))
 selection_needed=not request['enabled_before'] or (request['family']!='fixed' and 'hermes-feishu-card' in config.read_user_config_raw().get('plugins',{}).get('disabled',[]))
 if selection_needed:
-    if request['family']=='fixed':
-        commands._save_enabled_set(set(desired['plugins']['enabled']))
-        commands._save_disabled_set(set(desired['plugins']['disabled']))
+    if fixed:
+        grant._save_enabled_set(set(desired['plugins']['enabled']))
+        grant._save_disabled_set(set(desired['plugins']['disabled']))
     else:
         yaml=module('hermes_yaml','hermes_yaml.py').roundtrip_yaml()
         state=yaml.load((home/'config.yaml').read_bytes().decode('utf-8-sig')) or {}
@@ -1054,7 +1061,6 @@ if selection_needed:
         import io
         stream=io.StringIO();yaml.dump(state,stream)
         (home/'config.yaml').write_bytes(stream.getvalue().encode('utf-8'))
-grant=commands if request['family']=='fixed' else module('hermes_cli.plugins_cmd_capabilities','hermes_cli/plugins_cmd_capabilities.py')
 grant._set_plugin_entry_flag('hermes-feishu-card','allow_tool_override',False)
 assert not any(name in sys.modules for name in ('pm.install','pm.client'))
 for name,digest in request['sources'].items():

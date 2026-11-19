@@ -16,7 +16,7 @@ from .source_layout import (
     BACKUP_SUFFIX, MANIFEST_NAME,
     DECOMPOSED_MANIFEST_VERSION as MANIFEST_VERSION,
     DECOMPOSED_SOURCE_TARGETS as SOURCE_TARGETS,
-    read_peer_contract_sources,
+    peer_contract_sources, read_peer_contract_bytes,
 )
 
 VERSION_TARGETS = ("VERSION", "hermes_cli/__init__.py", ".git/HEAD", ".git/packed-refs")
@@ -33,7 +33,7 @@ def is_managed(root: Path) -> bool:
 
 def _snapshot(root: Path) -> dict[str, bytes | None]:
     """Bind every candidate, including absence, so a new file invalidates a plan."""
-    result: dict[str, bytes | None] = {}
+    result = read_peer_contract_bytes(root)
     for name in (*SOURCE_TARGETS, *(n + BACKUP_SUFFIX for n in SOURCE_TARGETS),
                  MANIFEST_NAME, *VERSION_TARGETS):
         path = root / name
@@ -119,8 +119,9 @@ def verified_snapshot_provenance(root: Path) -> dict[str, Any]:
     if state != "installed":
         raise ValueError("integrity migration requires healthy decomposed ownership")
     assert rendered is not None  # installed inspection always renders hooks
+    peers = peer_contract_sources(snapshot)
     for name, raw in rendered.items():
-        if snapshot[name] != raw or _remove_target(name, raw, peer_sources=read_peer_contract_sources(root)) != originals[name]:
+        if snapshot[name] != raw or _remove_target(name, raw, peer_sources=peers) != originals[name]:
             raise ValueError("decomposed hook is not reversible")
     return snapshot_provenance(originals, rendered)
 
@@ -145,7 +146,7 @@ def _verified_reapplied_source(root: Path, target: str, raw: bytes, snapshot: Ma
         raise ValueError(f"{target}: source drift has no exact Git proof")
     git_root = git_evidence._exact_git_root(root)
     revision = head.decode("ascii")
-    original = _remove_target(target, raw, peer_sources=read_peer_contract_sources(root))
+    original = _remove_target(target, raw, peer_sources=peer_contract_sources(snapshot))
     if (b"HERMES_FEISHU_CARD_" in original
             or original != git_evidence._git_blob(git_root, revision, target).encode("utf-8")
             or git_evidence._git_head(git_root) != revision):
@@ -211,7 +212,7 @@ def _legacy_upgrade_sources(snapshot: Mapping[str, bytes | None], sources: Mappi
 
 def _inspect(root: Path, *, render_hooks: bool = True) -> tuple[dict[str, bytes | None], dict[str, bytes], dict[str, bytes] | None, str]:
     snapshot = _snapshot(root)
-    peer_sources = read_peer_contract_sources(root)
+    peer_sources = peer_contract_sources(snapshot)
     sources = {name: raw for name in SOURCE_TARGETS if (raw := snapshot[name]) is not None}
     raw_manifest = snapshot[MANIFEST_NAME]
     if raw_manifest is None:

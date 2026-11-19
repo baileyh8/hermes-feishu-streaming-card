@@ -729,7 +729,8 @@ def test_private_plan_equals_real_official_writer_and_exact_restore(
         desired, _ = plugin._expected_enabled_config(
             plugin._load_config_mapping(original), preserve_enabled_lists=True
         )
-    plan = plugin_config_bytes.plan_enabled_bytes(
+    plan = _plan_with_failure_diagnostic(
+        plugin_config_bytes.plan_enabled_bytes,
         root=root,
         python=python,
         home=home,

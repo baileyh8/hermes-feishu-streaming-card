@@ -23,7 +23,7 @@ from .transaction_lock import (
 from .source_layout import (
     BACKUP_SUFFIX as BACKUP_SUFFIX, MANIFEST_NAME as MANIFEST_NAME,
     DECOMPOSED_MANIFEST_VERSION, DECOMPOSED_SOURCE_TARGETS,
-    read_peer_contract_sources,
+    peer_contract_sources, read_peer_contract_sources,
 )
 from .manifest import validate_decomposed_manifest
 from . import posix_transaction as bound_io
@@ -2713,7 +2713,9 @@ def install_decomposed(detection, *, no_repair=False, expected_fingerprint=None,
         fresh = _plan_decomposed_recovery(detection, accept_hermes_upgrade=accept_hermes_upgrade)
         if fresh.fingerprint != decomposed_ownership._fingerprint(snapshot):
             raise ValueError("decomposed evidence changed before install")
-        rendered = rendered or decomposed_ownership.render(originals, detection.hook_strategy, peer_sources=read_peer_contract_sources(detection.root))
+        rendered = rendered or decomposed_ownership.render(
+            originals, detection.hook_strategy, peer_sources=peer_contract_sources(snapshot),
+        )
         manifest = {
             "manifest_version": DECOMPOSED_MANIFEST_VERSION, "layout": "gateway-decomposed-v1",
             "integration_mode": "legacy-patch",

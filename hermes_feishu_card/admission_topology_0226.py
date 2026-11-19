@@ -380,7 +380,7 @@ _AST_TREE_CACHE_LIMIT = 64
 _AST_TREE_CACHE: OrderedDict[str, ast.Module] = OrderedDict()
 _AST_TREE_CACHE_LOCK = threading.Lock()
 _OWNED_REMOVAL_CACHE_LIMIT = 32
-_OWNED_REMOVAL_CACHE: OrderedDict[tuple[str, str], bytes] = OrderedDict()
+_OWNED_REMOVAL_CACHE: OrderedDict[tuple[str, ...], bytes] = OrderedDict()
 _OWNED_REMOVAL_CACHE_LOCK = threading.Lock()
 
 
@@ -420,11 +420,17 @@ def _parsed_ast(source: bytes | str) -> ast.Module:
     return tree
 
 
-def _owned_removal_key(target: str, raw: bytes) -> tuple[str, str]:
-    return (target, sha256(raw).hexdigest())
+def _owned_removal_key(
+    target: str, raw: bytes, peer_sources: dict[str, str] | None,
+) -> tuple[str, ...]:
+    peers = tuple(
+        f"{name}:{sha256(text.encode('utf-8')).hexdigest()}"
+        for name, text in sorted((peer_sources or {}).items())
+    )
+    return (target, sha256(raw).hexdigest(), *peers)
 
 
-def _cached_owned_removal(key: tuple[str, str]) -> bytes | None:
+def _cached_owned_removal(key: tuple[str, ...]) -> bytes | None:
     """Reuse a pure normalization result; never cache disk or loaded facts."""
     with _OWNED_REMOVAL_CACHE_LOCK:
         cached = _OWNED_REMOVAL_CACHE.get(key)
@@ -434,7 +440,7 @@ def _cached_owned_removal(key: tuple[str, str]) -> bytes | None:
     return None
 
 
-def _remember_owned_removal(key: tuple[str, str], original: bytes) -> None:
+def _remember_owned_removal(key: tuple[str, ...], original: bytes) -> None:
     with _OWNED_REMOVAL_CACHE_LOCK:
         _OWNED_REMOVAL_CACHE[key] = original
         while len(_OWNED_REMOVAL_CACHE) > _OWNED_REMOVAL_CACHE_LIMIT:
@@ -481,14 +487,19 @@ def _read_023_set_sources(
                 return None
             key = None
             if name in owned:
-                key = _owned_removal_key(owned[name], raw)
+                peer_sources = None
+                if source_hashes is SOURCE_HASHES_0232 and name == "gateway.platforms.base":
+                    from .install.source_layout import read_peer_contract_sources
+                    peer_sources = read_peer_contract_sources(root)
+                key = _owned_removal_key(owned[name], raw, peer_sources)
                 original = _cached_owned_removal(key)
                 if original is None:
-                    from .install.source_layout import read_peer_contract_sources
-                    original = decomposed_ownership._remove_target(
-                        owned[name], raw,
-                        peer_sources=read_peer_contract_sources(root),
-                    )
+                    if peer_sources is None:
+                        original = decomposed_ownership._remove_target(owned[name], raw)
+                    else:
+                        original = decomposed_ownership._remove_target(
+                            owned[name], raw, peer_sources=peer_sources,
+                        )
             else:
                 original = raw
             if original is None or sha256(original).hexdigest() != digest:

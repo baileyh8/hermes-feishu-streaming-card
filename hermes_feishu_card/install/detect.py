@@ -205,17 +205,11 @@ def detect_hermes(root: str | Path) -> HermesDetection:
                 return result(False, error)
             gateway_sources[name] = source
 
-    peer_sources = {}
-    from .source_layout import DECOMPOSED_PEER_SOURCES
-    for name in DECOMPOSED_PEER_SOURCES:
-        path = hermes_root / name
-        if path.is_symlink():
-            return result(False, f"{name} must not be a symlink")
-        if path.exists():
-            source, error = _read_text(path, name)
-            if error:
-                return result(False, error)
-            peer_sources[name] = source
+    from .source_layout import read_peer_contract_sources
+    try:
+        peer_sources = read_peer_contract_sources(hermes_root)
+    except (OSError, ValueError):
+        return result(False, "unsafe or unreadable decomposed peer source")
 
     cron_contents = ""
     cron_error = None

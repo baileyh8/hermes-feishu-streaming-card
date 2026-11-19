@@ -252,6 +252,23 @@ def test_v0232_missing_dispatch_peer_is_rejected(tmp_path):
     assert detection.capabilities["exact_base_delivery"] is False
 
 
+def test_v0232_install_plan_refuses_peer_drift_before_writing(tmp_path):
+    from hermes_feishu_card.install import recovery
+
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    copy = tmp_path / "peer-drift"
+    _copy_detect_tree(root, copy)
+    detection = detect_hermes(copy)
+    plan = recovery.plan_recovery(detection)
+    assert plan.state == "clean"
+    peer = copy / "gateway/run_turn_setup_guard.py"
+    peer.write_bytes(peer.read_bytes() + b"\n# changed since diagnosis\n")
+    with pytest.raises(ValueError, match="recovery evidence changed"):
+        recovery.install_decomposed(detection, expected_fingerprint=plan.fingerprint)
+    assert not (copy / ".hermes_feishu_card_manifest").exists()
+    assert not list(copy.rglob("*.hermes_feishu_card.bak"))
+
+
 def test_v0232_base_patch_roundtrip_requires_peers_and_restores(tmp_path):
     from hermes_feishu_card.install import decomposed_ownership, patcher, recovery
 

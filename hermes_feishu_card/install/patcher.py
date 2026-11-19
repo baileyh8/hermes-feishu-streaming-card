@@ -4617,39 +4617,38 @@ def _approval_callback_name(content, peer_sources=None):
     )
     if notify_ok and ast.dump(calls[0]) == ast.dump(expected_call):
         return "_render_approval_sync"
-    if notify_ok and ast.dump(calls[0]) == ast.dump(transport_call) and _approval_transport_is_verified(runner, peer_sources):
+    if notify_ok and ast.dump(calls[0]) == ast.dump(transport_call) and _approval_transport_is_verified(runner, calls[0], peer_sources):
         return "_render_approval_sync"
     raise ValueError("extracted approval generation/notify contract changed")
 
 
-def _approval_transport_is_verified(runner, peer_sources) -> bool:
+def _approval_transport_is_verified(runner, call, peer_sources) -> bool:
     """Accept only the verified transport that still notifies via this turn."""
-    from .source_layout import DECOMPOSED_PEER_SOURCES
     target = "gateway/run_turn_runner_approval_transport.py"
-    if target not in DECOMPOSED_PEER_SOURCES:
-        return False
-    imported = any(
-        isinstance(node, ast.ImportFrom)
-        and node.module == "gateway.run_turn_runner_approval_transport"
-        and node.level == 0
-        and any(alias.name == "approval_transport" and alias.asname is None for alias in node.names)
-        for node in ast.walk(runner)
+    expected_import = ast.dump(ast.parse(
+        "from gateway.run_turn_runner_approval_transport import approval_transport"
+    ).body[0])
+    bound_at_call = any(
+        ast.dump(previous) == expected_import and isinstance(current, ast.Expr)
+        and current.value is call
+        for method in runner.body if isinstance(method, ast.FunctionDef)
+        for previous, current in zip(method.body, method.body[1:])
     )
-    if not imported or not peer_sources or target not in peer_sources:
+    if not bound_at_call or not peer_sources or target not in peer_sources:
         return False
     try:
         tree = ast.parse(peer_sources[target])
     except SyntaxError:
         return False
-    functions = [node for node in tree.body
-                 if isinstance(node, ast.FunctionDef) and node.name == "approval_transport"]
-    if len(functions) != 1:
-        return False
-    expected = ast.parse(_VERIFIED_APPROVAL_TRANSPORT).body[0]
-    return ast.dump(functions[0]) == ast.dump(expected)
+    body = tree.body[1:] if ast.get_docstring(tree) is not None else tree.body
+    return [ast.dump(node) for node in body] == [
+        ast.dump(node) for node in ast.parse(_VERIFIED_APPROVAL_TRANSPORT).body
+    ]
 
 
 _VERIFIED_APPROVAL_TRANSPORT = '''
+from gateway.turn_context import TurnContext
+
 def approval_transport(turn):
     from gateway.run_turn_progress import local_viewer_turn
     from gateway.session_context import NON_MESSAGING_SESSION_SURFACES
