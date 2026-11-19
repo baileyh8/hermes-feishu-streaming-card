@@ -57,7 +57,7 @@ def available(root: Path) -> bool:
     raw = _read(root / "agent" / "turn_response_intake.py")
     if raw is None:
         return False
-    # v0.22.2 exact observation producer: bind the usage/timing expressions and
+    # Bind the usage/timing expressions and
     # helper signature/imports, rather than accepting the same keyword names
     # attached to unrelated values or an uncalled helper. Comments are irrelevant.
     try:
@@ -70,9 +70,12 @@ def available(root: Path) -> bool:
               and n.name == "normalize_model_response"]
     if len(helpers) != 1 or len(owners) != 1:
         return False
-    if _ast_sha256(helpers[0]) != (
-        "4620431faaa1e4fada26d16e8e80ee0cade75f75587cd4fa5f2f1a693025f05b"
-    ):
+    if _ast_sha256(helpers[0]) not in {
+        "4620431faaa1e4fada26d16e8e80ee0cade75f75587cd4fa5f2f1a693025f05b",
+        # v0.23.2 routes auxiliary forks to their own hook and preserves the
+        # main model-request observer's usage/timing and hook context.
+        "a303d4df31936cdc4bee4928579c0ee14a6cfcecc5f74220a567055c3053c616",
+    }:
         return False
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
              and isinstance(n.func, ast.Name) and n.func.id == helpers[0].name]

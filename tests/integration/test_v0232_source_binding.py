@@ -86,6 +86,21 @@ def test_v0232_tag_finds_documented_anchors_and_is_not_unsupported():
     assert detection.capabilities["exact_base_delivery"] is True
 
 
+def test_v0232_legacy_observer_preserves_auxiliary_request_boundary(tmp_path):
+    from hermes_feishu_card.install import legacy_observer
+
+    root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
+    assert legacy_observer.available(root)
+    name = "agent/turn_response_intake.py"
+    target = tmp_path / name
+    target.parent.mkdir()
+    source = (root / name).read_bytes()
+    needle = b'getattr(agent, "_loop_aux_task", None)'
+    assert needle in source
+    target.write_bytes(source.replace(needle, b"False", 1))
+    assert not legacy_observer.available(tmp_path)
+
+
 def test_v0232_runner_and_handler_apply_with_peer_contracts():
     root = _pinned_root(ENV_0232, COMMIT_0232, "v0.23.2")
     peers = read_peer_contract_sources(root)
