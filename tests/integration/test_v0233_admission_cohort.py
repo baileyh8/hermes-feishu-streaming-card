@@ -163,6 +163,45 @@ def test_v0233_detect_accepts_the_pinned_cohort(tmp_path: Path) -> None:
         True, "verified-source-cohort")
 
 
+def test_v0233_detect_accepts_the_rendered_install(tmp_path: Path) -> None:
+    """A live install renders every managed target; the closure must verify
+    through hook removal (base.py needs its peer-contract sources), and the
+    rendered bytes must land in EXPECTED_RENDERED_HASHES_0233."""
+    import hashlib
+
+    from hermes_feishu_card.install import decomposed_ownership
+    from hermes_feishu_card.install.source_layout import (
+        DECOMPOSED_SOURCE_TARGETS,
+        read_peer_contract_sources,
+    )
+
+    root = _root()
+    base_clean = (root / "gateway/platforms/base.py").read_text(encoding="utf-8")
+    fixture = _fixture()
+    owned = sorted(
+        name.replace(".", "/") + ".py" for name in fixture["closure"]
+        if name.replace(".", "/") + ".py" in DECOMPOSED_SOURCE_TARGETS
+    )
+    assert len(owned) == 14
+    rendered = decomposed_ownership.render(
+        {rel: (root / rel).read_bytes() for rel in owned},
+        peer_sources=read_peer_contract_sources(root),
+    )
+    copy = _minimal_copy(root, tmp_path)
+    for rel, raw in rendered.items():
+        (copy / rel).write_bytes(raw)
+    pair = _read_023_set_sources(copy, SOURCE_HASHES_0233,
+                                 (EXPECTED_RENDERED_HASHES_0233,))
+    assert pair is not None, "rendered install rejected"
+    # The full-install render of this exact stable is what the shipped table
+    # pins, byte for byte.
+    for rel, raw in rendered.items():
+        assert (hashlib.sha256(raw).hexdigest()
+                == EXPECTED_RENDERED_HASHES_0233[rel]), rel
+    assert _detect_admission_completion(copy, base_clean) == (
+        True, "verified-source-cohort")
+
+
 def test_v0233_function_bindings_exist_in_source(tmp_path: Path) -> None:
     import ast
     root = _root()

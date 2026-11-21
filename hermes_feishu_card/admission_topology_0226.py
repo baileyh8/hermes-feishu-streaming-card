@@ -567,7 +567,7 @@ def _read_023_set_sources(
             key = None
             if name in owned:
                 peer_sources = None
-                if source_hashes is SOURCE_HASHES_0232 and name == "gateway.platforms.base":
+                if source_hashes in (SOURCE_HASHES_0232, SOURCE_HASHES_0233) and name == "gateway.platforms.base":
                     from .install.source_layout import read_peer_contract_sources
                     peer_sources = read_peer_contract_sources(root)
                 key = _owned_removal_key(owned[name], raw, peer_sources)
