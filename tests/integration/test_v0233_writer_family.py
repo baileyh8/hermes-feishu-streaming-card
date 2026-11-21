@@ -95,7 +95,7 @@ def test_v0233_writer_and_launch_sources_are_exact():
         if pm0232_digest(name) != digest
     }
     assert drifted == set(fixture["changed_from_pm0232"]) | set(fixture["new_bound_sources"])
-    assert set(fixture["new_bound_sources"]) == {"hermes_scope.py"}
+    assert set(fixture["new_bound_sources"]) == {"hermes_scope.py", "hermes_cli/main_resume_args.py"}
 
     planner.verify_family(root, "pm-0233")
     assert planner.verify_launch_sources(root) == "pm-0233"

@@ -16,6 +16,7 @@ LAUNCH_SOURCES: dict[str, str] = {
     'hermes_cli/cpu_profile.py': '9c743d0f356e625f1d8e3269f033809c511a4724e1c1b7f6db81c23c09c81322',
     'hermes_cli/main.py': 'a38742fee3bae18f0f7a43153314f8e664b6aca4bdd280a494478f29c49df0c4',
     'hermes_cli/main_dashboard.py': '2be8bb2e23ab63be12b05b5bd864f3c17ea6fc99eb128214a76d465638bd8298',
+    'hermes_cli/main_resume_args.py': '907c68545fe1b668e5bc606380c201f7ce45ec7bd938ee3c78e59caa19a9334c',
 }
 
 FAMILY_SOURCES: dict[str, str] = {
