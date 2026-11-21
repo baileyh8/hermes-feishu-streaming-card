@@ -25,6 +25,7 @@ from ._writer_0227 import FAMILY_SOURCES as _PM_0227_SOURCES, LAUNCH_SOURCES as 
 from ._writer_0230 import FAMILY_SOURCES as _PM_0230_SOURCES, LAUNCH_SOURCES as _PM_0230_LAUNCH
 from ._writer_0231 import FAMILY_SOURCES as _PM_0231_SOURCES, LAUNCH_SOURCES as _PM_0231_LAUNCH
 from ._writer_0232 import FAMILY_SOURCES as _PM_0232_SOURCES, LAUNCH_SOURCES as _PM_0232_LAUNCH
+from ._writer_0233 import FAMILY_SOURCES as _PM_0233_SOURCES, LAUNCH_SOURCES as _PM_0233_LAUNCH
 
 from .file_transaction import BINARY_FLAG
 
@@ -319,7 +320,7 @@ FAMILIES["pm-main-4e58"] = {
 # The CLI migrates configuration only once per install identity. Bind the
 # read-only decision helpers as well as the writer; a restored older preimage
 # must not be migrated merely because its schema is below the latest one.
-BOOT_GATE_FAMILIES = frozenset(('pm-main', 'pm-0223', 'pm-0221', 'pm-0224', 'pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232', 'pm-main-4e58'))
+BOOT_GATE_FAMILIES = frozenset(('pm-main', 'pm-0223', 'pm-0221', 'pm-0224', 'pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232', 'pm-0233', 'pm-main-4e58'))
 FAMILIES['pm-main'] = {**FAMILIES['pm-main'],
     'hermes_cli/boot_bootstrap.py': 'ff1cbe91e3ff860ac5c342df0fee581f9393c354f5ce4db3bdebdef332b31ebc',
     'hermes_cli/post_update.py': 'd025e7746a691d753372cac32c64b9ca9121744811f49fb64e822c769a8fea3e',
@@ -404,6 +405,7 @@ FAMILIES["pm-0227"] = dict(_PM_0227_SOURCES)
 FAMILIES["pm-0230"] = dict(_PM_0230_SOURCES)
 FAMILIES["pm-0231"] = dict(_PM_0231_SOURCES)
 FAMILIES["pm-0232"] = dict(_PM_0232_SOURCES)
+FAMILIES["pm-0233"] = dict(_PM_0233_SOURCES)
 
 # The official launch bootstrap executes these files before the writer plan.
 # They are intentionally separate from FAMILIES: the writer contract and the
@@ -450,6 +452,7 @@ LAUNCH_SOURCES["pm-0227"] = dict(_PM_0227_LAUNCH)
 LAUNCH_SOURCES["pm-0230"] = dict(_PM_0230_LAUNCH)
 LAUNCH_SOURCES["pm-0231"] = dict(_PM_0231_LAUNCH)
 LAUNCH_SOURCES["pm-0232"] = dict(_PM_0232_LAUNCH)
+LAUNCH_SOURCES["pm-0233"] = dict(_PM_0233_LAUNCH)
 
 
 def _digest(path: Path) -> str:
@@ -701,7 +704,7 @@ class ConfigBytesPlan:
 
     def verify_source(self) -> None:
         verify_family(self.root, self.family)
-        if self.family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232"):
+        if self.family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232", "pm-0233"):
             if self.backend_proof is None:
                 raise ConfigBytesRefused("file backend proof missing", code="backend-unverified", stage="backend")
             try:
@@ -824,7 +827,7 @@ def library_alias(raw,path):
                and raw.relative_to(alias)==path.relative_to(base)
                for alias,base in library_aliases)
 def audit(event,args):
-    if request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232') and event=='exec':
+    if request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232', 'pm-0233') and event=='exec':
         filename=args[0].co_filename
         if not filename.startswith('<'):
             raw=Path(os.path.abspath(os.fspath(filename)))
@@ -865,7 +868,7 @@ def audit(event,args):
         if under(raw,root) and has_symlink(raw) and not library_alias(raw,path):
             deny('local-source-symlink','open',raw.relative_to(root).as_posix())
         # Ignore checkout bytecode caches: verified source must be compiled.
-        if request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232') and under(path,root) and path.suffix=='.pyc' and not library_path(path):
+        if request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232', 'pm-0233') and under(path,root) and path.suffix=='.pyc' and not library_path(path):
             raise OSError('private planner requires verified source')
         mode=args[1];flags=args[2]
         writing=(isinstance(mode,str) and any(x in mode for x in 'wax+')) or bool(flags & (os.O_WRONLY|os.O_RDWR|os.O_CREAT|os.O_TRUNC))
@@ -888,7 +891,7 @@ def profile(frame,event,arg):
     if event!='call': return
     module=frame.f_globals.get('__name__','') or ''
     name=frame.f_code.co_name
-    if (sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232')
+    if (sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232', 'pm-0233')
             and module=='hermes_dir_acl'
             and name in {'_grant_with_pywin32','_grant_with_icacls','_whoami_sid'}):
         deny('acl-grant-attempt','profile','hermes_dir_acl.py')
@@ -941,7 +944,7 @@ def _restrict_shadow_acl(acl):
     except (OSError,AttributeError,TypeError,ValueError,SyntaxError):
         deny('acl-helper-drift','plan','hermes_dir_acl.py')
     acl._grant=_refuse_shadow_acl_grant
-if sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232'):
+if sys.platform=='win32' and request['family'] in ('pm-0225', 'pm-0226', 'pm-0227', 'pm-0230', 'pm-0231', 'pm-0232', 'pm-0233'):
     # Load and bind before any upstream HOME helper can perform a Windows grant.
     _restrict_shadow_acl(module('hermes_dir_acl','hermes_dir_acl.py'))
 migrate_on_boot=request.get('historical_migration')
@@ -1022,7 +1025,7 @@ def no_setup_provider_metadata(*args,**kwargs):
     if caller.f_globals.get('__name__')=='hermes_cli.config' and caller.f_code.co_name=='_inject_profile_env_vars':
         raise RuntimeError('setup prompt metadata is excluded from byte planning')
     deny('provider-metadata','profile')
-if request['family']=='pm-0232':
+if request['family'] in ('pm-0232', 'pm-0233'):
     # This config defers descriptive provider metadata until first use.
     config=module('hermes_cli.config','hermes_cli/config.py')
 else:
@@ -1041,7 +1044,7 @@ try:
             deny('startup-migration-incomplete','migration')
 except Exception:
     deny('startup-migration-failed','migration')
-utils_source='utils/__init__.py' if request['family']=='pm-0232' else 'utils.py'
+utils_source='utils/__init__.py' if request['family'] in ('pm-0232', 'pm-0233') else 'utils.py'
 module('utils',utils_source)
 desired=request['desired']
 fixed=request['family']=='fixed'
@@ -1145,11 +1148,15 @@ def verify_0226_admission(
     required_version = 52
     if sources is not None and sources in (FAMILIES.get("pm-0231"), FAMILIES.get("pm-0232")):
         required_version = 53
+    if sources is not None and sources == FAMILIES.get("pm-0233"):
+        required_version = 54
     if type(version) is not int or version != required_version:
         raise ConfigBytesRefused(
-            ("Hermes v0.23.1/v0.23.2 config migration must complete before HFC installation; "
+            ("Hermes v0.23.3 config migration must complete before HFC installation; "
+             if required_version == 54 else
+             ("Hermes v0.23.1/v0.23.2 config migration must complete before HFC installation; "
              if required_version == 53 else
-             "Hermes v0.22.6/v0.22.7/v0.23.0 config migration must complete before HFC installation; ") +
+             "Hermes v0.22.6/v0.22.7/v0.23.0 config migration must complete before HFC installation; ")) +
             "run the normal Hermes upgrade/config migrate flow, do not edit the version stamp",
             code="upstream-migration-required", stage="migration")
     section = config.get("plugins", {})
@@ -1187,7 +1194,7 @@ def _plan_enabled_bytes(
     backend_proof = (verify_0226_admission(
         root, python, home, before=before, sources=FAMILIES[family],
     )
-                     if family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232") else None)
+                     if family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232", "pm-0233") else None)
     try:
         with tempfile.TemporaryDirectory(
             prefix="hfc-config-plan-", dir=state_dir
