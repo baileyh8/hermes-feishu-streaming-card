@@ -43,6 +43,11 @@ from .admission_topology_0226 import (
     SOURCE_HASHES_0230 as _V0230_SOURCE_HASHES,
     SOURCE_HASHES_0231 as _V0231_SOURCE_HASHES,
     SOURCE_HASHES_0232 as _V0232_SOURCE_HASHES,
+    SOURCE_HASHES_0233 as _V0233_SOURCE_HASHES,
+    CORE_HASHES_0233 as _V0233_CORE_HASHES,
+    FUNCTIONS_0233 as _V0233_FUNCTIONS,
+    DECORATED_0233 as _V0233_DECORATED,
+    OPTIONAL_MODULES_0233 as _V0233_OPTIONAL_MODULES,
 )
 
 # Public provenance names for pinned-source contract tests.
@@ -97,6 +102,10 @@ SOURCE_COHORTS += (_V0231_CORE_HASHES,)
 # v0.23.2 keeps the same admission function names while pinning the
 # extracted ledger and bind_turn source closure (issue #532).
 SOURCE_COHORTS += (_V0232_CORE_HASHES,)
+# v0.23.3 (caafe5389a) renames SessionAuthority's store attribute (db ->
+# persistence, same StoreHolder) and moves the admission store out of
+# hermes_state_runtime; the seam resolves both through compatibility probes.
+SOURCE_COHORTS += (_V0233_CORE_HASHES,)
 
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -269,6 +278,15 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
             functions=_V0232_FUNCTIONS,
             decorated=_V0232_DECORATED,
             optional_modules=_V0232_OPTIONAL_MODULES,
+        ):
+            return None
+    elif _V0233_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(
+            root, modules[0], modules[1], _V0233_SOURCE_HASHES,
+            functions=_V0233_FUNCTIONS,
+            decorated=_V0233_DECORATED,
+            optional_modules=_V0233_OPTIONAL_MODULES,
         ):
             return None
     return modules[0], modules[1]
@@ -452,6 +470,35 @@ def _claim_frame(ingress: ModuleType) -> dict[str, Any] | None:
     return None
 
 
+def _admission_store_module() -> Any:
+    """The native admission store across its two known module homes.
+
+    Through v0.23.2 it loaded as ``hermes_state_runtime``; v0.23.3 (caafe5389a)
+    moved it to ``persistence.sqlite.authority._admission_store`` with identical
+    signatures. Neither import executes application code beyond the module body
+    that the source cohorts already pin.
+    """
+    for name in ("hermes_state_runtime",
+                 "persistence.sqlite.authority._admission_store"):
+        try:
+            return importlib.import_module(name)
+        except ImportError:
+            continue
+    return None
+
+
+def _authority_store(authority: Any) -> Any:
+    """SessionAuthority's native store across its two attribute names.
+
+    v0.23.2 held it as ``db``; v0.23.3 renamed the attribute to
+    ``persistence`` (same StoreHolder contract: ``_read_ctx``/``db_path``).
+    """
+    store = getattr(authority, "db", None)
+    if store is None:
+        store = getattr(authority, "persistence", None)
+    return store
+
+
 def _runtime_epoch_current(db: Any, epoch: Any, instance_id: str) -> bool:
     """Read the current native owner; terminal rows retain their historical epoch."""
     try:
@@ -498,8 +545,9 @@ def _authority_current(
             or authority.instance_id != offer.instance_id
             or authority.profile_id != offer.authority_profile
             or offer.db is None
-            or authority.db is not offer.db()
-            or not _runtime_epoch_current(authority.db, offer.epoch, offer.instance_id)
+            or _authority_store(authority) is not offer.db()
+            or not _runtime_epoch_current(
+                _authority_store(authority), offer.epoch, offer.instance_id)
             or authority.sessions.get(offer.authority_owner[0]) is not live
             or not _live_route_matches(live.source, offer.route)
             or live.route != offer.session_key
@@ -508,10 +556,12 @@ def _authority_current(
             or not _current(offer)
         ):
             return False
-        get_session_admission = importlib.import_module(
-            "hermes_state_runtime"
-        ).get_session_admission
-        row = get_session_admission(authority.db, admission_id=offer.admission_id)
+        store_module = _admission_store_module()
+        if store_module is None:
+            return False
+        get_session_admission = store_module.get_session_admission
+        row = get_session_admission(
+            _authority_store(authority), admission_id=offer.admission_id)
         if (
             not isinstance(row, dict)
             or row.get("admission_id") != offer.admission_id
@@ -722,7 +772,7 @@ def _authority_profile_matches(authority: Any, profile: str) -> bool:
             # Absolute claims always bind to their own DB first (#512): the
             # parser must not bypass this proof for .hermes-shaped paths.
             home = Path(authority_value).resolve()
-            if Path(authority.db.db_path).resolve().parent != home:
+            if Path(_authority_store(authority).db_path).resolve().parent != home:
                 return False
             # With a verified native root, the name is root-bound: only the
             # root itself (default) or an exact <root>/profiles/<name> child
@@ -813,7 +863,8 @@ def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool]
             admission_id=row["admission_id"], authority=weakref.ref(authority),
             epoch=authority.epoch, live=weakref.ref(authority.sessions[owner[0]]),
             app_id=adapter._app_id, instance_id=authority.instance_id,
-            authority_profile=authority.profile_id, db=weakref.ref(authority.db),
+            authority_profile=authority.profile_id,
+            db=weakref.ref(_authority_store(authority)),
         )
 
         def current() -> bool:
@@ -827,9 +878,11 @@ def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool]
                         or _base_extractor(adapter) is None
                         or not _authority_current(offer, started=True, producer_task=task)):
                     return False
-                current_row = importlib.import_module(
-                    "hermes_state_runtime"
-                ).get_session_admission(authority.db, admission_id=offer.admission_id)
+                store_module = _admission_store_module()
+                if store_module is None:
+                    return False
+                current_row = store_module.get_session_admission(
+                    _authority_store(authority), admission_id=offer.admission_id)
                 if (not isinstance(current_row, dict)
                         or current_row.get("admission_id") != offer.admission_id
                         or current_row.get("target_session_id") != owner[0]
@@ -895,13 +948,15 @@ def _prepare_authority_reason(offer: Completion) -> str:
         if authority is None or live is None:
             return "authority-owner-stale"
         if (authority.epoch != offer.epoch or authority.instance_id != offer.instance_id
-                or offer.db is None or authority.db is not offer.db()
-                or not _runtime_epoch_current(authority.db, offer.epoch, offer.instance_id)):
+                or offer.db is None or _authority_store(authority) is not offer.db()
+                or not _runtime_epoch_current(
+                    _authority_store(authority), offer.epoch, offer.instance_id)):
             return "authority-epoch-stale"
         if (authority.retiring or getattr(live, "superseded", False)
                 or authority.sessions.get(offer.authority_owner[0]) is not live):
             return "authority-owner-stale"
-        get_row = importlib.import_module("hermes_state_runtime").get_session_admission
+        store_module = _admission_store_module()
+        get_row = None if store_module is None else store_module.get_session_admission
         row = get_row(authority.db, admission_id=offer.admission_id)
         if isinstance(row, dict):
             if row.get("owner_epoch") != offer.epoch:
@@ -1025,7 +1080,7 @@ def prepare(
         offer.epoch = authority.epoch
         offer.instance_id = authority.instance_id
         offer.authority_profile = authority.profile_id
-        offer.db = weakref.ref(authority.db)
+        offer.db = weakref.ref(_authority_store(authority))
         offer.admission_id = row["admission_id"]
         offer.app_id = adapter._app_id
         offer.profile_source = data["profile_source"]

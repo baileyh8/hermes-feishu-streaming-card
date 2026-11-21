@@ -234,8 +234,74 @@ EXPECTED_RENDERED_HASHES_0232 = {
     "gateway/run_turn_prepare.py": "df1799aca1a0a094ec91bc0a74a9dc0136f3a5a90cb5ef75b780ef56e772cd67",
     "gateway/run_turn_runner.py": "3defcac90464f87fa4ea9f5c6a96bd2a758377ed9f45baae3d8ded905e6e2c3b",
 }
+# v0.23.3 (caafe5389a) deletes hermes_state_runtime (get_session_admission and its
+# admission siblings moved to persistence/sqlite/authority/_admission_store.py, resolved
+# through the completion seam's compatibility probe) and renames SessionAuthority's store
+# attribute from ``db`` to ``persistence`` (same StoreHolder contract: _read_ctx/db_path).
+# The function list drops the hermes_state_runtime entry and session_results'
+# close_discarded_turn (moved to _admission_owner.py); every other module binding is
+# byte-identical to v0.23.2. The whole-file set pins this exact stable tag.
+SOURCE_HASHES_0233 = {
+    "gateway.platforms.base": "9820518ed01e88737dd07bc0927ed63d949a41bbbc851f012af5e79159c29bec",
+    "gateway.platforms.event": "9cd0bb259089d41d4aa8e7f04ce84bfbb0bd1cbd1639f862281c9901ea8b0780",
+    "gateway.session_ingress": "060e9b3a65c876f1a3d4a10c3d2e4fea9251348611530bf60eebec1174ffa732",
+    "gateway.session_authority": "0c63dfc2b7bde9a8392373cc91a67518d8e91956be96f9b01c31f3bc514678c4",
+    "gateway.session_producer_lifecycle": "10ac034ab08317b336afa8a479b3a6c49171db831a807c4833180695cace3dbe",
+    "gateway.platforms.base_post_delivery": "7e1865ef9484c3ad863f214ad07491fd468958d15e7a4ba58d6f1752dcf897df",
+    "gateway.run_turn_followup_ack": "f45f7b93d091ecb57f30d80e18d08bca0aa7aae92a7bb796ae9ce4b499852283",
+    "gateway.session_settlement_recovery": "4871ef45afb1e2815519fde1f6f31ed6d584c8f7121800f1d07f361a28598baf",
+    "gateway.session_runtime_workers": "56a1358b17328809ebac7b1775d671a03f8938bb0290812b14acd2fa3b03f538",
+    "gateway.session_results": "577b7dad0ccecfd1fd004e9589d5b6c901724bae0df8cc84a8e2d2a58b0679bc",
+    "gateway.session_queued_controls": "0fcc42c3ca31b054c5d500d8c55139714673d44712e5c4d063ef6d8761b36323",
+    "gateway.session_ingress_media": "3a47222d2fe85e3480c716c3aa0a664855b5b15eeb41db26fd441dfd8f49f13a",
+    "gateway.session_retirement": "225bcb76236e8c1661683bc9d7061414cf8461a61741235208ee17259c7b1584",
+    "gateway.session_contract": "624f45de8dcf2537266614ac14eaf98150ad6ed82ac3167f30f6f463733e7a41",
+    "gateway.bot_loop_guard": "bef2b671488f0b6a26713647ae832026d2fae4fdb4d689e2968839e3fb15e621",
+    "gateway.bot_peer_notices": "671e75da3ff3c6fb8af43f9cfa4b4ec8c67f8e3fe605f6b4b7b888481897b9d6",
+    "gateway.authz_mixin": "1e994d925ad1b3315cee5825dbc0b40a2aa525f514a9dc1a05d6a07c6e4c1fd5",
+    "gateway.run_turn_persistence": "388ed2200bfc5bc983585e28e3755c4e14daa57ed55b79b5d6afc15fe7ed3f30",
+    "gateway.run_turn": "834c924b1b5b83816ba228800f4b2daff39d10e9ef046ba32f28f2133752284b",
+    "gateway.run": "6e8585f22f61d2c70a43bade1c212448ae9388d6a68c47a3a307dbe3833d1d97",
+    "gateway.run_background": "57bff0906f115c9694c48db16647b273b30c599968e6ee03bd82d09ffabc4a3d",
+    "gateway.run_turn_prepare": "5ff3ab81b38d019b8568126dcfb24424db0553c377fdbaeff9b19ce8b42f4848",
+    "gateway.run_turn_hygiene": "b5e59f36c1cefa1aacf19ff272e0603aadac200417e4cf84365559145a1204c4",
+    "gateway.run_turn_runner": "3843440af2cd02c925e6adebd093090d35dbec5df79d8bb627d4f60960da2c97",
+    "gateway.run_inbound": "f46b4b79c0b3bb175c3a6a3e0738e69e17cc7a81ead4f51c43d7a1a903f1ebf1",
+    "gateway.run_busy": "97400a866f83aea698ff4612ca78db6bc615a6de0bc6b86a41559aa10c1a6343",
+    "gateway.run_startup": "46814a6c1de58ecb77771fd262d73df80fa98f6c014a680634c4df9bcbdc75e7",
+    "gateway.run_notifications": "75de0c0166333fb452e5c6e2ad833c9115c1989f5fc1a6194e1bdf8479ed7dee",
+    "cron.scheduler": "3e62309da97546e4edf5cd5dcfe20af887a6467da3f7d6bf7f6ea1cc1678d96a",
+    "cron.scheduler_delivery": "592b39785a54edbb9cc41d9076c2b77777bacadb568a47a40f0b0c92fb0d6a7f",
+    "agent.runtime_scope": "688fc3336f97e688976084af3d601186a3bc0a97b0951d475a2cb7c37f4baa53",
+    "gateway.platforms.base_delivery_ledger": "8c8aefe86a6ec3bc05f77136f26bfb2b3d6f82cf7d533777e9ea5da26e6bdee0",
+    "gateway.platforms.base_session_command": "d59c102b32fc1d3bdca74487496f96e7af6b52ff6ec05e4652aff714115bff33",
+}
+CORE_HASHES_0233 = {name: SOURCE_HASHES_0233[name] for name in (
+    "gateway.session_ingress", "gateway.session_authority")}
+# Exact rendered bytes of the HFC-managed files for the pinned v0.23.3 stable, same
+# render contract (completion-native-fallthrough-v1) as 0.23.2.
+EXPECTED_RENDERED_HASHES_0233 = {
+# Exact rendered bytes of the HFC-managed files for the pinned v0.23.3 stable,
+# same render contract (completion-native-fallthrough-v1) as 0.23.2. Files whose
+# strategy hook is a no-op at this render contract keep their clean bytes, so
+# their rendered digest equals the clean source digest (as at 0.23.2).
+    "cron/scheduler.py": "3e62309da97546e4edf5cd5dcfe20af887a6467da3f7d6bf7f6ea1cc1678d96a",
+    "cron/scheduler_delivery.py": "25db18d93339eb062b0227223dac229094a75123e3036eb5eb2a1c08a58c3ef1",
+    "gateway/platforms/base.py": "1fa3aa63be24b331a73a50174460d9db59e1d82f7abe41e89ea3577f976d1d97",
+    "gateway/run.py": "6e8585f22f61d2c70a43bade1c212448ae9388d6a68c47a3a307dbe3833d1d97",
+    "gateway/run_background.py": "57bff0906f115c9694c48db16647b273b30c599968e6ee03bd82d09ffabc4a3d",
+    "gateway/run_busy.py": "7c87e0355228a12a9e8e807f7e4b7c0ffc29f2493eea9b494db4e304e156acbc",
+    "gateway/run_inbound.py": "dc19a76e4bd52fe392741ea5ed272e72916d7f5b305e9a6221baffcb79cc962c",
+    "gateway/run_notifications.py": "4c430265d8ab8e07a06a4ab4230af18387f7da673df0e7f1ee2edea805fc3cac",
+    "gateway/run_startup.py": "2de33dac9647e78b94f8642fcbe5abb5a98e5472c8929aebec4fcd96f3a430ed",
+    "gateway/run_turn.py": "1f92850557c6e31c2952f1052af0c9df81d5fcbff6e64d875168275038ab6096",
+    "gateway/run_turn_hygiene.py": "b5e59f36c1cefa1aacf19ff272e0603aadac200417e4cf84365559145a1204c4",
+    "gateway/run_turn_persistence.py": "99911c03f9459480d947e13d4c0a94f095762bc8a3a544a01d0ad34461c32166",
+    "gateway/run_turn_prepare.py": "5ff3ab81b38d019b8568126dcfb24424db0553c377fdbaeff9b19ce8b42f4848",
+    "gateway/run_turn_runner.py": "f0f8911ea93e0fc8ec1f527c8322623d4d89469d476583fc0460336bbb1b603a",
+}
 TOPOLOGY_HASHES = (SOURCE_HASHES, SOURCE_HASHES_0227, SOURCE_HASHES_0230,
-                   SOURCE_HASHES_0231, SOURCE_HASHES_0232)
+                   SOURCE_HASHES_0231, SOURCE_HASHES_0232, SOURCE_HASHES_0233)
 _FUNCTIONS = {
     "gateway.platforms.base": ("_split_post_delivery_entry",
                                "BasePlatformAdapter.send_typing", "BasePlatformAdapter.on_processing_start"),
@@ -367,6 +433,19 @@ OPTIONAL_MODULES_0232 = OPTIONAL_MODULES_0231 | frozenset({
     "gateway.platforms.base_delivery_ledger",
     "gateway.platforms.base_session_command",
 })
+# v0.23.3 drops the deleted hermes_state_runtime bindings; close_discarded_turn
+# left session_results for _admission_owner.py and out of the ingress seam.
+FUNCTIONS_0233 = {
+    **{name: names for name, names in FUNCTIONS_0232.items()
+       if name != "hermes_state_runtime"},
+    "gateway.session_results": (
+        "retain_result", "prepare_result", "finish_result", "admission_result",
+    ),
+}
+DECORATED_0233 = DECORATED_0232
+SYNC_DECORATED_0233 = SYNC_DECORATED_0232
+OPTIONAL_MODULES_0233 = (OPTIONAL_MODULES_0232
+                         - frozenset({"hermes_state_runtime"}))
 
 
 _MISSING_DEFAULT = object()
@@ -562,6 +641,14 @@ def source_bytes_0232(
     )
 
 
+def source_bytes_0233(
+    root: Path,
+) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
+    return _read_023_set_sources(
+        root, SOURCE_HASHES_0233, (EXPECTED_RENDERED_HASHES_0233,),
+    )
+
+
 def _function_node(source: bytes | str, qualified: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     text = source.decode("utf-8") if isinstance(source, bytes) else source
     key = (sha256(text.encode("utf-8")).hexdigest(), qualified)
@@ -673,6 +760,9 @@ def source_bytes(
     if expected == SOURCE_HASHES_0232:
         pair = source_bytes_0232(root)
         return None if pair is None else pair[0]
+    if expected == SOURCE_HASHES_0233:
+        pair = source_bytes_0233(root)
+        return None if pair is None else pair[0]
     try:
         result = {}
         for name, digest in (expected or SOURCE_HASHES).items():
@@ -750,6 +840,11 @@ def verified(
         if pair is None:
             return False
         sources, code_sources = pair
+    elif expected == SOURCE_HASHES_0233:
+        pair = source_bytes_0233(root)
+        if pair is None:
+            return False
+        sources, code_sources = pair
     else:
         legacy_sources = source_bytes(root, expected)
         if legacy_sources is None:
@@ -762,6 +857,7 @@ def verified(
         SYNC_DECORATED_0230 if expected == SOURCE_HASHES_0230
         else SYNC_DECORATED_0231 if expected == SOURCE_HASHES_0231
         else SYNC_DECORATED_0232 if expected == SOURCE_HASHES_0232
+        else SYNC_DECORATED_0233 if expected == SOURCE_HASHES_0233
         else frozenset()
     )
     modules = {"gateway.session_ingress": ingress, "gateway.session_authority": authority}
@@ -815,7 +911,8 @@ def verified(
                             _compiled_code(compiled, function_name, owner or None))):
                     return False
         lifecycle = modules["gateway.session_producer_lifecycle"]
-        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231, SOURCE_HASHES_0232):
+        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231,
+                         SOURCE_HASHES_0232, SOURCE_HASHES_0233):
             settlement = modules.get("gateway.session_settlement_recovery")
             workers = modules.get("gateway.session_runtime_workers")
             contract = modules.get("gateway.session_contract")
