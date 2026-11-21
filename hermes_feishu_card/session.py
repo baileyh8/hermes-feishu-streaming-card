@@ -562,11 +562,20 @@ class CardSession:
         elif event.event == "message.completed":
             if self.active_interaction is not None:
                 self.active_interaction.runtime_admission = None
+            intentional_silence = event.data.get("intentional_silence") is True
+            native_fallback = event.data.get("native_fallback") is True
             outcome = event.data.get("turn_outcome")
             failed_outcome = (
-                isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES
+                not intentional_silence
+                and not native_fallback
+                and isinstance(outcome, str)
+                and outcome in _UNSUCCESSFUL_TURN_OUTCOMES
             )
-            completed_answer = normalize_stream_text(str(event.data.get("answer") or ""))
+            completed_answer = (
+                ""
+                if intentional_silence or native_fallback
+                else normalize_stream_text(str(event.data.get("answer") or ""))
+            )
             if completed_answer.strip():
                 completed_answer = self._prepare_completed_answer(
                     completed_answer, failed_outcome=failed_outcome
@@ -574,7 +583,21 @@ class CardSession:
             self.timeline.complete()
             self.status = "completed"
             self.latest_tool_preview = ""
-            if completed_answer.strip():
+            if intentional_silence:
+                self.runtime_phase_text = ""
+                self.answer_normalizer = StreamingTextNormalizer()
+                self.terminal_disposition = "silent"
+                self.completion_notify_state = "sent"
+                if not self.answer_text.strip():
+                    self.answer_text = "本轮无需回复（已静默结束）"
+            elif native_fallback:
+                self.runtime_phase_text = ""
+                self.answer_normalizer = StreamingTextNormalizer()
+                self.terminal_disposition = "native"
+                self.completion_notify_state = "sent"
+                if not self.answer_text.strip():
+                    self.answer_text = "已转原生回复"
+            elif completed_answer.strip():
                 self.answer_text = completed_answer
             delivery_kind = event.data.get("delivery_kind")
             if isinstance(delivery_kind, str) and delivery_kind.strip():
@@ -602,13 +625,13 @@ class CardSession:
             except (TypeError, ValueError):
                 self.duration = 0.0
             attachments = event.data.get("attachments", [])
-            if isinstance(attachments, list):
+            if not intentional_silence and not native_fallback and isinstance(attachments, list):
                 self.attachments = [
                     attachment
                     for attachment in attachments
                     if isinstance(attachment, dict) and isinstance(attachment.get("name"), str)
                 ]
-            if isinstance(outcome, str) and outcome in _UNSUCCESSFUL_TURN_OUTCOMES:
+            if failed_outcome:
                 self.status = "failed"
                 self.answer_text = (
                     self._adopt_in_progress_content(_UNSUCCESSFUL_TURN_OUTCOME_NOTICES[outcome])

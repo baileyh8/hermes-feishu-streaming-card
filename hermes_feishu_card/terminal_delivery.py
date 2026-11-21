@@ -36,6 +36,7 @@ class TerminalDeliveryPlan:
     target: TerminalTarget
     disposition: str
     card: dict[str, Any] = field(repr=False)
+    allow_recover: bool = True
 
 
 class TerminalOwner(Protocol):
@@ -88,7 +89,11 @@ async def deliver_terminal(
     if plan.disposition in {"card", "segmented"}:
         if updated:
             owner.terminal_delivery_state = "delivered"
-        elif plan.disposition == "card" and owner.terminal_delivery_state == "pending":
+        elif (
+            plan.disposition == "card"
+            and plan.allow_recover
+            and owner.terminal_delivery_state == "pending"
+        ):
             owner.terminal_delivery_state = "recovering"
             recovery = await transport.recover(plan)
             if not is_current():
@@ -97,6 +102,8 @@ async def deliver_terminal(
                 "recovered" if recovery.outcome == "delivered" else recovery.outcome
             )
             updated = recovery.outcome == "delivered"
+        elif plan.disposition == "card" and not plan.allow_recover:
+            owner.terminal_delivery_state = "failed"
         else:
             updated = owner.terminal_delivery_state in {"delivered", "recovered"}
     return TerminalDeliveryOutcome(
