@@ -2,8 +2,8 @@
 
 ## v5.0.27 — 2026-11-21
 
-- 兼容固定的 Hermes v0.23.3 源码（`caafe5389ae585ef77387a962aee05b1bcf17029`，#537 / PR #538）：登记 `pm-0233` writer 与 launch 家族（含 `hermes_cli/main_resume_args.py` 与 `hermes_scope.py`）及 schema 54 配置写入契约；适配 `persistence_assembly.Persistence` 句柄与 `SQLiteAdmissionRepository` / `SQLiteSessionRuntimeRepository` 仓库接口，校验底层 `SQLiteStore`、`StoreHolder`、作用域与文件替换状态，保留未知来源拒绝与逐字恢复。
-- 修复后台完成回执等有意静默回合在飞书卡片显示 `NO_REPLY` 并停留在「执行中」的问题（#535）：在 `answer.delta` 阶段有界暂存潜在静默标记前缀，仅在确认允许静默时传递 `intentional_silence` 并在原卡就地收尾（保留已有正文、附件与审批回执，不触发完成通知或补发空卡）；人类回合被 Hermes 拒绝静默时保留原生 fallback 投递。
+- 兼容固定的 Hermes v0.23.3 源码（`caafe5389ae585ef77387a962aee05b1bcf17029`，#537 / PR #538）：登记 `pm-0233` writer 与 launch 家族（含 `hermes_cli/main_resume_args.py` 与 `hermes_scope.py`）及 schema 54 配置写入契约；适配 `persistence_assembly.Persistence` 句柄与 `SQLiteAdmissionRepository` / `SQLiteSessionRuntimeRepository` 仓库接口（由 `current_epoch()` 读取持久 epoch，实例 ID 来自进程内 `SessionAuthority`），校验底层 `SQLiteStore`、`StoreHolder`、作用域与文件替换状态，保留未知来源拒绝与逐字恢复。
+- 修复后台完成回执等有意静默回合在飞书卡片显示 `NO_REPLY` 并停留在「执行中」的问题（#535）：在 `answer.delta` 阶段有界暂存潜在静默标记前缀，仅在确认允许静默时传递 `intentional_silence` 并在原卡就地收尾（保留已有正文、附件与审批回执，不触发完成通知或补发空卡）；覆盖普通、queued-first 与递归排队回合的静默判定及回合归属；人类回合被 Hermes 拒绝静默时以独立的 `native_fallback` 终局状态保留原生 fallback 投递并隔离重复/迟到终局事件。
 - CI 增加固定的 v0.23.3 源码绑定、writer 家族与官方镜像（preserved/cleared）门禁。
 - #536（`~silent`）目前仅有截图、缺少版本与日志证据，本版不宣称修复。
 

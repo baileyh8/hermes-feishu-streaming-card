@@ -1838,6 +1838,9 @@ def _is_intentional_silence_agent_result(agent_result: Any, response: Any) -> bo
     )
 
 
+is_intentional_silence_result = _is_intentional_silence_agent_result
+
+
 def _queued_silence_verdict(local_vars: dict[str, Any]) -> str | None:
     if "turn_ctx" in local_vars and "_delivery_result" in local_vars:
         runner = local_vars.get("self")
@@ -1882,16 +1885,29 @@ def _queued_silence_verdict(local_vars: dict[str, Any]) -> str | None:
         answer = local_vars.get("answer")
         if not _is_intentional_silence_agent_result(agent_result, answer):
             return None
+        runner = local_vars.get("self")
         internal = bool(getattr(source, "_hfc_internal_event", False))
-        reply_expected = getattr(source, "_hfc_reply_expected", None)
+        reply_expected = local_vars.get("reply_expected")
+        if reply_expected is None:
+            reply_expected = getattr(source, "_hfc_reply_expected", None)
         if getattr(source, "is_bot", False) is True:
             reply_expected = False
-        display_kind = getattr(source, "_hfc_display_kind", None)
-        allowed = (
-            internal
-            or reply_expected is False
-            or display_kind in {"internal_notification", "process_complete", "async_delegation_complete"}
-        )
+        display_kind = local_vars.get("display_kind")
+        if display_kind is None:
+            display_kind = getattr(source, "_hfc_display_kind", None)
+        if display_kind is None and internal:
+            display_kind = "internal_notification"
+        allowed_fn = getattr(runner, "_silence_allowed_for_source", None)
+        if callable(allowed_fn):
+            allowed = bool(
+                allowed_fn(source, display_kind, reply_expected, agent_result)
+            )
+        else:
+            allowed = (
+                internal
+                or reply_expected is False
+                or display_kind in {"internal_notification", "process_complete", "async_delegation_complete"}
+            )
         return "silence_allowed" if allowed else "silence_rejected"
     return None
 
@@ -2131,8 +2147,11 @@ def emit_from_hermes_locals(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
+            _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
+        if event_name in {"message.started", "message.completed", "message.failed"}:
+            _clear_answer_delta_hold(config, event_locals)
         payload = build_event(event_name, event_locals)
         if payload is None:
             return False
@@ -10811,13 +10830,18 @@ def queued_followup_source(source: Any, event: Any) -> Any:
     copied = copy(source)
     # Bind ownership before emit: startup/policy can fail before build_event.
     # An unidentified non-internal turn must not retain copied canonical state.
+    is_internal = getattr(event, "internal", False) is True
+    is_heartbeat = bool(getattr(event, "_heartbeat_session_id", None))
     copied._hfc_internal_turn_id = ""
     copied._hfc_turn_id = str(getattr(event, "message_id", None) or "")
     copied._hfc_queued_followup = True
-    copied._hfc_internal_event = bool(getattr(event, "internal", False) is True)
+    copied._hfc_internal_event = bool(is_internal)
     copied._hfc_reply_expected = getattr(event, "reply_expected", None)
-    copied._hfc_display_kind = (getattr(event, "metadata", None) or {}).get("display_kind")
-    if getattr(event, "internal", False) is True and not copied._hfc_turn_id:
+    display_kind = (getattr(event, "metadata", None) or {}).get("display_kind")
+    if not display_kind and (is_internal or is_heartbeat):
+        display_kind = "internal_notification"
+    copied._hfc_display_kind = display_kind
+    if (is_internal or is_heartbeat) and not copied._hfc_turn_id:
         copied._hfc_internal_turn_id = "hfc-internal:" + uuid4().hex
         copied._hfc_turn_id = copied._hfc_internal_turn_id
     return copied

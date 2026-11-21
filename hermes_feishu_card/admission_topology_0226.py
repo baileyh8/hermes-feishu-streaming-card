@@ -92,7 +92,7 @@ LEGACY_EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run_inbound.py": "974d23c4a4dc4dc07e532b06b75a130ac8edbf56a6a2239a0754ad591051c93f",
     "gateway/run_notifications.py": "e156bced1c28743477f6c405aa833f40b9ef5836ac258a7b1705ec6b7a056c71",
     "gateway/run_startup.py": "68f549a53eebfd578002b748e6454a21229a312495bc5405cae0a633eb88c17d",
-    "gateway/run_turn.py": "1dabfdfca3011509df7a7cc5d36a5ef6f05cce848982d7bc295fe795f0cfe731",
+    "gateway/run_turn.py": "167dde1ba8a25837919bd54c23cc99982a182e2324244345962999ee706eaeda",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
@@ -235,11 +235,11 @@ CORE_HASHES_0233 = {name: SOURCE_HASHES_0233[name] for name in (
 # clean v0.23.0 sources and HFC 5.0.17. A full installer render is too costly
 # on a terminal admission request; the project test proves these hashes are
 # byte-for-byte equivalent to that render and rejects mixed/drifted files.
-RENDER_VERSION_0230 = "completion-native-fallthrough-v1"
+RENDER_VERSION_0230 = "completion-native-fallthrough-v2"
 EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run.py": "f2eabc2972822df232375a4e32b22e79daafcec9bc2f66a6cfb305c255cf11d3",
     "gateway/run_background.py": "7702a2b46dd13acfe82c2bbc0fecff63761498ba0ca257fcddcf21cea0288f54",
-    "gateway/run_turn.py": "1dabfdfca3011509df7a7cc5d36a5ef6f05cce848982d7bc295fe795f0cfe731",
+    "gateway/run_turn.py": "167dde1ba8a25837919bd54c23cc99982a182e2324244345962999ee706eaeda",
     "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
@@ -262,7 +262,7 @@ EXPECTED_RENDERED_HASHES_0231 = {
     "gateway/run_inbound.py": "971d77238832d34371a4abcb5873712342949f959756b4a9847d6e838d8fa7f4",
     "gateway/run_notifications.py": "e156bced1c28743477f6c405aa833f40b9ef5836ac258a7b1705ec6b7a056c71",
     "gateway/run_startup.py": "b3d0bb622929a25a6aa9324ede42cf42f16948acf53f8a047bccec66068292fd",
-    "gateway/run_turn.py": "1c085aa8f86ef99b99fe59dfbe2cb92ee7da311dd21a6547c03be290728b7264",
+    "gateway/run_turn.py": "54293798abe7c36b9e2dc1d37c0f128786e58f5c1d161bbb8def1585ba57a276",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_persistence.py": "bb77aae0da9cc392a5d7df294c10806c7434eff26acc419696209fe5cb12c0e6",
     "gateway/run_turn_prepare.py": "63fdc7cbdf694e7b7a22b309dd99f131b23adf0e606e107c608d895b2a24edda",
@@ -278,7 +278,7 @@ EXPECTED_RENDERED_HASHES_0232 = {
     "gateway/run_inbound.py": "972be2bad98e189d3573a7ecf1bd0e40362c39737a92c7e7d53787cf802322a5",
     "gateway/run_notifications.py": "cfd4dfbd44898d6d1b8007476b1e6c6b3adbc940b4ac15e3d88fde9001ffe1b9",
     "gateway/run_startup.py": "2de33dac9647e78b94f8642fcbe5abb5a98e5472c8929aebec4fcd96f3a430ed",
-    "gateway/run_turn.py": "1f92850557c6e31c2952f1052af0c9df81d5fcbff6e64d875168275038ab6096",
+    "gateway/run_turn.py": "eb7c05a99fd70793cd881251a2a354b9c8eaa74382469c42e1de7788668cdbb2",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_persistence.py": "7d3b64ccb0d3a6763f91d1d418a4a8378c8e19a13b9bd639d9fa11bcea6f0294",
     "gateway/run_turn_prepare.py": "df1799aca1a0a094ec91bc0a74a9dc0136f3a5a90cb5ef75b780ef56e772cd67",
@@ -294,7 +294,7 @@ EXPECTED_RENDERED_HASHES_0233 = {
     "gateway/run_inbound.py": "dc19a76e4bd52fe392741ea5ed272e72916d7f5b305e9a6221baffcb79cc962c",
     "gateway/run_notifications.py": "4c430265d8ab8e07a06a4ab4230af18387f7da673df0e7f1ee2edea805fc3cac",
     "gateway/run_startup.py": "2de33dac9647e78b94f8642fcbe5abb5a98e5472c8929aebec4fcd96f3a430ed",
-    "gateway/run_turn.py": "1f92850557c6e31c2952f1052af0c9df81d5fcbff6e64d875168275038ab6096",
+    "gateway/run_turn.py": "eb7c05a99fd70793cd881251a2a354b9c8eaa74382469c42e1de7788668cdbb2",
     "gateway/run_turn_hygiene.py": "b5e59f36c1cefa1aacf19ff272e0603aadac200417e4cf84365559145a1204c4",
     "gateway/run_turn_persistence.py": "99911c03f9459480d947e13d4c0a94f095762bc8a3a544a01d0ad34461c32166",
     "gateway/run_turn_prepare.py": "5ff3ab81b38d019b8568126dcfb24424db0553c377fdbaeff9b19ce8b42f4848",

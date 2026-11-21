@@ -605,9 +605,307 @@ async def test_server_silence_and_native_fallback_isolate_profiles(tmp_path):
         assert fallback.status == 200
         assert await fallback.json() == {"ok": True, "applied": True}
         await wait_for_condition(lambda: len(factories["default"].clients["default"].updated) >= 1)
-        assert app[SESSIONS_KEY]["default:shared-turn"].terminal_disposition == "native"
+        assert app[SESSIONS_KEY]["default:shared-turn"].terminal_disposition == "native_fallback"
         assert "已转原生回复" in _card_text(factories["default"].clients["default"].updated[-1][1])
         assert app[SESSIONS_KEY]["sales:shared-turn"].status == "thinking"
         assert factories["sales"].clients["default"].updated == []
     finally:
         await test_client.close()
+
+
+@pytest.mark.asyncio
+async def test_server_native_fallback_duplicate_and_late_terminal_do_not_trigger_missing_fence(tmp_path):
+    test_client, feishu_client, app = await _make_silence_client(tmp_path)
+    try:
+        generation = "a" * 32
+        started = await test_client.post(
+            "/events",
+            json=identified(
+                event_payload(
+                    "message.started",
+                    0,
+                    {
+                        "sender_open_id": "ou_1",
+                        "native_handoff": {"generation": generation},
+                    },
+                ),
+                "turn:turn-1:started",
+            ),
+        )
+        assert started.status == 200
+        await wait_for_condition(lambda: len(feishu_client.sent) == 1)
+
+        fallback = await test_client.post(
+            "/events",
+            json=identified(
+                event_payload(
+                    "message.completed",
+                    1,
+                    {
+                        "answer": "",
+                        "native_fallback": True,
+                        "native_handoff": {"generation": generation},
+                    },
+                ),
+                "turn:turn-1:completed",
+                phase="terminal",
+            ),
+        )
+        assert fallback.status == 200
+        assert await fallback.json() == {"ok": True, "applied": True}
+        await wait_for_condition(lambda: len(feishu_client.updated) >= 1)
+        assert app[SESSIONS_KEY]["turn-1"].terminal_disposition == "native_fallback"
+        before_updates = len(feishu_client.updated)
+
+        # Duplicate native_fallback and late message.failed must stay idempotent (never 503 missing_fence).
+        dup = await test_client.post(
+            "/events",
+            json=identified(
+                event_payload(
+                    "message.completed",
+                    2,
+                    {
+                        "answer": "",
+                        "native_fallback": True,
+                        "native_handoff": {"generation": generation},
+                    },
+                ),
+                "turn:turn-1:completed-dup",
+                phase="terminal",
+            ),
+        )
+        assert dup.status == 200
+        assert await dup.json() == {"ok": True, "applied": True}
+
+        late_failed = await test_client.post(
+            "/events",
+            json=identified(
+                event_payload(
+                    "message.failed",
+                    3,
+                    {
+                        "error": "late failure",
+                        "native_handoff": {"generation": generation},
+                    },
+                ),
+                "turn:turn-1:late-failed",
+                phase="terminal",
+            ),
+        )
+        assert late_failed.status == 200
+        assert await late_failed.json() == {"ok": True, "applied": True}
+        assert len(feishu_client.updated) == before_updates
+        assert app[sidecar_server.METRICS_KEY].events_rejected == 0
+        assert app[sidecar_server.METRICS_KEY].native_handoff_fence_restore_refusals == 0
+    finally:
+        await test_client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_silence", [True, False])
+async def test_generated_queued_complete_hook_handles_empty_notification_no_reply(monkeypatch, allow_silence):
+    from hermes_feishu_card.install import patcher
+
+    hook_runtime.reset_runtime_state()
+    posted = []
+    monkeypatch.setattr(hook_runtime, "load_runtime_config", lambda: _runtime_config())
+    monkeypatch.setattr(
+        hook_runtime,
+        "_policy_gate_async",
+        lambda config, lv, ev: asyncio.sleep(
+            0,
+            result=hook_runtime._PolicyGateResult(
+                card=True,
+                identity=hook_runtime._policy_identity(config, lv, ev),
+            ),
+        ),
+    )
+    monkeypatch.setattr(hook_runtime, "_ensure_runtime_control_started", lambda *_a, **_k: None)
+
+    async def fake_post(_config, payload, _event_name):
+        posted.append(payload)
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(hook_runtime, "_post_terminal_with_retry", fake_post)
+    async def fake_post_ordered(_url, payload, _timeout):
+        posted.append(payload)
+        return {"ok": True, "applied": True}
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", fake_post_ordered)
+
+    block = "".join(patcher._render_queued_complete_hook_block("    ", "\n"))
+    namespace = {}
+    exec(
+        "async def run(self, turn_ctx, _delivery_result, first_response, _already_streamed, result):\n"
+        + block
+        + "    return _already_streamed, first_response\n",
+        namespace,
+    )
+    runner = SimpleNamespace(
+        _is_intentional_silence=lambda dr, resp: hook_runtime.is_intentional_silence_result(dr, resp),
+        _silence_allowed_for_source=lambda *_a: allow_silence,
+    )
+    source = SimpleNamespace(platform="feishu", chat_id="oc_1", thread_id="", user_id="ou_1")
+    turn_ctx = SimpleNamespace(
+        source=source,
+        event_message_id="om_qfirst",
+        persist_user_display_kind="internal_notification" if allow_silence else None,
+        reply_expected=False if allow_silence else True,
+    )
+    delivery_result = {"final_response": "", "turn_exit_reason": "notification_no_reply", "failed": False}
+    streamed, response = await namespace["run"](runner, turn_ctx, delivery_result, "", False, delivery_result)
+    assert len(posted) == 1
+    assert posted[0]["message_id"] == "om_qfirst"
+    if allow_silence:
+        assert streamed is True
+        assert posted[0]["data"].get("intentional_silence") is True
+    else:
+        assert streamed is False
+        assert posted[0]["data"].get("native_fallback") is True
+    assert response == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario,allow_silence,expected_silence",
+    [
+        ("room_opt_in", True, True),
+        ("human_rejected", False, False),
+        ("heartbeat_no_id", False, True),
+    ],
+)
+async def test_generated_queued_followup_and_final_hooks_preserve_verdict_and_turn_ownership(
+    monkeypatch, scenario, allow_silence, expected_silence,
+):
+    from hermes_feishu_card.install import patcher
+
+    hook_runtime.reset_runtime_state()
+    posted = []
+    monkeypatch.setattr(hook_runtime, "load_runtime_config", lambda: _runtime_config())
+    monkeypatch.setattr(
+        hook_runtime,
+        "_policy_gate_async",
+        lambda config, lv, ev: asyncio.sleep(
+            0,
+            result=hook_runtime._PolicyGateResult(
+                card=True,
+                identity=hook_runtime._policy_identity(config, lv, ev),
+            ),
+        ),
+    )
+    monkeypatch.setattr(hook_runtime, "_ensure_runtime_control_started", lambda *_a, **_k: None)
+
+    async def fake_post(_config, payload, _event_name):
+        posted.append(payload)
+        return {"ok": True, "applied": True}
+
+    monkeypatch.setattr(hook_runtime, "_post_terminal_with_retry", fake_post)
+    async def fake_post_ordered(_url, payload, _timeout):
+        posted.append(payload)
+        return {"ok": True, "applied": True}
+    monkeypatch.setattr(hook_runtime, "_post_json_ordered_response", fake_post_ordered)
+
+    followup_block = "".join(patcher._render_queued_followup_hook_block("    ", "\n"))
+    final_block = "".join(patcher._render_queued_final_hook_block("    ", "\n"))
+    namespace = {}
+    exec(
+        "async def run(self, source, next_source, pending_event, next_message_id, next_display_kind, next_reply_expected, result, followup_result):\n"
+        + followup_block
+        + final_block
+        + "    return next_source, followup_result\n",
+        namespace,
+    )
+    parent_source = SimpleNamespace(
+        platform="feishu",
+        chat_id="oc_1",
+        thread_id="",
+        user_id="ou_1",
+        _hfc_turn_id="om_parent",
+        _hfc_internal_turn_id="hfc-internal:parent",
+    )
+    if scenario == "heartbeat_no_id":
+        pending_event = SimpleNamespace(
+            message_id="",
+            internal=False,
+            reply_expected=None,
+            metadata={},
+            _heartbeat_session_id="hb_1",
+        )
+        next_display_kind = "internal_notification"
+        next_reply_expected = None
+    else:
+        pending_event = SimpleNamespace(
+            message_id="om_child",
+            internal=False,
+            reply_expected=True,
+            metadata={},
+        )
+        next_display_kind = None
+        next_reply_expected = True
+
+    runner = SimpleNamespace(
+        _silence_allowed_for_source=lambda _src, dk, re, _res: (
+            dk == "internal_notification" or re is False or allow_silence
+        ),
+    )
+    next_source, followup_result = await namespace["run"](
+        runner,
+        parent_source,
+        parent_source,
+        pending_event,
+        None,
+        next_display_kind,
+        next_reply_expected,
+        {"interrupted": False},
+        {"final_response": "NO_REPLY", "failed": False},
+    )
+    assert next_source._hfc_turn_id != "om_parent"
+    assert next_source._hfc_internal_turn_id != "hfc-internal:parent"
+    assert [p["event"] for p in posted] == ["message.started", "message.completed"]
+    assert posted[0]["message_id"] == posted[1]["message_id"]
+    if scenario == "heartbeat_no_id":
+        assert posted[0]["message_id"].startswith("hfc-internal:")
+    else:
+        assert posted[0]["message_id"] == "om_child"
+    if expected_silence:
+        assert followup_result.get("_hfc_queued_final_delivered") is True
+        assert posted[1]["data"].get("intentional_silence") is True
+    else:
+        assert followup_result.get("_hfc_queued_final_attempted") is True
+        assert not followup_result.get("_hfc_queued_final_delivered")
+        assert posted[1]["data"].get("native_fallback") is True
+
+
+def test_emit_from_hermes_locals_clears_answer_delta_hold(monkeypatch):
+    hook_runtime.reset_runtime_state()
+    loop = asyncio.new_event_loop()
+    try:
+        monkeypatch.setattr(hook_runtime, "load_runtime_config", lambda: _runtime_config())
+        monkeypatch.setattr(
+            hook_runtime,
+            "_policy_gate_sync",
+            lambda config, lv, ev: hook_runtime._PolicyGateResult(
+                card=True,
+                identity=hook_runtime._policy_identity(config, lv, ev),
+            ),
+        )
+        monkeypatch.setattr(hook_runtime, "_ensure_runtime_control_started", lambda *_a, **_k: None)
+
+        async def fake_send(*_a, **_k):
+            return True
+
+        monkeypatch.setattr(hook_runtime, "_send_fail_open_ordered", fake_send)
+        source = SimpleNamespace(platform="feishu", chat_id="oc_1", thread_id="", user_id="ou_1")
+        base_locals = {"source": source, "message_id": "om_sync_clear", "chat_id": "oc_1", "_hfc_loop": loop}
+        assert hook_runtime.emit_from_hermes_locals_threadsafe({**base_locals, "text": "NO"}, "answer.delta") is True
+        assert len(hook_runtime._ANSWER_DELTA_HOLDS) == 1
+        loop.run_until_complete(
+            asyncio.sleep(0)
+        )
+        # Sync message.started (used by PATCH_BEGIN) must clear any stale hold for that turn.
+        async def run_sync_emit():
+            assert hook_runtime.emit_from_hermes_locals(base_locals, "message.started") is True
+        loop.run_until_complete(run_sync_emit())
+        assert hook_runtime._ANSWER_DELTA_HOLDS == {}
+    finally:
+        hook_runtime.reset_runtime_state()
+        loop.close()

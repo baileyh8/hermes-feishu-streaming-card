@@ -593,7 +593,7 @@ class CardSession:
             elif native_fallback:
                 self.runtime_phase_text = ""
                 self.answer_normalizer = StreamingTextNormalizer()
-                self.terminal_disposition = "native"
+                self.terminal_disposition = "native_fallback"
                 self.completion_notify_state = "sent"
                 if not self.answer_text.strip():
                     self.answer_text = "已转原生回复"

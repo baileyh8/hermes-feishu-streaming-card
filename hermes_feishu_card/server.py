@@ -5226,7 +5226,7 @@ async def _apply_event_locked_inner(
         and event_is_terminal
         and session.status in {"completed", "failed"}
     )
-    if terminal_already_handled and session.terminal_disposition in {"native", "segmented", "silent"}:
+    if terminal_already_handled and session.terminal_disposition in {"native", "segmented", "silent", "native_fallback"}:
         metrics.events_applied += 1
         return web.json_response({"ok": True, "applied": True}), None
     if terminal_already_handled:
