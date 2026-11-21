@@ -2,6 +2,10 @@
 
 ## Current candidate
 
+This branch targets `5.0.27`. It adapts HFC installation and `Persistence` admission verification to Hermes v0.23.3 (#537 / PR #538) and fixes intentional-silence `NO_REPLY` card leakage and stuck running cards (#535). #536 (`~silent`) lacks version and log evidence and is not claimed resolved. The [release notes](release-notes-v5.0.27.en.md) and GitHub Release track CI, public package and field evidence separately.
+
+## v5.0.26
+
 This branch targets `5.0.26`. It adapts HFC installation and delivery to Hermes v0.23.2 (#532). The [release notes](release-notes-v5.0.26.en.md) and GitHub Release track CI, public package and field evidence separately.
 
 ## v5.0.25

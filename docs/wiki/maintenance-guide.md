@@ -121,6 +121,7 @@ Gateway stale-result 的 AST 来源绑定判断在 `install/gateway_contracts.py
 - Hermes source-stripped Docker 目录缺少 `VERSION`，或版本 metadata 可读但格式不可解析时，只能在 gateway anchors 可验证时兜底。
 - 新 hook block 必须有 patcher 单测和 remove/restore 覆盖。
 - Feishu admission 返回 native、或 handoff 未成功 staged 时，只跳过 HFC 投递，继续 Hermes 原有 `already_sent`、失败正文、媒体和 footer 判断；不得提前 `return response` 绕过核心防重。v0.23.0 的同步 `capture_lease` 必须按标准 `contextmanager` 包装器身份单独验证，不能混用异步包装器规则或泛化 unwrap。渲染契约使用 patcher 的 `RENDER_CONTRACT_VERSION` 与固定摘要绑定，不使用发行包元数据后缀作为兼容性证据（#504）。
+- 有意静默回合（#535）：`answer.delta` 仅在行首有界暂存潜在静默标记前缀，工具事件或新 `message.started` 到达时释放非静默前缀或清理状态；`message.completed` 仅在 Hermes 判定允许静默时发送 `intentional_silence=True` 并在原卡就地收尾（保留已有正文、附件与审批回执，不触发完成通知或补发空卡），人类回合被拒绝静默时发送 `native_fallback=True` 并保留 Hermes 原生 fallback 投递。
 - completion hook 只允许飞书进入 HFC 的 admission、queued-final 和卡片交接分支；Telegram 等其他平台必须继续 Hermes 原有 `already_sent`、媒体及最终回复逻辑。平台隔离须覆盖普通、reply-anchor 与拆分 handler，并保留旧版受管 block 的精确识别和可逆升级（#479）。
 - Hermes 0.20 将同步 delivery-ledger 写入包装为 `await asyncio.to_thread(...)`；只可在已验证的 ledger anchor 内解包这一精确结构，未 `await`、其他 wrapper 或全局 call 解包必须继续拒绝。
 - `_status_callback_sync` 是 optional `status_callback` capability；缺失时保持其他安装路径可用并由 doctor 报 partial compatibility。Hermes v0.22.5 的 `GatewayTurnProgressMixin` 方法不在 TurnRunner 内，安装器只接受 `_wire_turn_agent_callbacks` 中 `ctx = self._ctx` 与 `agent.status_callback, agent.notice_callback = ctx._status_callback_sync, ...` 的精确每轮交接，并在交接后包装 status；静默、失效轮次、非 Feishu 或 sidecar 未接受时继续调用原回调，`notice_callback` 不得被第二个 producer 替换。
