@@ -144,16 +144,24 @@ IMAGE_SPECS: dict[str, ImageSpec] = {
         "sha256:667a9dc77f303f6cd6e9ff62ce2c9580563597e09dde07fe5a224375988d6209",
         1147774026,
     ),
+    "v0.23.3": ImageSpec(
+        "v0.23.3",
+        "caafe5389ae585ef77387a962aee05b1bcf17029",
+        "sha256:3e9fe4c6ef36490f43aa0d0d80f9df64e9c92a576eee3042f1a97c8813c05355",
+        "sha256:41468459379a943cf0a25a55589e230d244bd9f95b83cff5eca789470c892fac",
+        1148386925,
+    ),
 }
 
 # Images whose official writer admission requires the upstream config schema
 # to be migrated from FULL_SEED. The seed itself stays at version 50; the
 # official docker_config_migrate script performs the real upgrade to the
-# pinned image's own schema version (v0.23.0: 50 -> 52, v0.23.1/2: 50 -> 53).
+# pinned image's own schema version (v0.23.0: 50 -> 52, v0.23.1/2: 50 -> 53, v0.23.3: 50 -> 54).
 CONFIG_MIGRATION_TARGETS = {
     IMAGE_SPECS["v0.23.0"].source_sha: 52,
     IMAGE_SPECS["v0.23.1"].source_sha: 53,
     IMAGE_SPECS["v0.23.2"].source_sha: 53,
+    IMAGE_SPECS["v0.23.3"].source_sha: 54,
 }
 CONFIG_MIGRATION_SOURCE_SHAS = frozenset(CONFIG_MIGRATION_TARGETS)
 MIN_MIGRATED_CONFIG_VERSION = 52

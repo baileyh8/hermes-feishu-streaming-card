@@ -52,6 +52,7 @@ def test_image_matrix_is_pinned_and_includes_0222():
         "v0.23.0",
         "v0.23.1",
         "v0.23.2",
+        "v0.23.3",
     }
     for spec in acceptance.IMAGE_SPECS.values():
         assert spec.reference.startswith("nousresearch/hermes-agent@sha256:")

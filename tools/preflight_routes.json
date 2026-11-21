@@ -18,7 +18,8 @@
       "tests/unit/test_profile_root.py",
       "tests/unit/test_512_authority_profile_matches.py",
       "tests/unit/test_completion_notification.py",
-      "tests/integration/test_server_segmented.py"
+      "tests/integration/test_server_segmented.py",
+      "tests/integration/test_issue_535_silence.py"
     ],
     "render": [
       "tests/unit/test_approval_rule_hints.py",
@@ -276,6 +277,8 @@
       "tests/integration/test_v0231_admission_topology.py",
       "tests/integration/test_v0232_writer_family.py",
       "tests/integration/test_v0232_source_binding.py",
+      "tests/integration/test_v0233_writer_family.py",
+      "tests/integration/test_v0233_source_binding.py",
       "tests/integration/test_v0230_wheel_install_restore.py"
     ],
     "install_transactions": [
@@ -850,6 +853,10 @@
       "install",
       "install_transactions"
     ],
+    "hermes_feishu_card/install/_writer_0233.py": [
+      "install",
+      "install_transactions"
+    ],
     "tests/fixtures/hermes_v0230_writer_family.json": [
       "upstream"
     ],
@@ -860,6 +867,9 @@
       "upstream"
     ],
     "tests/fixtures/hermes_v0232_writer_family.json": [
+      "upstream"
+    ],
+    "tests/fixtures/hermes_v0233_writer_family.json": [
       "upstream"
     ],
     "tests/fixtures/hermes_v0232/run_turn_runner_approval_transport.py": [
@@ -880,12 +890,22 @@
       "install",
       "install_transactions"
     ],
+    "tests/integration/test_v0233_writer_family.py": [
+      "upstream",
+      "install",
+      "install_transactions"
+    ],
     "tests/integration/test_v0231_admission_sources.py": [
       "upstream",
       "install",
       "install_transactions"
     ],
     "tests/integration/test_v0232_source_binding.py": [
+      "upstream",
+      "install",
+      "install_transactions"
+    ],
+    "tests/integration/test_v0233_source_binding.py": [
       "upstream",
       "install",
       "install_transactions"
@@ -921,6 +941,9 @@
       "upstream"
     ],
     "hermes_feishu_card/completion_notification.py": [
+      "runtime"
+    ],
+    "tests/integration/test_issue_535_silence.py": [
       "runtime"
     ]
   }

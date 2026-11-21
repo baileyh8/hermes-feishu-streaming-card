@@ -140,17 +140,18 @@ def _restore_old_member(registration, precondition, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("family", ["pm-0232", "pm-0233"])
 @pytest.mark.parametrize("selection", ["verified", "stale-launcher", "unverified-wheel"])
 def test_initial_pm_observer_keeps_only_verified_post_enable_binding(
-    tmp_path, monkeypatch, selection,
+    tmp_path, monkeypatch, selection, family,
 ):
     from hermes_feishu_card.install import plugin_config_bytes, runtime_python
 
     precondition, new_binding, registration, marker, config = _setup(tmp_path, monkeypatch)
     old_binding = precondition.binding
-    registration.source_family = "pm-0232"
+    registration.source_family = family
     registration.post_python = old_binding.runtime_python
-    monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", lambda *_args, **_kwargs: "pm-0232")
+    monkeypatch.setattr(plugin_config_bytes, "verify_launch_sources", lambda *_args, **_kwargs: family)
     monkeypatch.setattr(
         runtime_python, "pm_managed_runtime_python",
         lambda *_args, **_kwargs: (

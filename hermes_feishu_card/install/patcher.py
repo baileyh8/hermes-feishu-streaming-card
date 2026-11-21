@@ -13,7 +13,7 @@ from . import admission_extraction, stop_cancellation, rate_scope
 
 # Rendering compatibility is independent of package metadata/local build suffixes.
 # Bump this together with the pinned rendered digests whenever hook bytes change.
-RENDER_CONTRACT_VERSION = "completion-native-fallthrough-v1"
+RENDER_CONTRACT_VERSION = "completion-native-fallthrough-v2"
 from .gateway_contracts import find_stale_interrupted_location
 from .cron_contracts import (
     find_cron_deliver_body_location as _find_cron_deliver_body_location,
@@ -3366,13 +3366,17 @@ def _render_queued_complete_hook_block(indent: str, newline: str):
             f"{inner_indent}from hermes_feishu_card.hook_runtime "
             f"import native_media_only_response as _hfc_media_only{newline}"
         ),
-        f"{inner_indent}if first_response and not _already_streamed:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import is_intentional_silence_result as _hfc_is_silence_result{newline}"
+        ),
+        f"{inner_indent}_hfc_delivery_result = locals().get(\"_delivery_result\"){newline}",
+        f"{inner_indent}if not isinstance(_hfc_delivery_result, dict):{newline}",
+        f"{inner_indent}    _hfc_delivery_result = result if isinstance(result, dict) else {{}}{newline}",
+        f"{inner_indent}if (first_response and not _already_streamed) or _hfc_is_silence_result(_hfc_delivery_result, first_response):{newline}",
         f"{deeper_indent}_hfc_turn_ctx = locals().get(\"turn_ctx\"){newline}",
         f"{deeper_indent}_hfc_source = locals().get(\"source\") or getattr(_hfc_turn_ctx, \"source\", None){newline}",
         f"{deeper_indent}_hfc_message_id = locals().get(\"event_message_id\") or getattr(_hfc_turn_ctx, \"event_message_id\", None){newline}",
-        f"{deeper_indent}_hfc_delivery_result = locals().get(\"_delivery_result\"){newline}",
-        f"{deeper_indent}if not isinstance(_hfc_delivery_result, dict):{newline}",
-        f"{deeper_indent}    _hfc_delivery_result = result if isinstance(result, dict) else {{}}{newline}",
         f"{deeper_indent}_hfc_completed_locals = {{{newline}",
         f"{deeper_indent}    **locals(),{newline}",
         f"{deeper_indent}    \"source\": _hfc_source,{newline}",
@@ -3438,9 +3442,9 @@ def _render_queued_followup_hook_block(indent: str, newline: str):
             f"_hfc_interrupted_locals(source, _hfc_original_message_id, result), "
             f"event_name=\"message.failed\"){newline}"
         ),
-        f"{deeper_indent}if _hfc_followup_message_id or getattr(pending_event, \"internal\", False) is True:{newline}",
-        f"{deepest_indent}from hermes_feishu_card.hook_runtime import queued_followup_source as _hfc_queued_source{newline}",
-        f"{deepest_indent}next_source = _hfc_queued_source(next_source, pending_event){newline}",
+        f"{deeper_indent}from hermes_feishu_card.hook_runtime import queued_followup_source as _hfc_queued_source{newline}",
+        f"{deeper_indent}next_source = _hfc_queued_source(next_source, pending_event){newline}",
+        f"{deeper_indent}if _hfc_followup_message_id or getattr(pending_event, \"internal\", False) is True or bool(getattr(pending_event, \"_heartbeat_session_id\", None)):{newline}",
         (
             f"{deepest_indent}await _hfc_emit_async({{"
             f"\"source\": next_source, \"event\": pending_event, \"message\": pending_event, "
@@ -3559,7 +3563,7 @@ def _render_queued_final_hook_block(indent: str, newline: str):
         f"{deeper}followup_result = {{**followup_result, \"_hfc_queued_final_attempted\": True}}{newline}",
         f"{deeper}_hfc_final_answer = followup_result.get(\"final_response\") or followup_result.get(\"error\") or \"\"{newline}",
         f"{deeper}_hfc_final_metrics = {{\"duration\": followup_result.get(\"_hfc_turn_seconds\"), \"model\": followup_result.get(\"model\", \"\"), \"tokens\": {{\"input_tokens\": followup_result.get(\"input_tokens\", 0), \"output_tokens\": followup_result.get(\"output_tokens\", 0)}}, \"context\": {{\"used_tokens\": followup_result.get(\"last_prompt_tokens\", 0), \"max_tokens\": followup_result.get(\"context_length\", 0)}}}}{newline}",
-        f"{deeper}_hfc_final_locals = {{\"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"answer\": _hfc_final_answer, \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result, **_hfc_final_metrics}}{newline}",
+        f"{deeper}_hfc_final_locals = {{\"self\": locals().get(\"self\"), \"event\": pending_event, \"source\": next_source, \"message_id\": getattr(pending_event, \"message_id\", None) or next_message_id, \"display_kind\": locals().get(\"next_display_kind\"), \"reply_expected\": locals().get(\"next_reply_expected\"), \"answer\": _hfc_final_answer, \"error\": followup_result.get(\"error\") or \"任务已中断\", \"agent_result\": followup_result, **_hfc_final_metrics}}{newline}",
         f"{deeper}# A queued follow-up ends with the completed envelope even when it failed. Only that{newline}",
         f"{deeper}# branch reads duration/model/tokens/context, and the failure still reaches the card{newline}",
         f"{deeper}# because the turn result travels as agent_result (the sidecar derives turn_outcome{newline}",

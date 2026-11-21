@@ -23,6 +23,7 @@ from types import CodeType, SimpleNamespace
 import threading
 import time
 from typing import Any, Callable, Optional
+import unicodedata
 import weakref
 from urllib import error as urlerror
 from urllib import parse
@@ -304,6 +305,130 @@ _SEND_LOCKS_GUARD = threading.Lock()
 _POST_FAILED = object()
 _PENDING_DELTAS: dict[tuple[int, str, str, str, str], _PendingDelta] = {}
 _PENDING_DELTAS_LOCK = threading.Lock()
+_LIVE_SILENT_MARKERS = frozenset({
+    "[SILENT]", "SILENT", "NO_REPLY", "NO REPLY",
+    "[静默]", "静默", "[沉默]", "沉默",
+})
+_SILENCE_MARKER_LENGTH_CAP = 64
+_ANSWER_DELTA_HOLDS_LIMIT = 256
+
+
+def _canonical_silence_candidate(text: str) -> str:
+    return " ".join(text.strip().upper().split())
+
+
+def _is_silence_edge_punctuation(ch: str) -> bool:
+    return ch not in "[]" and unicodedata.category(ch).startswith("P")
+
+
+def _strip_silence_edge_punctuation(text: str) -> str:
+    start, end = 0, len(text)
+    while start < end and _is_silence_edge_punctuation(text[start]):
+        start += 1
+    while end > start and _is_silence_edge_punctuation(text[end - 1]):
+        end -= 1
+    return text[start:end].strip()
+
+
+def _canonical_silence_candidates(text: Any) -> tuple[str, ...]:
+    stripped = text.strip() if isinstance(text, str) else ""
+    if not 0 < len(stripped) <= _SILENCE_MARKER_LENGTH_CAP:
+        return ()
+    depunctuated = _strip_silence_edge_punctuation(stripped)
+    forms = (stripped,) if depunctuated == stripped else (stripped, depunctuated)
+    return tuple(_canonical_silence_candidate(form) for form in forms)
+
+
+def _is_intentional_silence_response(response: Any) -> bool:
+    return any(
+        candidate in _LIVE_SILENT_MARKERS
+        for candidate in _canonical_silence_candidates(response)
+    )
+
+
+def _is_partial_silence_marker(text: Any) -> bool:
+    return any(
+        candidate and any(marker.startswith(candidate) for marker in _LIVE_SILENT_MARKERS)
+        for candidate in _canonical_silence_candidates(text)
+    )
+
+
+def _split_trailing_silence_line(text: str) -> tuple[str, str]:
+    head, _, tail = text.rstrip().rpartition("\n")
+    return head.rstrip(), tail
+
+
+def _strip_trailing_silence_marker(response: str) -> str:
+    head, tail = _split_trailing_silence_line(response)
+    return head if head.strip() and _is_intentional_silence_response(tail) else response
+
+
+class _SilenceMarkerStreamHold:
+    """Bounded delta gate holding only potential silence markers."""
+
+    _MAX_LINE_BUF = _SILENCE_MARKER_LENGTH_CAP * 4
+
+    def __init__(self) -> None:
+        self._has_prior_content = False
+        self._at_line_start = True
+        self._line_buf = ""
+
+    def feed(self, delta: str) -> str:
+        if not delta:
+            return ""
+        if not self._at_line_start and "\n" not in delta:
+            return delta
+        combined = self._line_buf + delta
+        stripped_right = combined.rstrip()
+        if not stripped_right:
+            if not self._has_prior_content and len(combined) <= self._MAX_LINE_BUF:
+                self._line_buf = combined
+                return ""
+            self._line_buf = ""
+            self._at_line_start = "\n" in combined or self._at_line_start
+            return combined
+        nl = stripped_right.rfind("\n")
+        if nl >= 0:
+            prefix = combined[: nl + 1]
+            suffix = combined[nl + 1 :]
+            if prefix.strip():
+                self._has_prior_content = True
+            if (
+                len(suffix.strip()) <= _SILENCE_MARKER_LENGTH_CAP
+                and len(suffix) <= self._MAX_LINE_BUF
+                and _is_partial_silence_marker(suffix)
+            ):
+                self._line_buf = suffix
+                self._at_line_start = True
+                return prefix
+            self._has_prior_content = True
+            self._line_buf = ""
+            self._at_line_start = not combined.rsplit("\n", 1)[-1].strip()
+            return combined
+        if (
+            self._at_line_start
+            and len(stripped_right) <= _SILENCE_MARKER_LENGTH_CAP
+            and len(combined) <= self._MAX_LINE_BUF
+            and _is_partial_silence_marker(combined)
+        ):
+            self._line_buf = combined
+            return ""
+        self._has_prior_content = True
+        self._line_buf = ""
+        self._at_line_start = "\n" in combined and not combined.rsplit("\n", 1)[-1].strip()
+        return combined
+
+    def take_non_silence(self) -> str:
+        held = self._line_buf
+        self._line_buf = ""
+        if not held or _is_intentional_silence_response(held):
+            return ""
+        self._has_prior_content = True
+        self._at_line_start = "\n" in held and not held.rsplit("\n", 1)[-1].strip()
+        return held
+
+
+_ANSWER_DELTA_HOLDS: OrderedDict[tuple[str, str, str], _SilenceMarkerStreamHold] = OrderedDict()
 _POLICY_LOCK = threading.RLock()
 _POLICY_CACHE: OrderedDict[tuple[str, str, str], _PolicyCacheEntry] = OrderedDict()
 _TURN_POLICY_DECISIONS: OrderedDict[
@@ -437,6 +562,7 @@ def reset_runtime_state() -> None:
         _SEND_LOCKS.clear()
     with _PENDING_DELTAS_LOCK:
         _PENDING_DELTAS.clear()
+        _ANSWER_DELTA_HOLDS.clear()
     with _POLICY_LOCK:
         _POLICY_CACHE.clear()
         _TURN_POLICY_DECISIONS.clear()
@@ -1641,6 +1767,157 @@ def _discard_pending_deltas_for_local_vars(local_vars: dict[str, Any]) -> None:
         for key, pending in list(_PENDING_DELTAS.items()):
             if _pending_message_id(key, pending) == canonical_id:
                 _PENDING_DELTAS.pop(key, None)
+        for hold_key in list(_ANSWER_DELTA_HOLDS):
+            if hold_key[1] == canonical_id:
+                _ANSWER_DELTA_HOLDS.pop(hold_key, None)
+
+
+def _answer_delta_hold_key(
+    config: RuntimeConfig, local_vars: dict[str, Any]
+) -> tuple[str, str, str] | None:
+    source_obj = local_vars.get("source")
+    if _platform_name(local_vars, source_obj) != "feishu":
+        return None
+    canonical_id = _canonical_id_from_local_vars(local_vars)
+    if not canonical_id:
+        return None
+    profile_id, _ = _profile_identity(
+        local_vars, source_obj, local_vars.get("message")
+    )
+    return (config.event_url, canonical_id, profile_id)
+
+
+def _feed_answer_delta_silence_hold(
+    config: RuntimeConfig, local_vars: dict[str, Any], text: str
+) -> str:
+    key = _answer_delta_hold_key(config, local_vars)
+    if key is None:
+        return text
+    with _PENDING_DELTAS_LOCK:
+        hold = _ANSWER_DELTA_HOLDS.get(key)
+        if hold is None:
+            hold = _SilenceMarkerStreamHold()
+            _ANSWER_DELTA_HOLDS[key] = hold
+            while len(_ANSWER_DELTA_HOLDS) > _ANSWER_DELTA_HOLDS_LIMIT:
+                _ANSWER_DELTA_HOLDS.popitem(last=False)
+        else:
+            _ANSWER_DELTA_HOLDS.move_to_end(key)
+        return hold.feed(text)
+
+
+def _take_answer_delta_silence_hold(
+    config: RuntimeConfig, local_vars: dict[str, Any]
+) -> str:
+    key = _answer_delta_hold_key(config, local_vars)
+    if key is None:
+        return ""
+    with _PENDING_DELTAS_LOCK:
+        hold = _ANSWER_DELTA_HOLDS.get(key)
+        if hold is None:
+            return ""
+        return hold.take_non_silence()
+
+
+def _clear_answer_delta_hold(
+    config: RuntimeConfig, local_vars: dict[str, Any]
+) -> None:
+    key = _answer_delta_hold_key(config, local_vars)
+    if key is None:
+        return
+    with _PENDING_DELTAS_LOCK:
+        _ANSWER_DELTA_HOLDS.pop(key, None)
+
+
+def _is_intentional_silence_agent_result(agent_result: Any, response: Any) -> bool:
+    if not (isinstance(agent_result, dict) and not agent_result.get("failed")):
+        return False
+    if _is_intentional_silence_response(response):
+        return True
+    return agent_result.get("turn_exit_reason") == "notification_no_reply" and not (
+        isinstance(response, str) and response.strip()
+    )
+
+
+is_intentional_silence_result = _is_intentional_silence_agent_result
+
+
+def _queued_silence_verdict(local_vars: dict[str, Any]) -> str | None:
+    if "turn_ctx" in local_vars and "_delivery_result" in local_vars:
+        runner = local_vars.get("self")
+        turn_ctx = local_vars.get("turn_ctx")
+        delivery_result = local_vars.get("_delivery_result")
+        first_response = local_vars.get("first_response")
+        is_silence_fn = getattr(runner, "_is_intentional_silence", None)
+        is_silence = (
+            bool(is_silence_fn(delivery_result, first_response))
+            if callable(is_silence_fn)
+            else _is_intentional_silence_agent_result(delivery_result, first_response)
+        )
+        if not is_silence:
+            return None
+        allowed_fn = getattr(runner, "_silence_allowed_for_source", None)
+        if callable(allowed_fn):
+            allowed = bool(
+                allowed_fn(
+                    getattr(turn_ctx, "source", None),
+                    getattr(turn_ctx, "persist_user_display_kind", None),
+                    getattr(turn_ctx, "reply_expected", None),
+                    delivery_result,
+                )
+            )
+        else:
+            source = getattr(turn_ctx, "source", None)
+            display_kind = getattr(turn_ctx, "persist_user_display_kind", None)
+            reply_expected = getattr(turn_ctx, "reply_expected", None)
+            allowed = (
+                display_kind in {"internal_notification", "process_complete", "async_delegation_complete"}
+                or reply_expected is False
+                or bool(getattr(source, "_hfc_internal_turn_id", ""))
+            )
+        return "silence_allowed" if allowed else "silence_rejected"
+    source = local_vars.get("source")
+    if (
+        getattr(source, "_hfc_queued_followup", False) is True
+        and "_intentional_silence" not in local_vars
+        and "intentional_silence" not in local_vars
+    ):
+        agent_result = local_vars.get("agent_result")
+        answer = local_vars.get("answer")
+        if not _is_intentional_silence_agent_result(agent_result, answer):
+            return None
+        runner = local_vars.get("self")
+        internal = bool(getattr(source, "_hfc_internal_event", False))
+        reply_expected = local_vars.get("reply_expected")
+        if reply_expected is None:
+            reply_expected = getattr(source, "_hfc_reply_expected", None)
+        if getattr(source, "is_bot", False) is True:
+            reply_expected = False
+        display_kind = local_vars.get("display_kind")
+        if display_kind is None:
+            display_kind = getattr(source, "_hfc_display_kind", None)
+        if display_kind is None and internal:
+            display_kind = "internal_notification"
+        allowed_fn = getattr(runner, "_silence_allowed_for_source", None)
+        if callable(allowed_fn):
+            allowed = bool(
+                allowed_fn(source, display_kind, reply_expected, agent_result)
+            )
+        else:
+            allowed = (
+                internal
+                or reply_expected is False
+                or display_kind in {"internal_notification", "process_complete", "async_delegation_complete"}
+            )
+        return "silence_allowed" if allowed else "silence_rejected"
+    return None
+
+
+def _is_intentional_silence_locals(local_vars: dict[str, Any]) -> bool:
+    if bool(local_vars.get("_intentional_silence")) or bool(
+        local_vars.get("intentional_silence")
+    ):
+        return True
+    return _queued_silence_verdict(local_vars) == "silence_allowed"
 
 
 def _queue_coalesced_delta(
@@ -1870,8 +2147,11 @@ def emit_from_hermes_locals(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
+            _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
+        if event_name in {"message.started", "message.completed", "message.failed"}:
+            _clear_answer_delta_hold(config, event_locals)
         payload = build_event(event_name, event_locals)
         if payload is None:
             return False
@@ -1900,8 +2180,58 @@ def emit_from_hermes_locals_threadsafe(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
+            _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
+        if event_name in {"message.started", "message.completed", "message.failed"}:
+            _clear_answer_delta_hold(config, event_locals)
+        if event_name == "answer.delta":
+            delta_mode = _first_string(event_locals, ("mode", "_hfc_text_mode"))
+            if not delta_mode or delta_mode.lower() == "delta":
+                raw_text = _first_raw_string(
+                    event_locals, ("text", "delta", "delta_text", "content")
+                )
+                if raw_text is None:
+                    raw_text = _first_attr_raw_string(
+                        event_locals.get("message"), ("text", "content")
+                    )
+                if raw_text:
+                    released = _feed_answer_delta_silence_hold(
+                        config, event_locals, str(raw_text)
+                    )
+                    if not released:
+                        return True
+                    event_locals = {**event_locals, "text": released}
+        elif event_name == "tool.updated":
+            held_text = _take_answer_delta_silence_hold(config, event_locals)
+            if held_text:
+                held_locals = {**event_locals, "text": held_text}
+                if not _queue_coalesced_delta(config, held_locals, "answer.delta"):
+                    held_payload = build_event("answer.delta", held_locals)
+                    if held_payload is not None:
+                        if "_hfc_loop" in held_locals:
+                            held_coro = _send_fail_open_ordered(
+                                config.event_url,
+                                held_payload,
+                                _timeout_for_event(config, "answer.delta"),
+                            )
+                            try:
+                                asyncio.run_coroutine_threadsafe(
+                                    held_coro,
+                                    held_locals["_hfc_loop"],
+                                )
+                            except Exception:
+                                held_coro.close()
+                                raise
+                        else:
+                            asyncio.get_running_loop()
+                            asyncio.create_task(
+                                _send_fail_open_ordered(
+                                    config.event_url,
+                                    held_payload,
+                                    _timeout_for_event(config, "answer.delta"),
+                                )
+                            )
         if _queue_coalesced_delta(config, event_locals, event_name):
             return True
         if _has_pending_deltas_for_local_vars(event_locals):
@@ -2032,6 +2362,15 @@ async def emit_from_hermes_locals_async(
     *, require_ack: bool = False,
 ) -> bool:
     try:
+        queued_verdict = (
+            _queued_silence_verdict(local_vars)
+            if event_name == "message.completed"
+            else None
+        )
+        if queued_verdict == "silence_allowed":
+            local_vars = {**local_vars, "_intentional_silence": True}
+        elif queued_verdict == "silence_rejected":
+            local_vars = {**local_vars, "_hfc_native_fallback": True}
         config = _config_for_terminal(load_runtime_config(), local_vars, event_name)
         if not config.enabled:
             return False
@@ -2044,10 +2383,13 @@ async def emit_from_hermes_locals_async(
         async with event_lock:
             gate = await _policy_gate_async(config, local_vars, event_name)
             if not gate.card:
+                _clear_answer_delta_hold(config, local_vars)
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
             if event_name not in {"thinking.delta", "answer.delta"}:
                 await _flush_pending_deltas_for_local_vars(event_locals)
+            if event_name in {"message.started", "message.completed", "message.failed"}:
+                _clear_answer_delta_hold(config, event_locals)
             payload = build_event(event_name, event_locals)
             if payload is None:
                 return False
@@ -2068,6 +2410,8 @@ async def emit_from_hermes_locals_async(
             )
             if event_name == "message.completed":
                 _register_native_media_text_suppression(payload, applied=applied)
+            if queued_verdict == "silence_rejected":
+                return False
             return applied
     except Exception:
         return False
@@ -2078,10 +2422,6 @@ def can_stage_exact_base_completion(local_vars: dict[str, Any]) -> bool:
     try:
         source = local_vars.get("source")
         if _platform_name(local_vars, source) != "feishu":
-            return False
-        response = _completion_answer(local_vars)
-        if not response:
-            _warn_stage_diagnostic("empty-answer")
             return False
         agent_result = local_vars.get("agent_result")
         already_sent = bool(
@@ -2096,6 +2436,15 @@ def can_stage_exact_base_completion(local_vars: dict[str, Any]) -> bool:
         )
         if already_sent and not failed:
             _warn_stage_diagnostic("already-delivered")
+            return False
+        if _is_intentional_silence_locals(local_vars):
+            from .admission_completion import mode
+            if mode(local_vars) != "handoff":
+                return False
+            return _exact_base_delivery_hook_available()
+        response = _completion_answer(local_vars)
+        if not response:
+            _warn_stage_diagnostic("empty-answer")
             return False
         return _exact_base_delivery_hook_available()
     except Exception:
@@ -2198,6 +2547,7 @@ async def stage_message_completed_from_hermes_locals_async(
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
             await _flush_pending_deltas_for_local_vars(event_locals)
+            _clear_answer_delta_hold(config, event_locals)
             payload = build_event("message.completed", event_locals)
             if payload is None:
                 _warn_stage_diagnostic("payload-unavailable")
@@ -2226,6 +2576,16 @@ async def stage_message_completed_from_hermes_locals_async(
             if offer is None:
                 return False
             stage["_admission_offer"] = offer
+        if _is_intentional_silence_locals(event_locals):
+            offer = stage.get("_admission_offer")
+            if offer is not None:
+                offer.abort()
+                event_obj = local_vars.get("event")
+                if event_obj is not None:
+                    setattr(event_obj, "_hfc_admission_display_completion", None)
+            _HFC_EXACT_COMPLETION_STAGE.set(None)
+            result = await _post_terminal_with_retry(config, payload, "message.completed")
+            return isinstance(result, dict) and result.get("ok") is True
         _HFC_EXACT_COMPLETION_STAGE.set(stage)
         return True
     except Exception:
@@ -10470,9 +10830,18 @@ def queued_followup_source(source: Any, event: Any) -> Any:
     copied = copy(source)
     # Bind ownership before emit: startup/policy can fail before build_event.
     # An unidentified non-internal turn must not retain copied canonical state.
+    is_internal = getattr(event, "internal", False) is True
+    is_heartbeat = bool(getattr(event, "_heartbeat_session_id", None))
     copied._hfc_internal_turn_id = ""
     copied._hfc_turn_id = str(getattr(event, "message_id", None) or "")
-    if getattr(event, "internal", False) is True and not copied._hfc_turn_id:
+    copied._hfc_queued_followup = True
+    copied._hfc_internal_event = bool(is_internal)
+    copied._hfc_reply_expected = getattr(event, "reply_expected", None)
+    display_kind = (getattr(event, "metadata", None) or {}).get("display_kind")
+    if not display_kind and (is_internal or is_heartbeat):
+        display_kind = "internal_notification"
+    copied._hfc_display_kind = display_kind
+    if (is_internal or is_heartbeat) and not copied._hfc_turn_id:
         copied._hfc_internal_turn_id = "hfc-internal:" + uuid4().hex
         copied._hfc_turn_id = copied._hfc_internal_turn_id
     return copied
@@ -11152,7 +11521,43 @@ def _event_data(
             data["error"] = error
         return data
     if event_name == "message.completed":
-        answer = _completion_answer(local_vars)
+        if local_vars.get("_hfc_native_fallback") is True:
+            model, provider = _completion_route(local_vars)
+            data.update({
+                "answer": "",
+                "native_fallback": True,
+                "attachments": [],
+                "native_delivery": "required",
+                "duration": _completion_duration(local_vars),
+                "model": model,
+                "tokens": _completion_tokens(local_vars, ""),
+                "context": _completion_context(local_vars),
+            })
+            if provider:
+                data["provider"] = provider
+            delivery_kind = _first_string(local_vars, ("delivery_kind",))
+            if delivery_kind:
+                data["delivery_kind"] = delivery_kind
+            return data
+        if _is_intentional_silence_locals(local_vars):
+            model, provider = _completion_route(local_vars)
+            data.update({
+                "answer": "",
+                "intentional_silence": True,
+                "attachments": [],
+                "native_delivery": "allowed",
+                "duration": _completion_duration(local_vars),
+                "model": model,
+                "tokens": _completion_tokens(local_vars, ""),
+                "context": _completion_context(local_vars),
+            })
+            if provider:
+                data["provider"] = provider
+            delivery_kind = _first_string(local_vars, ("delivery_kind",))
+            if delivery_kind:
+                data["delivery_kind"] = delivery_kind
+            return data
+        answer = _strip_trailing_silence_marker(_completion_answer(local_vars))
         model, provider = _completion_route(local_vars)
         # The completion envelope also carries failed/partial Gateway returns.
         # Keep its delivery/attachment contract, but do not lose exact outcome
@@ -11888,6 +12293,8 @@ def _completion_duration(local_vars: dict[str, Any]) -> float:
 
 
 def _completion_answer(local_vars: dict[str, Any]) -> str:
+    if _is_intentional_silence_locals(local_vars):
+        return ""
     direct = _first_string(
         local_vars,
         ("answer", "response", "final_answer", "final_response", "text", "content"),

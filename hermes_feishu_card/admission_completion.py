@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import asyncio
 from contextvars import ContextVar
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 from functools import wraps
 from hashlib import sha256
 import importlib
 import inspect
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -30,19 +31,24 @@ from .admission_topology_0226 import (
     CORE_HASHES_0230 as _V0230_CORE_HASHES,
     CORE_HASHES_0231 as _V0231_CORE_HASHES,
     CORE_HASHES_0232 as _V0232_CORE_HASHES,
+    CORE_HASHES_0233 as _V0233_CORE_HASHES,
     DECORATED_0230 as _V0230_DECORATED,
     DECORATED_0231 as _V0231_DECORATED,
     DECORATED_0232 as _V0232_DECORATED,
+    DECORATED_0233 as _V0233_DECORATED,
     FUNCTIONS_0230 as _V0230_FUNCTIONS,
     FUNCTIONS_0231 as _V0231_FUNCTIONS,
     FUNCTIONS_0232 as _V0232_FUNCTIONS,
+    FUNCTIONS_0233 as _V0233_FUNCTIONS,
     OPTIONAL_MODULES_0230 as _V0230_OPTIONAL_MODULES,
     OPTIONAL_MODULES_0231 as _V0231_OPTIONAL_MODULES,
     OPTIONAL_MODULES_0232 as _V0232_OPTIONAL_MODULES,
+    OPTIONAL_MODULES_0233 as _V0233_OPTIONAL_MODULES,
     SOURCE_HASHES_0227 as _V0227_SOURCE_HASHES,
     SOURCE_HASHES_0230 as _V0230_SOURCE_HASHES,
     SOURCE_HASHES_0231 as _V0231_SOURCE_HASHES,
     SOURCE_HASHES_0232 as _V0232_SOURCE_HASHES,
+    SOURCE_HASHES_0233 as _V0233_SOURCE_HASHES,
 )
 
 # Public provenance names for pinned-source contract tests.
@@ -97,6 +103,9 @@ SOURCE_COHORTS += (_V0231_CORE_HASHES,)
 # v0.23.2 keeps the same admission function names while pinning the
 # extracted ledger and bind_turn source closure (issue #532).
 SOURCE_COHORTS += (_V0232_CORE_HASHES,)
+# v0.23.3 replaces hermes_state_runtime and authority.db with the
+# persistence_assembly.Persistence handle and repository interfaces (#537).
+SOURCE_COHORTS += (_V0233_CORE_HASHES,)
 
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -271,7 +280,28 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
             optional_modules=_V0232_OPTIONAL_MODULES,
         ):
             return None
+    elif _V0233_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(
+            root, modules[0], modules[1], _V0233_SOURCE_HASHES,
+            functions=_V0233_FUNCTIONS,
+            decorated=_V0233_DECORATED,
+            optional_modules=_V0233_OPTIONAL_MODULES,
+        ):
+            return None
     return modules[0], modules[1]
+
+
+def _verified_with_mode() -> tuple[ModuleType, ModuleType, bool] | None:
+    verified = _verified()
+    if verified is None:
+        return None
+    authority_mod = verified[1]
+    persistence_mode = (
+        callable(getattr(authority_mod, "admission_row", None))
+        and callable(getattr(authority_mod, "authority_persistence", None))
+    )
+    return verified[0], authority_mod, persistence_mode
 
 
 def mode(values: dict[str, Any]) -> str:
@@ -354,6 +384,9 @@ class Completion:
     db: Any = None
     target: Any = None
     diagnostic_emitted: bool = False
+    persistence_mode: bool = field(default=False, repr=False)
+    bound_store: Any = field(default=None, repr=False)
+    holder: Any = field(default=None, repr=False)
 
     def abort(self) -> None:
         self.state = "closed"
@@ -452,9 +485,123 @@ def _claim_frame(ingress: ModuleType) -> dict[str, Any] | None:
     return None
 
 
-def _runtime_epoch_current(db: Any, epoch: Any, instance_id: str) -> bool:
+def _authority_store(authority: Any, *, persistence_mode: bool) -> Any:
+    if not persistence_mode:
+        return getattr(authority, "db", None)
+    persistence_mod = sys.modules.get("gateway.session_persistence")
+    assembly_mod = sys.modules.get("persistence_assembly")
+    context_mod = sys.modules.get("persistence.core.context")
+    admissions_mod = sys.modules.get("persistence.authority.admissions")
+    sqlite_backend_mod = sys.modules.get("persistence.sqlite._backend")
+    sqlite_admissions_mod = sys.modules.get("persistence.sqlite.authority.admissions")
+    sqlite_runtime_mod = sys.modules.get("persistence.sqlite.authority.runtime")
+    sqlite_admission_store_mod = sys.modules.get("persistence.sqlite.authority._admission_store")
+    sqlite_runtime_helper_mod = sys.modules.get("persistence.sqlite.authority._runtime")
+    sqlite_ends_mod = sys.modules.get("persistence.sqlite.authority._runtime_ends")
+    if (
+        persistence_mod is None
+        or assembly_mod is None
+        or context_mod is None
+        or admissions_mod is None
+        or sqlite_backend_mod is None
+        or sqlite_admissions_mod is None
+        or sqlite_runtime_mod is None
+        or sqlite_admission_store_mod is None
+        or sqlite_runtime_helper_mod is None
+        or sqlite_ends_mod is None
+    ):
+        return None
+    store = persistence_mod.authority_persistence(authority)
+    if (
+        type(store) is not assembly_mod.Persistence
+        or getattr(store, "read_only", None) is not False
+        or getattr(store, "_release", None) is None
+        or type(getattr(store, "scope", None)) is not context_mod.ProfileScope
+        or "runtime" in vars(store)
+        or "admissions" in vars(store)
+        or "_bound_store" in vars(store)
+        or "serves_same_store" in vars(store)
+    ):
+        return None
+    bound_store: Any = getattr(store, "_store", None)
+    if bound_store is None:
+        return None
+    if (
+        type(bound_store) is not sqlite_backend_mod.SQLiteStore
+        or getattr(bound_store, "read_only", None) is not False
+        or type(getattr(bound_store, "scope", None)) is not context_mod.ProfileScope
+        or bound_store.scope != store.scope
+        or bound_store.scope.hermes_home_key != store.scope.hermes_home_key
+        or Path(bound_store.scope.profile_dir).resolve() != Path(store.scope.profile_dir).resolve()
+        or Path(bound_store.store_path).resolve() != Path(store.scope.profile_dir).resolve() / "state.db"
+    ):
+        return None
+    admissions_repo = store.admissions
+    runtime_repo = store.runtime
+    if (
+        type(admissions_repo) is not sqlite_admissions_mod.SQLiteAdmissionRepository
+        or type(runtime_repo) is not sqlite_runtime_mod.SQLiteSessionRuntimeRepository
+        or admissions_repo._store is not bound_store
+        or runtime_repo._store is not bound_store
+        or "get" in vars(admissions_repo)
+        or "current_epoch" in vars(runtime_repo)
+    ):
+        return None
+    holder = getattr(bound_store, "_held", None)
+    if (
+        holder is None
+        or bound_store.holder(reacquire=False) is not holder
+        or getattr(holder, "read_only", True) is not False
+        or getattr(holder, "_db_replaced", False)
+        or getattr(holder, "_db_wal_generation_lost", False)
+        or getattr(holder, "_read_conns_closed", False)
+        or Path(holder.db_path).resolve() != Path(bound_store.store_path).resolve()
+        or holder._db_file_was_replaced()
+    ):
+        return None
+    return store
+
+
+def _get_admission_row(
+    store_or_db: Any, admission_id: str, *, persistence_mode: bool = False
+) -> dict[str, Any] | None:
+    if not persistence_mode:
+        get_session_admission = importlib.import_module(
+            "hermes_state_runtime"
+        ).get_session_admission
+        row = get_session_admission(store_or_db, admission_id=admission_id)
+        return row if isinstance(row, dict) else None
+    record = store_or_db.admissions.get(admission_id=admission_id)
+    if record is None:
+        return None
+    admissions_mod = sys.modules.get("persistence.authority.admissions")
+    authority_mod = sys.modules.get("gateway.session_authority")
+    if (
+        admissions_mod is None
+        or authority_mod is None
+        or type(record) is not admissions_mod.AdmissionRecord
+    ):
+        return None
+    row = authority_mod.admission_row(record)
+    return row if isinstance(row, dict) else None
+
+
+def _runtime_epoch_current(
+    db: Any, epoch: Any, instance_id: str
+) -> bool:
     """Read the current native owner; terminal rows retain their historical epoch."""
     try:
+        assembly_mod = sys.modules.get("persistence_assembly")
+        if assembly_mod is not None and type(db) is getattr(assembly_mod, "Persistence", None):
+            if type(epoch) is not int or _text(instance_id) is None:
+                return False
+            holder = db._store._held
+            if holder._db_file_was_replaced():
+                return False
+            current = db.runtime.current_epoch()
+            if holder._db_file_was_replaced():
+                return False
+            return type(current) is int and current == epoch
         with db._read_ctx() as connection:
             row = connection.execute(
                 "SELECT epoch, instance_id FROM runtime_epoch WHERE singleton=1"
@@ -475,11 +622,14 @@ def _authority_current(
 ) -> bool:
     authority = offer.authority() if offer.authority is not None else None
     live = offer.live() if offer.live is not None else None
-    verified = _verified()
-    if authority is None or live is None or verified is None:
+    verified_info = _verified_with_mode()
+    if authority is None or live is None or verified_info is None:
+        return False
+    _, authority_mod, persistence_mode = verified_info
+    if bool(getattr(offer, "persistence_mode", False)) is not persistence_mode:
         return False
     try:
-        cls = verified[1].SessionAuthority
+        cls = authority_mod.SessionAuthority
         if any(
             getattr(authority, name).__func__ is not getattr(cls, name)
             for name in (
@@ -491,15 +641,28 @@ def _authority_current(
             )
         ):
             return False
+        store_or_db = _authority_store(authority, persistence_mode=persistence_mode)
         if (
             authority.epoch != offer.epoch
             or authority.runner is not offer.runner()
             or authority.retiring
             or authority.instance_id != offer.instance_id
             or authority.profile_id != offer.authority_profile
+            or store_or_db is None
             or offer.db is None
-            or authority.db is not offer.db()
-            or not _runtime_epoch_current(authority.db, offer.epoch, offer.instance_id)
+            or store_or_db is not offer.db()
+            or (
+                persistence_mode
+                and (
+                    offer.bound_store is None
+                    or store_or_db._store is not offer.bound_store()
+                    or offer.holder is None
+                    or store_or_db._store._held is not offer.holder()
+                )
+            )
+            or not _runtime_epoch_current(
+                store_or_db, offer.epoch, offer.instance_id
+            )
             or authority.sessions.get(offer.authority_owner[0]) is not live
             or not _live_route_matches(live.source, offer.route)
             or live.route != offer.session_key
@@ -508,10 +671,9 @@ def _authority_current(
             or not _current(offer)
         ):
             return False
-        get_session_admission = importlib.import_module(
-            "hermes_state_runtime"
-        ).get_session_admission
-        row = get_session_admission(authority.db, admission_id=offer.admission_id)
+        row = _get_admission_row(
+            store_or_db, offer.admission_id, persistence_mode=persistence_mode
+        )
         if (
             not isinstance(row, dict)
             or row.get("admission_id") != offer.admission_id
@@ -712,7 +874,9 @@ def _automation_owner(event: Any, ref: Any, row: Any, key: str | None) -> tuple[
         return None
 
 
-def _authority_profile_matches(authority: Any, profile: str) -> bool:
+def _authority_profile_matches(
+    authority: Any, profile: str, *, persistence_mode: bool = False, store: Any = None
+) -> bool:
     from .profile_sources import legacy_profile_identity, profile_from_hermes_home_path
     from .profile_root import ProfileRootUnavailable, native_profile_root
 
@@ -722,8 +886,16 @@ def _authority_profile_matches(authority: Any, profile: str) -> bool:
             # Absolute claims always bind to their own DB first (#512): the
             # parser must not bypass this proof for .hermes-shaped paths.
             home = Path(authority_value).resolve()
-            if Path(authority.db.db_path).resolve().parent != home:
-                return False
+            if persistence_mode:
+                if (
+                    store is None
+                    or Path(store.scope.profile_dir).resolve() != home
+                    or store.scope.hermes_home_key != os.path.normcase(str(home))
+                ):
+                    return False
+            else:
+                if Path(authority.db.db_path).resolve().parent != home:
+                    return False
             # With a verified native root, the name is root-bound: only the
             # root itself (default) or an exact <root>/profiles/<name> child
             # counts. Without the helper, keep the pre-#512 shape rule.
@@ -766,14 +938,18 @@ def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool]
     short-lived and can recheck the same borrowed owner after policy I/O in a
     worker thread; it never grants a later completion or acknowledgement.
     """
-    verified = _verified()
-    if verified is None:
+    verified_info = _verified_with_mode()
+    if verified_info is None:
         return None
-    claim = _claim_frame(verified[0])
+    ingress_mod, _, persistence_mode = verified_info
+    claim = _claim_frame(ingress_mod)
     if claim is None:
         return None
     try:
         authority, ref, row = claim["authority"], claim["ref"], claim["row"]
+        store_or_db = _authority_store(authority, persistence_mode=persistence_mode)
+        if store_or_db is None:
+            return None
         event, runner, source = values.get("event"), values.get("self"), values.get("source")
         task = asyncio.current_task()
         if (task is None or event is None or runner is None or source is None
@@ -801,7 +977,9 @@ def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool]
                 or type(owner[1]) is not int or owner[1] <= 0
                 or getattr(ref, "session_id", None) != owner[0]
                 or row.get("generation") != owner[1]
-                or not _authority_profile_matches(authority, profile)):
+                or not _authority_profile_matches(
+                    authority, profile, persistence_mode=persistence_mode, store=store_or_db
+                )):
             return None
         adapter = runner._adapter_for_source(source)
         if (adapter is None or _text(getattr(adapter, "_app_id", None)) is None
@@ -813,7 +991,10 @@ def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool]
             admission_id=row["admission_id"], authority=weakref.ref(authority),
             epoch=authority.epoch, live=weakref.ref(authority.sessions[owner[0]]),
             app_id=adapter._app_id, instance_id=authority.instance_id,
-            authority_profile=authority.profile_id, db=weakref.ref(authority.db),
+            authority_profile=authority.profile_id, db=weakref.ref(store_or_db),
+            persistence_mode=persistence_mode,
+            bound_store=weakref.ref(store_or_db._store) if persistence_mode else None,
+            holder=weakref.ref(store_or_db._store._held) if persistence_mode else None,
         )
 
         def current() -> bool:
@@ -823,13 +1004,15 @@ def first_card_guard(values: dict[str, Any], profile: str) -> Callable[[], bool]
                         or _route_source(source, route[-1], profile) != route
                         or runner._adapter_for_source(source) is not adapter
                         or runner._adapter_for_source(getattr(event, "source", None)) is not adapter
-                        or not _authority_profile_matches(authority, profile)
+                        or not _authority_profile_matches(
+                            authority, profile, persistence_mode=persistence_mode, store=store_or_db
+                        )
                         or _base_extractor(adapter) is None
                         or not _authority_current(offer, started=True, producer_task=task)):
                     return False
-                current_row = importlib.import_module(
-                    "hermes_state_runtime"
-                ).get_session_admission(authority.db, admission_id=offer.admission_id)
+                current_row = _get_admission_row(
+                    store_or_db, offer.admission_id, persistence_mode=persistence_mode
+                )
                 if (not isinstance(current_row, dict)
                         or current_row.get("admission_id") != offer.admission_id
                         or current_row.get("target_session_id") != owner[0]
@@ -894,15 +1077,24 @@ def _prepare_authority_reason(offer: Completion) -> str:
         live = offer.live() if offer.live is not None else None
         if authority is None or live is None:
             return "authority-owner-stale"
+        persistence_mode = bool(getattr(offer, "persistence_mode", False))
+        store_or_db = _authority_store(authority, persistence_mode=persistence_mode)
         if (authority.epoch != offer.epoch or authority.instance_id != offer.instance_id
-                or offer.db is None or authority.db is not offer.db()
-                or not _runtime_epoch_current(authority.db, offer.epoch, offer.instance_id)):
+                or store_or_db is None or offer.db is None or store_or_db is not offer.db()
+                or (persistence_mode and (
+                    offer.bound_store is None or store_or_db._store is not offer.bound_store()
+                    or offer.holder is None or store_or_db._store._held is not offer.holder()
+                ))
+                or not _runtime_epoch_current(
+                    store_or_db, offer.epoch, offer.instance_id
+                )):
             return "authority-epoch-stale"
         if (authority.retiring or getattr(live, "superseded", False)
                 or authority.sessions.get(offer.authority_owner[0]) is not live):
             return "authority-owner-stale"
-        get_row = importlib.import_module("hermes_state_runtime").get_session_admission
-        row = get_row(authority.db, admission_id=offer.admission_id)
+        row = _get_admission_row(
+            store_or_db, offer.admission_id, persistence_mode=persistence_mode
+        )
         if isinstance(row, dict):
             if row.get("owner_epoch") != offer.epoch:
                 return "authority-epoch-stale"
@@ -925,10 +1117,11 @@ def prepare(
     values: dict[str, Any], stage: dict[str, Any], finish: Finish
 ) -> Completion | None:
     """Bind the existing claim and canonical payload; never infer an execution claim."""
-    verified = _verified()
-    if verified is None or mode(values) != "handoff":
+    verified_info = _verified_with_mode()
+    if verified_info is None or mode(values) != "handoff":
         return _prepare_failed("source-unverified")
-    claim = _claim_frame(verified[0])
+    ingress_mod, _, persistence_mode = verified_info
+    claim = _claim_frame(ingress_mod)
     if claim is None:
         return _prepare_failed("claim-frame-missing")
     authority: Any = claim.get("authority")
@@ -999,6 +1192,9 @@ def prepare(
     if not _admission_identity_matches(data, route):
         return _prepare_failed("identity-mismatch")
     try:
+        store_or_db = _authority_store(authority, persistence_mode=persistence_mode)
+        if store_or_db is None:
+            return _prepare_failed("authority-unverified")
         adapter = runner._adapter_for_source(source)
         if (
             _text(getattr(adapter, "_app_id", None)) is None
@@ -1025,12 +1221,18 @@ def prepare(
         offer.epoch = authority.epoch
         offer.instance_id = authority.instance_id
         offer.authority_profile = authority.profile_id
-        offer.db = weakref.ref(authority.db)
+        offer.db = weakref.ref(store_or_db)
+        offer.persistence_mode = persistence_mode
+        if persistence_mode:
+            offer.bound_store = weakref.ref(store_or_db._store)
+            offer.holder = weakref.ref(store_or_db._store._held)
         offer.admission_id = row["admission_id"]
         offer.app_id = adapter._app_id
         offer.profile_source = data["profile_source"]
         offer.turn_outcome = data.get("turn_outcome")
-        if not _authority_profile_matches(authority, profile):
+        if not _authority_profile_matches(
+            authority, profile, persistence_mode=persistence_mode, store=store_or_db
+        ):
             return _prepare_failed("authority-profile-mismatch")
         if not _row_route_matches(row, offer):
             return _prepare_failed("durable-route-mismatch")
@@ -1040,7 +1242,7 @@ def prepare(
         if isinstance(previous, Completion):
             previous.abort()
         setattr(event, _ATTR, offer)
-        _install(verified[0], finish)
+        _install(ingress_mod, finish)
         return offer
     except (TypeError, AttributeError, KeyError, ValueError, OSError):
         return _prepare_failed("prepare-exception")

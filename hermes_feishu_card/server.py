@@ -75,6 +75,8 @@ from .event_rules import (
     is_independent_notice_event as _is_independent_notice_event,
     is_redirect_followup_event as _is_redirect_followup_event,
     is_compaction_session_start as _is_compaction_session_start,
+    is_intentional_silence_event as _is_intentional_silence_event,
+    is_native_fallback_event as _is_native_fallback_event,
     event_is_terminal as _event_is_terminal,
     safe_profile_id as _safe_profile_id,
     would_apply as _would_apply,
@@ -4656,6 +4658,9 @@ async def _apply_event_locked_inner(
         return web.json_response(response_payload), post_lock_task
 
     if session is None or reopens_completed_session:
+        if _is_intentional_silence_event(incoming_event) or _is_native_fallback_event(incoming_event):
+            metrics.events_ignored += 1
+            return web.json_response({"ok": True, "applied": False}), None
         metrics.policy_event_checks += 1
         decision = _policy_decision(
             request.app,
@@ -5174,6 +5179,11 @@ async def _apply_event_locked_inner(
 
     feishu_message_id = feishu_message_ids.get(session_key)
     if _would_apply(session, event) and feishu_message_id is None:
+        if _is_intentional_silence_event(event) or _is_native_fallback_event(event):
+            if session.apply(event, advance_sequence=advance_sequence):
+                session.terminal_delivery_state = "delivered"
+            metrics.events_ignored += 1
+            return web.json_response({"ok": True, "applied": False}), None
         metrics.events_rejected += 1
         return web.json_response(
             {"ok": False, "error": "feishu_message_id missing"},
@@ -5216,7 +5226,7 @@ async def _apply_event_locked_inner(
         and event_is_terminal
         and session.status in {"completed", "failed"}
     )
-    if terminal_already_handled and session.terminal_disposition in {"native", "segmented"}:
+    if terminal_already_handled and session.terminal_disposition in {"native", "segmented", "silent", "native_fallback"}:
         metrics.events_applied += 1
         return web.json_response({"ok": True, "applied": True}), None
     if terminal_already_handled:
@@ -5224,8 +5234,13 @@ async def _apply_event_locked_inner(
     render_result: CardRenderResult | None = None
     handoff_record: NativeHandoffRecord | None = None
     if applied and not terminal_already_handled:
+        is_silence_or_fallback = _is_intentional_silence_event(event) or _is_native_fallback_event(event)
         render_result = _render_session_card_result_for_app(request.app, session)
-        if needs_continuation(session, event) and render_result.disposition == "card":
+        if (
+            not is_silence_or_fallback
+            and needs_continuation(session, event)
+            and render_result.disposition == "card"
+        ):
             await _open_display_continuation(
                 request, session_key, session, render_result.card,
                 profile_id=_policy_profile_id(event),
@@ -5235,7 +5250,11 @@ async def _apply_event_locked_inner(
             render_result = _render_session_card_result_for_app(request.app, session)
         if event.event != "interaction.requested":
             render_result = _existing_owner_render_result(request.app, session, render_result, session_key=session_key)
-        if event_is_terminal and render_result.disposition == "segmented":
+        if (
+            event_is_terminal
+            and not is_silence_or_fallback
+            and render_result.disposition == "segmented"
+        ):
             # Opt-in over-limit terminal segmentation (card.over_limit). The
             # main card and every continuation card were verified in limit at
             # render time; deliver them inside the turn so the event response
@@ -5270,7 +5289,11 @@ async def _apply_event_locked_inner(
                     render_result = _segmented_fallback_result(
                         request.app, session, render_result, session_key=session_key
                     )
-        if event_is_terminal and render_result.disposition == "native":
+        if (
+            event_is_terminal
+            and not is_silence_or_fallback
+            and render_result.disposition == "native"
+        ):
             handoff_record, handoff_created = _begin_native_handoff(
                 request.app,
                 handoff_identity,
@@ -5528,19 +5551,25 @@ async def _apply_event_locked_inner(
         return web.json_response({"ok": True, "applied": True}), None
     post_lock_task = None
     if applied and feishu_message_id is not None and render_result is not None:
-        if event_is_terminal:
+        is_silence_or_fallback = _is_intentional_silence_event(event) or _is_native_fallback_event(event)
+        if event_is_terminal and not is_silence_or_fallback:
             _store_card_summary(request.app, event, session, feishu_message_id)
         is_terminal = event_is_terminal
         controller = _flush_controller_for_session(request.app, session_key)
         bot_id = message_bot_ids.get(session_key)
         owner_generation = session.display_segment.get("generation", 0)
-        _ensure_card_animation(
-            request.app,
-            session_key=session_key,
-            session=session,
-            feishu_message_id=feishu_message_id,
-            bot_id=bot_id,
-        )
+        if is_silence_or_fallback:
+            animation_task = request.app[CARD_ANIMATION_TASKS_KEY].pop(session_key, None)
+            if animation_task is not None:
+                animation_task.cancel()
+        else:
+            _ensure_card_animation(
+                request.app,
+                session_key=session_key,
+                session=session,
+                feishu_message_id=feishu_message_id,
+                bot_id=bot_id,
+            )
 
         terminal_target = TerminalTarget(
             session_key=session_key, message_id=feishu_message_id,
@@ -5599,7 +5628,8 @@ async def _apply_event_locked_inner(
                 except Exception:
                     # Optional display cleanup must never withhold the final answer.
                     request.app[DIAGNOSTICS_KEY]['last_approval_display_cleanup'] = 'retained'
-                await _populate_subscription_usage(request.app, latest_session)
+                if not is_silence_or_fallback:
+                    await _populate_subscription_usage(request.app, latest_session)
                 populated_result = _render_session_card_result_for_app(
                     request.app, latest_session
                 )
@@ -5619,7 +5649,12 @@ async def _apply_event_locked_inner(
                         latest_card = bounded_result.card
             if terminal_target is not None:
                 terminal_outcome = await deliver_terminal(
-                    TerminalDeliveryPlan(terminal_target, render_result.disposition, latest_card),
+                    TerminalDeliveryPlan(
+                        terminal_target,
+                        "card" if is_silence_or_fallback else render_result.disposition,
+                        latest_card,
+                        allow_recover=not is_silence_or_fallback,
+                    ),
                     latest_session,
                     _AppTerminalTransport(request.app),
                     is_current=lambda: session.display_segment.get("generation", 0) == owner_generation,
@@ -5679,6 +5714,7 @@ async def _apply_event_locked_inner(
                 and is_terminal
                 and event.event == "message.completed"
                 and render_result.disposition in {"card", "segmented"}
+                and not is_silence_or_fallback
             ):
                 await _maybe_send_completion_notify(
                     request.app,

@@ -166,6 +166,20 @@ def is_compaction_session_start(event: SidecarEvent) -> bool:
     )
 
 
+def is_intentional_silence_event(event: SidecarEvent) -> bool:
+    if event.event != "message.completed":
+        return False
+    data = event.data if isinstance(event.data, dict) else {}
+    return data.get("intentional_silence") is True
+
+
+def is_native_fallback_event(event: SidecarEvent) -> bool:
+    if event.event != "message.completed":
+        return False
+    data = event.data if isinstance(event.data, dict) else {}
+    return data.get("native_fallback") is True
+
+
 def event_is_terminal(event: SidecarEvent) -> bool:
     if event.event in TERMINAL_EVENTS:
         return True
