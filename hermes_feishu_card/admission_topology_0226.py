@@ -488,7 +488,7 @@ def _read_023_set_sources(
             key = None
             if name in owned:
                 peer_sources = None
-                if source_hashes is SOURCE_HASHES_0232 and name == "gateway.platforms.base":
+                if (source_hashes is SOURCE_HASHES_0232 or "persistence_assembly" in source_hashes) and name == "gateway.platforms.base":
                     from .install.source_layout import read_peer_contract_sources
                     peer_sources = read_peer_contract_sources(root)
                 key = _owned_removal_key(owned[name], raw, peer_sources)
@@ -664,6 +664,10 @@ def _defaults_match(
 def source_bytes(
     root: Path, expected: dict[str, str] | None = None
 ) -> dict[str, bytes] | None:
+    from .admission_topology_0233 import SOURCE_HASHES_0233, EXPECTED_RENDERED_HASHES_0233
+    if expected == SOURCE_HASHES_0233:
+        pair = _read_023_set_sources(root, expected, (EXPECTED_RENDERED_HASHES_0233,))
+        return None if pair is None else pair[0]
     if expected == SOURCE_HASHES_0230:
         pair = source_bytes_0230(root)
         return None if pair is None else pair[0]
@@ -735,7 +739,13 @@ def verified(
     """Bind loaded helpers and their explicitly registered contextlib wrappers."""
     from .admission_completion import _claim_frame, _compiled_code, _shape
 
-    if expected == SOURCE_HASHES_0230:
+    from .admission_topology_0233 import SOURCE_HASHES_0233, EXPECTED_RENDERED_HASHES_0233
+    if expected == SOURCE_HASHES_0233:
+        pair = _read_023_set_sources(root, expected, (EXPECTED_RENDERED_HASHES_0233,))
+        if pair is None:
+            return False
+        sources, code_sources = pair
+    elif expected == SOURCE_HASHES_0230:
         pair = source_bytes_0230(root)
         if pair is None:
             return False
@@ -761,9 +771,11 @@ def verified(
     sync_decorated = (
         SYNC_DECORATED_0230 if expected == SOURCE_HASHES_0230
         else SYNC_DECORATED_0231 if expected == SOURCE_HASHES_0231
-        else SYNC_DECORATED_0232 if expected == SOURCE_HASHES_0232
+        else SYNC_DECORATED_0232 if expected in (SOURCE_HASHES_0232, SOURCE_HASHES_0233)
         else frozenset()
     )
+    if expected == SOURCE_HASHES_0233:
+        sync_decorated = sync_decorated | {("persistence.sqlite.authority._runtime", "refused")}
     modules = {"gateway.session_ingress": ingress, "gateway.session_authority": authority}
     try:
         for name, raw in sources.items():
@@ -815,7 +827,7 @@ def verified(
                             _compiled_code(compiled, function_name, owner or None))):
                     return False
         lifecycle = modules["gateway.session_producer_lifecycle"]
-        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231, SOURCE_HASHES_0232):
+        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231, SOURCE_HASHES_0232, SOURCE_HASHES_0233):
             settlement = modules.get("gateway.session_settlement_recovery")
             workers = modules.get("gateway.session_runtime_workers")
             contract = modules.get("gateway.session_contract")

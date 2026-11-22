@@ -413,6 +413,9 @@ def _detect_admission_completion(root: Path, base: str) -> tuple[bool, str] | No
         return False, "unsupported-source"
     if hashes == CORE_HASHES_0232 and source_bytes(root, SOURCE_HASHES_0232) is None:
         return False, "unsupported-source"
+    from ..admission_topology_0233 import CORE_HASHES_0233, SOURCE_HASHES_0233
+    if hashes == CORE_HASHES_0233 and source_bytes(root, SOURCE_HASHES_0233) is None:
+        return False, "unsupported-source"
     return True, "verified-source-cohort"
 
 

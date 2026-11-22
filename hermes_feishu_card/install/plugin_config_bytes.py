@@ -404,6 +404,8 @@ FAMILIES["pm-0227"] = dict(_PM_0227_SOURCES)
 FAMILIES["pm-0230"] = dict(_PM_0230_SOURCES)
 FAMILIES["pm-0231"] = dict(_PM_0231_SOURCES)
 FAMILIES["pm-0232"] = dict(_PM_0232_SOURCES)
+from ._writer_0233 import FAMILY_SOURCES as _PM_0233_SOURCES, LAUNCH_SOURCES as _PM_0233_LAUNCH
+FAMILIES["pm-0233"] = dict(_PM_0233_SOURCES)
 
 # The official launch bootstrap executes these files before the writer plan.
 # They are intentionally separate from FAMILIES: the writer contract and the
@@ -450,6 +452,7 @@ LAUNCH_SOURCES["pm-0227"] = dict(_PM_0227_LAUNCH)
 LAUNCH_SOURCES["pm-0230"] = dict(_PM_0230_LAUNCH)
 LAUNCH_SOURCES["pm-0231"] = dict(_PM_0231_LAUNCH)
 LAUNCH_SOURCES["pm-0232"] = dict(_PM_0232_LAUNCH)
+LAUNCH_SOURCES["pm-0233"] = dict(_PM_0233_LAUNCH)
 
 
 def _digest(path: Path) -> str:
@@ -701,7 +704,7 @@ class ConfigBytesPlan:
 
     def verify_source(self) -> None:
         verify_family(self.root, self.family)
-        if self.family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232"):
+        if self.family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232", "pm-0233"):
             if self.backend_proof is None:
                 raise ConfigBytesRefused("file backend proof missing", code="backend-unverified", stage="backend")
             try:
@@ -1145,9 +1148,13 @@ def verify_0226_admission(
     required_version = 52
     if sources is not None and sources in (FAMILIES.get("pm-0231"), FAMILIES.get("pm-0232")):
         required_version = 53
+    if sources is not None and sources == FAMILIES.get("pm-0233"):
+        required_version = 54
     if type(version) is not int or version != required_version:
         raise ConfigBytesRefused(
-            ("Hermes v0.23.1/v0.23.2 config migration must complete before HFC installation; "
+            ("Hermes v0.23.3 config migration must complete before HFC installation; "
+             if required_version == 54 else
+             "Hermes v0.23.1/v0.23.2 config migration must complete before HFC installation; "
              if required_version == 53 else
              "Hermes v0.22.6/v0.22.7/v0.23.0 config migration must complete before HFC installation; ") +
             "run the normal Hermes upgrade/config migrate flow, do not edit the version stamp",
@@ -1187,7 +1194,7 @@ def _plan_enabled_bytes(
     backend_proof = (verify_0226_admission(
         root, python, home, before=before, sources=FAMILIES[family],
     )
-                     if family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232") else None)
+                     if family in ("pm-0226", "pm-0227", "pm-0230", "pm-0231", "pm-0232", "pm-0233") else None)
     try:
         with tempfile.TemporaryDirectory(
             prefix="hfc-config-plan-", dir=state_dir
