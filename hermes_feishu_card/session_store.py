@@ -11,7 +11,10 @@ from pathlib import Path
 
 from .card_timeline import CardTimeline, TimelineEntry
 from .event_rules import TERMINAL_EVENTS, TURN_REOPENING_EVENTS
-from .session import CardSession, PendingReopenCreate, ToolState
+from .session import (
+    MAX_CONFIRMED_LEGACY_TERMINAL_RECEIPTS, CardSession, LegacyTerminalReceipts,
+    PendingReopenCreate, ToolState, recent_legacy_terminal_receipts,
+)
 from .display_segments import valid_checkpoint_state
 from .legacy_owner import valid_auxiliary_receipt, valid_legacy_receipt
 from .native_handoff import (
@@ -24,16 +27,34 @@ RETENTION_SECONDS = 24 * 3600
 _EXCLUDED = {'tools', 'timeline', 'thinking_normalizer', 'answer_normalizer',
              'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id', '_process_activity',
              'presentation_state', 'observation', 'legacy_terminal_fingerprint', 'legacy_terminal_start_at',
-             'legacy_route_thread_id',
+             'legacy_route_thread_id', 'confirmed_legacy_terminal_receipts',
              'pending_reopen_create', 'restored_legacy_terminal', 'restored_unconfirmed_terminal',
              # Keep the v1 display payload unchanged and the live requester private.
              'sender_user_id', 'sender_open_id_rejected', 'display_requester_digest'}
 _FIELDS = {f.name for f in fields(CardSession)} - _EXCLUDED
 _REOPEN_FIELDS = {f.name for f in fields(PendingReopenCreate)} - {'candidate'}
+_SESSION_ROUTE_FIELDS = ('conversation_id', 'message_id', 'chat_id')
+_SHA256_DIGEST = re.compile(r'[0-9a-f]{64}')
 
 
 def _validated_requester_digest(value: object) -> str:
-    return value if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) else ''
+    return value if isinstance(value, str) and _SHA256_DIGEST.fullmatch(value) else ''
+
+
+def _load_confirmed_legacy_terminal_receipts(data, now: float) -> LegacyTerminalReceipts:
+    if not isinstance(data, list) or len(data) > MAX_CONFIRMED_LEGACY_TERMINAL_RECEIPTS:
+        return ()
+    receipts = {}
+    for item in data:
+        if not isinstance(item, list) or len(item) != 2:
+            return ()
+        fingerprint, confirmed_at = item
+        if (not isinstance(fingerprint, str) or not _SHA256_DIGEST.fullmatch(fingerprint)
+                or fingerprint in receipts
+                or type(confirmed_at) not in (int, float) or not 0 < confirmed_at <= now):
+            return ()
+        receipts[fingerprint] = float(confirmed_at)
+    return recent_legacy_terminal_receipts(tuple(receipts.items()), now=now)
 
 
 def _display_payload(session):
@@ -62,7 +83,7 @@ def _load_display_payload(data):
         raise ValueError('invalid checkpoint display')
     session = CardSession(**{key: data[key] for key in _FIELDS})
     if not all(isinstance(getattr(session, key), str) and getattr(session, key)
-               for key in ('conversation_id', 'message_id', 'chat_id')):
+               for key in _SESSION_ROUTE_FIELDS):
         raise ValueError('invalid checkpoint route')
     session.tools = {key: ToolState(**tool) for key, tool in data['tools'].items()}
     timeline = dict(data['timeline'])
@@ -108,19 +129,29 @@ class SessionStore:
 
     def save(self, key, session, message_id, bot_id, profile_id, aliases, client_identity,
              *, auxiliary_receipt=None):
-        # Keep confirmed segmented display ownership across restart.
-        # Native handoff uses its own delivery ledger.
-        if session.terminal_disposition not in {'', 'segmented'} or session.delivery_kind != 'chat':
+        now = time.time()
+        history = recent_legacy_terminal_receipts(session.confirmed_legacy_terminal_receipts, now=now)
+        has_display_owner = session.terminal_disposition in {'', 'segmented'} and session.delivery_kind == 'chat'
+        if not has_display_owner and not history:
             self.remove(key)
             return
-        body = _display_payload(session)
         prefix = f"{profile_id}:" if profile_id else ""
         if not key.startswith(prefix) or not key[len(prefix):]:
             raise ValueError("checkpoint turn scope mismatch")
-        record = dict(version=1, key=key, turn_id=key[len(prefix):], session=body, message_id=message_id,
-                      bot_id=bot_id, profile_id=profile_id, aliases=aliases, client_identity=client_identity,
-                      had_interaction=(session.active_interaction is not None and session.active_interaction.status in {"pending","paused"}),
-                      saved_at=time.time())
+        record = dict(version=1, key=key, turn_id=key[len(prefix):], bot_id=bot_id,
+                      profile_id=profile_id, client_identity=client_identity, saved_at=now)
+        if history:
+            record['confirmed_legacy_terminal_receipts'] = history
+        if not has_display_owner:
+            # A native or partially delivered replacement retires the writable
+            # owner. Keep only the previously confirmed receipts and their route.
+            record['legacy_terminal_receipts_only'] = True
+            record['session'] = {field: getattr(session, field) for field in _SESSION_ROUTE_FIELDS}
+            self._write_record(key, record)
+            return
+        record.update(session=_display_payload(session), message_id=message_id, aliases=aliases,
+                      had_interaction=(session.active_interaction is not None
+                                       and session.active_interaction.status in {"pending", "paused"}))
         requester = _validated_requester_digest(session.checkpoint_requester_digest())
         if requester:
             record['display_requester_digest'] = requester
@@ -144,6 +175,9 @@ class SessionStore:
                     or auxiliary_receipt['message_id'] == message_id):
                 raise ValueError('invalid auxiliary display receipt')
             record['auxiliary_receipt'] = auxiliary_receipt
+        self._write_record(key, record)
+
+    def _write_record(self, key, record):
         encoded = json.dumps(record, ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
         payload = json.dumps({'record':record, 'digest':hashlib.sha256(encoded).hexdigest()},
                              ensure_ascii=False, allow_nan=False).encode()
@@ -166,10 +200,14 @@ class SessionStore:
             if time.time() - path.stat().st_mtime > RETENTION_SECONDS:
                 path.unlink()
 
-    def load(self):
-        self.prune()
+    def load(self, *, key=None):
+        if key is None:
+            self.prune()
+            paths = sorted(self.root.glob('*.json'))[:MAX_RECORDS]
+        else:
+            paths = (self._path(key),)
         records = []
-        for path in sorted(self.root.glob('*.json'))[:MAX_RECORDS]:
+        for path in paths:
             try:
                 _validate_existing_private_file(self.root, path)
                 if path.stat().st_size > MAX_RECORD_BYTES:
@@ -181,30 +219,51 @@ class SessionStore:
                     continue
                 if r['version'] != 1 or self._path(r['key']) != path:
                     continue
-                if not 0 <= time.time() - r['saved_at'] <= RETENTION_SECONDS:
+                now = time.time()
+                if not 0 <= now - r['saved_at'] <= RETENTION_SECONDS:
                     continue
-                if not all(isinstance(r[k], str) for k in ('key','turn_id','message_id','profile_id')):
+                if not all(isinstance(r[k], str) for k in ('key', 'turn_id', 'profile_id')):
                     continue
                 prefix = f"{r['profile_id']}:" if r['profile_id'] else ''
                 if not r['turn_id'] or r['key'] != prefix + r['turn_id']:
                     continue
-                if not r['message_id'] or r['bot_id'] is not None and not isinstance(r['bot_id'],str):
+                if r['bot_id'] is not None and not isinstance(r['bot_id'], str):
+                    continue
+                history = _load_confirmed_legacy_terminal_receipts(r.get('confirmed_legacy_terminal_receipts'), now)
+                if r.get('legacy_terminal_receipts_only') is True:
+                    route = r['session']
+                    if (not history or not isinstance(route, dict) or set(route) != set(_SESSION_ROUTE_FIELDS)
+                            or not all(isinstance(value, str) and value for value in route.values())):
+                        continue
+                    r['session'] = CardSession(**route, confirmed_legacy_terminal_receipts=history)
+                    records.append(r)
+                    continue
+                if not isinstance(r['message_id'], str) or not r['message_id']:
                     continue
                 auxiliary = r.get('auxiliary_receipt', {})
                 if (not valid_auxiliary_receipt(auxiliary)
                         or auxiliary and auxiliary['message_id'] == r['message_id']):
                     continue
                 session = _load_display_payload(r['session'])
+                session.confirmed_legacy_terminal_receipts = history
                 session.display_requester_digest = _validated_requester_digest(r.get('display_requester_digest'))
                 thread = r.get('legacy_route_thread_id', '')
                 if isinstance(thread, str) and thread.startswith(('omt_', 'om_')):
                     session.legacy_route_thread_id = thread
                 digest = r.get('legacy_terminal_fingerprint', '')
-                if session.status in {'completed', 'failed'} and isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest):
+                if session.status in {'completed', 'failed'} and isinstance(digest, str) and _SHA256_DIGEST.fullmatch(digest):
                     session.legacy_terminal_fingerprint = digest
                     start_at = r.get('legacy_terminal_start_at')
                     if session.terminal_card_confirmed and type(start_at) in (int, float) and math.isfinite(start_at):
                         session.legacy_terminal_start_at = start_at
+                        if ('confirmed_legacy_terminal_receipts' not in r and not r['had_interaction']
+                                and session.delivery_kind == 'chat' and session.terminal_delivery_state == 'delivered'):
+                            # Older v1 writers stored the exact marked terminal
+                            # only after the full write. Its local create time
+                            # is a conservative bound when the ACK time is absent.
+                            session.confirmed_legacy_terminal_receipts = _load_confirmed_legacy_terminal_receipts(
+                                [[digest, session.created_at]], now,
+                            )
                 session.restored_legacy_terminal = (
                     session.status in {'completed', 'failed'} and 'legacy_terminal_fingerprint' not in r
                 )
@@ -233,6 +292,6 @@ class SessionStore:
                     session.display_segment = {}
                 r['session'] = session
                 records.append(r)
-            except (ValueError, TypeError, KeyError, AttributeError, OSError):
+            except (ValueError, TypeError, KeyError, AttributeError, OSError, OverflowError):
                 continue
         return records

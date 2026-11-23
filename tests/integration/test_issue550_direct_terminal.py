@@ -63,6 +63,7 @@ async def old_v1_checkpoint(tmp_path):
         # and explicit thread provenance were saved on the record.
         record.pop("legacy_terminal_fingerprint", None)
         record.pop("legacy_route_thread_id", None)
+        record.pop("confirmed_legacy_terminal_receipts", None)
         body = json.dumps(record, ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
         envelope["digest"] = hashlib.sha256(body).hexdigest()
         path.write_text(json.dumps(envelope, ensure_ascii=False, allow_nan=False))
@@ -388,3 +389,28 @@ async def test_direct_terminal_create_failure_preserves_v1_and_replay_does_not_c
         assert transport.attempted_uuids[-1] not in attempted_uuids
         assert transport.updated == updates
         assert transport.cards["card-0"] == old_card
+
+
+async def test_marked_direct_terminal_without_checkpoint_keeps_its_own_delivery_uuid(tmp_path):
+    transport = DeduplicatingClient()
+    first_at = time.time()
+    old = _terminal("message.completed", 0, first_at, answer="First terminal body")
+    new = _terminal("message.completed", 0, first_at + 1, answer="Second terminal body")
+
+    async def send_after_restart(event, directory):
+        # Each boot has no display owner to consult; the Feishu endpoint still
+        # remembers successful creates for this bot and reply anchor.
+        async with TestClient(TestServer(_app(transport, tmp_path / directory))) as client:
+            await client.app[server.SESSION_RESTORE_TASK_KEY]
+            assert await _post(client, event) == _DELIVERED
+
+    await send_after_restart(old, "old")
+    first_card = copy.deepcopy(transport.cards["card-0"])
+    await send_after_restart(new, "new")
+    assert len(transport.cards) == 2
+    assert transport.cards["card-0"] == first_card
+    assert "Second terminal body" in str(transport.cards["card-1"])
+    await send_after_restart(new, "retry")
+    assert len(transport.cards) == 2
+    first_uuid, new_uuid, retry_uuid = transport.attempted_uuids
+    assert first_uuid != new_uuid == retry_uuid

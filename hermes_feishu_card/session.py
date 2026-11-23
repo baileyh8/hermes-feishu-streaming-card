@@ -30,6 +30,20 @@ MIN_COMPLETED_SUFFIX_RATIO_DENOMINATOR = 5
 MIN_PRESERVED_STREAMED_ANSWER_CHARS = 64
 MAX_SHORT_COMPLETION_POSTSCRIPT_CHARS = 240
 MIN_STREAMED_ANSWER_TO_POSTSCRIPT_RATIO = 3
+MAX_CONFIRMED_LEGACY_TERMINAL_RECEIPTS = 16
+LEGACY_TERMINAL_RECEIPT_TTL_SECONDS = 3600.0
+
+LegacyTerminalReceipts = tuple[tuple[str, float], ...]
+
+
+def recent_legacy_terminal_receipts(
+    receipts: LegacyTerminalReceipts, *, now: float,
+) -> LegacyTerminalReceipts:
+    recent = {
+        fingerprint: confirmed_at for fingerprint, confirmed_at in receipts
+        if 0 <= now - confirmed_at < LEGACY_TERMINAL_RECEIPT_TTL_SECONDS
+    }
+    return tuple(sorted(recent.items(), key=lambda item: item[1])[-MAX_CONFIRMED_LEGACY_TERMINAL_RECEIPTS:])
 
 # Unsuccessful turn outcomes (the gateway reports these once the provider/API call
 # failed, the turn was interrupted, or no completion was confirmed).  On these the
@@ -252,6 +266,9 @@ class CardSession:
     terminal_delivery_state: str = "idle"
     # Identity of an accepted legacy terminal event, including unconfirmed writes.
     legacy_terminal_fingerprint: str = field(default="", repr=False)
+    # Exact receipts from acknowledged legacy terminal creates on this route.
+    # Persisted separately from the v1 display payload and pending candidates.
+    confirmed_legacy_terminal_receipts: LegacyTerminalReceipts = field(default=(), repr=False)
     # Producer time of the terminal event that opened this replacement card.
     legacy_terminal_start_at: float | None = field(default=None, repr=False)
     legacy_route_thread_id: str = field(default="", repr=False)

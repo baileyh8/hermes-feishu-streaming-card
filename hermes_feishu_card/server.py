@@ -154,7 +154,10 @@ from .render import (
     render_terminal_limit_handoff_card,
 )
 from .process import state_dir
-from .session import CardSession, PendingReopenCreate
+from .session import (
+    LEGACY_TERMINAL_RECEIPT_TTL_SECONDS, CardSession, PendingReopenCreate,
+    recent_legacy_terminal_receipts,
+)
 from .text import normalize_stream_text
 from .turn_metrics import retained_output_rate
 from .approval_receipts import approval_receipt_fingerprint
@@ -326,8 +329,9 @@ NATIVE_HANDOFF_CURRENT_REPAIRS_KEY = web.AppKey(
 )
 EVENT_ID_FENCE_KEY = web.AppKey("event_id_fence", object)
 EVENT_ID_FENCE_MAX_ENTRIES = 4096
-EVENT_ID_FENCE_TTL_SECONDS = 3600.0
+EVENT_ID_FENCE_TTL_SECONDS = LEGACY_TERMINAL_RECEIPT_TTL_SECONDS
 EVENT_ID_FENCE_WAIT_SECONDS = 30.0
+_CONFIRMED_LEGACY_TERMINAL = {"ok": True, "applied": True, "delivery": {"outcome": "delivered"}}
 UPDATE_MAX_ATTEMPTS = 3
 UPDATE_MIN_INTERVAL_SECONDS = 0.2
 CARD_ANIMATION_INTERVAL_SECONDS = 0.8
@@ -478,6 +482,8 @@ class EventIdFence:
         entry: EventIdFenceEntry,
         status: int,
         payload: dict[str, object],
+        *,
+        remaining_ttl: float | None = None,
     ) -> None:
         canonical_payload = copy.deepcopy(payload)
         async with self._lock:
@@ -485,7 +491,8 @@ class EventIdFence:
                 return
             entry.response_status = int(status)
             entry.response_payload = canonical_payload
-            entry.expires_at = self.now() + self.ttl_seconds
+            ttl = self.ttl_seconds if remaining_ttl is None else min(self.ttl_seconds, remaining_ttl)
+            entry.expires_at = self.now() + ttl
             if not entry.future.done():
                 entry.future.set_result((int(status), copy.deepcopy(canonical_payload)))
 
@@ -504,6 +511,14 @@ class EventIdFence:
             copy.deepcopy(entry.response_payload),
             status=entry.response_status,
         )
+
+    def replay_confirmed_legacy_terminal(self, fingerprint: str) -> web.Response | None:
+        entry = self.entries.get(("legacy_terminal", fingerprint))
+        if (entry is not None and entry.expires_at > self.now() and entry.response_status == 200
+                and entry.response_payload == _CONFIRMED_LEGACY_TERMINAL):
+            self.metrics.event_id_replays += 1
+            return self.replay_response(entry)
+        return None
 
     def _evict_expired_completed_locked(self) -> None:
         now = self.now()
@@ -3682,6 +3697,7 @@ async def _events(request: web.Request) -> web.Response:
     fence_claim: EventIdFenceClaim | None = None
     fence = request.app[EVENT_ID_FENCE_KEY]
     fence_key: FenceKey = event.event_id
+    unfenced_marked_fingerprint = ""
     legacy_alias = (
         not event.event_id and not event.turn_id and event.event in TERMINAL_EVENTS
         and not event.data.get("native_handoff")
@@ -3725,12 +3741,23 @@ async def _events(request: web.Request) -> web.Response:
                 status=503,
             )
         assert fence_claim.kind == "owner" and fence_claim.entry is not None
+    elif _is_marked_legacy_terminal(event):
+        # No alias lock is needed just to replay an exact acknowledged
+        # delivery. First attempts still use the normal terminal admission.
+        unfenced_marked_fingerprint = _legacy_terminal_fingerprint(event)
+        replay = fence.replay_confirmed_legacy_terminal(unfenced_marked_fingerprint)
+        if replay is not None:
+            return replay
 
     metrics.events_received += 1
     response_finalized = False
     cancelled_after_runtime_delivery = False
     try:
         async with _event_owner_lock(request.app, event) as session_key:
+            if unfenced_marked_fingerprint:
+                replay = fence.replay_confirmed_legacy_terminal(unfenced_marked_fingerprint)
+                if replay is not None:
+                    return replay
             response, post_lock_task = await _apply_event_locked(request, event, session_key=session_key)
         if isinstance(post_lock_task, RuntimeInteractionDeliveryReservation):
             completion_task = asyncio.create_task(
@@ -4391,6 +4418,31 @@ def _legacy_terminal_fingerprint(event: SidecarEvent) -> str:
         return ""
 
 
+def _is_marked_legacy_terminal(event: SidecarEvent) -> bool:
+    return (
+        not event.turn_id and event.event in TERMINAL_EVENTS
+        and event.data.get("policy_new_turn") is True
+        and _delivery_kind(event) in {"", "chat"}
+        and not _is_intentional_silence_event(event) and not _is_native_fallback_event(event)
+    )
+
+
+async def _install_legacy_terminal_receipt(app, fingerprint, *, confirmed_at=None):
+    remaining_ttl = None
+    payload = {"ok": True, "applied": True}
+    if confirmed_at is not None:
+        age = time.time() - confirmed_at
+        if not 0 <= age < LEGACY_TERMINAL_RECEIPT_TTL_SECONDS:
+            return
+        remaining_ttl = LEGACY_TERMINAL_RECEIPT_TTL_SECONDS - age
+        payload = _CONFIRMED_LEGACY_TERMINAL
+    fence = app[EVENT_ID_FENCE_KEY]
+    key = ("legacy_terminal", fingerprint)
+    claim = await fence.claim(key, fingerprint)
+    if claim.kind == "owner":
+        await fence.finalize(key, claim.entry, 200, payload, remaining_ttl=remaining_ttl)
+
+
 def _register_session_aliases(
     app: web.Application, event: SidecarEvent, canonical_key: str,
 ) -> None:
@@ -4477,6 +4529,33 @@ def _checkpoint_session(app, key, profile_id) -> bool:
         return False
 
 
+def _inherit_confirmed_legacy_terminal_receipts(app, key, profile, current, previous, previous_bot):
+    bot_id = app[MESSAGE_BOT_IDS_KEY].get(key)
+    same_route = (
+        previous is not None and (previous_bot or "") == (bot_id or "")
+        and previous.chat_id == current.chat_id and previous.conversation_id == current.conversation_id
+    )
+    history = previous.confirmed_legacy_terminal_receipts if same_route else ()
+    store = app.get(SESSION_STORE_KEY)
+    if not history and store is not None and (previous is None or same_route):
+        # A receipt-only checkpoint seeds the fence at boot without
+        # resurrecting a writable display owner. Reattach it to the next card.
+        try:
+            for record in store.load(key=key):
+                source = record["session"]
+                if (record["profile_id"] == profile and (record["bot_id"] or "") == (bot_id or "")
+                        and source.chat_id == current.chat_id and source.conversation_id == current.conversation_id
+                        and record.get("client_identity") == _checkpoint_client_identity(app, bot_id)):
+                    history = source.confirmed_legacy_terminal_receipts
+        except (OSError, ValueError, TypeError, RuntimeError, KeyError, AttributeError):
+            # An optional history read cannot revoke an acknowledged create.
+            return
+    if history:
+        current.confirmed_legacy_terminal_receipts = recent_legacy_terminal_receipts(
+            history + current.confirmed_legacy_terminal_receipts, now=time.time(),
+        )
+
+
 def _checkpoint_auxiliary_receipt(app, key, session, owner_id):
     interaction = session.active_interaction
     if (interaction is None or not interaction.feishu_message_id
@@ -4521,20 +4600,20 @@ async def _restore_card_checkpoints(app):
             continue
         if key != _session_key(probe):
             continue
+        for fingerprint, confirmed_at in session.confirmed_legacy_terminal_receipts:
+            await _install_legacy_terminal_receipt(app, fingerprint, confirmed_at=confirmed_at)
+        if record.get("legacy_terminal_receipts_only") is True:
+            continue
         session.route_profile_id = profile or "default"
         if session.pending_reopen_create is not None:
             pending = session.pending_reopen_create
             pending.candidate.route_profile_id = session.route_profile_id
             pending.candidate.legacy_route_thread_id = pending.thread_id
-        if session.legacy_terminal_fingerprint and session.terminal_card_confirmed:
+        if (session.legacy_terminal_fingerprint and session.terminal_card_confirmed
+                and session.legacy_terminal_start_at is None):
             # Only a confirmed card write can seed the restart receipt. The
             # fingerprint alone may name an accepted but unfinished delivery.
-            digest = session.legacy_terminal_fingerprint
-            fence = app[EVENT_ID_FENCE_KEY]
-            receipt = await fence.claim(("legacy_terminal", digest), digest)
-            if receipt.kind == "owner":
-                await fence.finalize(("legacy_terminal", digest), receipt.entry, 200,
-                                     {"ok": True, "applied": True})
+            await _install_legacy_terminal_receipt(app, session.legacy_terminal_fingerprint)
         app[SESSIONS_KEY][key] = session
         app[FEISHU_MESSAGE_IDS_KEY][key] = record['message_id']
         app[MESSAGE_BOT_IDS_KEY][key] = record['bot_id']
@@ -4783,6 +4862,8 @@ async def _apply_event_locked(request, event, *, session_key, advance_sequence=T
     app = request.app
     key = session_key
     prior = app[SESSIONS_KEY].get(key)
+    prior_message_id = app[FEISHU_MESSAGE_IDS_KEY].get(key)
+    prior_bot = app[MESSAGE_BOT_IDS_KEY].get(key)
     retained = None
     retained_aliases = {}
     if (prior is not None and prior.status in {"completed", "failed"}
@@ -4814,6 +4895,10 @@ async def _apply_event_locked(request, event, *, session_key, advance_sequence=T
     _remember_legacy_owner_receipt(request.app, key)
     profile = _policy_profile_id(event)
     if profile is not None:
+        current = app[SESSIONS_KEY].get(key)
+        message_id = app[FEISHU_MESSAGE_IDS_KEY].get(key)
+        if current is not None and current is not prior and message_id and message_id != prior_message_id:
+            _inherit_confirmed_legacy_terminal_receipts(app, key, profile, current, prior, prior_bot)
         _checkpoint_session(request.app, key, profile)
     return result
 
@@ -5137,9 +5222,14 @@ async def _apply_event_locked_inner(
                 request.app,
                 handoff_identity,
             )
-    # A native placeholder has no recoverable display snapshot after restart.
-    # Its successor still needs its own IM UUID, including after a lost ACK.
-    reopen_delivery_key = f"{session_key}:terminal:{terminal_fingerprint}" if starts_after_legacy_handoff else ""
+    # Without a display owner, a reused legacy message ID can refer to an
+    # earlier card still in Feishu's UUID cache. Only the exact marked terminal
+    # should reuse this create, including after a lost ACK or restart.
+    reopen_delivery_key = ""
+    if starts_after_legacy_handoff or (session is None and _is_marked_legacy_terminal(incoming_event)):
+        create_fingerprint = terminal_fingerprint or _legacy_terminal_fingerprint(incoming_event)
+        if create_fingerprint:
+            reopen_delivery_key = f"{session_key}:terminal:{create_fingerprint}"
     reopen_predecessor = None
     if reopens_completed_session:
         # A completed topic session can share the next turn's message id. A
@@ -5556,6 +5646,19 @@ async def _apply_event_locked_inner(
                         session.legacy_terminal_start_at = incoming_event.created_at
                         legacy_fingerprint = terminal_fingerprint
                     session.legacy_terminal_fingerprint = legacy_fingerprint
+                    if _is_marked_legacy_terminal(incoming_event):
+                        fingerprint = (
+                            terminal_fingerprint or legacy_fingerprint or _legacy_terminal_fingerprint(incoming_event)
+                        )
+                        if fingerprint:
+                            confirmed_at = time.time()
+                            session.confirmed_legacy_terminal_receipts = recent_legacy_terminal_receipts(
+                                (*session.confirmed_legacy_terminal_receipts, (fingerprint, confirmed_at)),
+                                now=confirmed_at,
+                            )
+                            await _install_legacy_terminal_receipt(
+                                request.app, fingerprint, confirmed_at=confirmed_at,
+                            )
                     _store_card_summary(request.app, event, session, message_id)
                     request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
                         "message_id_hash": _diagnostic_id_hash(event.message_id),
