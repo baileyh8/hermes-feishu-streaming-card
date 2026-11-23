@@ -3607,7 +3607,19 @@ def test_manual_compress_original_exception_is_not_swallowed():
         asyncio.run(runner._handle_compress_command(event))
 
 
-def test_native_feishu_system_notice_send_posts_sidecar_and_suppresses_text(monkeypatch):
+@pytest.fixture
+def status_notice_egress(monkeypatch):
+    gateway = types.ModuleType("gateway.run")
+    exec(
+        "async def _send_or_update_status_coro(adapter, chat_id, status_key, content, metadata):\n"
+        "    return await adapter.send(chat_id, content, metadata=metadata)\n",
+        gateway.__dict__,
+    )
+    monkeypatch.setitem(sys.modules, gateway.__name__, gateway)
+    return gateway._send_or_update_status_coro
+
+
+def test_native_feishu_system_notice_send_posts_sidecar_and_suppresses_text(monkeypatch, status_notice_egress):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -3647,10 +3659,9 @@ def test_native_feishu_system_notice_send_posts_sidecar_and_suppresses_text(monk
     hook_runtime.install_feishu_command_card_adapter_methods(runner, event=event)
 
     async def run():
-        return await adapter.send(
-            "oc_abc",
+        return await status_notice_egress(
+            adapter, "oc_abc", "lifecycle",
             "ℹ️ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
-            reply_to="om_user_weather",
             metadata={"reply_to_message_id": "om_user_weather"},
         )
 
@@ -3669,7 +3680,7 @@ def test_native_feishu_system_notice_send_posts_sidecar_and_suppresses_text(monk
     assert posted[0][2] == hook_runtime.TERMINAL_TIMEOUT_SECONDS
 
 
-def test_native_feishu_system_notice_send_warns_when_card_times_out(monkeypatch):
+def test_native_feishu_system_notice_send_warns_when_card_times_out(monkeypatch, status_notice_egress):
     attempts = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -3705,10 +3716,9 @@ def test_native_feishu_system_notice_send_warns_when_card_times_out(monkeypatch)
     hook_runtime.install_feishu_command_card_adapter_methods(runner, event=event)
 
     async def run():
-        return await adapter.send(
-            "oc_abc",
+        return await status_notice_egress(
+            adapter, "oc_abc", "lifecycle",
             "ℹ Codex gpt-5.5 caps context at 272K, so auto-compaction was raised to 85%.",
-            reply_to="om_user_weather",
             metadata={"reply_to_message_id": "om_user_weather"},
         )
 
@@ -3721,7 +3731,7 @@ def test_native_feishu_system_notice_send_warns_when_card_times_out(monkeypatch)
         (
             "oc_abc",
             "⚠️ 一条运行提示的卡片投递结果无法确认，请稍后查看 /hfc status。",
-            "om_user_weather",
+            None,
             {"reply_to_message_id": "om_user_weather"},
         )
     ]
@@ -3762,8 +3772,8 @@ def test_system_notice_delivery_outcome_selects_safe_native_fallback(
     monkeypatch.setattr(hook_runtime, "_hfc_send_system_notice_card", failed_notice)
     monkeypatch.setattr(
         hook_runtime,
-        "_hfc_classify_system_notice",
-        lambda content: {"notice_kind": "system"},
+        "_hfc_classify_adapter_notice",
+        lambda *_args, **_kwargs: ({"notice_kind": "system"}, None),
     )
 
     result = asyncio.run(
@@ -3819,8 +3829,8 @@ def test_system_notice_delivered_suppresses_native_fallback(monkeypatch):
     monkeypatch.setattr(hook_runtime, "_hfc_send_system_notice_card", delivered_notice)
     monkeypatch.setattr(
         hook_runtime,
-        "_hfc_classify_system_notice",
-        lambda content: {"notice_kind": "system"},
+        "_hfc_classify_adapter_notice",
+        lambda *_args, **_kwargs: ({"notice_kind": "system"}, None),
     )
 
     result = asyncio.run(
@@ -4559,12 +4569,13 @@ def test_gateway_platform_notice_falls_back_for_non_system_notice(monkeypatch):
 @pytest.mark.parametrize(
     ("content", "expected_title"),
     [
-        ("📚 Reading skill hermes-agent", "技能加载"),
-        ("💾 Self-improvement review: Memory updated", "自我改进"),
+        ("ℹ️ Context compression deferred — summary still streaming. Continuing without compression this turn.", "上下文压缩提示"),
+        ("ℹ️ 上下文压缩已推迟 — 摘要仍在生成中。本回合将不压缩继续。", "上下文压缩提示"),
     ],
 )
 def test_native_feishu_system_notice_retries_as_independent_card_when_session_missing(
     monkeypatch,
+    status_notice_egress,
     content,
     expected_title,
 ):
@@ -4608,10 +4619,10 @@ def test_native_feishu_system_notice_retries_as_independent_card_when_session_mi
     hook_runtime.install_feishu_command_card_adapter_methods(runner, event=event)
 
     async def run():
-        return await adapter.send(
-            "oc_abc",
+        return await status_notice_egress(
+            adapter, "oc_abc", "lifecycle",
             content,
-            reply_to="om_user_weather",
+            metadata={"reply_to_message_id": "om_user_weather"},
         )
 
     result = asyncio.run(run())

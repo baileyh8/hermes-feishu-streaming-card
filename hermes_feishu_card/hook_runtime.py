@@ -453,7 +453,7 @@ _HFC_FEISHU_COMMAND_RESULT_CONTEXT: ContextVar[dict[str, Any] | None] = ContextV
     "hfc_feishu_command_result_context",
     default=None,
 )
-_HFC_FEISHU_NOTICE_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
+_HFC_FEISHU_NOTICE_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "hfc_feishu_notice_context",
     default=None,
 )
@@ -5092,14 +5092,17 @@ def _hfc_delivery_context_from_event(event: Any) -> dict[str, Any] | None:
     }
 
 
-def _hfc_direct_policy_locals(chat_id: Any) -> dict[str, Any]:
+def _hfc_direct_policy_locals(
+    chat_id: Any, notice_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     normalized_chat_id = str(chat_id or "").strip()
-    context = _HFC_FEISHU_DELIVERY_CONTEXT.get()
+    context = notice_context if notice_context is not None else _HFC_FEISHU_DELIVERY_CONTEXT.get()
     if not isinstance(context, dict):
         context = {}
     return {
         "platform": "feishu",
         "chat_id": normalized_chat_id,
+        "chat_type": str(context.get("chat_type") or "").strip(),
         "profile_id": str(context.get("profile_id") or "").strip(),
         "_hfc_profile_invalid": context.get("profile_invalid") is True,
         "message_id": str(context.get("message_id") or "").strip(),
@@ -5113,6 +5116,7 @@ def _hfc_direct_card_allowed_sync(
     chat_id: Any,
     *,
     event_name: str = "system.notice",
+    notice_context: dict[str, Any] | None = None,
 ) -> bool:
     try:
         config = load_runtime_config()
@@ -5120,7 +5124,7 @@ def _hfc_direct_card_allowed_sync(
             return False
         return _policy_gate_sync(
             config,
-            _hfc_direct_policy_locals(chat_id),
+            _hfc_direct_policy_locals(chat_id, notice_context),
             event_name,
         ).card
     except Exception:
@@ -5131,6 +5135,7 @@ async def _hfc_direct_card_allowed_async(
     chat_id: Any,
     *,
     event_name: str = "system.notice",
+    notice_context: dict[str, Any] | None = None,
 ) -> bool:
     try:
         config = load_runtime_config()
@@ -5139,7 +5144,7 @@ async def _hfc_direct_card_allowed_async(
         return (
             await _policy_gate_async(
                 config,
-                _hfc_direct_policy_locals(chat_id),
+                _hfc_direct_policy_locals(chat_id, notice_context),
                 event_name,
             )
         ).card
@@ -5176,7 +5181,7 @@ def _hfc_take_feishu_command_result_context(
     return context
 
 
-def _hfc_notice_context_from_event(event: Any) -> dict[str, str] | None:
+def _hfc_notice_context_from_event(event: Any) -> dict[str, Any] | None:
     if event is None:
         return None
     source = getattr(event, "source", None)
@@ -5189,7 +5194,7 @@ def _hfc_notice_context_from_source(
     source: Any,
     *,
     event: Any = None,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     if _platform_name({}, source) != "feishu":
         return None
     chat_id = str(getattr(source, "chat_id", "") or "").strip()
@@ -5212,7 +5217,7 @@ def _hfc_notice_context_from_source(
         or (getattr(event, "thread_id", "") if event is not None else "")
         or ""
     ).strip()
-    profile_id, _profile_source = _profile_identity(
+    profile_id, profile_source = _profile_identity(
         {"source": source, "event": event},
         source,
         None,
@@ -5229,6 +5234,7 @@ def _hfc_notice_context_from_source(
         "conversation_id": thread_id or chat_id,
         "thread_id": thread_id,
         "profile_id": profile_id,
+        "profile_invalid": profile_source.startswith("sanitized_"),
     }
 
 
@@ -5272,13 +5278,7 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "title": "默认投递位置未设置", "level": "info",
             "notice_kind": "home-channel", "notice_id": "home-channel",
         }
-    if text.startswith("ℹ️ 上下文压缩已推迟"):
-        return {
-            "title": "上下文压缩提示", "level": "info",
-            "notice_kind": "compression",
-            "notice_id": _hfc_content_notice_id("compression", text),
-        }
-    if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
+    if text.startswith("⏳") or lowered.startswith("working "):
         # Maintainer note (contract change): the ⏳ status line is NEVER a card.
         #
         # These lines used to become notice cards titled「运行中」. They are transient process state
@@ -5294,35 +5294,44 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         # path also still works: `_hfc_edit_message_with_system_notice_card` falls back to the
         # original edit once classification returns None, so a refreshing status updates ONE line.
         return None
-    if "caps context" in lowered and "auto-compaction" in lowered:
+    if (text.startswith(("ℹ Codex ", "ℹ️ Codex ")) and " caps context at " in text
+            and ", so auto-compaction was raised to " in text):
         return {
             "title": "上下文窗口提示",
             "level": "info",
             "notice_kind": "context-cap",
             "notice_id": "context-cap",
         }
-    if "session automatically reset" in lowered:
+    if (text == "Session automatically reset" or text.startswith((
+        "◐ Session automatically reset (",
+        "◐ Session reset after being stopped. Conversation history cleared.\nUse /resume ",
+        "◐ 会话在停止后已重置。对话历史已清空。\n用 /resume ",
+    ))):
         return {
             "title": "会话已自动重置",
             "level": "success",
             "notice_kind": "session-reset",
             "notice_id": "session-reset",
         }
-    if "reading skill" in lowered:
+    for prefix in ("💾 Self-improvement review:", "💾 自我改进回顾："):
+        if text.startswith(prefix) and text[len(prefix):].strip():
+            return {
+                "title": "自我改进",
+                "level": "info",
+                "notice_kind": "self-improvement",
+                "notice_id": _hfc_content_notice_id("self-improvement", text),
+            }
+    if re.fullmatch(r"(?:📚 |📖 )?(?:Reading skill|阅读技能)[：: \t]+\S[^\r\n]*", text):
         return {
             "title": "技能加载",
             "level": "info",
             "notice_kind": "skill-loading",
             "notice_id": _hfc_content_notice_id("skill-loading", text),
         }
-    if "self-improvement review" in lowered or "自我改进回顾" in text:
-        return {
-            "title": "自我改进",
-            "level": "info",
-            "notice_kind": "self-improvement",
-            "notice_id": _hfc_content_notice_id("self-improvement", text),
-        }
-    if "context compression" in lowered or "compression model" in lowered:
+    if re.match(
+        r"^(?:ℹ️?|⚠️?) (?:Context compression |Compression (?:model |aborted \()"
+        r"|Configured compression model |上下文压缩已推迟|配置的压缩模型 )", text,
+    ):
         return {
             "title": "上下文压缩提示",
             "level": "info",
@@ -5330,6 +5339,36 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_id": _hfc_content_notice_id("compression", text),
         }
     return None
+
+
+def _hfc_classify_adapter_notice(
+    chat_id: str, content: str, *, review_source: Any = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    notice = _hfc_classify_system_notice(content)
+    if notice is None:
+        return None, None
+    from .notice_producers import adapter_card_notice_source
+
+    frame = inspect.currentframe()
+    try:
+        # This helper is called by the Feishu send/edit shim; its caller's
+        # caller is the native egress. The task-local turn route is not proof.
+        wrapper = frame.f_back if frame is not None else None
+        caller = wrapper.f_back if wrapper is not None else None
+        if review_source is not None:
+            known, source = notice["notice_kind"] == "self-improvement", review_source
+        else:
+            known, source = adapter_card_notice_source(notice["notice_kind"], caller)
+        if not known:
+            return None, None
+        context = _hfc_notice_context_from_source(source) if source is not None else None
+        if source is not None and (context is None or context["chat_id"] != chat_id):
+            return None, None
+        return notice, context
+    except Exception:
+        return None, None
+    finally:
+        del frame, wrapper, caller
 
 
 def _hfc_classify_background_notice(text: str) -> dict[str, Any] | None:
@@ -5460,10 +5499,13 @@ async def _hfc_send_system_notice_card(
     reply_to: str | None = None,
     metadata: dict[str, Any] | None = None,
     existing_message_id: str | None = None,
+    notice: dict[str, Any] | None = None,
+    notice_context: dict[str, Any] | None = None,
 ) -> Any:
-    notice = _hfc_classify_system_notice(content)
     if notice is None:
-        return _send_result(False, error="not a system notice")
+        notice = _hfc_classify_system_notice(content)
+        if notice is None:
+            return _send_result(False, error="not a system notice")
     plain_text = _hfc_notice_plain_text(notice)
     if plain_text is not None:
         # Deliberately BEFORE the card policy gate: the delivery format of this notice is its own
@@ -5476,14 +5518,15 @@ async def _hfc_send_system_notice_card(
             reply_to=reply_to,
             metadata=metadata,
         )
-    if not await _hfc_direct_card_allowed_async(chat_id):
+    policy_context = {"notice_context": notice_context} if notice_context is not None else {}
+    if not await _hfc_direct_card_allowed_async(chat_id, **policy_context):
         return _send_result(False, error="delivery_disposition=native")
     try:
         config = load_runtime_config()
         if not config.enabled:
             return _send_result(False, error="delivery_outcome=not_sent")
-        context = _HFC_FEISHU_NOTICE_CONTEXT.get()
-        if not isinstance(context, dict):
+        context = notice_context if notice_context is not None else _HFC_FEISHU_NOTICE_CONTEXT.get()
+        if not isinstance(context, dict) or context.get("chat_id") != chat_id:
             context = {}
         message_id = str(existing_message_id or context.get("message_id") or "").strip()
         if message_id and not message_id.startswith("notice_"):
@@ -5644,7 +5687,7 @@ def _hfc_build_system_notice_payload(
     content: str,
     reply_to: str | None,
     metadata: dict[str, Any] | None,
-    context: dict[str, str],
+    context: dict[str, Any],
     notice: dict[str, Any],
     notice_scope: str,
     message_id: str,
@@ -6656,7 +6699,7 @@ async def _hfc_send_with_native_command_result_card(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_send", None)
-    from .notice_producers import notice_for_send
+    from .notice_producers import notice_for_send, take_review_source
     try:
         notice = notice_for_send(self, chat_id, content, metadata)
     except Exception:
@@ -6728,7 +6771,10 @@ async def _hfc_send_with_native_command_result_card(
         if acknowledged or handoff_context.get("recovery") is True:
             _HFC_NATIVE_HANDOFF_CONTEXT.set(None)
         return result
-    if not await _hfc_direct_card_allowed_async(chat_id):
+    review_source = take_review_source(self, chat_id, content)
+    card_notice, notice_context = _hfc_classify_adapter_notice(chat_id, content, review_source=review_source)
+    policy_context = {"notice_context": notice_context} if notice_context is not None else {}
+    if not await _hfc_direct_card_allowed_async(chat_id, **policy_context):
         _HFC_NATIVE_MEDIA_TEXT_SUPPRESSION.set(None)
         if callable(original):
             return await original(
@@ -6741,42 +6787,38 @@ async def _hfc_send_with_native_command_result_card(
         return _send_result(False, error="original Feishu send unavailable")
     if _should_suppress_matching_native_media_text(chat_id, content):
         return _send_result(True, message_id="media_text_suppressed")
-    context = _hfc_take_feishu_command_result_context(chat_id=chat_id, content=content)
-    if context is not None:
-        result = await _hfc_send_native_command_result_card(
+    # A cold /refine receipt can inherit the command's context. Apply the
+    # confirmed review policy without consuming the command feedback slot.
+    if review_source is None:
+        context = _hfc_take_feishu_command_result_context(chat_id=chat_id, content=content)
+        if context is not None:
+            result = await _hfc_send_native_command_result_card(
+                self,
+                chat_id=chat_id,
+                content=str(content or ""),
+                reply_to=reply_to,
+                metadata=metadata,
+                context=context,
+            )
+            if getattr(result, "success", False):
+                return result
+    if card_notice is not None:
+        notice_result = await _hfc_send_system_notice_card(
             self,
             chat_id=chat_id,
-            content=str(content or ""),
+            content=content,
             reply_to=reply_to,
             metadata=metadata,
-            context=context,
+            notice=card_notice,
+            notice_context=notice_context,
         )
-        if getattr(result, "success", False):
-            return result
-    notice_result = await _hfc_send_system_notice_card(
-        self,
-        chat_id=chat_id,
-        content=content,
-        reply_to=reply_to,
-        metadata=metadata,
-    )
-    if getattr(notice_result, "success", False):
-        return notice_result
-    if _hfc_classify_system_notice(content) is not None:
-        if getattr(notice_result, "error", None) == "delivery_disposition=native":
-            if callable(original):
-                return await original(
-                    self,
-                    chat_id,
-                    content,
-                    reply_to=reply_to,
-                    metadata=metadata,
-                )
-            return _send_result(False, error="original Feishu send unavailable")
-        outcome = _hfc_send_result_delivery_outcome(notice_result)
+        if getattr(notice_result, "success", False):
+            return notice_result
         if callable(original):
+            native = getattr(notice_result, "error", None) == "delivery_disposition=native"
+            outcome = _hfc_send_result_delivery_outcome(notice_result)
             fallback_content = (
-                content if outcome == "not_sent" else _NOTICE_UNCERTAIN_WARNING
+                content if native or outcome == "not_sent" else _NOTICE_UNCERTAIN_WARNING
             )
             return await original(
                 self,
@@ -6852,15 +6894,19 @@ async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwa
     parsed = _hfc_parse_edit_message_args(args, kwargs)
     if parsed is not None:
         chat_id, message_id, content, metadata = parsed
-        notice_result = await _hfc_send_system_notice_card(
-            self,
-            chat_id=chat_id,
-            content=content,
-            metadata=metadata,
-            existing_message_id=message_id,
-        )
-        if getattr(notice_result, "success", False):
-            return notice_result
+        notice, notice_context = _hfc_classify_adapter_notice(chat_id, content)
+        if notice is not None:
+            notice_result = await _hfc_send_system_notice_card(
+                self,
+                chat_id=chat_id,
+                content=content,
+                metadata=metadata,
+                existing_message_id=message_id,
+                notice=notice,
+                notice_context=notice_context,
+            )
+            if getattr(notice_result, "success", False):
+                return notice_result
     if callable(original):
         forwarded_kwargs = dict(kwargs)
         try:
@@ -6887,9 +6933,11 @@ def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -
         chat_id = str(getattr(source, "chat_id", "") or "").strip()
         if not chat_id:
             return False
-        if not _hfc_direct_card_allowed_sync(chat_id):
+        notice = _hfc_classify_system_notice(content)
+        if notice is None:
             return False
-        if _hfc_classify_system_notice(str(content or "")) is None:
+        notice_context = _hfc_notice_context_from_source(source)
+        if not _hfc_direct_card_allowed_sync(chat_id, notice_context=notice_context):
             return False
         adapter = _hfc_feishu_adapter_from_runner(runner, source)
         if adapter is None:
@@ -6909,7 +6957,8 @@ def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -
             chat_id=chat_id,
             content=str(content or ""),
             reply_to=str(getattr(source, "message_id", "") or "").strip() or None,
-            notice_context=_hfc_notice_context_from_source(source),
+            notice=notice,
+            notice_context=notice_context,
         )
         return True
     except Exception as exc:
@@ -6999,19 +7048,19 @@ def _hfc_schedule_platform_notice_card(
     chat_id: str,
     content: str,
     reply_to: str | None,
-    notice_context: dict[str, str] | None,
+    notice: dict[str, Any],
+    notice_context: dict[str, Any] | None,
 ) -> None:
     async def send_notice() -> None:
-        token = None
-        if notice_context is not None:
-            token = _HFC_FEISHU_NOTICE_CONTEXT.set(notice_context)
+        token = _HFC_FEISHU_NOTICE_CONTEXT.set(notice_context) if notice_context is not None else None
         try:
             notice_result = await _hfc_send_system_notice_card(
                 adapter,
                 chat_id=chat_id,
                 content=content,
                 reply_to=reply_to,
-                metadata=None,
+                notice=notice,
+                notice_context=notice_context,
             )
             if not getattr(notice_result, "success", False):
                 _hfc_warn(
@@ -9700,8 +9749,9 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
             _HFC_FEISHU_DELIVERY_CONTEXT.set(None)
             return False
         runner_type = type(runner)
-        from .notice_producers import install_notice_producers
+        from .notice_producers import install_notice_producers, install_review_notice_scheduler
         install_notice_producers(runner_type)
+        install_review_notice_scheduler(runner_type, _hfc_send_with_native_command_result_card)
         _install_startup_resume_wait(runner_type)
         if callable(getattr(runner_type, "_thread_metadata_for_target", None)):
             _hfc_install_policy_adapter_method(

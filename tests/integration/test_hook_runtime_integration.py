@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from aiohttp import web
@@ -641,11 +641,16 @@ async def test_installed_notice_hook_uses_sidecar_delivery_outcome_for_topic_fal
             "ℹ️ Codex gpt-5.5 caps context at 272K, "
             "so auto-compaction was raised to 85%."
         )
-        result = await adapter.send(
-            "oc_topic",
-            original_content,
-            reply_to="om_topic_user",
-            metadata={"thread_id": "omt_topic"},
+        gateway = ModuleType("gateway.run")
+        exec(
+            "async def _send_or_update_status_coro(adapter, chat_id, status_key, content, metadata):\n"
+            "    return await adapter.send(chat_id, content, metadata=metadata)\n",
+            gateway.__dict__,
+        )
+        monkeypatch.setitem(sys.modules, gateway.__name__, gateway)
+        metadata = {"thread_id": "omt_topic", "reply_to_message_id": "om_topic_user"}
+        result = await gateway._send_or_update_status_coro(
+            adapter, "oc_topic", "lifecycle", original_content, metadata,
         )
         health = await (await test_client.get("/health")).json()
     finally:
@@ -656,8 +661,8 @@ async def test_installed_notice_hook_uses_sidecar_delivery_outcome_for_topic_fal
         (
             "oc_topic",
             expected_content,
-            "om_topic_user",
-            {"thread_id": "omt_topic"},
+            None,
+            metadata,
         )
     ]
     assert len(feishu_client.delivery_calls) == 1

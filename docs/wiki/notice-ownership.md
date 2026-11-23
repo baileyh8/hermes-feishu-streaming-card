@@ -9,3 +9,9 @@
 不得将普通回答、审批决定、失败解释或未知 home 提示当临时通知撤回。账本不含答案/密钥/token，不恢复执行或审批。平台发送与本地登记之间仍可能中断，因此不承诺跨系统原子发送或永久 exactly-once。
 
 V4.6.6 增加 15 秒到期与同 scope 确认投递提前唤醒；使用已有创建时间恢复计时，不重置重复登记期限。原生 requester、drain、后台成功一行有独立 producer 证明；原生过期审批纠正提示可能是唯一未执行记录，保持留存；普通短提示仍为进程内计时，完整回执、失败和输出不撤回。详见[生命周期](notice-lifecycle.md)。
+
+## 群聊通知抑制
+
+`card.chat_overrides` 的 `suppressed_notice_kinds` 作用于已识别的 `system.notice`。通用 Feishu `send` 或 `edit_message` 中的自我改进回顾文案需要来源证明，普通正文即使逐字引用模板也会照常投递。会话上下文和 `_interim_send` 只提供路由或展示信息。压缩、会话重置及技能加载使用已知的 Hermes 通知出口，混合工具进度保留原生更新。旧版后台进程和任务继续按各自完整的消息格式识别。
+
+Hermes v0.23.3 的自我改进回顾由 `background_review_callback` 发出。会话内的回顾沿用 Hermes 的缓冲和 `post_delivery` 释放时机，冷会话的 `/refine` 通过同一调度器投递。HFC 在这两处及旧版 Gateway 内联回调核对实际 Feishu 发送调用，并识别带 `💾` 的中英文正式模板。已确认的通知按来源的 profile、群或私聊配置处理，指定群的 `[]` 继续覆盖群默认值，`native` 继续走原生发送。[v0.23.3 会话回调](https://github.com/NousResearch/hermes-agent/blob/caafe5389ae585ef77387a962aee05b1bcf17029/gateway/run_turn_runner.py#L453) · [冷会话 `/refine`](https://github.com/NousResearch/hermes-agent/blob/caafe5389ae585ef77387a962aee05b1bcf17029/gateway/session_cold_review.py#L102)
