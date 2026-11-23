@@ -1,14 +1,17 @@
 """Issue #359: real IM create UUID deduplication must not overwrite old cards."""
 import asyncio
 import copy
+import hashlib
 import json
+import time
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from hermes_feishu_card import server
 from hermes_feishu_card.feishu_client import FeishuAPIError
 from hermes_feishu_card.native_handoff import NativeHandoffStore
-from tests.integration.test_server import create_app, event_payload
+from tests.integration.test_server import create_app, event_payload, wait_for_condition
 from tests.integration.test_server_segmented import oversize_answer
 
 class DeduplicatingClient:
@@ -57,7 +60,8 @@ async def test_reopening_twice_keeps_previous_cards_and_checkpoint(first_event, 
         assert active[0]['session'].answer_text=='followup 2'
         assert answer.rstrip() in json.dumps(transport.cards['card-0'])
 
-async def test_failed_reopen_keeps_original_until_followup_can_create(tmp_path):
+@pytest.mark.parametrize("policy_marker", [False, True])
+async def test_failed_reopen_keeps_original_until_followup_can_create(tmp_path, policy_marker):
     class FailedCreateClient(DeduplicatingClient):
         fail = False
         async def send_card_delivery(self, chat_id, card, **kwargs):
@@ -78,7 +82,7 @@ async def test_failed_reopen_keeps_original_until_followup_can_create(tmp_path):
         assert status==502
         assert app[server.SESSIONS_KEY]['hermes-message-1'].answer_text=='ORIGINAL ANSWER'
         transport.fail=False
-        await post('answer.delta',0,{'policy_new_turn':True,'text':'FOLLOWUP'})
+        await post('answer.delta',0,{'policy_new_turn':policy_marker,'text':'FOLLOWUP'})
         await post('message.completed',1,{'answer':'FOLLOWUP'})
         assert len(transport.cards)==2
         assert transport.cards['card-0']==original
@@ -340,3 +344,246 @@ async def test_refused_reopen_restores_only_the_previous_display_aliases(tmp_pat
         await client.app[server.SESSION_RESTORE_TASK_KEY]
         assert (await _post_event(client, terminal))["applied"]
         assert len(transport.cards) == 4
+
+
+@pytest.mark.parametrize("restart", [False, True], ids=["live", "restart"])
+@pytest.mark.parametrize("policy_marker", [False, True], ids=["ordinary-delta", "policy-new-turn"])
+async def test_lost_reopen_ack_recovers_on_different_event(tmp_path, monkeypatch, restart, policy_marker):
+    transport = DeduplicatingClient()
+    send = transport.send_card_delivery
+
+    async def lose_ack(*args, **kwargs):
+        await send(*args, **kwargs)
+        raise FeishuAPIError("fixture lost ACK", outcome="unknown")
+
+    async with AsyncExitStack() as stack:
+        client = await stack.enter_async_context(TestClient(TestServer(_segmented_app(transport, tmp_path))))
+        assert (await _post_event(client, _long_topic_terminal(1)))["applied"] is True
+        previous = copy.deepcopy(transport.cards)
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", lose_ack)
+            result = await _post_event(client, _topic_event("message.started", 0, 2), status=502)
+        assert result["delivery"]["outcome"] == "unknown"
+        assert client.app[server.FEISHU_MESSAGE_IDS_KEY]["hermes-message-1"] == "card-0"
+        reopen_uuid = transport.attempted_uuids[-1]
+
+        if restart:
+            await stack.aclose()
+            client = await stack.enter_async_context(TestClient(TestServer(_segmented_app(transport, tmp_path))))
+            await client.app[server.SESSION_RESTORE_TASK_KEY]
+
+        # The later hook may omit placement metadata. Recovery must keep the
+        # placement/UUID of the first create and update the actual message.
+        delta = _topic_event("answer.delta", 1, 2, text="SECOND BODY", policy_new_turn=policy_marker)
+        delta.pop("thread_id")
+        delta["data"].pop("reply_to_message_id")
+        delta["data"].pop("reply_in_thread")
+        assert (await _post_event(client, delta))["applied"] is True
+        assert transport.attempted_uuids[4:] == [reopen_uuid, reopen_uuid]
+        assert (await _post_event(client, _topic_event("message.completed", 2, 2)))["applied"] is True
+        await wait_for_condition(lambda: "SECOND BODY" in str(transport.cards["card-4"]))
+        assert len(transport.cards) == 5
+        assert all(transport.cards[mid] == card for mid, card in previous.items())
+
+
+@pytest.mark.parametrize("restart", [False, True], ids=["live", "restart"])
+@pytest.mark.parametrize("outcome", ["unknown", "not_sent"])
+async def test_unconfirmed_reopen_terminal_leaves_body_to_native(tmp_path, monkeypatch, restart, outcome):
+    transport = DeduplicatingClient()
+    send = transport.send_card_delivery
+
+    async def lose_ack(*args, **kwargs):
+        await send(*args, **kwargs)
+        raise FeishuAPIError("fixture lost ACK", outcome="unknown")
+
+    async with AsyncExitStack() as stack:
+        client = await stack.enter_async_context(TestClient(TestServer(_segmented_app(transport, tmp_path))))
+        assert (await _post_event(client, _long_topic_terminal(1)))["applied"] is True
+        previous = copy.deepcopy(transport.cards)
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", lose_ack)
+            assert (await _post_event(client, _topic_event("message.started", 0, 2), status=502))["delivery"]["outcome"] == "unknown"
+        reopen_uuid = transport.attempted_uuids[-1]
+
+        if restart:
+            await stack.aclose()
+            client = await stack.enter_async_context(TestClient(TestServer(_segmented_app(transport, tmp_path))))
+            await client.app[server.SESSION_RESTORE_TASK_KEY]
+
+        async def refuse_or_lose_ack(chat_id, card, **kwargs):
+            transport.attempted_uuids.append(kwargs["delivery_uuid"])
+            raise FeishuAPIError("fixture cannot confirm create", outcome=outcome)
+
+        monkeypatch.setattr(transport, "send_card_delivery", refuse_or_lose_ack)
+        terminal = _topic_event("message.completed", 2, 2, answer="BODY FOR NATIVE")
+        for _ in range(2):
+            result = await _post_event(client, terminal)
+            assert result["applied"] is False
+            assert result["disposition"] == "native"
+        if restart:
+            await stack.aclose()
+            client = await stack.enter_async_context(TestClient(TestServer(_segmented_app(transport, tmp_path))))
+            await client.app[server.SESSION_RESTORE_TASK_KEY]
+            assert (await _post_event(client, terminal))["disposition"] == "native"
+        assert transport.attempted_uuids[4:] == [reopen_uuid, reopen_uuid]
+        assert len(transport.cards) == 5
+        assert all(transport.cards[mid] == card for mid, card in previous.items())
+
+
+@pytest.mark.parametrize("patch_succeeds", [True, False], ids=["confirmed-body", "unconfirmed-body"])
+async def test_terminal_after_restarted_reopen_requires_body_ack(tmp_path, monkeypatch, patch_succeeds):
+    transport = DeduplicatingClient()
+    send = transport.send_card_delivery
+
+    async def lose_ack(*args, **kwargs):
+        await send(*args, **kwargs)
+        raise FeishuAPIError("fixture lost ACK", outcome="unknown")
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        assert (await _post_event(client, _long_topic_terminal(1)))["applied"] is True
+        previous = copy.deepcopy(transport.cards)
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", lose_ack)
+            result = await _post_event(client, _topic_event("message.started", 0, 2), status=502)
+            assert result["delivery"]["outcome"] == "unknown"
+    reopen_uuid = transport.attempted_uuids[-1]
+    reopened_message = transport.ids[reopen_uuid]
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        if not patch_succeeds:
+            async def reject_patch(_message_id, _card):
+                raise FeishuAPIError("fixture PATCH declined", outcome="not_sent")
+
+            monkeypatch.setattr(transport, "update_card_message", reject_patch)
+        terminal = _topic_event("message.completed", 1, 2, answer="TERMINAL BODY")
+        result = await _post_event(client, terminal)
+        assert result["applied"] is patch_succeeds
+        assert ("TERMINAL BODY" in str(transport.cards[reopened_message])) is patch_succeeds
+        if not patch_succeeds:
+            assert result["disposition"] == "native"
+            assert (await _post_event(client, terminal))["applied"] is False
+        assert transport.attempted_uuids[4:] == [reopen_uuid, reopen_uuid]
+        assert all(transport.cards[mid] == card for mid, card in previous.items())
+
+
+async def test_first_reopen_delta_keeps_partial_answer_across_restart(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    send = transport.send_card_delivery
+
+    async def lose_ack(*args, **kwargs):
+        await send(*args, **kwargs)
+        raise FeishuAPIError("fixture lost ACK", outcome="unknown")
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        assert (await _post_event(client, _long_topic_terminal(1)))["applied"] is True
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", lose_ack)
+            delta = _topic_event("answer.delta", 0, 2, policy_new_turn=True, text="PARTIAL CONTENT")
+            assert (await _post_event(client, delta, status=502))["delivery"]["outcome"] == "unknown"
+    reopen_uuid = transport.attempted_uuids[-1]
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        terminal = _topic_event("message.failed", 1, 2, error="EXPECTED FAILURE")
+        assert (await _post_event(client, terminal))["applied"] is True
+        assert transport.attempted_uuids[4:] == [reopen_uuid, reopen_uuid]
+        visible = str(transport.cards[transport.ids[reopen_uuid]])
+        assert "PARTIAL CONTENT" in visible and "EXPECTED FAILURE" in visible
+
+
+async def test_cancelled_reopen_wait_preserves_reservation_before_restart(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    send = transport.send_card_delivery
+    accepted, cancelled = asyncio.Event(), asyncio.Event()
+
+    async def hold_ack(*args, **kwargs):
+        await send(*args, **kwargs)
+        accepted.set()
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.set()
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        assert (await _post_event(client, _long_topic_terminal(1)))["applied"]
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", hold_ack)
+            request = asyncio.create_task(_post_event(client, _topic_event("message.started", 0, 2)))
+            try:
+                await asyncio.wait_for(accepted.wait(), timeout=5)
+            finally:
+                request.cancel()
+                await asyncio.gather(request, return_exceptions=True)
+            await asyncio.wait_for(cancelled.wait(), timeout=5)
+    reopen_uuid = transport.attempted_uuids[-1]
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        terminal = _topic_event("message.completed", 1, 2, answer="RECOVERED AFTER CANCELLATION")
+        assert (await _post_event(client, terminal))["applied"] is True
+        assert transport.attempted_uuids[4:] == [reopen_uuid, reopen_uuid]
+        assert "RECOVERED AFTER CANCELLATION" in str(transport.cards[transport.ids[reopen_uuid]])
+
+
+async def test_uncertain_cardkit_reopen_does_not_create_another_entity(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    app = create_app(
+        transport, card_config={"streaming_mode": True, "flush_interval_ms": 0},
+        session_store_directory=tmp_path,
+    )
+    send = transport.send_card_delivery
+
+    async def lose_ack(*args, **kwargs):
+        assert args[1]["config"]["streaming_mode"] is True
+        await send(*args, **kwargs)
+        raise FeishuAPIError("fixture lost CardKit IM ACK", outcome="unknown")
+
+    async with TestClient(TestServer(app)) as client:
+        assert (await _post_event(client, _topic_event("message.completed", 1, 1, answer="PREDECESSOR")))["applied"]
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", lose_ack)
+            result = await _post_event(client, _topic_event("message.started", 0, 2), status=502)
+            assert result["delivery"]["outcome"] == "unknown"
+        terminal = _topic_event("message.completed", 1, 2, answer="NATIVE BODY")
+        assert (await _post_event(client, terminal)) == {"ok": True, "applied": False, "disposition": "native"}
+        assert len(transport.attempted_uuids) == 2
+        assert len(transport.cards) == 2
+
+
+async def test_pre_fingerprint_checkpoint_avoids_duplicate_quote_card_without_hiding_new_terminal(tmp_path):
+    transport = DeduplicatingClient()
+    quote = {"reply_to_message_id": "om_quote"}
+    first = event_payload("message.started", 0, quote, message_id="om_original", created_at=time.time())
+    old_terminal = event_payload(
+        "message.completed", 1, {**quote, "answer": "SAME TEXT"},
+        message_id="om_quote", created_at=time.time(),
+    )
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        assert (await _post_event(client, first))["applied"] is True
+        assert (await _post_event(client, old_terminal))["applied"] is True
+        store = client.app[server.SESSION_STORE_KEY]
+        await wait_for_condition(lambda: store.load()[0]["session"].terminal_delivery_state == "delivered")
+        path = next(store.root.glob("*.json"))
+        envelope = json.loads(path.read_bytes())
+        assert envelope["record"]["aliases"]["om_quote"] == "om_original"
+        # a2db3ee1 wrote the same v1 display envelope without these fields.
+        for field in ("legacy_terminal_fingerprint", "legacy_route_thread_id"):
+            envelope["record"].pop(field, None)
+        body = json.dumps(envelope["record"], ensure_ascii=False, allow_nan=False, sort_keys=True).encode()
+        envelope["digest"] = hashlib.sha256(body).hexdigest()
+        path.write_text(json.dumps(envelope, ensure_ascii=False, allow_nan=False))
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        restored = client.app[server.SESSIONS_KEY]["om_original"]
+        assert not restored.legacy_terminal_fingerprint
+        result = await _post_event(client, old_terminal)
+        assert result["applied"] is False
+        assert result["disposition"] == "native"
+        assert len(transport.cards) == 1
+        assert not restored.legacy_terminal_fingerprint
+
+        new_terminal = {**old_terminal, "created_at": time.time()}
+        assert (await _post_event(client, new_terminal))["applied"] is True
+        assert len(transport.cards) == 2

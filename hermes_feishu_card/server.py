@@ -60,7 +60,7 @@ from .interaction_input import (
 )
 from .event_rules import (
     active_session_key, resolve_session_key, session_alias_assignments, session_alias_keys_for_event,
-    explicit_thread_id, legacy_alias_owner_matches,
+    event_conversation_matches, explicit_thread_id, legacy_alias_owner_matches, legacy_reference_owner_key,
     interaction_reply_placement,
     TERMINAL_EVENTS,
     TURN_REOPENING_EVENTS,
@@ -153,7 +153,8 @@ from .render import (
     render_terminal_limit_handoff_card,
 )
 from .process import state_dir
-from .session import CardSession
+from .session import CardSession, PendingReopenCreate
+from .text import normalize_stream_text
 from .turn_metrics import retained_output_rate
 from .approval_receipts import approval_receipt_fingerprint
 from .display_segments import begin_continuation, display_view, needs_continuation
@@ -1429,6 +1430,7 @@ async def _interaction_action(
             response, post_lock_task = await _apply_event_locked(
                 request,
                 event,
+                session_key=session_key,
                 advance_sequence=False,
             )
             if response.status < 400:
@@ -1501,6 +1503,7 @@ async def _interaction_action(
             response, post_lock_task = await _apply_event_locked(
                 request,
                 event,
+                session_key=session_key,
                 advance_sequence=False,
             )
             if response.status < 400:
@@ -3646,7 +3649,7 @@ async def _event_owner_lock(app, event):
                 # claimed the quote while this request waited.
                 if key != _resolve_session_key(app, event):
                     continue
-                yield
+                yield key
                 return
         finally:
             users[key] -= 1
@@ -3726,15 +3729,15 @@ async def _events(request: web.Request) -> web.Response:
     response_finalized = False
     cancelled_after_runtime_delivery = False
     try:
-        async with _event_owner_lock(request.app, event):
-            response, post_lock_task = await _apply_event_locked(request, event)
+        async with _event_owner_lock(request.app, event) as session_key:
+            response, post_lock_task = await _apply_event_locked(request, event, session_key=session_key)
         if isinstance(post_lock_task, RuntimeInteractionDeliveryReservation):
             completion_task = asyncio.create_task(
                 _complete_runtime_interaction_delivery(request, post_lock_task)
             )
             try:
                 response = await asyncio.shield(completion_task)
-                _checkpoint_session(request.app, _resolve_session_key(request.app, event), _policy_profile_id(event) or "")
+                _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             except asyncio.CancelledError:
                 response = await completion_task
                 cancelled_after_runtime_delivery = True
@@ -4347,24 +4350,22 @@ def _active_session_key(app: web.Application, session_key: str) -> str | None:
 
 
 def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
-    direct_key = _session_key(event)
     sessions = app[SESSIONS_KEY]
     aliases = app[SESSION_ALIASES_KEY]
     if not event.turn_id and not event.event_id and event.event in TERMINAL_EVENTS:
-        prior_key = aliases.get(direct_key)
-        prior = sessions.get(prior_key)
-        if (prior is not None and prior.status in {"completed", "failed"}
-                and prior.legacy_terminal_fingerprint
-                and prior.legacy_terminal_fingerprint == _legacy_terminal_fingerprint(event)):
-            return prior_key
-    key = resolve_session_key(
+        fingerprint = _legacy_terminal_fingerprint(event)
+        if fingerprint:
+            prior_key = legacy_reference_owner_key(
+                event, _session_key(event), sessions=sessions, aliases=aliases,
+                accepts=lambda owner: owner.status in {"completed", "failed"}
+                and owner.legacy_terminal_fingerprint == fingerprint,
+            )
+            if prior_key is not None:
+                return prior_key
+    return resolve_session_key(
         event, sessions=sessions, aliases=aliases,
         redirect_aliases=app.get(REDIRECT_SESSION_ALIASES_KEY) or {},
     )
-    if not event.turn_id and key != direct_key:
-        if not legacy_alias_owner_matches(sessions[key], event):
-            return direct_key
-    return key
 
 
 def _legacy_terminal_fingerprint(event: SidecarEvent) -> str:
@@ -4378,8 +4379,9 @@ def _register_session_aliases(
     app: web.Application, event: SidecarEvent, canonical_key: str,
 ) -> None:
     # Mutation remains in the existing serialized server boundary.
-    app[SESSION_ALIASES_KEY].update(session_alias_assignments(
-        event, canonical_key, sessions=app[SESSIONS_KEY],
+    aliases = app[SESSION_ALIASES_KEY]
+    aliases.update(session_alias_assignments(
+        event, canonical_key, sessions=app[SESSIONS_KEY], aliases=aliases,
     ))
 
 
@@ -4436,12 +4438,14 @@ def _checkpoint_client_identity(app, bot_id):
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-def _checkpoint_session(app, key, profile_id):
+def _checkpoint_session(app, key, profile_id) -> bool:
     store = app.get(SESSION_STORE_KEY)
+    if store is None:
+        return True
     session = app[SESSIONS_KEY].get(key)
     mid = app[FEISHU_MESSAGE_IDS_KEY].get(key)
-    if store is None or session is None or not mid:
-        return
+    if session is None or not mid:
+        return False
     try:
         aliases = {a:k for a,k in app[SESSION_ALIASES_KEY].items() if k == key}
         store.save(key, session, mid, app[MESSAGE_BOT_IDS_KEY].get(key), profile_id, aliases,
@@ -4449,10 +4453,12 @@ def _checkpoint_session(app, key, profile_id):
                    auxiliary_receipt=_checkpoint_auxiliary_receipt(app, key, session, mid))
         if not app[DIAGNOSTICS_KEY].get("card_checkpoint_failures"):
             app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "ready"
+        return True
     except (OSError, ValueError, TypeError, RuntimeError, KeyError):
         # Existing delivery stays fail-open; never turn a local disk failure into a duplicate send.
         app[DIAGNOSTICS_KEY]["card_checkpoint_state"] = "unavailable"
         app[DIAGNOSTICS_KEY]["card_checkpoint_failures"] = app[DIAGNOSTICS_KEY].get("card_checkpoint_failures", 0) + 1
+        return False
 
 
 def _checkpoint_auxiliary_receipt(app, key, session, owner_id):
@@ -4500,6 +4506,10 @@ async def _restore_card_checkpoints(app):
         if key != _session_key(probe):
             continue
         session.route_profile_id = profile or "default"
+        if session.pending_reopen_create is not None:
+            pending = session.pending_reopen_create
+            pending.candidate.route_profile_id = session.route_profile_id
+            pending.candidate.legacy_route_thread_id = pending.thread_id
         if session.legacy_terminal_fingerprint:
             # An accepted alias terminal may replay after another turn rebinds the quote.
             digest = session.legacy_terminal_fingerprint
@@ -4567,9 +4577,186 @@ async def _stop_card_restore(app):
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def _apply_event_locked(request, event, *, advance_sequence=True):
+def _terminal_matches_display(owner: CardSession, event: SidecarEvent) -> bool:
+    if event.event == "message.completed":
+        answer = normalize_stream_text(str(event.data.get("answer") or "")).strip()
+        return owner.status == "completed" and bool(answer) and owner.answer_text == answer
+    error = event.data.get("error")
+    return (event.event == "message.failed" and owner.status == "failed"
+            and isinstance(error, str) and bool(error.strip())
+            and (owner.answer_text == error or owner.answer_text.endswith("\n\n> " + error)))
+
+
+def _possible_legacy_checkpoint_replay(app, event: SidecarEvent) -> bool:
+    if (event.turn_id or event.event_id or event.event not in TERMINAL_EVENTS
+            or event.data.get("policy_new_turn") is True
+            or _is_native_fallback_event(event) or _is_intentional_silence_event(event)):
+        return False
+    alias_key = _session_key(event)
+    owner_key = app[SESSION_ALIASES_KEY].get(alias_key)
+    owner = app[SESSIONS_KEY].get(owner_key)
+    if (owner is None or owner_key == alias_key or not owner.restored_legacy_terminal
+            or owner.legacy_terminal_fingerprint
+            or not app[FEISHU_MESSAGE_IDS_KEY].get(owner_key)
+            or owner.conversation_id != event.conversation_id
+            or not legacy_alias_owner_matches(owner, event)
+            or event.sequence != owner.last_sequence):
+        return False
+    pending = owner.pending_reopen_create
+    terminal_at = owner.updated_at if pending is None else pending.predecessor_updated_at
+    return (
+        type(terminal_at) in (int, float) and math.isfinite(terminal_at)
+        and event.created_at <= terminal_at and _terminal_matches_display(owner, event)
+    )
+
+
+_REOPEN_CREATE_EVENTS = TURN_REOPENING_EVENTS | {"message.started"}
+_REOPEN_RECOVERY_EVENTS = _REOPEN_CREATE_EVENTS | TERMINAL_EVENTS | {"subagent.updated"}
+_REOPEN_UUID_WINDOW_SECONDS = 60 * 60
+
+
+def _reopen_generation(metadata) -> str:
+    raw = metadata.get("generation")
+    return raw if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{32,64}", raw) else ""
+
+
+def _pending_reopen_matches(pending: PendingReopenCreate, event: SidecarEvent, generation: str) -> bool:
+    candidate = pending.candidate
+    sender = event.data.get("sender_open_id")
+    tenant_user = event.data.get("admission_user_id")
+    thread = explicit_thread_id(event)
+    return (
+        event.chat_id == candidate.chat_id and event.conversation_id == candidate.conversation_id
+        and (not generation or not pending.generation or generation == pending.generation)
+        and (not thread or not pending.thread_id or thread == pending.thread_id)
+        and (not sender or not candidate.sender_open_id or sender == candidate.sender_open_id)
+        and (not tenant_user or not candidate.sender_user_id or tenant_user == candidate.sender_user_id)
+    )
+
+
+def _retain_reopen_predecessor(app: web.Application, key: str, session: CardSession) -> CardSession:
+    if session.active_interaction is not None or session.approval_retirements:
+        _remember_legacy_owner_receipt(app, key)
+        session = copy.copy(session)
+        session.active_interaction = None
+        session.approval_retirements = []
+        app[SESSIONS_KEY][key] = session
+    owners = app[INTERACTION_RESULT_SESSION_KEYS_KEY]
+    for interaction_id, owner in tuple(owners.items()):
+        if owner == key:
+            owners.pop(interaction_id, None)
+            app[INTERACTION_RESULTS_KEY].pop(interaction_id, None)
+    return session
+
+
+async def _deliver_reopened_create(
+    request: web.Request, session_key: str, predecessor: CardSession,
+    pending: PendingReopenCreate | None, candidate: CardSession, event: SidecarEvent,
+    card: dict[str, Any], bot_id: str, generation: str,
+) -> CardDeliveryResult:
     app = request.app
-    key = _resolve_session_key(app, event)
+    profile = _policy_profile_id(event) or ""
+    previous_id = app[FEISHU_MESSAGE_IDS_KEY][session_key]
+    terminal = event.event in TERMINAL_EVENTS
+    if pending is None:
+        previous_pending = predecessor.pending_reopen_create
+        attempted_at = time.time()
+        pending = PendingReopenCreate(
+            candidate=candidate, start_event=event.event, start_sequence=event.sequence,
+            start_at=event.created_at, attempted_at=attempted_at,
+            predecessor_updated_at=(
+                predecessor.updated_at if previous_pending is None else previous_pending.predecessor_updated_at
+            ),
+            generation=generation,
+            bot_id=bot_id, client_identity=_checkpoint_client_identity(app, bot_id),
+            thread_id=_thread_id_for_event(event) or "",
+            reply_to_message_id=_reply_to_message_id_for_event(event) or "",
+            reply_in_thread=_reply_in_thread_for_event(event),
+            streaming=card.get("config", {}).get("streaming_mode") is True,
+        )
+        # Retain the previous owner through this reservation's retry window.
+        predecessor.updated_at = max(predecessor.updated_at, attempted_at)
+    elif not pending.uncertain and pending.reply_in_thread and not pending.reply_to_message_id:
+        # A definite local refusal let no IM request through. Later verified
+        # placement can supply the missing anchor before the first send.
+        anchor = _reply_to_message_id_for_event(event)
+        if anchor:
+            pending = replace(pending, reply_to_message_id=anchor)
+    streaming = card.get("config", {}).get("streaming_mode") is True
+    staged = replace(
+        pending, candidate=pending.candidate if terminal else candidate,
+        streaming=pending.streaming if pending.uncertain else streaming,
+        terminal_at=event.created_at if terminal else None,
+    )
+    cannot_retry = pending.attempts and (
+        (pending.attempts >= 2 and not terminal)
+        or (pending.uncertain and (
+            not 0 <= time.time() - pending.attempted_at < _REOPEN_UUID_WINDOW_SECONDS
+            or pending.streaming
+            or (pending.thread_id and not pending.reply_to_message_id)
+            or not callable(getattr(_client_for_bot(app, bot_id), "send_card_delivery", None))
+        ))
+    )
+    if cannot_retry:
+        predecessor.pending_reopen_create = staged
+        return CardDeliveryResult(None, "unknown" if pending.uncertain else "not_sent")
+
+    # Write the reservation before sending. Cancellation or restart during the
+    # request must leave the same UUID and the previous confirmed display.
+    if pending.uncertain and streaming:
+        # An ambiguous inline create must stay inline even if card settings
+        # changed between hooks. A new CardKit entity cannot recover it.
+        card["config"]["streaming_mode"] = False
+    reservation = replace(staged, attempts=pending.attempts + 1, uncertain=True)
+    predecessor.pending_reopen_create = reservation
+    if not _checkpoint_session(app, session_key, profile):
+        predecessor.pending_reopen_create = staged
+        return CardDeliveryResult(None, "unknown" if pending.uncertain else "not_sent")
+    delivery = await _send_card(
+        request, candidate.chat_id, card, bot_id,
+        thread_id=pending.thread_id or None,
+        reply_to_message_id=pending.reply_to_message_id or None,
+        reply_in_thread=pending.reply_in_thread,
+        delivery_key=(
+            f"{session_key}:reopen:{previous_id}:{pending.start_event}:"
+            f"{pending.start_sequence}:{pending.start_at}"
+        ),
+        profile_id=profile,
+    )
+    if delivery.delivered:
+        # A UUID replay can return the original placeholder. Confirm the
+        # current body on that message before committing display ownership.
+        if delivery.message_id == previous_id or (pending.uncertain and not await _update_card_for_app(
+                app, str(delivery.message_id), card, bot_id)):
+            return CardDeliveryResult(None, "unknown", error_kind="ReopenBodyUnconfirmed")
+        candidate.reply_to_message_id = pending.reply_to_message_id
+        candidate.reply_in_thread = pending.reply_in_thread
+        return delivery
+    uncertain = pending.uncertain or delivery.outcome == "unknown" or bool(delivery.retry_count)
+    predecessor.pending_reopen_create = replace(reservation, uncertain=uncertain)
+    return replace(delivery, outcome="unknown") if uncertain else delivery
+
+
+def _unconfirmed_reopen_handoff(app: web.Application, event: SidecarEvent, metadata: dict) -> web.Response:
+    if not _native_handoff_ack_capable(app, metadata, event):
+        return _native_disposition_response()
+    record, _ = _begin_native_handoff(
+        app, _native_handoff_identity(event),
+        feishu_message_id=None, bot_id=None, event_created_at=event.created_at,
+        generation=str(metadata.get("generation") or ""), ack_capable=True,
+        obligation_key=str(metadata.get("obligation_key") or ""),
+        content_hash=str(metadata.get("content_hash") or ""),
+        plan_fingerprint=str(metadata.get("plan_fingerprint") or ""),
+        route=str(metadata.get("route") or ""),
+        target_hash=str(metadata.get("target_hash") or ""),
+        provisional_uuid_seed=str(metadata.get("provisional_uuid_seed") or ""),
+    )
+    return _native_disposition_response(record)
+
+
+async def _apply_event_locked(request, event, *, session_key, advance_sequence=True):
+    app = request.app
+    key = session_key
     prior = app[SESSIONS_KEY].get(key)
     retained = None
     retained_aliases = {}
@@ -4582,7 +4769,9 @@ async def _apply_event_locked(request, event, *, advance_sequence=True):
             for table in (SESSION_ALIASES_KEY, REDIRECT_SESSION_ALIASES_KEY):
                 retained_aliases[table] = {alias: owner for alias, owner in app[table].items()
                                            if alias == key or owner == key}
-    result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
+    result = await _apply_event_locked_inner(
+        request, event, session_key=session_key, advance_sequence=advance_sequence,
+    )
     # A refused/uncertain replacement create must not erase the previous
     # completed answer or let a later fallback reuse its original delivery UUID.
     # Restore display ownership only; no execution or approval is resurrected.
@@ -4614,6 +4803,7 @@ async def _apply_event_locked_inner(
     request: web.Request,
     event: SidecarEvent,
     *,
+    session_key: str,
     advance_sequence: bool = True,
 ) -> tuple[web.Response, Any]:
     """Process event state inside the lock. Returns (response, post_lock_task).
@@ -4639,7 +4829,6 @@ async def _apply_event_locked_inner(
     _record_profile_diagnostics(request.app, event)
     _record_attachment_diagnostics(request.app, event)
     incoming_event = event
-    session_key = _resolve_session_key(request.app, incoming_event)
     if session_key in request.app[RUNTIME_INTERACTION_RESERVATIONS_KEY]:
         return web.json_response(
             {"ok": False, "error": "interaction delivery pending"}, status=409
@@ -4651,6 +4840,7 @@ async def _apply_event_locked_inner(
     handoff_identity = _native_handoff_identity(incoming_event)
     handoff_metadata = _native_handoff_metadata(incoming_event)
     handoff_generation = str(handoff_metadata.get("generation") or "")
+    reopen_generation = _reopen_generation(handoff_metadata)
     starts_new_lifecycle = _event_starts_new_lifecycle(incoming_event)
     reopens_completed_session = bool(
         session is not None
@@ -4663,6 +4853,36 @@ async def _apply_event_locked_inner(
             )
         )
     )
+    pending_reopen = session.pending_reopen_create if session is not None else None
+    blocked_reopen = False
+    same_reopen_generation = bool(
+        pending_reopen and reopen_generation and reopen_generation == pending_reopen.generation
+    )
+    if pending_reopen is not None and (same_reopen_generation or incoming_event.created_at >= pending_reopen.start_at):
+        newer_start = (
+            incoming_event.event == "message.started"
+            and incoming_event.created_at > pending_reopen.start_at
+            and not same_reopen_generation
+            and _pending_reopen_matches(pending_reopen, incoming_event, "")
+            and (bool(reopen_generation and pending_reopen.generation)
+                 or pending_reopen.terminal_at is not None and incoming_event.created_at > pending_reopen.terminal_at)
+        )
+        if newer_start:
+            pending_reopen = None
+        elif incoming_event.event in _REOPEN_RECOVERY_EVENTS:
+            blocked_reopen = (
+                pending_reopen.terminal_at is not None
+                or not _pending_reopen_matches(pending_reopen, incoming_event, reopen_generation)
+            )
+            reopens_completed_session = not blocked_reopen
+        else:
+            blocked_reopen = True
+    elif pending_reopen is not None:
+        # The previous terminal body is still available. An older timestamp
+        # alone cannot make that card acknowledge different content.
+        blocked_reopen = event_is_terminal and not _terminal_matches_display(session, incoming_event)
+        pending_reopen = None
+        reopens_completed_session = False
 
     # Generation fences and terminal dedup precede policy. The domain boundary
     # returns cache updates independently of its final admission decision.
@@ -4739,8 +4959,29 @@ async def _apply_event_locked_inner(
         }
         return web.json_response(response_payload), post_lock_task
 
+    if blocked_reopen:
+        metrics.events_ignored += 1
+        if not event_is_terminal:
+            return web.json_response({"ok": True, "applied": False}), None
+        if (pending_reopen is not None and pending_reopen.terminal_at is not None
+                and _pending_reopen_matches(pending_reopen, incoming_event, reopen_generation)):
+            return _unconfirmed_reopen_handoff(request.app, incoming_event, handoff_metadata), None
+        return _native_disposition_response(), None
+
+    if (
+        session is None
+        and not _native_handoff_ack_capable(request.app, handoff_metadata, incoming_event)
+        and _possible_legacy_checkpoint_replay(request.app, incoming_event)
+    ):
+        # The older display record cannot prove which producer event created
+        # this terminal state. Preserve the card and leave native delivery open.
+        metrics.events_ignored += 1
+        return _native_disposition_response(), None
+
     if session is None or reopens_completed_session:
         if _is_intentional_silence_event(incoming_event) or _is_native_fallback_event(incoming_event):
+            if pending_reopen is not None and session is not None:
+                session.pending_reopen_create = replace(pending_reopen, terminal_at=incoming_event.created_at)
             metrics.events_ignored += 1
             return web.json_response({"ok": True, "applied": False}), None
         metrics.policy_event_checks += 1
@@ -4754,7 +4995,9 @@ async def _apply_event_locked_inner(
             ),
         )
         if decision.disposition == NATIVE_DISPOSITION:
-            if reopens_completed_session:
+            if pending_reopen is not None and session is not None and event_is_terminal:
+                session.pending_reopen_create = replace(pending_reopen, terminal_at=incoming_event.created_at)
+            if reopens_completed_session and pending_reopen is None:
                 _reset_session_for_new_turn(request.app, session_key)
             metrics.native_bypass_events += 1
             return web.json_response(
@@ -4803,6 +5046,7 @@ async def _apply_event_locked_inner(
                 handoff_identity,
             )
     reopen_delivery_key = ""
+    reopen_predecessor = None
     if reopens_completed_session:
         # A completed topic session can share the next turn's message id. A
         # stream event is also sufficient evidence of a new turn when Hermes
@@ -4817,12 +5061,18 @@ async def _apply_event_locked_inner(
             f"{session_key}:reopen:{previous_id}:{incoming_event.event}:"
             f"{incoming_event.sequence}:{incoming_event.created_at}"
         )
-        _reset_session_for_new_turn(request.app, session_key)
+        if (previous_id and session.delivery_kind == "chat" and session.terminal_disposition in {"", "segmented"}
+                and (pending_reopen is not None or (
+                    incoming_event.event in _REOPEN_CREATE_EVENTS and _delivery_kind(incoming_event) in {"", "chat"}
+                ))):
+            reopen_predecessor = _retain_reopen_predecessor(request.app, session_key, session)
+        else:
+            _reset_session_for_new_turn(request.app, session_key)
         session = None
-        event = incoming_event
+        event = _event_for_session(incoming_event, pending_reopen.candidate) if pending_reopen else incoming_event
         event_is_terminal = _event_is_terminal(event)
 
-    if _decline_runtime_interaction_in_text_mode(request.app, event):
+    if _decline_runtime_interaction_in_text_mode(request.app, event, session_key=session_key):
         # The runtime callback listener can only be completed by a card
         # action.  Claiming ownership while rendering text-only choices leaves
         # Hermes blocked on an Event that the Sidecar has no text-message path
@@ -4838,7 +5088,7 @@ async def _apply_event_locked_inner(
             }
         ), None
 
-    if _skip_native_text_fallback_interaction(request.app, event):
+    if _skip_native_text_fallback_interaction(request.app, event, session_key=session_key):
         metrics.events_ignored += 1
         return web.json_response(
             {
@@ -4881,115 +5131,19 @@ async def _apply_event_locked_inner(
             "reason": preflight_rejection,
         }), None
 
-    if event.event == "message.started":
-        if session is not None:
-            metrics.events_ignored += 1
-            return web.json_response({"ok": True, "applied": False}), None
-    if event.event == "message.started" and session is None:
-        # Abandon stale sessions for the same conversation — covers the case
-        # where a new message arrives with its own explicit message_id (e.g.
-        # after /stop or a generation-bump interrupt).
-        await _abandon_stale_sessions_for_chat(
-            request.app,
-            event.chat_id,
-            session_key,
-            event,
-            alias_to_session_key=(
-                session_key if _is_redirect_followup_event(event) else None
-            ),
-        )
-        session = CardSession(
-            conversation_id=event.conversation_id,
-            message_id=event.message_id,
-            chat_id=event.chat_id,
-            route_profile_id=_policy_profile_id(event) or "default",
-            legacy_route_thread_id=explicit_thread_id(event),
-        )
-        sessions[session_key] = session
-        applied = session.apply(event)
-        if applied:
-            _register_session_aliases(request.app, incoming_event, session_key)
-        if applied and session_key not in feishu_message_ids:
-            route = _resolve_route(request, event)
-            if route is None:
-                _cleanup_failed_session_state(request.app, session_key, session)
-                metrics.events_rejected += 1
-                delivery = CardDeliveryResult(
-                    message_id=None,
-                    outcome="not_sent",
-                    error_kind="RouteResolutionError",
-                )
-                return web.json_response(
-                    {
-                        "ok": False,
-                        "error": "bot route failed",
-                        "delivery": _delivery_payload(delivery),
-                    },
-                    status=502,
-                ), None
-            session_card_config = _resolve_session_card_config(
-                request.app, route.bot_id, event
-            )
-            request.app[SESSION_CARD_CONFIGS_KEY][session_key] = session_card_config
-            _refresh_session_display_status(request, session)
-            delivery = await _send_card(
-                request,
-                event.chat_id,
-                _render_session_card(request, session),
-                route.bot_id,
-                thread_id=_thread_id_for_event(event),
-                reply_to_message_id=_reply_to_message_id_for_event(event),
-                reply_in_thread=_reply_in_thread_for_event(event),
-                delivery_key=reopen_delivery_key or session_key,
-                delivery_kind=_delivery_kind(event) or "chat",
-                profile_id=_policy_profile_id(event),
-            )
-            if not delivery.delivered:
-                _cleanup_failed_session_state(
-                    request.app,
-                    session_key,
-                    session,
-                    session_card_config,
-                )
-                _record_notice_delivery_decision(metrics, event, delivery)
-                metrics.events_rejected += 1
-                return web.json_response(
-                    {
-                        "ok": False,
-                        "error": "feishu send failed",
-                        "delivery": _delivery_payload(delivery),
-                    },
-                    status=502,
-                ), None
-            feishu_message_ids[session_key] = delivery.message_id
-            message_bot_ids[session_key] = route.bot_id
-            _ensure_card_animation(
-                request.app,
-                session_key=session_key,
-                session=session,
-                feishu_message_id=str(delivery.message_id),
-                bot_id=route.bot_id,
-            )
-        if applied:
-            metrics.events_applied += 1
-        else:
-            metrics.events_ignored += 1
-        return web.json_response(
-            {
-                "ok": True,
-                "applied": applied,
-                "delivery": _delivery_payload(delivery),
-            }
-        ), None
+    if event.event == "message.started" and session is not None:
+        metrics.events_ignored += 1
+        return web.json_response({"ok": True, "applied": False}), None
 
     if session is None:
-        if event.event in SESSION_CREATING_EVENTS or _is_compaction_session_start(event):
+        if (event.event == "message.started" or event.event in SESSION_CREATING_EVENTS
+                or pending_reopen is not None or _is_compaction_session_start(event)):
             # Abandon stale sessions for the same conversation when a new
             # session is being created.  This handles the interrupt scenario:
             # the gateway interrupts a running turn and starts a new one
             # without sending message.completed for the old turn — the old
             # card would be stuck at "生成中" forever.
-            if not _is_independent_notice_event(event):
+            if pending_reopen is None and not _is_independent_notice_event(event):
                 await _abandon_stale_sessions_for_chat(
                     request.app,
                     event.chat_id,
@@ -4999,24 +5153,44 @@ async def _apply_event_locked_inner(
                         session_key if _is_redirect_followup_event(event) else None
                     ),
                 )
-            session = CardSession(
+            session = copy.deepcopy(pending_reopen.candidate) if pending_reopen else CardSession(
                 conversation_id=event.conversation_id,
                 message_id=event.message_id,
                 chat_id=event.chat_id,
                 route_profile_id=_policy_profile_id(event) or "default",
                 legacy_route_thread_id=explicit_thread_id(event),
             )
-            sessions[session_key] = session
-            applied = session.apply(event)
-            if applied:
+            if reopen_predecessor is None:
+                sessions[session_key] = session
+            retry_initial_event = pending_reopen is not None and (
+                event.event == pending_reopen.start_event and event.sequence == pending_reopen.start_sequence
+                and event.created_at == pending_reopen.start_at
+            )
+            applied = (session.apply(event) if pending_reopen is None or event.event != "message.started"
+                       else False)
+            if applied and reopen_predecessor is None:
                 _register_session_aliases(request.app, incoming_event, session_key)
-            if applied:
+            if applied or retry_initial_event:
                 is_cron_completed = (
                     event.event == "message.completed" and _delivery_kind(event) == "cron"
                 )
-                route = _resolve_route(request, event)
+                if pending_reopen is None:
+                    route = _resolve_route(request, event)
+                else:
+                    route = None
+                    try:
+                        if _checkpoint_client_identity(request.app, pending_reopen.bot_id) == pending_reopen.client_identity:
+                            route = RouteResult(pending_reopen.bot_id, "reopen")
+                    except Exception:
+                        pass
                 if route is None:
                     _cleanup_failed_session_state(request.app, session_key, session)
+                    if pending_reopen is not None and event_is_terminal:
+                        reopen_predecessor.pending_reopen_create = replace(
+                            pending_reopen, terminal_at=incoming_event.created_at,
+                        )
+                        metrics.events_ignored += 1
+                        return _unconfirmed_reopen_handoff(request.app, incoming_event, handoff_metadata), None
                     if is_cron_completed:
                         metrics.cron_fallbacks += 1
                     delivery = CardDeliveryResult(
@@ -5037,12 +5211,17 @@ async def _apply_event_locked_inner(
                 session_card_config = _resolve_session_card_config(
                     request.app, route.bot_id, event
                 )
-                request.app[SESSION_CARD_CONFIGS_KEY][session_key] = session_card_config
-                _refresh_session_display_status(request, session)
+                if reopen_predecessor is None:
+                    request.app[SESSION_CARD_CONFIGS_KEY][session_key] = session_card_config
+                session.refresh_display_status_source(StatusConfig.from_mapping(session_card_config.get("status")))
                 render_result = _render_session_card_result_for_app(
-                    request.app, session
+                    request.app, session, session_key=session_key, card_config_override=session_card_config,
                 )
                 if event_is_terminal and render_result.disposition == "native":
+                    if pending_reopen is not None:
+                        reopen_predecessor.pending_reopen_create = replace(
+                            pending_reopen, terminal_at=incoming_event.created_at,
+                        )
                     handoff_record, handoff_created = _begin_native_handoff(
                         request.app,
                         handoff_identity,
@@ -5114,19 +5293,25 @@ async def _apply_event_locked_inner(
                     session.active_interaction.thread_id = _thread_id_for_event(event) or ""
                     session.active_interaction.reply_to_message_id = _reply_to_message_id_for_event(event) or ""
                     session.active_interaction.reply_in_thread = _reply_in_thread_for_event(event)
-                delivery = await _send_card(
-                    request,
-                    event.chat_id,
-                    render_result.card,
-                    route.bot_id,
-                    thread_id=_thread_id_for_event(event),
-                    reply_to_message_id=_reply_to_message_id_for_event(event),
-                    reply_in_thread=_reply_in_thread_for_event(event),
-                    delivery_key=reopen_delivery_key or session_key,
-                    delivery_kind=_delivery_kind(event)
-                    or ("notice" if event.event == "system.notice" else "chat"),
-                    profile_id=_policy_profile_id(event),
-                )
+                if reopen_predecessor is not None:
+                    delivery = await _deliver_reopened_create(
+                        request, session_key, reopen_predecessor, pending_reopen,
+                        session, event, render_result.card, route.bot_id or "", reopen_generation,
+                    )
+                else:
+                    delivery = await _send_card(
+                        request,
+                        event.chat_id,
+                        render_result.card,
+                        route.bot_id,
+                        thread_id=_thread_id_for_event(event),
+                        reply_to_message_id=_reply_to_message_id_for_event(event),
+                        reply_in_thread=_reply_in_thread_for_event(event),
+                        delivery_key=reopen_delivery_key or session_key,
+                        delivery_kind=_delivery_kind(event)
+                        or ("notice" if event.event == "system.notice" else "chat"),
+                        profile_id=_policy_profile_id(event),
+                    )
                 if not delivery.delivered:
                     _cleanup_failed_session_state(
                         request.app,
@@ -5137,6 +5322,9 @@ async def _apply_event_locked_inner(
                     if is_cron_completed:
                         metrics.cron_fallbacks += 1
                     _record_notice_delivery_decision(metrics, event, delivery)
+                    if reopen_predecessor is not None and event_is_terminal:
+                        metrics.events_ignored += 1
+                        return _unconfirmed_reopen_handoff(request.app, incoming_event, handoff_metadata), None
                     metrics.events_rejected += 1
                     return web.json_response(
                         {
@@ -5146,6 +5334,22 @@ async def _apply_event_locked_inner(
                         },
                         status=502,
                     ), None
+                if reopen_predecessor is not None:
+                    _reset_session_for_new_turn(request.app, session_key)
+                    sessions[session_key] = session
+                    if pending_reopen is not None and pending_reopen.uncertain:
+                        # Keep subsequent IM updates in the dialect of the
+                        # now-confirmed inline create.
+                        session_card_config["streaming_mode"] = False
+                    request.app[SESSION_CARD_CONFIGS_KEY][session_key] = session_card_config
+                    placement = reopen_predecessor.pending_reopen_create
+                    if placement and placement.reply_to_message_id:
+                        _register_session_aliases(request.app, replace(
+                            incoming_event, thread_id=placement.thread_id,
+                            data={**incoming_event.data, "reply_to_message_id": placement.reply_to_message_id},
+                        ), session_key)
+                    _register_session_aliases(request.app, incoming_event, session_key)
+                    applied = True
                 message_id = str(delivery.message_id)
                 feishu_message_ids[session_key] = message_id
                 message_bot_ids[session_key] = route.bot_id
@@ -5166,9 +5370,11 @@ async def _apply_event_locked_inner(
                         session_key=session_key,
                         main_message_id=message_id,
                         bot_id=route.bot_id,
-                        thread_id=_thread_id_for_event(event) or None,
-                        reply_to_message_id=_reply_to_message_id_for_event(event) or None,
-                        reply_in_thread=_reply_in_thread_for_event(event),
+                        thread_id=(pending_reopen.thread_id or None)
+                        if pending_reopen else _thread_id_for_event(event),
+                        reply_to_message_id=session.reply_to_message_id or None
+                        if pending_reopen else _reply_to_message_id_for_event(event),
+                        reply_in_thread=session.reply_in_thread if pending_reopen else _reply_in_thread_for_event(event),
                         profile_id=_policy_profile_id(event),
                     )
                     if segments_delivered:
@@ -5250,6 +5456,8 @@ async def _apply_event_locked_inner(
                         session.active_interaction.feishu_message_id = message_id
                     _store_interaction_result(request.app, session)
                 if event_is_terminal:
+                    if reopen_predecessor is not None:
+                        session.terminal_delivery_state = "delivered"
                     _store_card_summary(request.app, event, session, message_id)
                     request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
                         "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -5911,7 +6119,7 @@ async def _apply_event_locked_inner(
             ), post_lock_task
         response_payload["interaction_mode"] = _interaction_mode_for_session_key(
             request.app,
-            _session_key(event),
+            session_key,
         )
     return web.json_response(response_payload), post_lock_task
 
@@ -7209,20 +7417,24 @@ def _record_attachment_diagnostics(app: web.Application, event: SidecarEvent) ->
 def _skip_native_text_fallback_interaction(
     app: web.Application,
     event: SidecarEvent,
+    *,
+    session_key: str | None = None,
 ) -> bool:
     return (
         native_text_fallback_requested(event)
-        and _interaction_mode_for_session_key(app, _session_key(event)) == "text"
+        and _interaction_mode_for_session_key(app, session_key or _session_key(event)) == "text"
     )
 
 
 def _decline_runtime_interaction_in_text_mode(
     app: web.Application,
     event: SidecarEvent,
+    *,
+    session_key: str | None = None,
 ) -> bool:
     return (
         runtime_text_decline_requested(event)
-        and _interaction_mode_for_session_key(app, _session_key(event)) == "text"
+        and _interaction_mode_for_session_key(app, session_key or _session_key(event)) == "text"
     )
 
 
@@ -7374,8 +7586,8 @@ def _render_session_card_result_for_app(
     session: CardSession,
     *,
     session_key: str | None = None,
+    card_config_override: dict[str, Any] | None = None,
 ) -> CardRenderResult:
-    footer_fields = _footer_fields_for_session(app, session)
     (
         resolved_session_key,
         card_config,
@@ -7385,10 +7597,13 @@ def _render_session_card_result_for_app(
         app,
         session,
         session_key=session_key,
+        card_config_override=card_config_override,
     )
+    footer_fields = _footer_fields_for_session(app, session, card_config_override=card_config_override)
     interaction_mode = _interaction_mode_for_session_key(
         app,
         resolved_session_key,
+        card_config_override=card_config_override,
     )
     notify = card_config.get("completion_notify") or {}
     completion_in_card = (isinstance(notify, dict) and notify.get("enabled") is True
@@ -7450,16 +7665,16 @@ def _session_card_render_context(
     session: CardSession,
     *,
     session_key: str | None = None,
+    card_config_override: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], str, str]:
     resolved_session_key = (
         session_key
         if session_key is not None
         else _session_key_for_session(app, session)
     )
-    card_config = app[SESSION_CARD_CONFIGS_KEY].get(
-        resolved_session_key,
-        {},
-    )
+    card_config = card_config_override
+    if card_config is None:
+        card_config = app[SESSION_CARD_CONFIGS_KEY].get(resolved_session_key, {})
     title = card_config.get("title", app[CARD_TITLE_KEY])
     if not isinstance(title, str):
         title = app[CARD_TITLE_KEY]
@@ -7515,12 +7730,11 @@ def _native_disposition_response(
 
 
 def _footer_fields_for_session(
-    app: web.Application, session: CardSession
+    app: web.Application, session: CardSession, *, card_config_override: dict[str, Any] | None = None,
 ) -> list[str] | None:
-    card_config = app[SESSION_CARD_CONFIGS_KEY].get(
-        _session_key_for_session(app, session),
-        {},
-    )
+    card_config = card_config_override
+    if card_config is None:
+        card_config = app[SESSION_CARD_CONFIGS_KEY].get(_session_key_for_session(app, session), {})
     footer_fields = card_config.get("footer_fields", app[FOOTER_FIELDS_KEY])
     if isinstance(footer_fields, list):
         return list(footer_fields)
@@ -7554,8 +7768,12 @@ async def _populate_subscription_usage(
     session.subscription_usage = usage if route == (session.model, session.provider) else ""
 
 
-def _interaction_mode_for_session_key(app: web.Application, session_key: str) -> str:
-    card_config = app[SESSION_CARD_CONFIGS_KEY].get(session_key, {})
+def _interaction_mode_for_session_key(
+    app: web.Application, session_key: str, *, card_config_override: dict[str, Any] | None = None,
+) -> str:
+    card_config = card_config_override
+    if card_config is None:
+        card_config = app[SESSION_CARD_CONFIGS_KEY].get(session_key, {})
     raw_mode = card_config.get(
         "interaction_mode",
         app[BASE_CARD_CONFIG_KEY].get("interaction_mode", "callback"),
@@ -8392,10 +8610,9 @@ async def _abandon_stale_sessions_for_chat(
     The old card stays stuck at "生成中" forever.  This function finds such
     orphaned sessions and ends them without claiming successful execution.
 
-    Only abandons sessions that share the same chat_id AND conversation_id AND
-    profile_id prefix (to avoid cross-profile or cross-thread interference),
-    and skips the new session itself. In a group, matching verified requesters
-    are also required: conversation membership does not prove interruption.
+    Only abandons sessions that share the chat, conversation, topic root and
+    profile, and skips the new session itself. In a group, matching verified
+    requesters are also required: conversation membership does not prove interruption.
     Explicit redirect handoffs affect only their named source turn.
     """
     sessions: Dict[str, CardSession] = app[SESSIONS_KEY]
@@ -8404,7 +8621,6 @@ async def _abandon_stale_sessions_for_chat(
 
     # Extract profile_id prefix from new_session_key (format: "profile:msg_id")
     new_profile = new_session_key.split(":", 1)[0] if ":" in new_session_key else ""
-    new_conversation_id = event.conversation_id
     # A redirect may move callbacks for one explicitly identified source turn.
     # Conversation membership (or a quoted message) alone is not evidence that
     # every historical turn belongs to this redirect.
@@ -8415,10 +8631,13 @@ async def _abandon_stale_sessions_for_chat(
         source_message = data.get("redirect_from_message_id")
         source_id = source_turn or source_message
         if isinstance(source_id, str) and source_id.strip():
-            redirect_source_key = _session_key_for_message_id(event, source_id.strip())
-            if not source_turn:
-                redirect_source_key = app[SESSION_ALIASES_KEY].get(
-                    redirect_source_key, redirect_source_key
+            reference = _session_key_for_message_id(event, source_id.strip())
+            if source_turn:
+                redirect_source_key = reference
+            else:
+                redirect_source_key = legacy_reference_owner_key(
+                    event, reference, sessions=sessions, aliases=app[SESSION_ALIASES_KEY],
+                    accepts=lambda owner: owner.delivery_kind != "notice",
                 )
 
     data = event.data if isinstance(event.data, dict) else {}
@@ -8433,9 +8652,7 @@ async def _abandon_stale_sessions_for_chat(
     for key, sess in sessions.items():
         if key == new_session_key:
             continue
-        if sess.chat_id != chat_id:
-            continue
-        if sess.conversation_id != new_conversation_id:
+        if not event_conversation_matches(sess, event):
             continue
         if not event.turn_id and not alias_to_session_key and not new_scope and not legacy_alias_owner_matches(sess, event):
             continue
@@ -8448,7 +8665,7 @@ async def _abandon_stale_sessions_for_chat(
         if key_profile != new_profile:
             continue
         if alias_to_session_key:
-            if key != redirect_source_key:
+            if key != redirect_source_key or not legacy_alias_owner_matches(sess, event):
                 continue
         elif new_scope or sess.execution_scope or event.producer == "plugin":
             if not new_scope or new_scope != sess.execution_scope:

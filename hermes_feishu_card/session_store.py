@@ -4,12 +4,13 @@ from __future__ import annotations
 from dataclasses import asdict, fields
 import hashlib
 import json
+import math
 import re
 import time
 from pathlib import Path
 
 from .card_timeline import CardTimeline, TimelineEntry
-from .session import CardSession, ToolState
+from .session import CardSession, PendingReopenCreate, ToolState
 from .display_segments import valid_checkpoint_state
 from .legacy_owner import valid_auxiliary_receipt, valid_legacy_receipt
 from .native_handoff import (
@@ -22,10 +23,70 @@ RETENTION_SECONDS = 24 * 3600
 _EXCLUDED = {'tools', 'timeline', 'thinking_normalizer', 'answer_normalizer',
              'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id', '_process_activity',
              'presentation_state', 'observation', 'legacy_terminal_fingerprint', 'legacy_route_thread_id',
+             'pending_reopen_create', 'restored_legacy_terminal',
              # Supplied by every gateway event; persisting them would change the
              # v1 checkpoint field set and strand records in both directions.
              'sender_user_id', 'sender_open_id_rejected'}
 _FIELDS = {f.name for f in fields(CardSession)} - _EXCLUDED
+_REOPEN_FIELDS = {f.name for f in fields(PendingReopenCreate)} - {'candidate'}
+
+
+def _display_payload(session):
+    body = {key: getattr(session, key) for key in _FIELDS}
+    # Leave the v1 session schema readable by older releases when possible.
+    for optional in ('display_segment', 'legacy_owner_receipt', 'terminal_reasoning_notice'):
+        if not body[optional]:
+            body.pop(optional)
+    body['tools'] = {key: asdict(tool) for key, tool in session.tools.items()}
+    for tool in body['tools'].values():
+        if not tool['call_id']:
+            tool.pop('call_id')
+    body['timeline'] = asdict(session.timeline)
+    body['normalizers'] = [session.thinking_normalizer._pending, session.answer_normalizer._pending]
+    return body
+
+
+def _load_display_payload(data):
+    data.setdefault('display_segment', {})
+    data.setdefault('legacy_owner_receipt', {})
+    data.setdefault('terminal_reasoning_notice', '')
+    if (set(data) != _FIELDS | {'tools', 'timeline', 'normalizers'}
+            or type(data['terminal_reasoning_notice']) is not str
+            or not valid_checkpoint_state(data['display_segment'])
+            or not valid_legacy_receipt(data['legacy_owner_receipt'])):
+        raise ValueError('invalid checkpoint display')
+    session = CardSession(**{key: data[key] for key in _FIELDS})
+    if not all(isinstance(getattr(session, key), str) and getattr(session, key)
+               for key in ('conversation_id', 'message_id', 'chat_id')):
+        raise ValueError('invalid checkpoint route')
+    session.tools = {key: ToolState(**tool) for key, tool in data['tools'].items()}
+    timeline = dict(data['timeline'])
+    timeline['_entries'] = [TimelineEntry(**entry) for entry in timeline['_entries']]
+    session.timeline = CardTimeline(**timeline)
+    session.thinking_normalizer._pending, session.answer_normalizer._pending = data['normalizers']
+    return session
+
+
+def _load_pending_reopen(data):
+    if (not isinstance(data, dict) or set(data) != _REOPEN_FIELDS | {'candidate'}
+            or data['start_event'] not in {'message.started', 'answer.delta', 'thinking.delta', 'tool.updated'}
+            or type(data['start_sequence']) is not int or data['start_sequence'] < 0
+            or type(data['attempts']) is not int or not 0 <= data['attempts'] <= 3
+            or any(type(data[key]) is not bool for key in ('reply_in_thread', 'streaming', 'uncertain'))
+            or any(type(data[key]) not in (int, float) or not math.isfinite(data[key])
+                   for key in ('start_at', 'attempted_at', 'predecessor_updated_at'))
+            or data['terminal_at'] is not None and (
+                type(data['terminal_at']) not in (int, float) or not math.isfinite(data['terminal_at']))
+            or any(not isinstance(data[key], str) for key in (
+                'generation', 'bot_id', 'client_identity', 'thread_id', 'reply_to_message_id'))
+            or not re.fullmatch(r'[0-9a-f]{64}', data['client_identity'])
+            or data['generation'] and not re.fullmatch(r'[0-9a-f]{32,64}', data['generation'])):
+        raise ValueError('invalid pending reopen')
+    candidate = _load_display_payload(data['candidate'])
+    if (candidate.delivery_kind != 'chat' or candidate.status in {'completed', 'failed'}
+            or candidate.last_sequence < data['start_sequence']):
+        raise ValueError('invalid pending candidate')
+    return PendingReopenCreate(candidate=candidate, **{key: data[key] for key in _REOPEN_FIELDS})
 
 
 class SessionStore:
@@ -43,18 +104,7 @@ class SessionStore:
         if session.terminal_disposition not in {'', 'segmented'} or session.delivery_kind != 'chat':
             self.remove(key)
             return
-        body = {k: getattr(session, k) for k in _FIELDS}
-        # Ordinary cards remain readable by v4.6.3 after a rollback. Records
-        # using new presentation ownership need the newer reader instead.
-        for optional in ('display_segment', 'legacy_owner_receipt', 'terminal_reasoning_notice'):
-            if not body[optional]:
-                body.pop(optional)
-        body['tools'] = {k: asdict(v) for k, v in session.tools.items()}
-        for tool in body['tools'].values():
-            if not tool['call_id']:
-                tool.pop('call_id')
-        body['timeline'] = asdict(session.timeline)
-        body['normalizers'] = [session.thinking_normalizer._pending, session.answer_normalizer._pending]
+        body = _display_payload(session)
         prefix = f"{profile_id}:" if profile_id else ""
         if not key.startswith(prefix) or not key[len(prefix):]:
             raise ValueError("checkpoint turn scope mismatch")
@@ -64,9 +114,14 @@ class SessionStore:
                       saved_at=time.time())
         if session.legacy_route_thread_id:
             record['legacy_route_thread_id'] = session.legacy_route_thread_id
-        if session.status in {'completed', 'failed'} and session.legacy_terminal_fingerprint:
+        if (session.status in {'completed', 'failed'}
+                and (session.legacy_terminal_fingerprint or not session.restored_legacy_terminal)):
             # Optional record metadata keeps the v1 session field set readable on rollback.
-            record['legacy_terminal_fingerprint'] = session.legacy_terminal_fingerprint
+            record['legacy_terminal_fingerprint'] = session.legacy_terminal_fingerprint or None
+        if session.pending_reopen_create is not None:
+            pending = session.pending_reopen_create
+            record['pending_reopen_create'] = {key: getattr(pending, key) for key in _REOPEN_FIELDS}
+            record['pending_reopen_create']['candidate'] = _display_payload(pending.candidate)
         if auxiliary_receipt:
             if (not valid_auxiliary_receipt(auxiliary_receipt)
                     or auxiliary_receipt['message_id'] == message_id):
@@ -122,35 +177,20 @@ class SessionStore:
                 if (not valid_auxiliary_receipt(auxiliary)
                         or auxiliary and auxiliary['message_id'] == r['message_id']):
                     continue
-                data = r['session']
-                # v4.6.3 records predate display segments. Preserve their exact
-                # semantics; new records retain the original logical identity.
-                data.setdefault('display_segment', {})
-                data.setdefault('legacy_owner_receipt', {})
-                data.setdefault('terminal_reasoning_notice', '')
-                if set(data) != _FIELDS | {'tools','timeline','normalizers'}:
-                    continue
-                if type(data['terminal_reasoning_notice']) is not str:
-                    continue
-                if not valid_checkpoint_state(data['display_segment']):
-                    continue
-                if not valid_legacy_receipt(data['legacy_owner_receipt']):
-                    continue
-                session = CardSession(**{k:data[k] for k in _FIELDS})
+                session = _load_display_payload(r['session'])
                 thread = r.get('legacy_route_thread_id', '')
                 if isinstance(thread, str) and thread.startswith(('omt_', 'om_')):
                     session.legacy_route_thread_id = thread
                 digest = r.get('legacy_terminal_fingerprint', '')
                 if session.status in {'completed', 'failed'} and isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest):
                     session.legacy_terminal_fingerprint = digest
-                if not all(isinstance(getattr(session,k),str) and getattr(session,k)
-                           for k in ('conversation_id','message_id','chat_id')):
-                    continue
-                session.tools = {k:ToolState(**v) for k,v in data['tools'].items()}
-                timeline = dict(data['timeline'])
-                timeline['_entries'] = [TimelineEntry(**x) for x in timeline['_entries']]
-                session.timeline = CardTimeline(**timeline)
-                session.thinking_normalizer._pending, session.answer_normalizer._pending = data['normalizers']
+                session.restored_legacy_terminal = (
+                    session.status in {'completed', 'failed'} and 'legacy_terminal_fingerprint' not in r
+                )
+                if 'pending_reopen_create' in r:
+                    if session.status not in {'completed', 'failed'}:
+                        continue
+                    session.pending_reopen_create = _load_pending_reopen(r['pending_reopen_create'])
                 # No interaction tokens, callbacks, waiter identity or native admissions are restored.
                 if r['had_interaction']:
                     session.status = 'failed'

@@ -172,6 +172,28 @@ class InteractionState:
         return True
 
 
+@dataclass(frozen=True, repr=False)
+class PendingReopenCreate:
+    # A display candidate and the exact placement of its first create attempt.
+    # The preceding card remains the owner while the create is unconfirmed.
+    candidate: CardSession
+    start_event: str
+    start_sequence: int
+    start_at: float
+    attempted_at: float
+    predecessor_updated_at: float
+    generation: str
+    bot_id: str
+    client_identity: str
+    thread_id: str
+    reply_to_message_id: str
+    reply_in_thread: bool
+    streaming: bool
+    attempts: int = 0
+    uncertain: bool = False
+    terminal_at: float | None = None
+
+
 @dataclass
 class CardSession:
     conversation_id: str
@@ -225,6 +247,8 @@ class CardSession:
     # Optional checkpoint metadata binds an exact legacy retry to the completed card.
     legacy_terminal_fingerprint: str = field(default="", repr=False)
     legacy_route_thread_id: str = field(default="", repr=False)
+    restored_legacy_terminal: bool = field(default=False, repr=False)
+    pending_reopen_create: PendingReopenCreate | None = field(default=None, repr=False)
     notice_kind: str = ""
     notice_title: str = ""
     notice_level: str = "info"
