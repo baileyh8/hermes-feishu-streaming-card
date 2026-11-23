@@ -121,6 +121,11 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "flush_interval_ms": 200,
         "final_drain_timeout_ms": 900,
         "title": "Hermes Agent",
+        # Presentation-only glyph on the live header sub-title. ``off`` keeps the card
+        # byte-identical to the pre-emoji release; ``classic`` adds one leading emoji per
+        # action row and ``lobster`` also themes the header state glyph (see
+        # emoji_theme.py). Cosmetic, so a bad value falls back to off.
+        "emoji_theme": "off",
         "interaction_mode": "auto",
         "streaming_mode": False,
         "show_reasoning": True,

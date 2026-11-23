@@ -265,6 +265,7 @@ V5 可追加 `--running` 核对进程已加载值，或用 `--minimal-yaml` 生�
 | 正文只看最新思考 | `card.thinking_body_tail_chars: 2400`（默认 `0` 不截断） |
 | 完成后精简成功工具行 | `card.hide_completed_tool_activity: true`，保留异常工具 |
 | 群聊不显示进行中的工具命令 | `card.tool_activity: summary` 或 `hidden`（默认 `full`），见[进行中工具信息](docs/wiki/reading-presets.md#进行中工具信息) |
+| 进行中副标题带动作表情 | `card.emoji_theme: classic`（📖 读取 / ⌨️ 执行 / 🔍 搜索等，默认 `off` 不显示）；`lobster` 另有标题状态表情 🦞/😵/🛎 |
 | 群聊默认不发卡片、个别群例外 | `bindings.default_delivery` 与 `bindings.card_chats` |
 | 不同群显示不同 | `card.chat_overrides`，用 `card-config --chat-type/--chat-id` 核对 |
 | 字号、页脚与订阅额度 | `card.text_sizes`、`card.footer_fields`；可选 `subscription_usage`、`output_rate` |
