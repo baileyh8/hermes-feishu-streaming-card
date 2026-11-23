@@ -17,7 +17,7 @@ import time
 import asyncio
 import logging
 import re
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Union
 
 from aiohttp import web
 
@@ -59,7 +59,8 @@ from .interaction_input import (
     extract_operator_name as _extract_operator_name,
 )
 from .event_rules import (
-    active_session_key, resolve_session_key, session_alias_assignments,
+    active_session_key, resolve_session_key, session_alias_assignments, session_alias_keys_for_event,
+    explicit_thread_id, legacy_alias_owner_matches,
     interaction_reply_placement,
     TERMINAL_EVENTS,
     TURN_REOPENING_EVENTS,
@@ -403,6 +404,9 @@ def _cleanup_state_for_app(app: web.Application) -> CleanupState:
     )
 
 
+FenceKey = Union[str, tuple[str, str]]
+
+
 class EventIdFence:
     def __init__(
         self,
@@ -418,13 +422,13 @@ class EventIdFence:
         self.ttl_seconds = ttl_seconds
         self.wait_seconds = wait_seconds
         self.now = now
-        self.entries: OrderedDict[str, EventIdFenceEntry] = OrderedDict()
+        self.entries: OrderedDict[FenceKey, EventIdFenceEntry] = OrderedDict()
         # Python 3.9 requires a current event loop when constructing a Lock.
         # create_app() is intentionally safe to call from synchronous startup,
         # so bind the fence lock lazily from the first async claim instead.
         self._lock: asyncio.Lock | None = None
 
-    async def claim(self, event_id: str, fingerprint: str) -> EventIdFenceClaim:
+    async def claim(self, event_id: FenceKey, fingerprint: str) -> EventIdFenceClaim:
         lock = self._lock
         if lock is None:
             lock = asyncio.Lock()
@@ -465,7 +469,7 @@ class EventIdFence:
 
     async def finalize(
         self,
-        event_id: str,
+        event_id: FenceKey,
         entry: EventIdFenceEntry,
         status: int,
         payload: dict[str, object],
@@ -480,7 +484,7 @@ class EventIdFence:
             if not entry.future.done():
                 entry.future.set_result((int(status), copy.deepcopy(canonical_payload)))
 
-    async def abandon(self, event_id: str, entry: EventIdFenceEntry) -> None:
+    async def abandon(self, event_id: FenceKey, entry: EventIdFenceEntry) -> None:
         async with self._lock:
             if self.entries.get(event_id) is not entry or entry.completed:
                 return
@@ -3667,7 +3671,14 @@ async def _events(request: web.Request) -> web.Response:
 
     fence_claim: EventIdFenceClaim | None = None
     fence = request.app[EVENT_ID_FENCE_KEY]
-    if event.event_id:
+    fence_key: FenceKey = event.event_id
+    legacy_alias = (
+        not event.event_id and not event.turn_id and event.event in TERMINAL_EVENTS
+        and not event.data.get("native_handoff")
+        and not _is_native_fallback_event(event) and not _is_intentional_silence_event(event)
+        and (_session_key(event) in request.app[SESSION_ALIASES_KEY] or bool(session_alias_keys_for_event(event)))
+    )
+    if event.event_id or legacy_alias:
         try:
             fingerprint = _event_id_fingerprint(event)
         except (TypeError, ValueError):
@@ -3676,7 +3687,10 @@ async def _events(request: web.Request) -> web.Response:
                 {"ok": False, "error": "event payload is not canonicalizable"},
                 status=400,
             )
-        fence_claim = await fence.claim(event.event_id, fingerprint)
+        if legacy_alias:
+            # Internal keys cannot collide with a producer-supplied event_id.
+            fence_key = ("legacy_terminal", fingerprint)
+        fence_claim = await fence.claim(fence_key, fingerprint)
         if fence_claim.kind == "conflict":
             return web.json_response(
                 {"ok": False, "error": "event_id payload conflict"},
@@ -3721,19 +3735,22 @@ async def _events(request: web.Request) -> web.Response:
             post_lock_task = None
         if fence_claim is not None:
             response_payload = _json_response_payload(response)
-            if (
+            unconfirmed_alias = legacy_alias and (
+                response.status != 200 or response_payload.get("applied") is not True
+            )
+            if unconfirmed_alias or (
                 _event_has_runtime_admission(event)
                 and not _is_exact_runtime_admission_response_payload(
                     response.status, response_payload
                 )
             ):
                 finalize_task = asyncio.create_task(
-                    fence.abandon(event.event_id, fence_claim.entry)
+                    fence.abandon(fence_key, fence_claim.entry)
                 )
             else:
                 finalize_task = asyncio.create_task(
                     fence.finalize(
-                        event.event_id,
+                        fence_key,
                         fence_claim.entry,
                         response.status,
                         response_payload,
@@ -3751,7 +3768,7 @@ async def _events(request: web.Request) -> web.Response:
     except BaseException:
         if fence_claim is not None and not response_finalized:
             await asyncio.shield(
-                fence.abandon(event.event_id, fence_claim.entry)
+                fence.abandon(fence_key, fence_claim.entry)
             )
         raise
     if post_lock_task is not None and _should_await_card_update(event):
@@ -4339,14 +4356,7 @@ def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
         redirect_aliases=app.get(REDIRECT_SESSION_ALIASES_KEY) or {},
     )
     if not event.turn_id and key != direct_key:
-        owner = sessions[key]
-        sender = event.data.get("sender_open_id")
-        thread = _thread_id_for_event(event)
-        if (
-            owner.chat_id != event.chat_id
-            or (owner.conversation_id.startswith("omt_") and thread and owner.conversation_id != thread)
-            or (owner.sender_open_id and sender and owner.sender_open_id != sender)
-        ):
+        if not legacy_alias_owner_matches(sessions[key], event):
             return direct_key
     return key
 
@@ -4484,6 +4494,14 @@ async def _restore_card_checkpoints(app):
         if key != _session_key(probe):
             continue
         session.route_profile_id = profile or "default"
+        if session.legacy_terminal_fingerprint:
+            # An accepted alias terminal may replay after another turn rebinds the quote.
+            digest = session.legacy_terminal_fingerprint
+            fence = app[EVENT_ID_FENCE_KEY]
+            receipt = await fence.claim(("legacy_terminal", digest), digest)
+            if receipt.kind == "owner":
+                await fence.finalize(("legacy_terminal", digest), receipt.entry, 200,
+                                     {"ok": True, "applied": True})
         app[SESSIONS_KEY][key] = session
         app[FEISHU_MESSAGE_IDS_KEY][key] = record['message_id']
         app[MESSAGE_BOT_IDS_KEY][key] = record['bot_id']
@@ -4548,11 +4566,16 @@ async def _apply_event_locked(request, event, *, advance_sequence=True):
     key = _resolve_session_key(app, event)
     prior = app[SESSIONS_KEY].get(key)
     retained = None
+    retained_aliases = {}
     if (prior is not None and prior.status in {"completed", "failed"}
             and prior.terminal_disposition in {"", "segmented"}
             and app[FEISHU_MESSAGE_IDS_KEY].get(key)):
         retained = {state_key: app[state_key].get(key) for state_key in
                     (SESSIONS_KEY, FEISHU_MESSAGE_IDS_KEY, MESSAGE_BOT_IDS_KEY, SESSION_CARD_CONFIGS_KEY)}
+        if _event_starts_new_lifecycle(event) or event.data.get("policy_new_turn") is True:
+            for table in (SESSION_ALIASES_KEY, REDIRECT_SESSION_ALIASES_KEY):
+                retained_aliases[table] = {alias: owner for alias, owner in app[table].items()
+                                           if alias == key or owner == key}
     result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
     # A refused/uncertain replacement create must not erase the previous
     # completed answer or let a later fallback reuse its original delivery UUID.
@@ -4565,6 +4588,9 @@ async def _apply_event_locked(request, event, *, advance_sequence=True):
         for state_key, value in retained.items():
             if value is not None:
                 app[state_key][key] = value
+        for table, bindings in retained_aliases.items():
+            for alias, owner in bindings.items():
+                app[table].setdefault(alias, owner)
     current = app[SESSIONS_KEY].get(key)
     if (key != _session_key(event) and not event.turn_id and not event.event_id
             and event.event in TERMINAL_EVENTS and current is not None
@@ -4778,8 +4804,13 @@ async def _apply_event_locked_inner(
         # state, so a native turn cannot leave an active lifecycle floor.
         # A new lifecycle must not reuse the IM/CardKit create UUID of the
         # completed card. Keep one key across all retries of this create.
-        # Random identity also avoids counter reuse after a sidecar restart.
-        reopen_delivery_key = f"{session_key}:reopen:{secrets.token_hex(16)}"
+        # A lost create ACK can leave a live card on Feishu. The previous
+        # confirmed main card and the incoming lifecycle stamp survive retry.
+        previous_id = feishu_message_ids.get(session_key) or ""
+        reopen_delivery_key = (
+            f"{session_key}:reopen:{previous_id}:{incoming_event.event}:"
+            f"{incoming_event.sequence}:{incoming_event.created_at}"
+        )
         _reset_session_for_new_turn(request.app, session_key)
         session = None
         event = incoming_event
@@ -4866,6 +4897,7 @@ async def _apply_event_locked_inner(
             message_id=event.message_id,
             chat_id=event.chat_id,
             route_profile_id=_policy_profile_id(event) or "default",
+            legacy_route_thread_id=explicit_thread_id(event),
         )
         sessions[session_key] = session
         applied = session.apply(event)
@@ -4966,6 +4998,7 @@ async def _apply_event_locked_inner(
                 message_id=event.message_id,
                 chat_id=event.chat_id,
                 route_profile_id=_policy_profile_id(event) or "default",
+                legacy_route_thread_id=explicit_thread_id(event),
             )
             sessions[session_key] = session
             applied = session.apply(event)
@@ -8348,6 +8381,8 @@ async def _abandon_stale_sessions_for_chat(
         if sess.chat_id != chat_id:
             continue
         if sess.conversation_id != new_conversation_id:
+            continue
+        if not event.turn_id and not alias_to_session_key and not new_scope and not legacy_alias_owner_matches(sess, event):
             continue
         if sess.status in {"completed", "failed"} and key != redirect_source_key:
             continue

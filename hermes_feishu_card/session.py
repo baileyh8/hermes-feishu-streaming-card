@@ -224,6 +224,7 @@ class CardSession:
     terminal_delivery_state: str = "idle"
     # Optional checkpoint metadata binds an exact legacy retry to the completed card.
     legacy_terminal_fingerprint: str = field(default="", repr=False)
+    legacy_route_thread_id: str = field(default="", repr=False)
     notice_kind: str = ""
     notice_title: str = ""
     notice_level: str = "info"

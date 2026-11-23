@@ -13652,6 +13652,31 @@ async def test_legacy_quote_cannot_replace_an_independent_owner(client, boundary
         assert original.answer_text == ""
 
 
+@pytest.mark.parametrize(("thread", "sender", "tenant", "same_owner"), [
+    ("om_root", "ou_" + "a" * 32, "user-a", True),
+    ("om_other", "ou_" + "a" * 32, "user-a", False),
+    ("om_root", "", "user-b", False),
+    ("om_root", "", "user-a", True),
+    ("om_root", "", "", False),
+])
+async def test_legacy_topic_and_requester_scope(client, thread, sender, tenant, same_owner):
+    http, feishu = client
+    start_data = {"chat_type": "group", "sender_open_id": "ou_" + "a" * 32,
+                  "admission_user_id": "user-a", "reply_to_message_id": "om_quote"}
+    await http.post("/events", json=event_payload(
+        "message.started", 0, start_data, conversation_id="omt_topic",
+        thread_id="om_root", message_id="om_a"))
+    terminal = event_payload("message.completed", 1, {**start_data, "sender_open_id": sender,
+                             "admission_user_id": tenant, "answer": "final"},
+                             conversation_id="omt_topic", thread_id=thread, message_id="om_quote")
+    assert (await http.post("/events", json=terminal)).status == 200
+    original = http.app[SESSIONS_KEY]["om_a"]
+    assert (original.answer_text == "final") == same_owner
+    if not same_owner:
+        assert original.status == "thinking"
+    assert len(feishu.sent) == (1 if same_owner else 2)
+
+
 async def test_shared_alias_cleanup_preserves_new_canonical_owner(client):
     test_client, _feishu_client = client
     quote = "om_shared_cleanup_quote"

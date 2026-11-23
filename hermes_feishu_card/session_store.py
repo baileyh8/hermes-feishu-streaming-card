@@ -21,7 +21,7 @@ MAX_RECORDS = 128
 RETENTION_SECONDS = 24 * 3600
 _EXCLUDED = {'tools', 'timeline', 'thinking_normalizer', 'answer_normalizer',
              'active_interaction', 'approval_retirements', 'terminal_handoff_record', 'route_profile_id', '_process_activity',
-             'presentation_state', 'observation', 'legacy_terminal_fingerprint',
+             'presentation_state', 'observation', 'legacy_terminal_fingerprint', 'legacy_route_thread_id',
              # Supplied by every gateway event; persisting them would change the
              # v1 checkpoint field set and strand records in both directions.
              'sender_user_id', 'sender_open_id_rejected'}
@@ -62,6 +62,8 @@ class SessionStore:
                       bot_id=bot_id, profile_id=profile_id, aliases=aliases, client_identity=client_identity,
                       had_interaction=(session.active_interaction is not None and session.active_interaction.status in {"pending","paused"}),
                       saved_at=time.time())
+        if session.legacy_route_thread_id:
+            record['legacy_route_thread_id'] = session.legacy_route_thread_id
         if session.status in {'completed', 'failed'} and session.legacy_terminal_fingerprint:
             # Optional record metadata keeps the v1 session field set readable on rollback.
             record['legacy_terminal_fingerprint'] = session.legacy_terminal_fingerprint
@@ -135,6 +137,9 @@ class SessionStore:
                 if not valid_legacy_receipt(data['legacy_owner_receipt']):
                     continue
                 session = CardSession(**{k:data[k] for k in _FIELDS})
+                thread = r.get('legacy_route_thread_id', '')
+                if isinstance(thread, str) and thread.startswith(('omt_', 'om_')):
+                    session.legacy_route_thread_id = thread
                 digest = r.get('legacy_terminal_fingerprint', '')
                 if session.status in {'completed', 'failed'} and isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest):
                     session.legacy_terminal_fingerprint = digest

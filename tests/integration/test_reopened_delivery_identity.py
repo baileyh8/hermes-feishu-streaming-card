@@ -246,3 +246,97 @@ async def test_interrupted_segment_delivery_retries_same_slots_after_restart(tmp
         assert len(transport.cards) == (8 if reopened else 4)
         for token in retried[-3:]:
             assert "二轮要点" in str(transport.cards[transport.ids[token]])
+
+
+async def test_replayed_alias_terminal_while_segmented_lead_is_in_flight(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    entered, release = asyncio.Event(), asyncio.Event()
+    patch = transport.update_card_message
+
+    async def held(message_id, card):
+        if not entered.is_set() and "一轮要点" in str(card):
+            entered.set()
+            await release.wait()
+        await patch(message_id, card)
+
+    app = _segmented_app(transport, tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        await _post_event(client, _topic_event("message.started", 0, 1))
+        terminal = {**_long_topic_terminal(1), "message_id": "om_alias"}
+        monkeypatch.setattr(transport, "update_card_message", held)
+        first = asyncio.create_task(_post_event(client, terminal))
+        await asyncio.wait_for(entered.wait(), 3)
+        parsed = asyncio.Event()
+        parse = server.SidecarEvent.from_dict
+
+        def observe_parse(payload):
+            event = parse(payload)
+            parsed.set()
+            return event
+
+        monkeypatch.setattr(server.SidecarEvent, "from_dict", staticmethod(observe_parse))
+        retry = asyncio.create_task(_post_event(client, terminal))
+        try:
+            await asyncio.wait_for(parsed.wait(), 2)
+        finally:
+            release.set()
+        assert (await first)["applied"] is True
+        assert (await retry)["applied"] is True
+        assert len(transport.cards) == 4
+
+
+async def test_old_quote_terminal_after_rebind_keeps_new_turn_writable(tmp_path):
+    transport = DeduplicatingClient()
+    app = _segmented_app(transport, tmp_path)
+    anchor = {"reply_to_message_id": "om_shared"}
+    async with TestClient(TestServer(app)) as client:
+        await _post_event(client, event_payload("message.started", 0, anchor, message_id="om_a"))
+        first = event_payload("message.completed", 1, {**anchor, "answer": "ALPHA"}, message_id="om_shared")
+        assert (await _post_event(client, first))["applied"]
+        await _post_event(client, event_payload("message.started", 0, anchor, message_id="om_b"))
+        assert (await _post_event(client, first))["applied"]
+        second = event_payload("message.completed", 1, {**anchor, "answer": "BETA"}, message_id="om_b")
+        assert (await _post_event(client, second))["applied"]
+        assert app[server.SESSIONS_KEY]["om_b"].answer_text == "BETA"
+        assert len(transport.cards) == 2
+
+
+async def test_same_reopen_request_reuses_accepted_create_after_lost_response(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    send_card = transport.send_card_delivery
+    first = _long_topic_terminal(1)
+    reopen = _topic_event("message.started", 0, 2)
+    async def lose_response(*args, **kwargs):
+        await send_card(*args, **kwargs)
+        raise FeishuAPIError("lost response", outcome="unknown")
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        assert (await _post_event(client, first))["applied"]
+        with monkeypatch.context() as scope:
+            scope.setattr(transport, "send_card_delivery", lose_response)
+            assert (await _post_event(client, reopen, status=502))["delivery"]["outcome"] == "unknown"
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        assert (await _post_event(client, reopen))["applied"]
+        assert len(transport.cards) == 5
+
+
+async def test_refused_reopen_restores_only_the_previous_display_aliases(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    primary = _topic_event("message.started", 0, 1)
+    terminal = {**_long_topic_terminal(1), "message_id": "om_legacy"}
+    reopen = _topic_event("message.started", 0, 2)
+
+    async def refuse(*args, **kwargs):
+        raise FeishuAPIError("declined", outcome="not_sent")
+
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        assert (await _post_event(client, primary))["applied"]
+        assert (await _post_event(client, terminal))["applied"]
+        before = dict(client.app[server.SESSION_ALIASES_KEY])
+        monkeypatch.setattr(transport, "send_card_delivery", refuse)
+        assert (await _post_event(client, reopen, status=502))["delivery"]["outcome"] == "not_sent"
+        assert client.app[server.SESSION_ALIASES_KEY] == before
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        assert (await _post_event(client, terminal))["applied"]
+        assert len(transport.cards) == 4

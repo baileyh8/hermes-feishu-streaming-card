@@ -91,6 +91,35 @@ def event_for_session(event: SidecarEvent, session: CardSession) -> SidecarEvent
     )
 
 
+def explicit_thread_id(event: SidecarEvent) -> str:
+    value = event.thread_id or event.data.get("thread_id")
+    return value if isinstance(value, str) and value.startswith(("omt_", "om_")) else ""
+
+
+def legacy_alias_owner_matches(owner: CardSession, event: SidecarEvent) -> bool:
+    if owner.chat_id != event.chat_id:
+        return False
+    # A topic root (om_*) and its conversation (omt_*) can both be present.
+    # Compare each with its own source field.
+    if (owner.conversation_id.startswith(("omt_", "om_"))
+            and event.conversation_id.startswith(("omt_", "om_"))
+            and owner.conversation_id != event.conversation_id):
+        return False
+    thread = explicit_thread_id(event)
+    if thread and owner.legacy_route_thread_id and owner.legacy_route_thread_id != thread:
+        return False
+    sender = event.data.get("sender_open_id")
+    tenant_user = event.data.get("admission_user_id")
+    if sender and owner.sender_open_id and sender != owner.sender_open_id:
+        return False
+    if tenant_user and owner.sender_user_id and tenant_user != owner.sender_user_id:
+        return False
+    if owner.chat_type == "group" and (owner.sender_open_id or owner.sender_user_id):
+        return bool((sender and sender == owner.sender_open_id)
+                    or (tenant_user and tenant_user == owner.sender_user_id))
+    return True
+
+
 def thread_id_for_event(event: SidecarEvent) -> str | None:
     data = event.data if isinstance(event.data, dict) else {}
     raw_thread = (
