@@ -4186,11 +4186,13 @@ def _prepare_native_handoff_lifecycle(
     identity_key: str,
     *,
     event_created_at: float,
+    expected_record: NativeHandoffRecord | None = None,
 ) -> str:
     try:
         return app[NATIVE_HANDOFF_STORE_KEY].prepare_lifecycle(
             identity_key,
             event_created_at=event_created_at,
+            expected_record=expected_record,
         )
     except (NativeHandoffStoreError, OSError, ValueError):
         logger.warning("native handoff lifecycle state could not be prepared safely")
@@ -4963,6 +4965,13 @@ async def _apply_event_locked_inner(
                 and session.terminal_disposition == "native"
             ),
             cached_record=session.terminal_handoff_record if session is not None else None,
+            allow_direct_terminal_start=(
+                not blocked_reopen and (session is None or reopens_direct_terminal or (
+                    session.status in {"completed", "failed"} and session.terminal_disposition == "native"
+                    and session.message_id == incoming_event.message_id and session.delivery_kind == "chat"
+                    and event_conversation_matches(session, incoming_event, allow_omitted_thread=True)
+                ))
+            ),
         ),
         ack_verifier_available=NATIVE_HANDOFF_ACK_AUTH_VERIFIER_KEY in request.app,
         store=request.app[NATIVE_HANDOFF_STORE_KEY],
@@ -4999,16 +5008,12 @@ async def _apply_event_locked_inner(
     if stale_direct_terminal and not (prior_handoff is not None and prior_handoff.has_exact_delivery_binding):
         metrics.events_ignored += 1
         return _native_disposition_response(), None
-    # A legacy native-only handoff is scoped by its producer time. Its
-    # unbound receipt can deduplicate that delivery, but cannot ACK a later
-    # explicit turn that reused the message ID.
-    starts_after_legacy_handoff = (
-        prior_handoff is not None and reopens_direct_terminal and not blocked_reopen
-        and prior_handoff.delivery_state == "legacy_consumed" and prior_handoff.card_state == "none"
-        and not prior_handoff.generation and not handoff_generation
-        and incoming_event.created_at > prior_handoff.event_created_at
-    )
-    if prior_handoff is not None and not starts_after_legacy_handoff:
+    starts_after_legacy_handoff = admission.kind == "start_legacy_terminal"
+    if starts_after_legacy_handoff:
+        reopens_direct_terminal = True
+        reopens_completed_session = session is not None
+        terminal_fingerprint = _legacy_terminal_fingerprint(incoming_event)
+    elif prior_handoff is not None:
         post_lock_task = _schedule_pending_native_handoff_repair(
             request.app,
             handoff_identity,
@@ -5108,11 +5113,15 @@ async def _apply_event_locked_inner(
             }
         ), None
 
-    if (starts_new_lifecycle or starts_after_legacy_handoff) and not lifecycle_fence_recorded:
+    advances_legacy_handoff = (
+        starts_after_legacy_handoff and prior_handoff is not None and prior_handoff.delivery_state != "lifecycle"
+    )
+    if (starts_new_lifecycle or advances_legacy_handoff) and not lifecycle_fence_recorded:
         lifecycle_state = _prepare_native_handoff_lifecycle(
             request.app,
             handoff_identity,
             event_created_at=incoming_event.created_at,
+            expected_record=prior_handoff if advances_legacy_handoff else None,
         )
         if lifecycle_state == "stale":
             metrics.events_ignored += 1
@@ -5128,7 +5137,9 @@ async def _apply_event_locked_inner(
                 request.app,
                 handoff_identity,
             )
-    reopen_delivery_key = ""
+    # A native placeholder has no recoverable display snapshot after restart.
+    # Its successor still needs its own IM UUID, including after a lost ACK.
+    reopen_delivery_key = f"{session_key}:terminal:{terminal_fingerprint}" if starts_after_legacy_handoff else ""
     reopen_predecessor = None
     if reopens_completed_session:
         # A completed topic session can share the next turn's message id. A
@@ -5140,7 +5151,7 @@ async def _apply_event_locked_inner(
         # A lost create ACK can leave a live card on Feishu. The previous
         # confirmed main card and the incoming lifecycle stamp survive retry.
         previous_id = feishu_message_ids.get(session_key) or ""
-        reopen_delivery_key = (
+        reopen_delivery_key = reopen_delivery_key or (
             f"{session_key}:reopen:{previous_id}:{incoming_event.event}:"
             f"{incoming_event.sequence}:{incoming_event.created_at}"
         )

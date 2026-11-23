@@ -140,6 +140,91 @@ async def test_direct_terminal_segment_failure_hands_off_without_editing_old_car
         assert transport.updated == [*updates, "card-1"]
 
 
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("settle_placeholder", [False, True])
+@pytest.mark.parametrize("generated", [False, True], ids=["legacy", "with-generation"])
+async def test_short_terminal_after_partial_segments_go_native(
+    tmp_path, old_v1_checkpoint, monkeypatch, restart, settle_placeholder, generated,
+):
+    transport, _ = old_v1_checkpoint
+    first_at = time.time()
+    first = _terminal("message.completed", 0, first_at, answer=_long_answer())
+    second = _terminal("message.completed", 0, first_at + 1, answer="NEXT SHORT BODY")
+    if generated:
+        first["data"]["native_handoff"] = {"generation": "a" * 32}
+        second["data"]["native_handoff"] = {"generation": "b" * 32}
+    send = transport.send_card_delivery
+
+    async def refuse_one_segment(*args, **kwargs):
+        if len(transport.cards) == 2:
+            raise FeishuAPIError("segment refused", retryable=False, outcome="not_sent")
+        return await send(*args, **kwargs)
+
+    async def short_turn(client):
+        before = copy.deepcopy(transport.cards)
+        assert await _post(client, second) == _DELIVERED
+        assert "NEXT SHORT BODY" in str(transport.cards["card-2"])
+        assert all(transport.cards[key] == value for key, value in before.items())
+        assert (await _post(client, second))["applied"]
+        assert len(transport.cards) == 3
+
+    async with TestClient(TestServer(_app(transport, tmp_path, over_limit="segmented"))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        with monkeypatch.context() as scoped:
+            scoped.setattr(transport, "send_card_delivery", refuse_one_segment)
+            assert await _post(client, first) == _NATIVE
+        assert len(transport.cards) == 2
+        assert "完整内容已切换为 Hermes 原生消息发送" in str(transport.cards["card-1"])
+        if settle_placeholder:
+            assert (await _post(client, first))["applied"]
+        if not restart:
+            await short_turn(client)
+    if restart:
+        async with TestClient(TestServer(_app(transport, tmp_path, over_limit="segmented"))) as client:
+            await client.app[server.SESSION_RESTORE_TASK_KEY]
+            await short_turn(client)
+
+
+async def test_new_card_after_native_placeholder_retries_its_own_uuid(tmp_path, old_v1_checkpoint, monkeypatch):
+    transport, _ = old_v1_checkpoint
+    first_at = time.time()
+    long_event = _terminal("message.completed", 0, first_at, answer=_long_answer())
+    short_event = _terminal("message.completed", 0, first_at + 1, answer="SHORT AFTER RESTART")
+    send = transport.send_card_delivery
+
+    async def fail_segment(*args, **kwargs):
+        if len(transport.cards) == 2:
+            raise FeishuAPIError("segment refused", retryable=False, outcome="not_sent")
+        return await send(*args, **kwargs)
+
+    async with TestClient(TestServer(_app(transport, tmp_path, over_limit="segmented"))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        with monkeypatch.context() as scoped:
+            scoped.setattr(transport, "send_card_delivery", fail_segment)
+            assert await _post(client, long_event) == _NATIVE
+    previous = copy.deepcopy(transport.cards)
+
+    async def lose_short_ack(*args, **kwargs):
+        await send(*args, **kwargs)
+        raise FeishuAPIError("create accepted, reply lost", retryable=False, outcome="unknown")
+
+    async with TestClient(TestServer(_app(transport, tmp_path, over_limit="segmented"))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        with monkeypatch.context() as scoped:
+            scoped.setattr(transport, "send_card_delivery", lose_short_ack)
+            response = await client.post("/events", json=short_event)
+            assert response.status == 502
+            assert (await response.json())["delivery"]["outcome"] == "unknown"
+
+    async with TestClient(TestServer(_app(transport, tmp_path, over_limit="segmented"))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        assert await _post(client, short_event) == _DELIVERED
+        assert transport.attempted_uuids[-2] == transport.attempted_uuids[-1]
+        assert len(transport.cards) == 3
+        assert all(transport.cards[key] == value for key, value in previous.items())
+        assert "SHORT AFTER RESTART" in str(transport.cards["card-2"])
+
+
 def _long_answer():
     return "\n\n".join(
         f"段落 {index:03d} 包含调研原始正文及逐项论证。" * 3

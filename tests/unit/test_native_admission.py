@@ -149,3 +149,17 @@ def test_exact_record_requires_ack_verifier_and_uses_canonical_turn_identity():
     aliased = replace(value, message_id="another-reply-alias")
     assert native_handoff_identity(aliased) == native_handoff_identity(value)
     assert store.calls == [("get", native_handoff_identity(value))]
+
+
+@pytest.mark.parametrize("generation", ["a" * 32, "b" * 32])
+def test_marked_direct_terminal_preserves_an_exact_pending_handoff(generation):
+    original = replace(exact_event(), turn_id="")
+    prior = exact_record(original)
+    incoming = replace(exact_event(created_at=101, generation=generation, policy_new_turn=True), turn_id="")
+    owner = NativeTerminalSnapshot(native_terminal=True, cached_record=prior, allow_direct_terminal_start=True)
+    store = RecordingStore(prior=prior)
+
+    result = admit_native_handoff(incoming, owner, ack_verifier_available=True, store=store)
+
+    assert (result.kind, result.reason) == ("reject", "cache_mismatch")
+    assert store.calls == [("get", native_handoff_identity(incoming))]

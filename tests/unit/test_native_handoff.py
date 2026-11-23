@@ -1202,6 +1202,17 @@ def test_begin_rejects_terminal_before_but_allows_at_lifecycle_floor(tmp_path):
     assert fresh_created is True
 
 
+def test_terminal_start_only_advances_the_observed_legacy_receipt(tmp_path):
+    store = NativeHandoffStore(tmp_path / "state")
+    identity = _identity()
+    previous, _ = store.begin(identity, feishu_message_id="old-card", bot_id="", event_created_at=10.0)
+    store.mark_committed(identity, expected_record=previous)
+    assert store.prepare_lifecycle(identity, event_created_at=20.0, expected_record=previous) == "cleared"
+    current, _ = store.begin_no_card(identity, event_created_at=21.0)
+    assert store.prepare_lifecycle(identity, event_created_at=30.0, expected_record=previous) == "stale"
+    assert store.get(identity) == current
+
+
 def test_capacity_refuses_to_evict_pending_or_lifecycle_records(tmp_path):
     store = NativeHandoffStore(tmp_path / "state", max_records=2)
     pending_key = _identity(1)
