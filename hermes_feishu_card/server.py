@@ -213,6 +213,9 @@ CARD_SUMMARIES_KEY = web.AppKey("card_summaries", dict)
 CARD_SUMMARY_SESSION_KEYS_KEY = web.AppKey("card_summary_session_keys", dict)
 INTERACTION_RESULTS_KEY = web.AppKey("interaction_results", dict)
 PAUSED_APPROVAL_TASKS_KEY = web.AppKey("paused_approval_tasks", set)
+CONTINUATION_RETIREMENT_TASKS_KEY = web.AppKey("continuation_retirement_tasks", dict)
+CONTINUATION_RETIREMENT_MAX_PENDING = 64
+CONTINUATION_RETIREMENT_TIMEOUT_SECONDS = 10.0
 INTERACTION_RESULT_SESSION_KEYS_KEY = web.AppKey(
     "interaction_result_session_keys", dict
 )
@@ -608,6 +611,7 @@ def create_app(
     app[CARD_SUMMARY_SESSION_KEYS_KEY] = {}
     app[INTERACTION_RESULTS_KEY] = {}
     app[PAUSED_APPROVAL_TASKS_KEY] = set()
+    app[CONTINUATION_RETIREMENT_TASKS_KEY] = {}
     app[INTERACTION_RESULT_SESSION_KEYS_KEY] = {}
     app[MESSAGE_BOT_IDS_KEY] = {}
     app[SESSION_CARD_CONFIGS_KEY] = {}
@@ -794,11 +798,13 @@ async def _stop_runtime_cleanup(app: web.Application) -> None:
 
 
 async def _clear_runtime_interaction_admissions(app: web.Application) -> None:
-    tasks = tuple(app[PAUSED_APPROVAL_TASKS_KEY])
+    retirements = app[CONTINUATION_RETIREMENT_TASKS_KEY]
+    tasks = (*app[PAUSED_APPROVAL_TASKS_KEY], *retirements.values())
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
     app[PAUSED_APPROVAL_TASKS_KEY].clear()
+    retirements.clear()
     for session in tuple(app[SESSIONS_KEY].values()):
         interaction = session.active_interaction
         if interaction is not None:
@@ -5334,7 +5340,6 @@ async def _apply_event_locked_inner(
         applied = True
     render_result: CardRenderResult | None = None
     handoff_record: NativeHandoffRecord | None = None
-    retire_terminal_predecessor = None
     if applied and not terminal_already_handled:
         is_silence_or_fallback = _is_intentional_silence_event(event) or _is_native_fallback_event(event)
         render_result = _render_session_card_result_for_app(request.app, session)
@@ -5343,15 +5348,11 @@ async def _apply_event_locked_inner(
             and needs_continuation(session, event)
             and render_result.disposition == "card"
         ):
-            retire_predecessor = await _open_display_continuation(
+            await _open_display_continuation(
                 request, session_key, session, render_result.card,
                 profile_id=_policy_profile_id(event),
                 predecessor_snapshot=continuation_predecessor,
             )
-            if event_is_terminal:
-                retire_terminal_predecessor = retire_predecessor
-            elif retire_predecessor is not None:
-                await retire_predecessor()
             feishu_message_id = feishu_message_ids.get(session_key)
             render_result = _render_session_card_result_for_app(request.app, session)
         if event.event != "interaction.requested":
@@ -5794,10 +5795,20 @@ async def _apply_event_locked_inner(
                     bot_id=bot_id,
                     session=latest_session,
                 )
-            if retire_terminal_predecessor is not None:
-                await retire_terminal_predecessor()
             if is_terminal and render_result.disposition == "card":
                 try:
+                    # Receipt compaction can follow retirement once the new
+                    # owner has already received the terminal body.
+                    retirement = request.app[CONTINUATION_RETIREMENT_TASKS_KEY].get(
+                        (id(latest_session), owner_generation)
+                    )
+                    if retirement is not None:
+                        await asyncio.shield(retirement)
+                        if (sessions.get(session_key) is not latest_session
+                                or feishu_message_ids.get(session_key) != feishu_message_id
+                                or message_bot_ids.get(session_key) != bot_id
+                                or latest_session.display_segment.get("generation", 0) != owner_generation):
+                            return updated
                     await _settle_approval_displays(request.app, session_key, latest_session)
                 except Exception:
                     request.app[DIAGNOSTICS_KEY]["last_approval_display_cleanup"] = "retained"
@@ -5903,8 +5914,9 @@ async def _apply_event_locked_inner(
     return web.json_response(response_payload), post_lock_task
 
 
-async def _open_display_continuation(request, session_key, session, card, *, profile_id,
-                                     predecessor_snapshot=None):
+async def _open_display_continuation(
+    request, session_key, session, card, *, profile_id, predecessor_snapshot=None,
+) -> None:
     """Commit a new display owner only after a confirmed, same-route send.
 
     Called under the turn lock. A failed/uncertain create gets no per-delta
@@ -5918,10 +5930,11 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         await asyncio.gather(old_animation, return_exceptions=True)
     profile = profile_id or ""
     previous_message_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+    bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
     # The accepted interaction already checkpointed the boundary. Do not save
     # a newly applied terminal event before its platform create has a result.
     delivery = await _send_card_for_app(
-        app, session.chat_id, card, app[MESSAGE_BOT_IDS_KEY].get(session_key),
+        app, session.chat_id, card, bot_id,
         thread_id=state["thread_id"] or None,
         reply_to_message_id=state["reply_to_message_id"] or session.reply_to_message_id or None,
         reply_in_thread=state["reply_in_thread"] or session.reply_in_thread,
@@ -5942,20 +5955,48 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         state["failed"] = True
         app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = delivery.outcome
     _checkpoint_session(app, session_key, profile)
-    if not delivery.delivered or predecessor_snapshot is None:
-        return None
+    if (not delivery.delivered or predecessor_snapshot is None
+            or predecessor_snapshot.legacy_owner_receipt or not previous_message_id
+            or previous_message_id == delivery.message_id):
+        return
 
-    # The final body and its ACK can proceed before the old card is retired.
-    async def retire_predecessor():
-        if (app[SESSIONS_KEY].get(session_key) is session
-                and app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == delivery.message_id):
-            await _retire_continuation_predecessor(
-                app, session_key, previous_message_id, predecessor_snapshot,
-                bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
-                navigation=delivery.navigation,
+    # Retire only the captured old message. This optional I/O must not occupy
+    # the turn lock or queue ahead of the new owner's updates.
+    generation = state["generation"]
+    tasks = app[CONTINUATION_RETIREMENT_TASKS_KEY]
+    if len(tasks) >= CONTINUATION_RETIREMENT_MAX_PENDING:
+        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "capacity"
+        return
+
+    def current():
+        return (app[SESSIONS_KEY].get(session_key) is session
+                and app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == delivery.message_id
+                and app[MESSAGE_BOT_IDS_KEY].get(session_key) == bot_id
+                and session.display_segment.get("generation") == generation)
+
+    async def retire_predecessor() -> None:
+        try:
+            await asyncio.wait_for(
+                _retire_continuation_predecessor(
+                    app, session_key, previous_message_id, predecessor_snapshot,
+                    bot_id=bot_id, navigation=delivery.navigation, is_current=current,
+                ),
+                timeout=CONTINUATION_RETIREMENT_TIMEOUT_SECONDS,
             )
+        except asyncio.TimeoutError:
+            if current():
+                app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "timeout"
 
-    return retire_predecessor
+    task_key = (id(session), generation)
+    task = asyncio.create_task(retire_predecessor())
+    tasks[task_key] = task
+
+    def finished(completed: asyncio.Task[None]) -> None:
+        if tasks.get(task_key) is completed:
+            tasks.pop(task_key, None)
+
+    task.add_done_callback(finished)
+    task.add_done_callback(_log_background_task_failure)
 
 
 async def _send_segment_cards(
@@ -6117,15 +6158,23 @@ def _render_static_display_card(app, snapshot, *, session_key, note, display_sta
         return None
 
 
-async def _retire_continuation_predecessor(app, session_key, message_id, snapshot, *, bot_id, navigation=None):
+async def _retire_continuation_predecessor(
+    app, session_key, message_id, snapshot, *, bot_id, navigation=None, is_current=None,
+):
     """Freeze a confirmed handoff without claiming that the whole turn succeeded.
 
     Adapted from PR #339's predecessor-close proposal. Keep the pre-output
     snapshot and decision receipt; a sole legacy owner already has a static
     receipt and must never receive a schema-2 PATCH.
     """
-    if (not message_id or message_id == app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
-            or snapshot.legacy_owner_receipt):
+    target_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key)
+    owner = app[SESSIONS_KEY].get(session_key)
+    if is_current is None:
+        def is_current():
+            return (app[SESSIONS_KEY].get(session_key) is owner
+                    and app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == target_id)
+    if (not target_id or not message_id or message_id == target_id
+            or snapshot.legacy_owner_receipt or not is_current()):
         return False
     try:
         card = _render_static_display_card(
@@ -6135,31 +6184,35 @@ async def _retire_continuation_predecessor(app, session_key, message_id, snapsho
         )
         if card is None:
             return False
-        target_id = app[FEISHU_MESSAGE_IDS_KEY].get(session_key) or ""
-        target_owner = app[SESSIONS_KEY].get(session_key)
         lookup = getattr(_client_for_bot(app, bot_id), "lookup_message_navigation", None)
-        if navigation is None and target_id and target_owner is not None and callable(lookup):
-            route = target_owner.display_segment
+        if navigation is None and owner is not None and callable(lookup):
+            route = owner.display_segment
             try:
                 navigation = await asyncio.wait_for(lookup(
                     target_id, snapshot.chat_id,
                     thread_id=route.get("thread_id") or None,
-                    reply_in_thread=bool(route.get("reply_in_thread") or target_owner.reply_in_thread),
+                    reply_in_thread=bool(route.get("reply_in_thread") or owner.reply_in_thread),
                 ), timeout=1.5)
             except Exception:
                 navigation = None
             if not isinstance(navigation, MessageNavigation):
                 navigation = None
-            if (app[SESSIONS_KEY].get(session_key) is not target_owner
-                    or app[FEISHU_MESSAGE_IDS_KEY].get(session_key) != target_id):
+            if not is_current():
                 return False
         card = with_continuation_navigation(
             card, navigation,
             message_id=target_id,
             chat_id=snapshot.chat_id,
         )
+        updated = await _update_card_for_app(app, message_id, card, bot_id, is_current=is_current)
+        if not is_current():
+            return False
+        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "retired" if updated else "update_failed"
+        if not updated:
+            return False
+        # Do not let terminal compaction race an outstanding or failed PATCH
+        # to this same card.
         interaction = snapshot.active_interaction
-        owner = app[SESSIONS_KEY].get(session_key)
         if (owner is not None and interaction is not None
                 and interaction.kind in {"approval", "clarify"} and interaction.status == "completed"
                 and interaction.feishu_message_id and interaction.feishu_message_id != message_id
@@ -6180,11 +6233,10 @@ async def _retire_continuation_predecessor(app, session_key, message_id, snapsho
                 owner.approval_retirements.append(dict(message_id=message_id,
                     bot_id=bot_id, card=clean, interaction=receipt,
                     fingerprint=approval_receipt_fingerprint(owner, receipt)))
-        updated = await _update_card_for_app(app, message_id, card, bot_id)
-        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "retired" if updated else "update_failed"
-        return bool(updated)
+        return True
     except Exception:
-        app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "update_failed"
+        if is_current():
+            app[DIAGNOSTICS_KEY]["last_continuation_predecessor"] = "update_failed"
         return False
 
 
