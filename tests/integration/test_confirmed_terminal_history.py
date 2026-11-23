@@ -81,6 +81,53 @@ def _with_store(transport, directory, **card_options):
     )
 
 
+@pytest.mark.parametrize("segmented", [False, True], ids=["patch", "segmented"])
+async def test_confirmed_update_survives_replacement_and_restart(tmp_path, segmented):
+    transport = RecordingTransport()
+    start = time.time()
+    old = _event("message.completed", 1, start, answer=oversize_answer() if segmented else "First answer",
+                 native_handoff={"generation": "a" * 32})
+    new = _terminal(start + 1, "Second answer", native_handoff={"generation": "b" * 32})
+
+    def app():
+        return _with_store(transport, tmp_path, over_limit="segmented")
+
+    async with TestClient(TestServer(app())) as client:
+        assert (await _post_event(client, _event("message.started", 0, start)))["applied"]
+        assert (await _post_event(client, old))["applied"]
+        owner = client.app[server.SESSIONS_KEY][old["message_id"]]
+        await wait_for_condition(lambda: owner.terminal_card_confirmed)
+        assert await _post_event(client, new) == DELIVERED
+        writes = transport.io_counts()
+        assert await _post_event(client, old) == DELIVERED
+        assert transport.io_counts() == writes
+
+    async with TestClient(TestServer(app())) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        writes = transport.io_counts()
+        assert await _post_event(client, old) == DELIVERED
+        assert await _post_event(client, new) == DELIVERED
+        assert transport.io_counts() == writes
+
+
+async def test_partly_delivered_segmented_update_does_not_confirm_full_body(tmp_path, monkeypatch):
+    transport = RecordingTransport()
+    start = time.time()
+    old = _event("message.completed", 1, start, answer=oversize_answer(),
+                 native_handoff={"generation": "a" * 32})
+
+    async def refuse_continuation(*args, **kwargs):
+        raise FeishuAPIError("continuation refused", outcome="not_sent")
+
+    async with TestClient(TestServer(_with_store(transport, tmp_path, over_limit="segmented"))) as client:
+        assert (await _post_event(client, _event("message.started", 0, start)))["applied"]
+        monkeypatch.setattr(transport, "send_card_delivery", refuse_continuation)
+        assert await _post_event(client, old) == NATIVE
+        owner = client.app[server.SESSIONS_KEY][old["message_id"]]
+        assert _fingerprint(old) not in dict(owner.confirmed_legacy_terminal_receipts)
+        assert client.app[server.EVENT_ID_FENCE_KEY].replay_confirmed_legacy_terminal(_fingerprint(old)) is None
+
+
 @pytest.mark.parametrize(("quote", "handoff"), [(True, False), (False, False), (True, True)])
 async def test_restarted_earlier_marked_terminal_uses_exact_delivery_receipt(tmp_path, quote, handoff):
     transport = RecordingTransport()

@@ -3697,7 +3697,7 @@ async def _events(request: web.Request) -> web.Response:
     fence_claim: EventIdFenceClaim | None = None
     fence = request.app[EVENT_ID_FENCE_KEY]
     fence_key: FenceKey = event.event_id
-    unfenced_marked_fingerprint = ""
+    receipt_fingerprint = ""
     legacy_alias = (
         not event.event_id and not event.turn_id and event.event in TERMINAL_EVENTS
         and not event.data.get("native_handoff")
@@ -3741,11 +3741,11 @@ async def _events(request: web.Request) -> web.Response:
                 status=503,
             )
         assert fence_claim.kind == "owner" and fence_claim.entry is not None
-    elif _is_marked_legacy_terminal(event):
+    elif _has_legacy_receipt_identity(event):
         # No alias lock is needed just to replay an exact acknowledged
         # delivery. First attempts still use the normal terminal admission.
-        unfenced_marked_fingerprint = _legacy_terminal_fingerprint(event)
-        replay = fence.replay_confirmed_legacy_terminal(unfenced_marked_fingerprint)
+        receipt_fingerprint = _legacy_terminal_fingerprint(event)
+        replay = fence.replay_confirmed_legacy_terminal(receipt_fingerprint)
         if replay is not None:
             return replay
 
@@ -3754,8 +3754,8 @@ async def _events(request: web.Request) -> web.Response:
     cancelled_after_runtime_delivery = False
     try:
         async with _event_owner_lock(request.app, event) as session_key:
-            if unfenced_marked_fingerprint:
-                replay = fence.replay_confirmed_legacy_terminal(unfenced_marked_fingerprint)
+            if receipt_fingerprint:
+                replay = fence.replay_confirmed_legacy_terminal(receipt_fingerprint)
                 if replay is not None:
                     return replay
             response, post_lock_task = await _apply_event_locked(request, event, session_key=session_key)
@@ -4418,13 +4418,35 @@ def _legacy_terminal_fingerprint(event: SidecarEvent) -> str:
         return ""
 
 
-def _is_marked_legacy_terminal(event: SidecarEvent) -> bool:
+def _is_legacy_chat_terminal(event: SidecarEvent) -> bool:
     return (
         not event.turn_id and event.event in TERMINAL_EVENTS
-        and event.data.get("policy_new_turn") is True
         and _delivery_kind(event) in {"", "chat"}
         and not _is_intentional_silence_event(event) and not _is_native_fallback_event(event)
     )
+
+
+def _has_legacy_receipt_identity(event: SidecarEvent) -> bool:
+    return (
+        not event.event_id and _is_legacy_chat_terminal(event)
+        and (event.data.get("policy_new_turn") is True or bool(_native_handoff_metadata(event)))
+    )
+
+
+async def _remember_confirmed_legacy_terminal(
+    app: web.Application, session: CardSession, event: SidecarEvent,
+) -> bool:
+    if not _has_legacy_receipt_identity(event):
+        return False
+    fingerprint = _legacy_terminal_fingerprint(event)
+    if not fingerprint:
+        return False
+    confirmed_at = time.time()
+    session.confirmed_legacy_terminal_receipts = recent_legacy_terminal_receipts(
+        (*session.confirmed_legacy_terminal_receipts, (fingerprint, confirmed_at)), now=confirmed_at,
+    )
+    await _install_legacy_terminal_receipt(app, fingerprint, confirmed_at=confirmed_at)
+    return True
 
 
 async def _install_legacy_terminal_receipt(app, fingerprint, *, confirmed_at=None):
@@ -5226,7 +5248,10 @@ async def _apply_event_locked_inner(
     # earlier card still in Feishu's UUID cache. Only the exact marked terminal
     # should reuse this create, including after a lost ACK or restart.
     reopen_delivery_key = ""
-    if starts_after_legacy_handoff or (session is None and _is_marked_legacy_terminal(incoming_event)):
+    if starts_after_legacy_handoff or (
+        session is None and incoming_event.data.get("policy_new_turn") is True
+        and _is_legacy_chat_terminal(incoming_event)
+    ):
         create_fingerprint = terminal_fingerprint or _legacy_terminal_fingerprint(incoming_event)
         if create_fingerprint:
             reopen_delivery_key = f"{session_key}:terminal:{create_fingerprint}"
@@ -5646,19 +5671,7 @@ async def _apply_event_locked_inner(
                         session.legacy_terminal_start_at = incoming_event.created_at
                         legacy_fingerprint = terminal_fingerprint
                     session.legacy_terminal_fingerprint = legacy_fingerprint
-                    if _is_marked_legacy_terminal(incoming_event):
-                        fingerprint = (
-                            terminal_fingerprint or legacy_fingerprint or _legacy_terminal_fingerprint(incoming_event)
-                        )
-                        if fingerprint:
-                            confirmed_at = time.time()
-                            session.confirmed_legacy_terminal_receipts = recent_legacy_terminal_receipts(
-                                (*session.confirmed_legacy_terminal_receipts, (fingerprint, confirmed_at)),
-                                now=confirmed_at,
-                            )
-                            await _install_legacy_terminal_receipt(
-                                request.app, fingerprint, confirmed_at=confirmed_at,
-                            )
+                    await _remember_confirmed_legacy_terminal(request.app, session, incoming_event)
                     _store_card_summary(request.app, event, session, message_id)
                     request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
                         "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -5823,6 +5836,7 @@ async def _apply_event_locked_inner(
                     session.terminal_disposition = "segmented"
                     session.terminal_limit_reason = render_result.limit_reason
                     session.terminal_delivery_state = "delivered"
+                    await _remember_confirmed_legacy_terminal(request.app, session, incoming_event)
                 else:
                     metrics.card_segmented_fallbacks += 1
                     render_result = _segmented_fallback_result(
@@ -6227,10 +6241,15 @@ async def _apply_event_locked_inner(
                     }
                 if terminal_outcome.commit_native:
                     _commit_native_handoff(request.app, handoff_identity, handoff_record)
-                if legacy_fingerprint and sessions.get(session_key) is latest_session:
+                if sessions.get(session_key) is latest_session:
                     # Commit the actual write result before optional notices
                     # or receipt cleanup can delay the terminal task.
-                    _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
+                    confirmed_update = (
+                        updated and render_result.disposition == "card" and not is_silence_or_fallback
+                        and await _remember_confirmed_legacy_terminal(request.app, latest_session, incoming_event)
+                    )
+                    if confirmed_update or legacy_fingerprint:
+                        _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             else:
                 updated = await _update_card_for_app(
                     request.app, feishu_message_id, latest_card, bot_id,

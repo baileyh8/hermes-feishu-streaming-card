@@ -121,6 +121,27 @@ def no_patch_retries(monkeypatch):
     monkeypatch.setattr(server, "_retry_terminal_update", exhausted)
 
 
+@pytest.mark.parametrize("recovery", ["delivered", "unknown"])
+async def test_generation_receipt_waits_for_confirmed_body(tmp_path, no_patch_retries, recovery):
+    transport = TerminalClient()
+    start = _event("message.started", 0)
+    terminal = _event("message.completed", 1, answer=ANSWER, native_handoff={"generation": "a" * 32})
+    terminal["message_id"] = start["message_id"]
+    fingerprint = server._legacy_terminal_fingerprint(server.SidecarEvent.from_dict(terminal))
+    async with TestClient(TestServer(_app(transport, tmp_path))) as http:
+        assert (await _post(http, start))["applied"]
+        transport.patch_fails = True
+        transport.lose_recovery_ack = "before" if recovery == "unknown" else ""
+        assert await _post(http, terminal) == ACCEPTED
+        owner = http.app[server.SESSIONS_KEY][OWNER]
+        state = "unknown" if recovery == "unknown" else "recovered"
+        await _wait_checkpoint(http.app, state)
+        confirmed = recovery == "delivered"
+        assert (fingerprint in dict(owner.confirmed_legacy_terminal_receipts)) == confirmed
+        assert (http.app[server.EVENT_ID_FENCE_KEY].replay_confirmed_legacy_terminal(fingerprint)
+                is not None) == confirmed
+
+
 @pytest.mark.parametrize("checkpoint", ["current", "c4596f0a", "a2db3ee1"])
 @pytest.mark.parametrize("ack_lost", ["before", "after"])
 async def test_exact_unknown_terminal_replays_without_duplicate_body(tmp_path, no_patch_retries, checkpoint, ack_lost):

@@ -111,6 +111,10 @@ async def test_delivered_completion_replays_original_measurements(
         assert await complete(None, source, SimpleNamespace(), message_id, answer, start + 1, 0.75) is None
         assert len(transport.cards) == 2 and all(answer in str(card) for card in transport.cards.values())
         assert json.loads(wires[-1])["data"]["duration"] == 0.75
+        assert await complete(None, source, event, message_id, answer, start, duration, result) is None
+        assert wires[-1] == first
+        assert len(transport.attempted_uuids) == 2
+        assert transport.updated == original_updates
 
 
 @pytest.fixture
