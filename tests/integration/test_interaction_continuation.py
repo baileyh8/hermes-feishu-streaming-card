@@ -1089,3 +1089,19 @@ async def test_navigation_lookup_owner_change_does_not_patch_predecessor(monkeyp
     assert not await server._retire_continuation_predecessor(
         app, 'turn_fixture', 'om_old_fixture', copy.deepcopy(owner), bot_id=None)
     assert not client.updated
+
+
+@pytest.mark.asyncio
+async def test_retirement_at_capacity_keeps_answer_on_new_owner(monkeypatch):
+    monkeypatch.setattr(server, "CONTINUATION_RETIREMENT_MAX_PENDING", 0)
+    client = BlockingPredecessorClient()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "question_one")
+        assert (await post(http, "answer.delta", 3, {"text": "CONTINUATION"}))["applied"]
+        assert (await post(http, "message.completed", 4, {"answer": "FINAL_NEW_OWNER"}))["applied"]
+        await asyncio.wait_for(client.final_written.wait(), timeout=1)
+        assert not client.predecessor_attempts
+        assert not app[server.CONTINUATION_RETIREMENT_TASKS_KEY]
+        assert app[server.DIAGNOSTICS_KEY]["last_continuation_predecessor"] == "capacity"
