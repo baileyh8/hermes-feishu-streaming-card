@@ -2,6 +2,10 @@
 
 ## Current candidate
 
+This branch targets `5.0.29`. It implements #500 (PR #547), adding opt-in `card.suppressed_notice_kinds` (default `[]`) across global, profile, bot, and `card.chat_overrides` (`group` / `p2p` / per-chat) scopes with localized self-improvement classification and silent suppression without native plain-text fallback. The [release notes](release-notes-v5.0.29.en.md) and GitHub Release track CI, public package and field evidence separately.
+
+## v5.0.28
+
 This branch targets `5.0.28`. It fixes #540 (PR #543) so `uninstall` preflights PM dependency removal before `_restore()` mutates managed hooks, keeps conservative default refusal for `selection_added: false` while adding an explicit `--remove-adopted-pm-dependency` release option limited to verified schema-2 members, and includes the Ruff 0.17.6 pin from PR #542. The [release notes](release-notes-v5.0.28.en.md) and GitHub Release track CI, public package and field evidence separately.
 
 ## v5.0.27
