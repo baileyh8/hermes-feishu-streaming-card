@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from collections import OrderedDict
 from dataclasses import dataclass, replace
+from functools import partial
 from contextlib import asynccontextmanager, suppress
 from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
@@ -17,7 +18,7 @@ import time
 import asyncio
 import logging
 import re
-from typing import Any, Callable, Dict, Union
+from typing import Any, Awaitable, Callable, Dict, Union
 
 from aiohttp import web
 
@@ -5488,6 +5489,19 @@ async def _apply_event_locked_inner(
                         request.app,
                         session_key,
                     )
+            if (applied and reopen_predecessor is not None and event.event == "message.completed"
+                    and render_result.disposition in {"card", "segmented"}
+                    and isinstance(session_card_config.get("completion_notify"), dict)
+                    and session_card_config["completion_notify"].get("enabled") is True):
+                # The terminal create/recovery already confirmed the body. Schedule only
+                # its push, using the recovered route even if the later hook omitted it.
+                notice_event = replace(event, thread_id=pending_reopen.thread_id) if pending_reopen else event
+                push = partial(_notify_confirmed_completion, request.app, session_key, session,
+                               notice_event, card_config=session_card_config, bot_id=route.bot_id)
+                controller = _flush_controller_for_session(request.app, session_key)
+                return web.json_response(response_payload), _schedule_terminal_work(
+                    request.app, session_key, controller, push,
+                )
             return web.json_response(response_payload), None
         metrics.events_ignored += 1
         return web.json_response({"ok": True, "applied": False}), None
@@ -6010,14 +6024,10 @@ async def _apply_event_locked_inner(
             if (updated and completion_card_config is not None and not is_silence_or_fallback
                     and render_result.disposition in {"card", "segmented"}):
                 # Notify for the confirmed turn, before any optional old-card I/O.
-                await _maybe_send_completion_notify(
+                await _notify_confirmed_completion(
                     request.app, session_key, latest_session, event,
                     card_config=completion_card_config, bot_id=bot_id,
                 )
-                if (latest_session.completion_notify_state == "sent"
-                        and sessions.get(session_key) is latest_session):
-                    # A restart during old-card cleanup must retain the completed push.
-                    _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             if is_terminal and render_result.disposition == "card":
                 try:
                     # Receipt compaction can follow retirement once the new
@@ -6061,16 +6071,7 @@ async def _apply_event_locked_inner(
         if is_terminal:
             session.terminal_delivery_state = "pending"
             await controller.drain(_final_drain_timeout_seconds(request.app, session_key))
-            current_task = controller.schedule(_render_and_update, terminal=True)
-            controller.close()
-            current_task.add_done_callback(
-                lambda task: _post_terminal_cleanup(
-                    request.app,
-                    session_key,
-                    controller,
-                    task,
-                )
-            )
+            current_task = _schedule_terminal_work(request.app, session_key, controller, _render_and_update)
             if render_result.disposition == "native":
                 _track_native_handoff_repair_task(
                     request.app,
@@ -6578,6 +6579,17 @@ def _completion_notify_meets_threshold(
     )
 
 
+async def _notify_confirmed_completion(
+    app: web.Application, session_key: str, session: CardSession, event: SidecarEvent,
+    *, card_config: dict[str, Any], bot_id: str | None,
+) -> bool:
+    await _maybe_send_completion_notify(app, session_key, session, event, card_config=card_config, bot_id=bot_id)
+    sent = session.completion_notify_state == "sent"
+    if sent and app[SESSIONS_KEY].get(session_key) is session:
+        _checkpoint_session(app, session_key, _policy_profile_id(event) or "")
+    return sent
+
+
 async def _maybe_send_completion_notify(
     app: web.Application,
     session_key: str,
@@ -6701,6 +6713,16 @@ async def _completion_mention_open_id(client: Any, session: CardSession) -> str:
     except Exception:
         return ""
     return resolved if isinstance(resolved, str) else ""
+
+
+def _schedule_terminal_work(
+    app: web.Application, session_key: str, controller: FlushController,
+    work: Callable[[], Awaitable[bool]],
+) -> asyncio.Task[None]:
+    task = controller.schedule(work, terminal=True)
+    controller.close()
+    task.add_done_callback(partial(_post_terminal_cleanup, app, session_key, controller))
+    return task
 
 
 def _post_terminal_cleanup(
@@ -8745,16 +8767,7 @@ async def _schedule_abandoned_session_terminal_update(
             bot_id,
         )
 
-    task = controller.schedule(render_and_update, terminal=True)
-    controller.close()
-    task.add_done_callback(
-        lambda completed: _post_terminal_cleanup(
-            app,
-            session_key,
-            controller,
-            completed,
-        )
-    )
+    _schedule_terminal_work(app, session_key, controller, render_and_update)
 
 
 def _flush_controller_for_session(

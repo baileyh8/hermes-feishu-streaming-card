@@ -119,6 +119,65 @@ def _segmented_app(transport, tmp_path):
     )
 
 
+async def test_recovered_terminal_sends_one_completion_notice_after_body_ack(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    notices = []
+    sending, release = asyncio.Event(), asyncio.Event()
+
+    async def send_notice(chat_id, text, **placement):
+        notices.append((chat_id, text, placement))
+        if len(notices) == 2:
+            sending.set()
+            await release.wait()
+        return "om_notice"
+
+    transport.send_text_message = send_notice
+
+    def app():
+        return create_app(transport, session_store_directory=tmp_path, card_config={
+            "flush_interval_ms": 0, "completion_notify": {"enabled": True, "placement": "message"},
+        })
+
+    create = transport.send_card_delivery
+
+    async def lose_ack(*args, **kwargs):
+        await create(*args, **kwargs)
+        raise FeishuAPIError("lost ACK", outcome="unknown")
+
+    terminal = _topic_event("message.completed", 1, 2, answer="Recovered final")
+    terminal.pop("thread_id")
+    terminal["data"].pop("reply_to_message_id")
+    terminal["data"].pop("reply_in_thread")
+    async with TestClient(TestServer(app())) as client:
+        await _post_event(client, _topic_event("message.started", 0, 1))
+        await _post_event(client, _topic_event("message.completed", 1, 1, answer="First final"))
+        await wait_for_condition(lambda: len(notices) == 1)
+        with monkeypatch.context() as patch:
+            patch.setattr(transport, "send_card_delivery", lose_ack)
+            await _post_event(client, _topic_event("message.started", 0, 2), status=502)
+        assert len(notices) == 1
+
+    async with TestClient(TestServer(app())) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        try:
+            assert (await asyncio.wait_for(_post_event(client, terminal), 2))["applied"]
+            assert "Recovered final" in str(transport.cards["card-1"])
+            await asyncio.wait_for(sending.wait(), 1)
+            assert (await _post_event(client, terminal))["applied"]
+        finally:
+            release.set()
+        await wait_for_condition(lambda: client.app[server.SESSION_STORE_KEY].load()[0][
+            "session"].completion_notify_state == "sent")
+
+    async with TestClient(TestServer(app())) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        assert (await _post_event(client, terminal))["applied"]
+    assert len(notices) == 2
+    assert notices[1][2] == {
+        "thread_id": "omt_topic", "reply_to_message_id": "om_topic_anchor", "reply_in_thread": True,
+    }
+
+
 @pytest.mark.parametrize("reopen_event", ["message.started", "answer.delta"])
 @pytest.mark.parametrize("cardless_first", [False, True], ids=["live", "cardless"])
 async def test_reopened_long_answer_sends_new_continuations(tmp_path, reopen_event, cardless_first):
