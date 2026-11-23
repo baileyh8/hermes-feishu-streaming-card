@@ -15,9 +15,9 @@
 
 [V5 新变化](#v5-新变化) · [从 V4x 升级](#从-v4x-升级到-v5) · [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.27；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.27.md)。
+**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.28；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.28.md)。
 
-v5.0.27 安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.27) 为准。
+v5.0.28 安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.28) 为准。
 
 ## V5 新变化
 
@@ -172,7 +172,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.27
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.28
 bash install-docker.sh
 ```
 
@@ -309,6 +309,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.28](docs/release-notes-v5.0.28.md) | `uninstall` PM 依赖前置校验、显式释放 schema 2 adopted-selection member 与 Ruff 0.17.6 同步 |
 | [v5.0.27](docs/release-notes-v5.0.27.md) | Hermes v0.23.3 兼容（schema 54 / `Persistence`）与有意静默 `NO_REPLY` 卡片收尾修复 |
 | [v5.0.26](docs/release-notes-v5.0.26.md) | Hermes v0.23.2 兼容、可逆安装与审批通知适配 |
 | [v5.0.25](docs/release-notes-v5.0.25.md) | 终局确认丢失后的有界幂等对账、Windows 5.1 凭据探针与安装诊断说明 |
@@ -318,12 +319,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.21](docs/release-notes-v5.0.21.md) | Codex 完成事件归属与 Windows 子进程编码 |
 | [v5.0.20](docs/release-notes-v5.0.20.md) | 官方 Docker 多 profile 数据根识别修复 |
 | [v5.0.19](docs/release-notes-v5.0.19.md) | 自管理 PM sticky profile 目标修复与 Windows NTFS 文件签名误报修复 |
-| [v5.0.18](docs/release-notes-v5.0.18.md) | Hermes v0.23.0 完成回调、admission 与 PM 安装兼容 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
 
+- V5.0.28：感谢 [tidytorch](https://github.com/tidytorch) 在 [#540](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/540) 提供跨多节点自管理 PM 升级窗口的 `selection_added: false` 诊断与复现证据，以及 [Dependabot](https://github.com/apps/dependabot) 的 [PR #542](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/542)。问题证据与代码作者分开记录，原提交与历史署名保留。
 - V5.0.27：感谢 [0x3st](https://github.com/0x3st) 在 [#537](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/537) 提供 119 文件漂移与 cohort 分析，并在 [#538](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/538) 提交 `pm-0233` 兼容实现；感谢 [mouyong](https://github.com/mouyong) 在 [#535](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/535) 提供后台回执 `NO_REPLY` 截图与时间线证据。问题证据与代码作者分开记录，原提交与历史署名保留。
 - V5.0.26：感谢 [Lite-G](https://github.com/Lite-G) 在 [#532](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/532) 提供可复现报告，并在 [#533](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/533) 提交兼容实现。
 - V5.0.25：感谢 [leavrcn](https://github.com/leavrcn) 提供 [#529](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/529) 的终局重复投递时序，[nmtlcxb](https://github.com/nmtlcxb) 提供 [#526](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/526) 的 Windows 恢复与 PowerShell 5.1 证据。问题证据与代码作者分开记录，全部历史署名保留。

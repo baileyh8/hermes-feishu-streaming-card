@@ -21,9 +21,9 @@ Use it when connecting [Hermes Agent](https://github.com/NousResearch/hermes-age
 
 [What’s new in V5](#whats-new-in-v5) · [Upgrade from V4.x](#upgrade-from-v4x-to-v5) · [Install](#quick-install) · [Configure](#configuration) · [Recent releases](#recent-releases) · [User guide](docs/user-guide.en.md) · [Contributors](#contributors)
 
-**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.27; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.27.en.md).
+**V5: follow the task, continue the conversation, keep the complete result.** This page describes v5.0.28; installable versions are listed in [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases). See the [release notes](docs/release-notes-v5.0.28.en.md).
 
-Download v5.0.27 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.27).
+Download v5.0.28 packages and checksums from the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.28).
 
 ## What's new in V5
 
@@ -178,7 +178,7 @@ Start or restart Hermes Gateway as directed by setup, then message the bot and c
 - **Docker:** inside an existing Hermes container, run the repository's installer:
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.27
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.28
 bash install-docker.sh
 ```
 
@@ -315,6 +315,7 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 
 | Version | Highlights |
 |---|---|
+| [v5.0.28](docs/release-notes-v5.0.28.en.md) | `uninstall` PM preflight checks, explicit schema-2 adopted-selection release and Ruff 0.17.6 pin |
 | [v5.0.27](docs/release-notes-v5.0.27.en.md) | Hermes v0.23.3 compatibility (schema 54 / `Persistence`) and intentional-silence `NO_REPLY` card settlement |
 | [v5.0.26](docs/release-notes-v5.0.26.en.md) | Hermes v0.23.2 compatibility, reversible installation and approval notifications |
 | [v5.0.25](docs/release-notes-v5.0.25.en.md) | Bounded terminal ACK reconciliation, Windows 5.1 credential probe and installation diagnostics |
@@ -324,12 +325,12 @@ HFC uses a **sidecar-only** architecture: Hermes executes tasks, the installer m
 | [v5.0.21](docs/release-notes-v5.0.21.en.md) | Codex completion attribution and Windows subprocess encoding |
 | [v5.0.20](docs/release-notes-v5.0.20.en.md) | Official Docker multiplex profile-root recognition |
 | [v5.0.19](docs/release-notes-v5.0.19.en.md) | Sticky-profile enable target and Windows NTFS signature fixes |
-| [v5.0.18](docs/release-notes-v5.0.18.en.md) | Hermes v0.23.0 completion, admission and PM installation compatibility |
 
 See [release history](docs/release-history.en.md) for earlier versions, and [CHANGELOG](CHANGELOG.md) or [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) for the full record.
 
 ## Contributors
 
+- V5.0.28: Thanks to [tidytorch](https://github.com/tidytorch) for the multi-node self-managed PM `selection_added: false` diagnostics and upgrade-window report in [#540](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/540), and [Dependabot](https://github.com/apps/dependabot) for [PR #542](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/542). Issue evidence is distinct from code authorship; original commits and historical credits remain.
 - V5.0.27: Thanks to [0x3st](https://github.com/0x3st) for the 119-file drift and cohort analysis in [#537](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/537) and the `pm-0233` compatibility implementation in [#538](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/538); thanks to [mouyong](https://github.com/mouyong) for the background-wake `NO_REPLY` screenshots and timeline evidence in [#535](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/535). Issue evidence is distinct from code authorship; original commits and historical credits remain.
 - V5.0.26: Thanks to [Lite-G](https://github.com/Lite-G) for the reproducible report in [#532](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/532) and the compatibility implementation in [#533](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/533).
 - V5.0.25: Thanks to [leavrcn](https://github.com/leavrcn) for the terminal duplicate-delivery timeline in [#529](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/529), and [nmtlcxb](https://github.com/nmtlcxb) for Windows recovery and PowerShell 5.1 evidence in [#526](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/526). Issue evidence is distinct from code authorship; all historical credits remain.

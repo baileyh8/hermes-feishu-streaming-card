@@ -1,5 +1,11 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V5.0.28
+
+- #540 / PR #543：`uninstall` 在 `_restore()` 前执行 PM 依赖前置校验，默认继续保守拒绝 `selection_added: false` 并提示升级改用 `restore`；新增 `uninstall --remove-adopted-pm-dependency` 显式释放经完整校验的 schema 2 `hfc-runtime-dependency` member，保留漂移、未知目录、schema 1 与 schema 3（`legacy_9b904`）拒绝。
+- PR #542：更新开发工具 `ruff` 至 `0.17.6` 并同步 `docs/wiki/development-rules.md`。
+- 发行验收以 [发行说明](docs/release-notes-v5.0.28.md) 和 GitHub Release 为准。
+
 ## V5.0.27
 
 - #537 / PR #538：兼容 Hermes v0.23.3（`caafe5389ae5`）的 `pm-0233` writer/launch 家族（schema 54）与 `Persistence` 仓库接口 admission completion 校验。

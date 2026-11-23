@@ -1,0 +1,13 @@
+# v5.0.28: `uninstall` PM preflight checks and explicit adopted-selection member release
+
+[中文](release-notes-v5.0.28.md)
+
+This release fixes `hermes-feishu-card uninstall` on self-managed PM layouts so PM dependency removal is preflighted before managed hooks are restored, adds an explicit opt-in release flag for verified schema-2 `hfc-runtime-dependency` members recorded with `selection_added: false`, and updates the Ruff development pin to `0.17.6`.
+
+- **Uninstall PM preflight ([#540](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/540) · [PR #543](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/543))**: Add `pm_dependency.preflight_remove()` and run it inside `cli._run_uninstall()` before `_restore()` mutates managed Hermes hooks or observer state, preventing a half-uninstalled state when PM removal is refused.
+- **Conservative default + explicit release flag ([#540](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/540) · [PR #543](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/543))**: Default `uninstall` still refuses `selection_added: false` and directs operators to `hermes-feishu-card restore` when parking hooks before an upgrade. Passing `uninstall --remove-adopted-pm-dependency` explicitly removes a schema-2 `hfc-runtime-dependency` member only after full `_owned()` and external `wheel-store` digest verification through Hermes's official PM admission API; unknown directories, drifted files, schema-1, and schema-3 (`legacy_9b904`) members remain refused.
+- **Development tooling & docs ([PR #542](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/542))**: Bump the `ruff` development dependency to `0.17.6` and update `docs/wiki/pm-recovery.md`, `README-install.md`, and `docs/wiki/development-rules.md`.
+
+Follow the [installation guide](../README-install.md); use `hermes-feishu-card restore` when parking hooks before an upgrade and retain existing manifests and backups. Exact-commit CI, packaged installation, and field acceptance boundaries are recorded separately on the [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.28).
+
+Thanks to [tidytorch](https://github.com/tidytorch) for the multi-node self-managed PM `selection_added: false` diagnostics and upgrade-window report in [#540](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/540), and to [Dependabot](https://github.com/apps/dependabot) for [PR #542](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/542). Issue evidence is distinct from code authorship; original commits and historical credits remain.
