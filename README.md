@@ -125,7 +125,7 @@ V5 的桌面验收已核对“已超时”状态、失效选项和“查看续�
 **已有机器人不必重新创建。** 沿用实际 Hermes 目录、配置文件、凭据文件和 profile；不要把示例路径直接套到分离 HOME、Docker 或多实例环境。
 
 1. 记下当前 HFC / Hermes 版本及服务启动方式，备份现有配置、`.env` 和安装器恢复资料。等任务结束，使用原服务管理器停止 Gateway、Desktop 和 sidecar。
-2. 使用下面的安装脚本固定安装 `v5.0.22`，继续传入原来的配置与凭据路径。只有该 tag 正式发布后才执行；安装器会检查旧安装的来源与兼容性。
+2. 使用下面的安装脚本固定安装 `v5.0.29`，继续传入原来的配置与凭据路径。只有该 tag 正式发布后才执行；安装器会检查旧安装的来源与兼容性。
 3. 如果诊断要求先恢复旧 hook，按其给出的官方 `restore` 命令处理后重装。未知源码漂移应停止并排查，不手改 `gateway/run.py`，不删除 manifest 或 backup 强行继续。
 4. 需要新版任务布局时合并上面的两行配置；其余凭据、路由、原生表格和阅读预设按原配置保留。
 5. 按安装输出恢复原服务管理器，重启 Gateway / Desktop，运行 `status`、`doctor --explain` 和 `card-config --running`，再给机器人发一条消息确认卡片和 footer。
@@ -136,7 +136,7 @@ macOS / Linux 示例（先把路径改为你当前安装所用的值）：
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.22/install.sh | bash -s -- --version v5.0.22 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.29/install.sh | bash -s -- --version v5.0.29 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 Windows、Docker、分离 HOME 的完整步骤，以及验证与回退方法，见 **[V4.x → V5 升级指南](docs/upgrade-v4-to-v5.md)**。升级 HFC 与升级 Hermes 是两件事；飞书 `/update` 不能当作本插件的版本升级命令。
