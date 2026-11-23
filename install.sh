@@ -13,6 +13,7 @@ EVENT_URL="${HERMES_FEISHU_CARD_EVENT_URL:-}"
 NO_REPAIR="${HFC_NO_REPAIR:-}"
 PYTHON_BIN="${HFC_PYTHON:-}"
 PIP_USER_FLAG="${HFC_PIP_USER-}"
+PM_MANAGEMENT_DIR=""
 
 log() {
   printf '[hermes-feishu-card] %s\n' "$*"
@@ -188,7 +189,7 @@ upsert_env() {
 }
 
 prompt_credentials() {
-  if [ -f "$CONFIG_PATH" ] && "$PYTHON_BIN" -c 'import sys; from hermes_feishu_card.config import load_config; from hermes_feishu_card.cli import _has_feishu_credentials; c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or "default"; ps=c.get("profiles"); p=next(iter(ps)) if ps and p=="default" and p not in ps and sys.argv[4]!="1" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)' "$CONFIG_PATH" "$ENV_FILE" "$PROFILE_ID" "$PROFILE_ID_EXPLICIT" >/dev/null 2>&1; then
+  if [ -f "$CONFIG_PATH" ] && run_python -c 'import sys; from hermes_feishu_card.config import load_config; from hermes_feishu_card.cli import _has_feishu_credentials; c=load_config(sys.argv[1],env_file=sys.argv[2]); p=sys.argv[3] or "default"; ps=c.get("profiles"); p=next(iter(ps)) if ps and p=="default" and p not in ps and sys.argv[4]!="1" else p; sys.exit(0 if _has_feishu_credentials(c,p) else 1)' "$CONFIG_PATH" "$ENV_FILE" "$PROFILE_ID" "$PROFILE_ID_EXPLICIT" >/dev/null 2>&1; then
     return 0
   fi
   if { [ -z "${FEISHU_APP_ID:-}" ] || [ -z "${FEISHU_APP_SECRET:-}" ]; } && \
@@ -218,48 +219,65 @@ prompt_credentials() {
   upsert_env "FEISHU_APP_SECRET" "$FEISHU_APP_SECRET"
 }
 
-pm_managed_runtime_python() {
-  # A PM-managed Hermes (0.21.4+) keeps its dependency environment outside the checkout:
-  # hermes_bootstrap selects pm.environments.committed_venv(root) before any third-party
-  # import, so that venv -- not <root>/venv -- is what the Gateway imports from. Read the
-  # same selection, or the package lands in a venv the Gateway never looks at and every
-  # hook seam fails on import while the card degrades silently.
-  # Probe with the platform's own python3: the module involved is stdlib-only by design
-  # ("environment selection must work before any dependency has been imported"), so any
-  # 3.9+ interpreter can answer it. $PYTHON is only the last resort — it names the install
-  # target, and running it here would be a surprising side effect.
-  local probe_python
-  probe_python="$(command -v python3 2>/dev/null || true)"
-  [ -n "$probe_python" ] || probe_python="${PYTHON:-}"
-  [ -n "$probe_python" ] && [ -x "$probe_python" ] || return 1
-  local selected
-  selected="$("$probe_python" -I -c '
-import sys
-sys.path.insert(0, sys.argv[1])
+prepare_pm_management() {
+  # Setup validates the old observer's owned wheel before PM admits its replacement.
+  # Keep the CLI usable independently of PM, including when a generation is missing.
+  local base_python="${PYTHON_BIN:-${PYTHON:-python3}}"
+  have "$base_python" || fail "$base_python was not found. Install Python 3.9+ first."
+  PM_MANAGEMENT_DIR="$("$base_python" -I -B -c '
+import os, stat, sys
 from pathlib import Path
-from pm.environments import committed_venv
-venv = committed_venv(Path(sys.argv[1]))
-print(str(venv) if venv else "")
-' "$HERMES_DIR" 2>/dev/null)" || return 1
-  [ -n "$selected" ] || return 1
-  local candidate
-  for candidate in "$selected/bin/python" "$selected/bin/python3" "$selected/Scripts/python.exe"; do
-    if [ -x "$candidate" ]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
+
+if sys.version_info < (3, 9):
+    raise SystemExit("The HFC management CLI requires Python 3.9+.")
+state = Path(sys.argv[1]).resolve(strict=True) / ".hermes_feishu_card"
+management = state / "management"
+for directory in (state, management):
+    directory.mkdir(mode=0o700, exist_ok=True)
+    metadata = directory.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o077):
+        raise SystemExit("The HFC management directory must be private and owned by the current user.")
+print(management)
+' "$HERMES_HOME_DIR")" || fail "could not prepare the PM management directory"
+
+  # The original directory descriptor stays open in Bash until setup exits.
+  exec 9<"$PM_MANAGEMENT_DIR"
+  "$base_python" -I -B -c '
+import fcntl, os, stat, sys, venv
+from pathlib import Path
+
+directory = Path(sys.argv[1])
+metadata = directory.lstat()
+opened = os.fstat(9)
+if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+        or (metadata.st_dev, metadata.st_ino) != (opened.st_dev, opened.st_ino)):
+    raise SystemExit("The HFC management directory changed.")
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    raise SystemExit("Another HFC installer is using this Hermes HOME.") from None
+
+target = directory / "venv"
+target.mkdir(mode=0o700, exist_ok=True)
+metadata = target.lstat()
+if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077):
+    raise SystemExit("The HFC management venv must be private and owned by the current user.")
+if not os.access(target / "bin" / "python", os.X_OK):
+    # Match the POSIX venv CLI. Relocating a copy of a dynamically linked
+    # Python can break its library search path, including on macOS.
+    venv.EnvBuilder(symlinks=True).create(target)
+' "$PM_MANAGEMENT_DIR" || fail "could not prepare the PM management Python"
+  PYTHON_BIN="$PM_MANAGEMENT_DIR/venv/bin/python"
+  run_python -c 'import sys; from pathlib import Path; raise SystemExit(Path(sys.prefix).resolve() != Path(sys.argv[1]))' \
+    "$PM_MANAGEMENT_DIR/venv" || fail "could not verify the PM management Python"
 }
 
-detect_python() {
+detect_legacy_python() {
   if [ -n "$PYTHON_BIN" ]; then
     [ -x "$PYTHON_BIN" ] || fail "HFC_PYTHON is not executable: $PYTHON_BIN"
-    return
-  fi
-  local pm_runtime
-  if pm_runtime="$(pm_managed_runtime_python)"; then
-    PYTHON_BIN="$pm_runtime"
     return
   fi
   local candidates=(
@@ -280,6 +298,43 @@ detect_python() {
   PYTHON_BIN="${PYTHON:-python3}"
 }
 
+detect_python() {
+  local inspector
+  local kind
+  inspector="$(command -v python3 2>/dev/null || true)"
+  if [ -z "$inspector" ]; then
+    # The platform Python is normally available; fall back to the explicit
+    # override or checkout interpreter for this stdlib-only probe.
+    inspector="$(detect_legacy_python; printf '%s' "$PYTHON_BIN")"
+  fi
+  kind="$("$inspector" -I -B -S -c '
+import stat, sys
+from pathlib import Path
+
+try:
+    metadata = (Path(sys.argv[1]) / "pm" / "environments.py").lstat()
+except FileNotFoundError:
+    print("legacy")
+else:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise SystemExit("Hermes PM environment module is not a regular file.")
+    print("pm")
+' "$HERMES_DIR")" || fail "could not inspect the Hermes PM environment module"
+  case "$kind" in
+    pm) prepare_pm_management ;;
+    legacy) detect_legacy_python ;;
+    *) fail "could not detect the Hermes install layout" ;;
+  esac
+}
+
+run_python() {
+  if [ -n "$PM_MANAGEMENT_DIR" ]; then
+    "$PYTHON_BIN" -I "$@"
+  else
+    "$PYTHON_BIN" "$@"
+  fi
+}
+
 configure_pip_user_flag() {
   if [ "${HFC_PIP_USER+x}" = "x" ]; then
     PIP_USER_FLAG="$HFC_PIP_USER"
@@ -287,8 +342,7 @@ configure_pip_user_flag() {
   fi
   # Never pass --user for an interpreter that already belongs to a virtual environment:
   # pip --user writes to the user site directory, which the venv does not import, so the
-  # Gateway would still not see the package. This also covers a PM-managed runtime venv,
-  # whose path is outside $HERMES_DIR and so matches none of the literals below.
+  # Gateway would still not see the package.
   if [ -n "$PYTHON_BIN" ] && \
     "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.prefix != sys.base_prefix else 1)' >/dev/null 2>&1; then
     PIP_USER_FLAG="0"
@@ -311,6 +365,33 @@ install_package() {
   local resolved_version="$2"
   have "$PYTHON_BIN" || fail "$PYTHON_BIN was not found. Install Python 3.9+ first."
   export PIP_ROOT_USER_ACTION="${PIP_ROOT_USER_ACTION:-ignore}"
+  if [ -n "$PM_MANAGEMENT_DIR" ]; then
+    log "installing management CLI from $REPO@$resolved_version"
+    (
+      # Only this private venv receives pip writes, including when the caller
+      # has pip defaults for a different installation target.
+      unset PIP_TARGET PIP_PREFIX PIP_ROOT PIP_USER PIP_PYTHON
+      export PIP_CONFIG_FILE=/dev/null
+      run_python -m pip --version >/dev/null 2>&1 || run_python -m ensurepip --upgrade >/dev/null
+      run_python -m pip --require-virtualenv install --force-reinstall "$spec"
+    ) || return "$?"
+    # Retain the source key used by existing PM registrations for immutable
+    # release tags. Resolve a moving ref to the installed CLI's Git commit.
+    HFC_INSTALL_SPEC="$(run_python -c '
+import re, sys
+from hermes_feishu_card.cli import _installed_distribution_spec
+
+requested = sys.argv[1]
+source, ref = requested.rsplit("@", 1)
+spec = _installed_distribution_spec()
+if not spec or not re.fullmatch(re.escape(source) + r"@(?:[0-9a-f]{40}|[0-9a-f]{64})", spec):
+    raise SystemExit("The installed HFC management CLI lacks a verified Git commit.")
+print(requested if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", ref) else spec)
+' "$spec")" || fail "could not pin the HFC runtime wheel source"
+    export HFC_INSTALL_SPEC
+    printf '[hermes-feishu-card] management CLI: %q -I -m hermes_feishu_card.cli\n' "$PYTHON_BIN"
+    return
+  fi
   "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 || "$PYTHON_BIN" -m ensurepip --upgrade >/dev/null
   export HFC_INSTALL_SPEC="$spec"
   log "installing $REPO@$resolved_version"
@@ -372,7 +453,7 @@ run_setup() {
     setup_args+=(--accept-hermes-upgrade)
   fi
   log "running setup"
-  "$PYTHON_BIN" "${setup_args[@]}"
+  run_python "${setup_args[@]}"
 }
 
 main() {
@@ -402,7 +483,9 @@ main() {
   resolved_version="$(resolve_version "$PYTHON_BIN")"
   resolved_install_spec="$(build_install_spec "$resolved_version")"
   VERSION="$resolved_version"
-  configure_pip_user_flag
+  if [ -z "$PM_MANAGEMENT_DIR" ]; then
+    configure_pip_user_flag
+  fi
 
   export HFC_CONFIG="$CONFIG_PATH"
   export HFC_ENV_FILE="$ENV_FILE"
@@ -422,7 +505,12 @@ main() {
   run_setup
 
   log "done"
-  log "status: $PYTHON_BIN -m hermes_feishu_card.cli status --config \"$CONFIG_PATH\""
+  if [ -n "$PM_MANAGEMENT_DIR" ]; then
+    printf '[hermes-feishu-card] status: %q -I -m hermes_feishu_card.cli status --config %q --env-file %q --hermes-dir %q --hermes-home %q\n' \
+      "$PYTHON_BIN" "$CONFIG_PATH" "$ENV_FILE" "$HERMES_DIR" "$HERMES_HOME_DIR"
+  else
+    log "status: $PYTHON_BIN -m hermes_feishu_card.cli status --config \"$CONFIG_PATH\""
+  fi
 }
 
 main "$@"
