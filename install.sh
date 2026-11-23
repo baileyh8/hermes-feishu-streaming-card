@@ -252,7 +252,7 @@ print(management)
 
 pm_management_venv() {
   "$PM_MANAGEMENT_INSPECTOR" -I -B -S -c '
-import errno, fcntl, os, stat, subprocess, sys, tempfile
+import errno, fcntl, os, shutil, stat, subprocess, sys, tempfile
 from pathlib import Path
 
 directory, action = Path(sys.argv[1]), sys.argv[2]
@@ -370,6 +370,17 @@ if action == "lock":
         raise SystemExit("Another HFC installer is using this Hermes HOME.") from None
 elif action == "rollback":
     rollback()
+elif action == "snapshot":
+    # pip can uninstall the working CLI before returning an error. Keep a
+    # complete rollback copy, including entry points and distribution metadata.
+    # A rebuilt environment already has its original directory in previous.
+    if not owned_venv(previous):
+        if not owned_venv(target):
+            raise SystemExit("The HFC management venv is missing.")
+        with tempfile.TemporaryDirectory(prefix=".venv-snapshot-", dir=directory) as scratch:
+            backup = Path(scratch) / "venv"
+            shutil.copytree(target, backup, symlinks=True)
+            move(backup, previous)
 elif action == "commit":
     if owned_venv(previous):
         discard(previous)
@@ -503,6 +514,7 @@ install_package() {
   export PIP_ROOT_USER_ACTION="${PIP_ROOT_USER_ACTION:-ignore}"
   if [ -n "$PM_MANAGEMENT_DIR" ]; then
     log "installing management CLI from $REPO@$resolved_version"
+    pm_management_venv snapshot || fail "could not preserve the current PM management venv"
     (
       # Only this private venv receives pip writes, including when the caller
       # has pip defaults for a different installation target.
@@ -614,11 +626,9 @@ print_status_command() {
   # Prefix the current directory without folding symlinks or parent components.
   command+=(-m hermes_feishu_card.cli status
     --config "$(absolute_status_path "$cwd" "$CONFIG_PATH")"
-    --env-file "$(absolute_status_path "$cwd" "$ENV_FILE")")
-  if [ -n "$PM_MANAGEMENT_DIR" ]; then
-    command+=(--hermes-dir "$(absolute_status_path "$cwd" "$HERMES_DIR")"
-      --hermes-home "$(absolute_status_path "$cwd" "$HERMES_HOME_DIR")")
-  fi
+    --env-file "$(absolute_status_path "$cwd" "$ENV_FILE")"
+    --hermes-dir "$(absolute_status_path "$cwd" "$HERMES_DIR")"
+    --hermes-home "$(absolute_status_path "$cwd" "$HERMES_HOME_DIR")")
   printf '[hermes-feishu-card] status:'
   printf ' %q' "${command[@]}"
   printf '\n'

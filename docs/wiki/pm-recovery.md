@@ -14,7 +14,9 @@ v5.0.25 的 PowerShell 凭据探针使用独占临时 Python 文件，避免 Win
 
 `install.sh` 将管理 CLI 安装在绑定 HOME 下的 `.hermes_feishu_card/management/venv`，后续安装复用该路径和本机 Python。PM 负责构建并登记普通 wheel，切代前会核验旧代际与 observer 归属。发布 tag 沿用原登记标识。安装 `main` 等移动 ref 时，wheel 构建使用管理 CLI 已解析的 Git commit。再次安装同一来源时，PM 复用已验证的登记。
 
-保存安装器给出的 `management CLI` 和 `status` 命令。管理 CLI 可以在安装失败或 PM 代际路径失效时独立运行。用同一条命令前缀可调用 `doctor`、`repair` 或 `integrity`，无需 HFC 源码目录。管理 CLI 可能已经更新，PM runtime 的实际版本以 `doctor` 的运行时检查和 PM 登记为准。
+更换管理 CLI 前，安装器会锁住该 HOME 的管理目录，在同一目录暂存一份旧环境。pip 中断或新包来源校验失败时会恢复旧 CLI。新 CLI 通过来源校验后，安装器会清除临时副本，再执行 `setup`。如果 `setup` 随后拒绝切代，可继续用已验证的新 CLI 诊断旧运行时。
+
+保存安装器给出的 `management CLI` 和 `status` 命令。`status` 包含 Hermes 源码、HOME、配置和环境文件的绝对路径，换目录后仍可使用。用同一条管理 CLI 命令前缀可调用 `doctor`、`repair` 或 `integrity`。PM runtime 的实际版本以 `doctor` 的运行时检查和 PM 登记为准。
 
 如果 `status` 显示 `manual_review_required`，复制它输出的 `doctor --explain` 命令。命令沿用当前管理 Python、配置文件和指定的 Hermes HOME，也保留本次使用的环境文件，可在另一个目录执行。
 

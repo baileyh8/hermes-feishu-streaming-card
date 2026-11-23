@@ -162,7 +162,7 @@ exit 0
             "HOME": str(tmp_path),
             "REAL_PYTHON": sys.executable,
             "FAKE_PYTHON_LOG": str(tmp_path / "python.log"),
-            "HERMES_DIR": str(hermes_dir),
+            "HERMES_DIR": hermes_dir.name,
             "HFC_CONFIG": "card config.yaml",
             "HFC_ENV_FILE": env_file.name,
             "HFC_NO_PROMPT": "1",
@@ -172,6 +172,7 @@ exit 0
         }
     )
     env.pop("HFC_PYTHON", None)
+    env.pop("HERMES_HOME", None)
     env.pop("FEISHU_APP_ID", None)
     env.pop("FEISHU_APP_SECRET", None)
 
@@ -203,6 +204,8 @@ exit 0
         str(runtime_python), "-m", "hermes_feishu_card.cli", "status",
         "--config", str(tmp_path.resolve() / "card config.yaml"),
         "--env-file", str(env_file.resolve()),
+        "--hermes-dir", str(tmp_path.resolve() / hermes_dir.name),
+        "--hermes-home", str(tmp_path.resolve()) + "/.",
     ]
 
 
@@ -360,6 +363,56 @@ fi
     runtime_log = tmp_path / "runtime.log"
     if runtime_log.exists():
         assert "-m pip" not in runtime_log.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="install.sh PM bootstrap is for macOS and Linux")
+@pytest.mark.parametrize(("failure", "exit_code"), [("interrupted", 130), ("unverified", 1)])
+def test_install_sh_keeps_working_manager_when_package_replacement_fails(tmp_path, failure, exit_code):
+    checkout = tmp_path / "checkout"
+    (checkout / "pm").mkdir(parents=True)
+    (checkout / "pm/environments.py").touch()
+    state = tmp_path / ".hermes_feishu_card"
+    management = state / "management"
+    prefix = management / "venv"
+    for directory in (state, management, prefix):
+        directory.mkdir(mode=0o700)
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(prefix)], check=True)
+    python = str(prefix / "bin/python")
+    site = Path(subprocess.check_output(
+        [python, "-I", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True,
+    ).strip())
+    package = site / "hermes_feishu_card"
+    package.mkdir()
+    (package / "__init__.py").touch()
+    cli = package / "cli.py"
+    cli.write_text("if __name__ == '__main__': print('working manager')\n", encoding="utf-8")
+    pip = site / "pip"
+    pip.mkdir()
+    (pip / "__init__.py").touch()
+    (pip / "__main__.py").write_text(
+        """import os, sys
+from pathlib import Path
+if "install" in sys.argv:
+    cli = Path(__file__).parent.parent / "hermes_feishu_card/cli.py"
+    cli.unlink()
+    if os.environ["REPLACEMENT_FAILURE"] == "interrupted":
+        sys.exit(130)
+    cli.write_text("def _installed_distribution_spec(): return None\\n")
+""", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text("feishu: {}\n", encoding="utf-8")
+    env = {**os.environ, "HOME": str(tmp_path), "HERMES_HOME": str(tmp_path),
+           "HERMES_DIR": str(checkout), "HFC_NO_PROMPT": "1", "HFC_SKIP_START": "1",
+           "REPLACEMENT_FAILURE": failure}
+    result = subprocess.run(
+        ["bash", str(ROOT / "install.sh"), "--config", str(config), "--version", "v5.0.29"],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == exit_code, result.stdout + result.stderr
+    assert "running setup" not in result.stdout
+    assert subprocess.check_output([python, "-I", "-m", "hermes_feishu_card.cli"],
+                                   cwd=tmp_path, text=True).strip() == "working manager"
+    assert list(management.iterdir()) == [prefix]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="install.sh PM bootstrap is for macOS and Linux")
