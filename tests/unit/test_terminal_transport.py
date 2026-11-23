@@ -40,7 +40,7 @@ async def test_backoff_generation_change_must_not_patch_obsolete_owner(monkeypat
         disposition, {"answer": "accepted final answer"},
     )
     result = await deliver_terminal(
-        plan, owner, Transport({}),
+        plan, owner, Transport({}, owner, replay=False),
         is_current=lambda: owner.generation == accepted_generation,
     )
     assert obsolete_writes == []
@@ -88,6 +88,8 @@ async def test_terminal_notice_patch_preserves_failure_metrics(monkeypatch, even
                        None, None, False, None, event, 2),
         "card", {},
     )
-    assert not await server._AppTerminalTransport(app).patch(plan, is_current=lambda: True)
+    owner = server.CardSession("conversation", "synthetic-turn", "oc_synthetic")
+    transport = server._AppTerminalTransport(app, owner, replay=False)
+    assert not await transport.patch(plan, is_current=lambda: True)
     assert metrics.feishu_update_failures == server.UPDATE_MAX_ATTEMPTS
     assert metrics.notice_update_failures == notice_failures

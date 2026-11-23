@@ -4363,6 +4363,19 @@ def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
             )
             if prior_key is not None:
                 return prior_key
+            # The quote can already belong to another turn when the process
+            # fence is absent. The retained exact fingerprint binds the old one.
+            profile = _policy_profile_id(event) or "default"
+            retained = [key for key, owner in sessions.items()
+                        if owner.status in {"completed", "failed"}
+                        and owner.legacy_terminal_fingerprint == fingerprint
+                        and owner.route_profile_id == profile
+                        and legacy_alias_owner_matches(owner, event)]
+            if len(retained) == 1:
+                return retained[0]
+        prior_key = _legacy_checkpoint_replay_key(app, event)
+        if prior_key is not None and sessions[prior_key].restored_unconfirmed_terminal:
+            return prior_key
     return resolve_session_key(
         event, sessions=sessions, aliases=aliases,
         redirect_aliases=app.get(REDIRECT_SESSION_ALIASES_KEY) or {},
@@ -4511,8 +4524,9 @@ async def _restore_card_checkpoints(app):
             pending = session.pending_reopen_create
             pending.candidate.route_profile_id = session.route_profile_id
             pending.candidate.legacy_route_thread_id = pending.thread_id
-        if session.legacy_terminal_fingerprint:
-            # An accepted alias terminal may replay after another turn rebinds the quote.
+        if session.legacy_terminal_fingerprint and session.terminal_card_confirmed:
+            # Only a confirmed card write can seed the restart receipt. The
+            # fingerprint alone may name an accepted but unfinished delivery.
             digest = session.legacy_terminal_fingerprint
             fence = app[EVENT_ID_FENCE_KEY]
             receipt = await fence.claim(("legacy_terminal", digest), digest)
@@ -4548,7 +4562,8 @@ async def _restore_card_checkpoints(app):
             # Keep the confirmed segmented lead intact while restoring the
             # separate interaction receipt on its original message.
             if (session.terminal_disposition != "segmented"
-                    and session.terminal_delivery_state not in {"recovered", "unknown"}):
+                    and session.terminal_delivery_state not in {"recovered", "recovering", "unknown"}
+                    and not (session.restored_unconfirmed_terminal and session.legacy_terminal_fingerprint)):
                 try:
                     updated = await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
                         _render_session_card_for_app(app, display, session_key=key), app[MESSAGE_BOT_IDS_KEY].get(key),
@@ -4588,32 +4603,39 @@ def _terminal_matches_display(owner: CardSession, event: SidecarEvent) -> bool:
             and (owner.answer_text == error or owner.answer_text.endswith("\n\n> " + error)))
 
 
-def _possible_legacy_checkpoint_replay(app, event: SidecarEvent) -> bool:
+def _unconfirmed_terminal_replay_response() -> web.Response:
+    # Keep ownership so Hermes cannot start a second delivery. Report the
+    # missing Feishu confirmation separately from the existing applied ACK.
+    return web.json_response({"ok": True, "applied": True, "delivery": {"outcome": "unknown"}})
+
+
+def _legacy_checkpoint_replay_key(app, event: SidecarEvent) -> str | None:
     if (event.turn_id or event.event_id or event.event not in TERMINAL_EVENTS
             or event.data.get("policy_new_turn") is True
             or _is_native_fallback_event(event) or _is_intentional_silence_event(event)):
-        return False
+        return None
     alias_key = _session_key(event)
     owner_key = app[SESSION_ALIASES_KEY].get(alias_key)
     owner = app[SESSIONS_KEY].get(owner_key)
-    if (owner is None or owner_key == alias_key or not owner.restored_legacy_terminal
+    if (owner is None or owner_key == alias_key
+            or not (owner.restored_legacy_terminal or owner.restored_unconfirmed_terminal)
             or owner.legacy_terminal_fingerprint
             or not app[FEISHU_MESSAGE_IDS_KEY].get(owner_key)
             or owner.conversation_id != event.conversation_id
             or not legacy_alias_owner_matches(owner, event)
             or event.sequence != owner.last_sequence):
-        return False
+        return None
     pending = owner.pending_reopen_create
     terminal_at = owner.updated_at if pending is None else pending.predecessor_updated_at
-    return (
-        type(terminal_at) in (int, float) and math.isfinite(terminal_at)
-        and event.created_at <= terminal_at and _terminal_matches_display(owner, event)
-    )
+    if (type(terminal_at) in (int, float) and math.isfinite(terminal_at)
+            and event.created_at <= terminal_at and _terminal_matches_display(owner, event)):
+        return owner_key
+    return None
 
 
 _REOPEN_CREATE_EVENTS = TURN_REOPENING_EVENTS | {"message.started"}
 _REOPEN_RECOVERY_EVENTS = _REOPEN_CREATE_EVENTS | TERMINAL_EVENTS | {"subagent.updated"}
-_REOPEN_UUID_WINDOW_SECONDS = 60 * 60
+_FEISHU_IM_UUID_WINDOW_SECONDS = 60 * 60
 
 
 def _reopen_generation(metadata) -> str:
@@ -4631,7 +4653,7 @@ def _pending_reopen_matches(pending: PendingReopenCreate, event: SidecarEvent, g
         and (not generation or not pending.generation or generation == pending.generation)
         and (not thread or not pending.thread_id or thread == pending.thread_id)
         and (not sender or not candidate.sender_open_id or sender == candidate.sender_open_id)
-        and (not tenant_user or not candidate.sender_user_id or tenant_user == candidate.sender_user_id)
+        and candidate.compare_display_tenant_requester(tenant_user) is not False
     )
 
 
@@ -4692,7 +4714,7 @@ async def _deliver_reopened_create(
     cannot_retry = pending.attempts and (
         (pending.attempts >= 2 and not terminal)
         or (pending.uncertain and (
-            not 0 <= time.time() - pending.attempted_at < _REOPEN_UUID_WINDOW_SECONDS
+            not 0 <= time.time() - pending.attempted_at < _FEISHU_IM_UUID_WINDOW_SECONDS
             or pending.streaming
             or (pending.thread_id and not pending.reply_to_message_id)
             or not callable(getattr(_client_for_bot(app, bot_id), "send_card_delivery", None))
@@ -4787,12 +4809,6 @@ async def _apply_event_locked(request, event, *, session_key, advance_sequence=T
         for table, bindings in retained_aliases.items():
             for alias, owner in bindings.items():
                 app[table].setdefault(alias, owner)
-    current = app[SESSIONS_KEY].get(key)
-    if (key != _session_key(event) and not event.turn_id and not event.event_id
-            and event.event in TERMINAL_EVENTS and current is not None
-            and current.status in {"completed", "failed"} and result[0].status == 200
-            and _json_response_payload(result[0]).get("applied") is True):
-        current.legacy_terminal_fingerprint = _legacy_terminal_fingerprint(event)
     _remember_legacy_owner_receipt(request.app, key)
     profile = _policy_profile_id(event)
     if profile is not None:
@@ -4838,30 +4854,81 @@ async def _apply_event_locked_inner(
     if session is not None:
         event = _event_for_session(incoming_event, session)
     event_is_terminal = _event_is_terminal(event)
+    legacy_fingerprint = (
+        _legacy_terminal_fingerprint(incoming_event)
+        if session_key != _session_key(incoming_event) and not incoming_event.turn_id
+        and not incoming_event.event_id and incoming_event.event in TERMINAL_EVENTS
+        and not _is_intentional_silence_event(incoming_event) and not _is_native_fallback_event(incoming_event)
+        else ""
+    )
+    resume_terminal_state = ""
+    if (legacy_fingerprint and session is not None and session.restored_unconfirmed_terminal
+            and (session.legacy_terminal_fingerprint == legacy_fingerprint
+                 or _legacy_checkpoint_replay_key(request.app, incoming_event) == session_key)):
+        resume_terminal_state = session.terminal_delivery_state
     handoff_identity = _native_handoff_identity(incoming_event)
     handoff_metadata = _native_handoff_metadata(incoming_event)
     handoff_generation = str(handoff_metadata.get("generation") or "")
     reopen_generation = _reopen_generation(handoff_metadata)
     starts_new_lifecycle = _event_starts_new_lifecycle(incoming_event)
+    pending_reopen = session.pending_reopen_create if session is not None else None
+    reopens_direct_terminal = False
+    stale_direct_terminal = False
+    terminal_fingerprint = ""
+    if (
+        session is not None
+        and session.status in {"completed", "failed"}
+        and session.delivery_kind == "chat"
+        and session.terminal_disposition in {"", "segmented"}
+        and feishu_message_ids.get(session_key)
+        and incoming_event.event in TERMINAL_EVENTS
+        and not incoming_event.turn_id
+        and incoming_event.message_id == session.message_id
+        and _delivery_kind(incoming_event) in {"", "chat"}
+        and event_conversation_matches(session, incoming_event, allow_omitted_thread=True)
+    ):
+        marked_as_new = incoming_event.data.get("policy_new_turn") is True
+        terminal_start_at = session.legacy_terminal_start_at
+        if marked_as_new or terminal_start_at is not None:
+            terminal_fingerprint = legacy_fingerprint or _legacy_terminal_fingerprint(incoming_event)
+        if terminal_start_at is not None:
+            if (terminal_fingerprint and terminal_fingerprint == session.legacy_terminal_fingerprint
+                    and session.terminal_card_confirmed):
+                metrics.events_applied += 1
+                return web.json_response(
+                    {"ok": True, "applied": True, "delivery": {"outcome": "delivered"}}
+                ), None
+            stale_direct_terminal = not marked_as_new or incoming_event.created_at <= terminal_start_at
+        if marked_as_new and not stale_direct_terminal:
+            # v1 stored the sidecar's display update time, not the producer's
+            # terminal timestamp. An older contradictory body is ambiguous.
+            previous_at = terminal_start_at if terminal_start_at is not None else (
+                pending_reopen.predecessor_updated_at if pending_reopen is not None else session.updated_at
+            )
+            reopens_direct_terminal = bool(terminal_fingerprint and incoming_event.created_at > previous_at)
+            stale_direct_terminal = not reopens_direct_terminal and not _terminal_matches_display(
+                session, incoming_event,
+            )
     reopens_completed_session = bool(
         session is not None
         and session.status in {"completed", "failed"}
         and (
-            starts_new_lifecycle
+            reopens_direct_terminal or starts_new_lifecycle
             or (
                 event.event in TURN_REOPENING_EVENTS
                 and incoming_event.data.get("policy_new_turn") is True
             )
         )
     )
-    pending_reopen = session.pending_reopen_create if session is not None else None
     blocked_reopen = False
     same_reopen_generation = bool(
         pending_reopen and reopen_generation and reopen_generation == pending_reopen.generation
     )
     if pending_reopen is not None and (same_reopen_generation or incoming_event.created_at >= pending_reopen.start_at):
         newer_start = (
-            incoming_event.event == "message.started"
+            (incoming_event.event == "message.started"
+             or (reopens_direct_terminal and pending_reopen.terminal_at is not None
+                 and incoming_event.created_at > pending_reopen.terminal_at))
             and incoming_event.created_at > pending_reopen.start_at
             and not same_reopen_generation
             and _pending_reopen_matches(pending_reopen, incoming_event, "")
@@ -4928,9 +4995,20 @@ async def _apply_event_locked_inner(
                 "disposition": "native_stale_replay",
             }
         return web.json_response({"ok": True, "applied": True}), None
-    if admission.kind == "use_record":
-        prior_handoff = admission.selected_record
-        assert prior_handoff is not None
+    prior_handoff = admission.selected_record
+    if stale_direct_terminal and not (prior_handoff is not None and prior_handoff.has_exact_delivery_binding):
+        metrics.events_ignored += 1
+        return _native_disposition_response(), None
+    # A legacy native-only handoff is scoped by its producer time. Its
+    # unbound receipt can deduplicate that delivery, but cannot ACK a later
+    # explicit turn that reused the message ID.
+    starts_after_legacy_handoff = (
+        prior_handoff is not None and reopens_direct_terminal and not blocked_reopen
+        and prior_handoff.delivery_state == "legacy_consumed" and prior_handoff.card_state == "none"
+        and not prior_handoff.generation and not handoff_generation
+        and incoming_event.created_at > prior_handoff.event_created_at
+    )
+    if prior_handoff is not None and not starts_after_legacy_handoff:
         post_lock_task = _schedule_pending_native_handoff_repair(
             request.app,
             handoff_identity,
@@ -4960,7 +5038,11 @@ async def _apply_event_locked_inner(
         }
         return web.json_response(response_payload), post_lock_task
 
-    if blocked_reopen:
+    if resume_terminal_state:
+        # The exact previous terminal still owns its delivery even if a
+        # subsequent reopen currently has a pending create on the same route.
+        reopens_completed_session = False
+    elif blocked_reopen:
         metrics.events_ignored += 1
         if not event_is_terminal:
             return web.json_response({"ok": True, "applied": False}), None
@@ -4972,7 +5054,7 @@ async def _apply_event_locked_inner(
     if (
         session is None
         and not _native_handoff_ack_capable(request.app, handoff_metadata, incoming_event)
-        and _possible_legacy_checkpoint_replay(request.app, incoming_event)
+        and _legacy_checkpoint_replay_key(request.app, incoming_event) is not None
     ):
         # The older display record cannot prove which producer event created
         # this terminal state. Preserve the card and leave native delivery open.
@@ -4998,7 +5080,7 @@ async def _apply_event_locked_inner(
         if decision.disposition == NATIVE_DISPOSITION:
             if pending_reopen is not None and session is not None and event_is_terminal:
                 session.pending_reopen_create = replace(pending_reopen, terminal_at=incoming_event.created_at)
-            if reopens_completed_session and pending_reopen is None:
+            if reopens_completed_session and pending_reopen is None and not reopens_direct_terminal:
                 _reset_session_for_new_turn(request.app, session_key)
             metrics.native_bypass_events += 1
             return web.json_response(
@@ -5026,7 +5108,7 @@ async def _apply_event_locked_inner(
             }
         ), None
 
-    if starts_new_lifecycle and not lifecycle_fence_recorded:
+    if (starts_new_lifecycle or starts_after_legacy_handoff) and not lifecycle_fence_recorded:
         lifecycle_state = _prepare_native_handoff_lifecycle(
             request.app,
             handoff_identity,
@@ -5063,7 +5145,7 @@ async def _apply_event_locked_inner(
             f"{incoming_event.sequence}:{incoming_event.created_at}"
         )
         if (previous_id and session.delivery_kind == "chat" and session.terminal_disposition in {"", "segmented"}
-                and (pending_reopen is not None or (
+                and (reopens_direct_terminal or pending_reopen is not None or (
                     incoming_event.event in _REOPEN_CREATE_EVENTS and _delivery_kind(incoming_event) in {"", "chat"}
                 ))):
             reopen_predecessor = _retain_reopen_predecessor(request.app, session_key, session)
@@ -5186,10 +5268,11 @@ async def _apply_event_locked_inner(
                         pass
                 if route is None:
                     _cleanup_failed_session_state(request.app, session_key, session)
-                    if pending_reopen is not None and event_is_terminal:
-                        reopen_predecessor.pending_reopen_create = replace(
-                            pending_reopen, terminal_at=incoming_event.created_at,
-                        )
+                    if reopen_predecessor is not None and event_is_terminal:
+                        if pending_reopen is not None:
+                            reopen_predecessor.pending_reopen_create = replace(
+                                pending_reopen, terminal_at=incoming_event.created_at,
+                            )
                         metrics.events_ignored += 1
                         return _unconfirmed_reopen_handoff(request.app, incoming_event, handoff_metadata), None
                     if is_cron_completed:
@@ -5457,8 +5540,11 @@ async def _apply_event_locked_inner(
                         session.active_interaction.feishu_message_id = message_id
                     _store_interaction_result(request.app, session)
                 if event_is_terminal:
-                    if reopen_predecessor is not None:
-                        session.terminal_delivery_state = "delivered"
+                    session.terminal_delivery_state = "delivered"
+                    if reopens_direct_terminal and pending_reopen is None:
+                        session.legacy_terminal_start_at = incoming_event.created_at
+                        legacy_fingerprint = terminal_fingerprint
+                    session.legacy_terminal_fingerprint = legacy_fingerprint
                     _store_card_summary(request.app, event, session, message_id)
                     request.app[DIAGNOSTICS_KEY]["last_terminal_event"] = {
                         "message_id_hash": _diagnostic_id_hash(event.message_id),
@@ -5542,8 +5628,8 @@ async def _apply_event_locked_inner(
         and event.event in {"answer.delta", "thinking.delta", "tool.updated", "subagent.updated", "message.completed", "message.failed"}
         else None
     )
-    applied = session.apply(event, advance_sequence=advance_sequence)
-    if applied:
+    applied = bool(resume_terminal_state) or session.apply(event, advance_sequence=advance_sequence)
+    if applied and not resume_terminal_state:
         _refresh_session_display_status(request, session)
         _register_session_aliases(request.app, incoming_event, session_key)
     # When a terminal event arrives for a session already completed (e.g. by
@@ -5562,7 +5648,16 @@ async def _apply_event_locked_inner(
         applied = True
     render_result: CardRenderResult | None = None
     handoff_record: NativeHandoffRecord | None = None
-    if applied and not terminal_already_handled:
+    if resume_terminal_state:
+        render_result = _existing_owner_render_result(
+            request.app, session, _render_session_card_result_for_app(request.app, session),
+            session_key=session_key,
+        )
+        if render_result.disposition != "card":
+            # A different card limit on restart cannot revoke the prior
+            # ownership or prove that its earlier writes never landed.
+            return _unconfirmed_terminal_replay_response(), None
+    elif applied and not terminal_already_handled:
         is_silence_or_fallback = _is_intentional_silence_event(event) or _is_native_fallback_event(event)
         render_result = _render_session_card_result_for_app(request.app, session)
         if (
@@ -5613,6 +5708,7 @@ async def _apply_event_locked_inner(
                 if delivered:
                     session.terminal_disposition = "segmented"
                     session.terminal_limit_reason = render_result.limit_reason
+                    session.terminal_delivery_state = "delivered"
                 else:
                     metrics.card_segmented_fallbacks += 1
                     render_result = _segmented_fallback_result(
@@ -5909,6 +6005,17 @@ async def _apply_event_locked_inner(
             profile_id=_policy_profile_id(event),
             event=event.event, sequence=event.sequence,
         ) if is_terminal else None
+        resume_recovery = resume_terminal_state in {"recovering", "unknown"}
+        allow_terminal_recovery = not is_silence_or_fallback and (
+            not resume_terminal_state or (
+                resume_terminal_state not in {"idle", "failed"} and terminal_target is not None
+                and _can_replay_terminal_recovery(request.app, terminal_target, session.updated_at)
+            )
+        )
+        if resume_recovery and not allow_terminal_recovery:
+            # An ambiguous create cannot be resolved safely outside the UUID
+            # window or without the same transport and reply placement.
+            return _unconfirmed_terminal_replay_response(), None
         completion_card_config = (
             request.app[SESSION_CARD_CONFIGS_KEY].get(session_key)
             if event.event == "message.completed" else None
@@ -5965,7 +6072,7 @@ async def _apply_event_locked_inner(
                 if populated_result.disposition == "card":
                     latest_card = populated_result.card
                 else:
-                    # The terminal response has already acknowledged card delivery.
+                    # The terminal response has already accepted card ownership.
                     # Drop only the optional late footer data rather than losing the
                     # full answer or switching disposition after Hermes decided.
                     latest_session.subscription_usage = ""
@@ -5981,10 +6088,11 @@ async def _apply_event_locked_inner(
                         terminal_target,
                         "card" if is_silence_or_fallback else render_result.disposition,
                         latest_card,
-                        allow_recover=not is_silence_or_fallback,
+                        allow_recover=allow_terminal_recovery,
+                        resume_recovery=resume_recovery,
                     ),
                     latest_session,
-                    _AppTerminalTransport(request.app),
+                    _AppTerminalTransport(request.app, latest_session, replay=bool(resume_terminal_state)),
                     is_current=lambda: session.display_segment.get("generation", 0) == owner_generation,
                 )
                 updated = terminal_outcome.updated
@@ -6005,6 +6113,10 @@ async def _apply_event_locked_inner(
                     }
                 if terminal_outcome.commit_native:
                     _commit_native_handoff(request.app, handoff_identity, handoff_record)
+                if legacy_fingerprint and sessions.get(session_key) is latest_session:
+                    # Commit the actual write result before optional notices
+                    # or receipt cleanup can delay the terminal task.
+                    _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             else:
                 updated = await _update_card_for_app(
                     request.app, feishu_message_id, latest_card, bot_id,
@@ -6069,9 +6181,13 @@ async def _apply_event_locked_inner(
             return updated
 
         if is_terminal:
-            session.terminal_delivery_state = "pending"
+            if not resume_recovery and session.terminal_disposition != "segmented":
+                session.terminal_delivery_state = "pending"
             await controller.drain(_final_drain_timeout_seconds(request.app, session_key))
+            if legacy_fingerprint and render_result.disposition in {"card", "segmented"} and not is_silence_or_fallback:
+                session.legacy_terminal_fingerprint = legacy_fingerprint
             current_task = _schedule_terminal_work(request.app, session_key, controller, _render_and_update)
+            session.restored_unconfirmed_terminal = False
             if render_result.disposition == "native":
                 _track_native_handoff_repair_task(
                     request.app,
@@ -6515,11 +6631,23 @@ async def _settle_approval_displays(app, session_key, session):
         "retained" if remaining else "confirmed" if confirmed else "not_applicable")
 
 
+def _can_replay_terminal_recovery(app, target: TerminalTarget, accepted_at: float) -> bool:
+    # The original placement must lead to the same IM create/reply endpoint.
+    return (
+        type(accepted_at) in (int, float)
+        and 0 <= time.time() - accepted_at < _FEISHU_IM_UUID_WINDOW_SECONDS
+        and (not (target.thread_id or target.reply_in_thread) or bool(target.reply_to_message_id))
+        and callable(getattr(_client_for_bot(app, target.bot_id), "send_card_delivery", None))
+    )
+
+
 class _AppTerminalTransport:
     """Bind only delivery I/O to the app; policy stays in terminal_delivery."""
 
-    def __init__(self, app: web.Application) -> None:
+    def __init__(self, app: web.Application, session: CardSession, *, replay: bool) -> None:
         self.app = app
+        self.session = session
+        self.replay = replay
 
     async def patch(
         self, plan: TerminalDeliveryPlan, *, is_current: Callable[[], bool]
@@ -6540,6 +6668,14 @@ class _AppTerminalTransport:
 
     async def recover(self, plan: TerminalDeliveryPlan) -> CardDeliveryResult:
         target = plan.target
+        if self.replay and not _can_replay_terminal_recovery(self.app, target, self.session.updated_at):
+            # PATCH retries or optional rendering may have crossed the UUID expiry.
+            return CardDeliveryResult(None, "unknown", error_kind="TerminalRecoveryWindowExpired")
+        if (self.session.legacy_terminal_fingerprint
+                and self.app[SESSIONS_KEY].get(target.session_key) is self.session):
+            # Record the in-flight create before sending it. Restarted retries
+            # must reuse its UUID instead of editing a second visible copy.
+            _checkpoint_session(self.app, target.session_key, target.profile_id or "")
         return await _send_card_for_app(
             self.app, target.chat_id, plan.card, target.bot_id,
             thread_id=target.thread_id,

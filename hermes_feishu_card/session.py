@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 
 from .approval_rule_hints import bounded_native_rule_keys
 from copy import deepcopy
+from hashlib import sha256
 import json
 import math
 import re
@@ -69,6 +70,11 @@ def _exact_feishu_open_id(value: object) -> str:
         if type(value) is str and _FEISHU_OPEN_ID_RE.fullmatch(value)
         else ""
     )
+
+
+def _normalized_feishu_user_id(value: object) -> str:
+    candidate = value.strip() if type(value) is str else ""
+    return candidate if len(candidate) <= 256 else ""
 
 
 @dataclass
@@ -244,10 +250,13 @@ class CardSession:
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
-    # Optional checkpoint metadata binds an exact legacy retry to the completed card.
+    # Identity of an accepted legacy terminal event, including unconfirmed writes.
     legacy_terminal_fingerprint: str = field(default="", repr=False)
+    # Producer time of the terminal event that opened this replacement card.
+    legacy_terminal_start_at: float | None = field(default=None, repr=False)
     legacy_route_thread_id: str = field(default="", repr=False)
     restored_legacy_terminal: bool = field(default=False, repr=False)
+    restored_unconfirmed_terminal: bool = field(default=False, repr=False)
     pending_reopen_create: PendingReopenCreate | None = field(default=None, repr=False)
     notice_kind: str = ""
     notice_title: str = ""
@@ -271,10 +280,48 @@ class CardSession:
     # Immutable route provenance, populated by the server from the accepted
     # event or checkpoint envelope. Logical turn IDs may contain colons.
     route_profile_id: str | None = None
+    # Restored evidence for display routing only. Live Gateway events supply
+    # the separate sender_user_id field used by the completion mention.
+    display_requester_digest: str = field(default="", repr=False)
+
+    @property
+    def has_display_requester(self) -> bool:
+        return bool(self.sender_open_id or self.sender_user_id or self.display_requester_digest)
+
+    def _digest_display_requester(self, tenant_user: str) -> str:
+        # Bind the digest to the card's persisted chat, conversation and message.
+        material = (
+            "hfc-display-requester-v1", self.chat_id, self.conversation_id, self.message_id, tenant_user,
+        )
+        return sha256(json.dumps(material).encode("ascii")).hexdigest()
+
+    def checkpoint_requester_digest(self) -> str:
+        if self.sender_user_id:
+            return self._digest_display_requester(self.sender_user_id)
+        return self.display_requester_digest
+
+    def compare_display_tenant_requester(self, value: object) -> bool | None:
+        """Compare tenant identity, returning None when either side has no evidence."""
+        if value in (None, "") or not (self.sender_user_id or self.display_requester_digest):
+            return None
+        tenant_user = _normalized_feishu_user_id(value)
+        if not tenant_user:
+            return False
+        if self.sender_user_id:
+            return tenant_user == self.sender_user_id
+        return self._digest_display_requester(tenant_user) == self.display_requester_digest
 
     @property
     def tool_count(self) -> int:
         return self._tool_call_count
+
+    @property
+    def terminal_card_confirmed(self) -> bool:
+        return self.status in {"completed", "failed"} and (
+            self.terminal_disposition == "segmented" or (
+                not self.terminal_disposition and self.terminal_delivery_state in {"delivered", "recovered"}
+            )
+        )
 
     @property
     def runtime_header_text(self) -> str:
@@ -351,9 +398,9 @@ class CardSession:
             # A claimed but unparseable requester id is treated as spoofing:
             # the completion notice is suppressed rather than falling back.
             self.sender_open_id_rejected = True
-        sender_user_id = event.data.get("admission_user_id")
-        if (type(sender_user_id) is str and 0 < len(sender_user_id.strip()) <= 256):
-            self.sender_user_id = sender_user_id.strip()
+        sender_user_id = _normalized_feishu_user_id(event.data.get("admission_user_id"))
+        if sender_user_id:
+            self.sender_user_id = sender_user_id
         # Card-action callbacks are authenticated out-of-band transitions. They
         # may complete an interaction while Hermes is already preparing the next
         # batch clarify request, so they must not consume the transport sequence

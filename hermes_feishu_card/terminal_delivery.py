@@ -37,6 +37,7 @@ class TerminalDeliveryPlan:
     disposition: str
     card: dict[str, Any] = field(repr=False)
     allow_recover: bool = True
+    resume_recovery: bool = False
 
 
 class TerminalOwner(Protocol):
@@ -74,17 +75,20 @@ async def deliver_terminal(
 
     The owner is the accepted turn object, never a lookup by a reusable session
     key. The coordinator retains checkpoint, receipt and native-ledger commits.
+    After a restart a pending recovery create can resume by the same UUID.
     Unknown recovery remains unknown; it must not trigger a native second send.
     """
     if not is_current():
         return TerminalDeliveryOutcome(False, superseded=True)
-    updated = await transport.patch(plan, is_current=is_current)
-    if not is_current():
-        return TerminalDeliveryOutcome(False, superseded=True)
-    if not updated:
-        updated = await transport.retry(plan, is_current=is_current)
+    updated = False
+    if not plan.resume_recovery:
+        updated = await transport.patch(plan, is_current=is_current)
         if not is_current():
             return TerminalDeliveryOutcome(False, superseded=True)
+        if not updated:
+            updated = await transport.retry(plan, is_current=is_current)
+            if not is_current():
+                return TerminalDeliveryOutcome(False, superseded=True)
     recovery = None
     if plan.disposition in {"card", "segmented"}:
         if updated:
@@ -92,17 +96,21 @@ async def deliver_terminal(
         elif (
             plan.disposition == "card"
             and plan.allow_recover
-            and owner.terminal_delivery_state == "pending"
+            and (owner.terminal_delivery_state == "pending" or plan.resume_recovery)
         ):
             owner.terminal_delivery_state = "recovering"
             recovery = await transport.recover(plan)
             if not is_current():
                 return TerminalDeliveryOutcome(False, recovery=recovery, superseded=True)
-            owner.terminal_delivery_state = (
-                "recovered" if recovery.outcome == "delivered" else recovery.outcome
-            )
-            updated = recovery.outcome == "delivered"
-        elif plan.disposition == "card" and not plan.allow_recover:
+            updated = recovery.delivered
+            if updated:
+                owner.terminal_delivery_state = "recovered"
+            elif plan.resume_recovery or recovery.retry_count or recovery.outcome != "not_sent":
+                # A refusal of the repeat cannot rule out an earlier write.
+                owner.terminal_delivery_state = "unknown"
+            else:
+                owner.terminal_delivery_state = "not_sent"
+        elif plan.disposition == "card" and not plan.allow_recover and not plan.resume_recovery:
             owner.terminal_delivery_state = "failed"
         else:
             updated = owner.terminal_delivery_state in {"delivered", "recovered"}

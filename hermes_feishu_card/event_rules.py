@@ -13,7 +13,7 @@ import re
 from typing import Any, Protocol
 
 from .events import SidecarEvent
-from .session import CardSession, _exact_feishu_open_id
+from .session import CardSession, _exact_feishu_open_id, _normalized_feishu_user_id
 
 
 TERMINAL_EVENTS = {"message.completed", "message.failed"}
@@ -112,7 +112,7 @@ def event_conversation_matches(
     if allow_omitted_thread and (not thread or interaction_placement) and event.conversation_id != event.chat_id:
         # Older direct callbacks can omit thread metadata. An approval can
         # also provide its own placement before the main turn opens a thread.
-        if (not owner.sender_open_id and not owner.sender_user_id and not any(_event_requester(event))
+        if (not owner.has_display_requester and not any(_event_requester(event))
                 and "group" not in (owner.chat_type, _event_chat_type(event))):
             return True
     return _topic_root(event.conversation_id, thread) == _topic_root(
@@ -121,11 +121,9 @@ def event_conversation_matches(
 
 
 def _event_requester(event: SidecarEvent) -> tuple[str, str]:
-    tenant_user = event.data.get("admission_user_id")
-    tenant_user = tenant_user.strip() if type(tenant_user) is str else ""
     return (
         _exact_feishu_open_id(event.data.get("sender_open_id")),
-        tenant_user if len(tenant_user) <= 256 else "",
+        _normalized_feishu_user_id(event.data.get("admission_user_id")),
     )
 
 
@@ -138,7 +136,8 @@ def _requester_matches(owner: CardSession, event: SidecarEvent, *, referenced: b
     sender, tenant_user = _event_requester(event)
     if sender and owner.sender_open_id and sender != owner.sender_open_id:
         return False
-    if tenant_user and owner.sender_user_id and tenant_user != owner.sender_user_id:
+    tenant_matches = owner.compare_display_tenant_requester(tenant_user)
+    if tenant_matches is False:
         return False
     if not referenced:
         return True
@@ -151,12 +150,9 @@ def _requester_matches(owner: CardSession, event: SidecarEvent, *, referenced: b
         direct_types = {"dm", "p2p", "private"}
         if owner.chat_type in direct_types or chat_type in direct_types:
             return True
-        if not (sender or tenant_user or owner.sender_open_id or owner.sender_user_id):
+        if not (sender or tenant_user or owner.has_display_requester):
             return True
-    return bool(
-        (sender and sender == owner.sender_open_id)
-        or (tenant_user and tenant_user == owner.sender_user_id)
-    )
+    return bool(sender and sender == owner.sender_open_id) or tenant_matches is True
 
 
 def legacy_alias_owner_matches(owner: CardSession, event: SidecarEvent) -> bool:
@@ -360,7 +356,7 @@ def _legacy_direct_key(
     # sender. A known reuse of that ID requires requester evidence instead.
     shared_message_id = aliases.get(key, "").startswith(prefix)
     if (raw_owner_matches and not shared_message_id and not any(requester)
-            and owner is not None and (owner.chat_type == "group" or owner.sender_open_id)):
+            and owner is not None and (owner.chat_type == "group" or owner.has_display_requester)):
         shared_message_id = any(candidate.startswith(prefix) for candidate in sessions)
     if raw_owner_matches and not shared_message_id:
         return key
@@ -447,7 +443,15 @@ def session_alias_assignments(
             assignments[alias_key] = canonical_key
             if owner is not None:
                 prefix = _legacy_route_prefix(event, alias_key, "reference")
-                key = _scoped_key(prefix, (owner.sender_open_id, owner.sender_user_id))
+                if owner.display_requester_digest and not owner.sender_user_id:
+                    # Index a new reference without treating the restored owner
+                    # as anonymous. Lookup still verifies the candidate against
+                    # the incoming requester on the card's own route.
+                    key = _scoped_key(
+                        prefix + "checkpoint-", (owner.sender_open_id, owner.display_requester_digest),
+                    )
+                else:
+                    key = _scoped_key(prefix, (owner.sender_open_id, owner.sender_user_id))
                 assignments[key] = canonical_key
     return assignments
 
