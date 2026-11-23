@@ -6,9 +6,11 @@ never acquire recall authority merely because their text resembles a notice.
 from contextvars import ContextVar
 from functools import wraps
 from hashlib import sha256
+import asyncio
 import inspect
 import re
 import sys
+from weakref import ref
 
 
 ONLINE = "♻️ Gateway online — Hermes is back and ready."
@@ -139,12 +141,63 @@ def take_review_source(adapter, chat_id, content):
     return None
 
 
+def background_card_notice_source(kind, caller, *, adapter, chat_id, content, metadata):
+    """Prove a background notice at its actual send, with the original route."""
+    if caller is None:
+        return False, None, None
+    send_thread = str(metadata.get("thread_id") or "") if isinstance(metadata, dict) else ""
+    values = caller.f_locals
+    if kind == "background-task":
+        # /bg returns its initial acknowledgement. Only the actual Base reply
+        # may carry it out of the originating delivery envelope.
+        if _at_call_site(
+            caller, "gateway.platforms.base", "_send", "_send_with_retry",
+            "_process_message_background", "_dispatch_inline_reply",
+        ) and values.get("self") is adapter:
+            delivery = _delivery_for_current_task()
+            if delivery is not None and delivery.get("background_started") == content:
+                event = delivery["event"]
+                source = getattr(event, "source", None)
+                if _background_source_matches(source, chat_id, send_thread):
+                    del delivery["background_started"]
+                    return True, source, event
+        # The task worker sends its own results directly. Base's generic
+        # _send_with_retry also carries arbitrary answer text.
+        for module in ("gateway.run_background", "gateway.run_turn", "gateway.run"):
+            if _at_call_site(caller, module, "_run_background_task_inner", "_run_background_task"):
+                source = values.get("source")
+                if values.get("adapter") is adapter and _background_source_matches(source, chat_id, send_thread):
+                    return True, source, None
+    elif any(
+        _at_call_site(caller, module, "_run_process_watcher", "_watch_process", "_send_watcher_message")
+        for module in ("gateway.run_notifications", "gateway.run")
+    ):
+        if (values.get("adapter") is adapter and values.get("platform_name") == "feishu"
+                and values.get("chat_id") == chat_id and values.get("message_text") == content
+                and str(values.get("thread_id") or "") == send_thread):
+            source = values.get("source")
+            # The inline watcher predates an explicit SessionSource.
+            if source is None or _background_source_matches(source, chat_id, send_thread):
+                return True, source, None
+    return False, None, None
+
+
+def _background_source_matches(source, chat_id, send_thread):
+    source_thread = str(getattr(source, "thread_id", "") or "")
+    return (_platform(getattr(source, "platform", None)) == "feishu"
+            and getattr(source, "chat_id", None) == chat_id
+            and (not source_thread or source_thread == send_thread))
+
+
+def _delivery_for_current_task():
+    delivery = _DELIVERY.get()
+    owner = delivery["task"] if delivery is not None else None
+    return delivery if owner is not None and owner() is asyncio.current_task() else None
+
+
 def adapter_card_notice_source(kind, caller):
     """Return the known producer's source, or None when only its egress is available."""
-    if kind in {"background-process", "background-task"}:
-        # The complete legacy wire envelopes have their own classifier.
-        return True, None
-    elif kind == "skill-loading":
+    if kind == "skill-loading":
         for module in ("gateway.run_turn_progress", "gateway.run"):
             if _at_call_site(caller, module, "_send_progress_text", "_edit_progress_message"):
                 values = caller.f_locals
@@ -239,6 +292,7 @@ def install_notice_producers(runner_type):
         ("_send_busy_drain_notice", ["self","event","session_key","effective_mode"]),
         ("_hm_handle_running_session_message", ["self","event","source","_quick_key"]),
         ("_hm_dispatch_quick_and_plugin_commands", ["self","event","source","command"]),
+        ("_handle_background_command", ["self", "event"]),
     ):
         original = getattr(runner_type, name, None)
         if getattr(original, "_hfc_notice_producer", False) or not inspect.iscoroutinefunction(original):
@@ -252,6 +306,12 @@ def install_notice_producers(runner_type):
             expected_kinds[-1] = inspect.Parameter.VAR_KEYWORD
         if [p.name for p in parameters] != names or [p.kind for p in parameters] != expected_kinds:
             continue
+        if name == "_handle_background_command":
+            module = sys.modules.get(getattr(original, "__module__", ""))
+            if (module is None or module.__name__ not in {"gateway.slash_commands", "gateway.run"}
+                    or getattr(original, "__globals__", None) is not vars(module)
+                    or original.__code__.co_name != name):
+                continue
         setattr(runner_type, name, _wrap(original, name))
 
 
@@ -288,6 +348,10 @@ def _wrap(original, name):
         token = _CONTEXT.set(context)
         try:
             result = await original(*args, **kwargs)
+            if name == "_handle_background_command":
+                delivery = _delivery_for_current_task()
+                if delivery is not None and delivery["event"] is bound["event"] and isinstance(result, str):
+                    delivery["background_started"] = result
             # Returned drain replies are sent later by Base. Carry provenance only
             # within the exact Base delivery invocation, never in a global text cache.
             if name.startswith('_hm_'):
@@ -316,25 +380,34 @@ def install_adapter_notice_producers(adapter, runner):
 
 
 def _install_delivery_envelopes(adapter_type):
-    for name,names,kinds in (
-        ('_process_message_background',['self','event','session_key'],[inspect.Parameter.POSITIONAL_OR_KEYWORD]*3),
-        ('_dispatch_inline_reply',['self','event','log_cmd'],[inspect.Parameter.POSITIONAL_OR_KEYWORD]*2+[inspect.Parameter.KEYWORD_ONLY]),
+    positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    keyword = inspect.Parameter.KEYWORD_ONLY
+    for name, names, kinds in (
+        ("_process_message_background", ["self", "event", "session_key"], [positional] * 3),
+        ("_dispatch_inline_reply", ["self", "event", "log_cmd"], [positional, positional, keyword]),
     ):
-        original=getattr(adapter_type,name,None)
-        if getattr(original,'_hfc_notice_delivery',False) or not inspect.iscoroutinefunction(original):continue
-        try:parameters=list(inspect.signature(original).parameters.values())
-        except (TypeError,ValueError):continue
-        if [p.name for p in parameters]!=names or [p.kind for p in parameters]!=kinds:continue
-        setattr(adapter_type,name,_delivery_envelope(original))
+        original = getattr(adapter_type, name, None)
+        if getattr(original, "_hfc_notice_delivery", False) or not inspect.iscoroutinefunction(original):
+            continue
+        try:
+            parameters = list(inspect.signature(original).parameters.values())
+        except (TypeError, ValueError):
+            continue
+        if [p.name for p in parameters] != names or [p.kind for p in parameters] != kinds:
+            continue
+        setattr(adapter_type, name, _delivery_envelope(original))
 
 
 def _delivery_envelope(original):
     @wraps(original)
-    async def wrapped(self,event,*args,**kwargs):
-        token=_DELIVERY.set({'event':event})
+    async def wrapped(self, event, *args, **kwargs):
+        owner = asyncio.current_task()
+        delivery = {"event": event, "task": ref(owner) if owner is not None else None}
+        token = _DELIVERY.set(delivery)
         try:
-            return await original(self,event,*args,**kwargs)
+            return await original(self, event, *args, **kwargs)
         finally:
+            delivery.pop("background_started", None)
             _DELIVERY.reset(token)
-    wrapped._hfc_notice_delivery=True
+    wrapped._hfc_notice_delivery = True
     return wrapped

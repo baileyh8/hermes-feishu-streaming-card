@@ -3032,21 +3032,12 @@ async def test_v4021_hook_runtime_keeps_image_delivery_and_accepted_notice_in_sa
         "oc_source", [("file:///tmp/result.png", "")]
     )
 
-    token = hook_runtime._HFC_FEISHU_NOTICE_CONTEXT.set(
-        {
-            "chat_id": "oc_source",
-            "message_id": "om_media_turn",
-            "conversation_id": "oc_source",
-            "thread_id": "",
-        }
+    notice_result = await _background_notice_egress(monkeypatch)._run_background_task_inner(
+        adapter,
+        SimpleNamespace(platform="feishu", chat_id="oc_source", message_id="om_media_turn"),
+        '✅ Background task complete\nPrompt: "Generate image"\n\nImage ready.',
+        None,
     )
-    try:
-        notice_result = await adapter.send(
-            "oc_source",
-            '✅ Background task complete\nPrompt: "Generate image"\n\nImage ready.',
-        )
-    finally:
-        hook_runtime._HFC_FEISHU_NOTICE_CONTEXT.reset(token)
 
     assert delivered is True
     assert duplicate.message_id == "media_text_suppressed"
@@ -3846,6 +3837,19 @@ def test_system_notice_delivered_suppresses_native_fallback(monkeypatch):
     assert calls == []
 
 
+def _background_notice_egress(monkeypatch):
+    gateway = types.ModuleType("gateway.run")
+    exec(
+        "async def _run_background_task_inner(adapter, source, content, metadata):\n"
+        "    return await adapter.send(source.chat_id, content, metadata=metadata)\n"
+        "async def _run_process_watcher(adapter, platform_name, chat_id, thread_id, message_text, metadata):\n"
+        "    return await adapter.send(chat_id, message_text, metadata=metadata)\n",
+        gateway.__dict__,
+    )
+    monkeypatch.setitem(sys.modules, gateway.__name__, gateway)
+    return gateway
+
+
 def _install_background_notice_probe(
     monkeypatch,
     *,
@@ -3890,7 +3894,18 @@ def _install_background_notice_probe(
         hook_runtime.install_feishu_command_card_adapter_methods(runner, event=event)
         is True
     )
-    return adapter, posted
+    gateway = _background_notice_egress(monkeypatch)
+
+    async def send_background(chat_id, content, metadata=None):
+        thread_id = (metadata or {}).get("thread_id", "")
+        if content.startswith("[Background process"):
+            return await gateway._run_process_watcher(adapter, "feishu", chat_id, thread_id, content, metadata)
+        source = event.source if event is not None else SimpleNamespace(
+            platform="feishu", chat_id=chat_id, thread_id=thread_id,
+        )
+        return await gateway._run_background_task_inner(adapter, source, content, metadata)
+
+    return adapter, posted, send_background
 
 
 def test_background_process_notice_classification_and_stable_id():
@@ -4142,7 +4157,7 @@ def test_long_running_heartbeat_is_plain_text_so_it_never_takes_the_card_path():
         ),
     ],
 )
-def test_background_direct_send_uses_system_notice_card(
+def test_background_producer_uses_system_notice_card(
     monkeypatch,
     content,
     expected_title,
@@ -4150,10 +4165,10 @@ def test_background_direct_send_uses_system_notice_card(
     expected_kind,
     expected_terminal,
 ):
-    adapter, posted = _install_background_notice_probe(monkeypatch)
+    adapter, posted, send_background = _install_background_notice_probe(monkeypatch)
 
     async def run():
-        return await adapter.send(
+        return await send_background(
             "oc_topic",
             content,
             metadata={"thread_id": "omt_topic"},
@@ -4179,7 +4194,7 @@ def test_background_direct_send_uses_system_notice_card(
     assert payload["data"]["content"] == content
 
 
-def test_background_task_started_notice_reuses_anchored_card_without_native_text(
+def test_background_task_result_keeps_its_request_anchor(
     monkeypatch,
 ):
     event = SimpleNamespace(
@@ -4192,64 +4207,32 @@ def test_background_task_started_notice_reuses_anchored_card_without_native_text
         message_id="om_background_request",
         thread_id="omt_topic",
     )
-    adapter, posted = _install_background_notice_probe(monkeypatch, event=event)
-    started = (
-        '🔄 Background task started: "Check the release"\n'
-        "Task ID: bg_123456_abcdef\n"
-        "You can keep chatting — results will appear when done."
-    )
+    adapter, posted, send_background = _install_background_notice_probe(monkeypatch, event=event)
     completed = (
         '✅ Background task complete\nPrompt: "Check the release"\n\n'
         "V4.0.6 background private ok"
     )
 
-    async def run():
-        first = await adapter.send(
-            "oc_topic",
-            started,
-            metadata={"thread_id": "omt_topic"},
-        )
-        second = await adapter.send(
-            "oc_topic",
-            completed,
-            metadata={"thread_id": "omt_topic"},
-        )
-        return first, second
+    result = asyncio.run(send_background("oc_topic", completed, metadata={"thread_id": "omt_topic"}))
 
-    first, second = asyncio.run(run())
-
-    assert first.success is True
-    assert second.success is True
+    assert result.success is True
     assert adapter.text_sent == []
-    assert len(posted) == 2
-    started_payload = posted[0][1]
-    completed_payload = posted[1][1]
-    assert started_payload["event"] == "system.notice"
-    assert started_payload["message_id"] == "om_background_request"
-    assert completed_payload["message_id"] == "om_background_request"
-    assert started_payload["data"]["content"] == started
-    assert started_payload["data"]["title"] == "后台任务已启动"
-    assert started_payload["data"]["level"] == "info"
-    assert started_payload["data"]["notice_kind"] == "background-task"
-    assert (
-        started_payload["data"]["notice_id"]
-        == "background-task:bg_123456_abcdef"
-    )
-    assert started_payload["data"]["notice_scope"] == "independent"
-    assert started_payload["data"]["notice_terminal"] is False
-    assert completed_payload["data"]["notice_scope"] == "independent"
-    assert completed_payload["data"]["notice_terminal"] is True
+    [(_, payload, _)] = posted
+    assert payload["event"] == "system.notice"
+    assert payload["message_id"] == "om_background_request"
+    assert payload["data"]["notice_scope"] == "independent"
+    assert payload["data"]["notice_terminal"] is True
 
 
 def test_identical_background_task_results_use_distinct_independent_message_ids(
     monkeypatch,
 ):
-    adapter, posted = _install_background_notice_probe(monkeypatch)
+    adapter, posted, send_background = _install_background_notice_probe(monkeypatch)
     content = '✅ Background task complete\nPrompt: "Clone repositories"\n\nDone.'
 
     async def run():
-        first = await adapter.send("oc_abc", content)
-        second = await adapter.send("oc_abc", content)
+        first = await send_background("oc_abc", content)
+        second = await send_background("oc_abc", content)
         return first, second
 
     first, second = asyncio.run(run())
@@ -4266,7 +4249,7 @@ def test_identical_background_task_results_use_distinct_independent_message_ids(
 
 
 def test_background_notice_timeout_uses_uncertain_warning(monkeypatch):
-    adapter, posted = _install_background_notice_probe(
+    adapter, posted, send_background = _install_background_notice_probe(
         monkeypatch,
         post_error=TimeoutError("timed out"),
     )
@@ -4275,7 +4258,7 @@ def test_background_notice_timeout_uses_uncertain_warning(monkeypatch):
         "Here's the final output:\ndone\n]"
     )
 
-    result = asyncio.run(adapter.send("oc_abc", content))
+    result = asyncio.run(send_background("oc_abc", content))
 
     assert result.success is True
     assert result.message_id == "om_native_text"
@@ -4311,9 +4294,9 @@ def test_background_notice_timeout_uses_uncertain_warning(monkeypatch):
     ],
 )
 def test_malformed_background_notice_fails_open(monkeypatch, content):
-    adapter, posted = _install_background_notice_probe(monkeypatch)
+    adapter, posted, send_background = _install_background_notice_probe(monkeypatch)
 
-    result = asyncio.run(adapter.send("oc_abc", content))
+    result = asyncio.run(send_background("oc_abc", content))
 
     assert result.success is True
     assert result.message_id == "om_native_text"
@@ -4402,7 +4385,7 @@ def test_gateway_platform_notice_posts_sidecar_and_suppresses_native_text(monkey
     assert payload["data"]["reply_to_message_id"] == "om_topic_user"
 
 
-def test_handle_platform_notice_from_hermes_schedules_card(monkeypatch):
+def test_synchronous_platform_notice_hook_waits_for_delivery(monkeypatch):
     posted = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -4450,7 +4433,7 @@ def test_handle_platform_notice_from_hermes_schedules_card(monkeypatch):
     assert payload["thread_id"] == "omt_topic"
 
 
-def test_gateway_platform_notice_suppresses_native_text_when_card_attempt_fails(monkeypatch):
+def test_gateway_platform_notice_sends_one_warning_when_delivery_is_unknown(monkeypatch):
     attempts = []
 
     async def fake_post_json_ordered_response(url, payload, timeout):
@@ -4504,10 +4487,10 @@ def test_gateway_platform_notice_suppresses_native_text_when_card_attempt_fails(
     result = asyncio.run(run())
 
     assert result.success is True
-    assert result.message_id == "om_topic_user"
+    assert result.message_id == "om_native_notice"
     assert len(attempts) == 1
-    assert runner.native_notices == []
-    assert adapter.text_sent == []
+    assert runner.native_notices == [(source, hook_runtime._NOTICE_UNCERTAIN_WARNING)]
+    assert adapter.text_sent == [("oc_topic", hook_runtime._NOTICE_UNCERTAIN_WARNING, None, None)]
 
 
 def test_gateway_platform_notice_falls_back_for_non_system_notice(monkeypatch):
@@ -12736,12 +12719,6 @@ def test_native_platform_notice_falls_through_without_scheduling_card(monkeypatc
             "ttl_ms": 1000,
         },
     )
-    scheduled = []
-    monkeypatch.setattr(
-        hook_runtime,
-        "_hfc_schedule_platform_notice_card",
-        lambda **kwargs: scheduled.append(kwargs),
-    )
     source = SimpleNamespace(
         platform="feishu",
         chat_id="oc_native_notice",
@@ -12756,7 +12733,6 @@ def test_native_platform_notice_falls_through_without_scheduling_card(monkeypatc
     )
 
     assert handled is False
-    assert scheduled == []
 
 
 @pytest.mark.parametrize("status,expected", [

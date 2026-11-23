@@ -11,6 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from hermes_feishu_card import hook_runtime
+from hermes_feishu_card.delivery import FeishuAPIError
 from hermes_feishu_card.delivery_policy import ChatDeliveryPolicy
 from hermes_feishu_card.server import create_app
 
@@ -20,9 +21,14 @@ class _RecordingFeishuClient:
         self.sent: list[dict] = []
         self.updated: list[dict] = []
         self.card_updated = asyncio.Event()
+        self.card_attempted = asyncio.Event()
+        self.outcome = "delivered"
 
     async def send_card(self, chat_id: str, card: dict, **kwargs):
         self.sent.append({"chat_id": chat_id, "card": card, **kwargs})
+        self.card_attempted.set()
+        if self.outcome != "delivered":
+            raise FeishuAPIError("test notice rejection", outcome=self.outcome)
         return f"om_card_{len(self.sent)}"
 
     async def update_card_message(self, message_id: str, card: dict, **kwargs):
@@ -32,6 +38,7 @@ class _RecordingFeishuClient:
 
 _SELF_IMPROVEMENT_EN = "💾 Self-improvement review: Saved memory."
 _SELF_IMPROVEMENT_ZH = "💾 自我改进回顾：已更新技能 foo"
+_SELF_IMPROVEMENT_ZH_HANT = "💾 自我改進檢閱：已更新技能 foo"
 
 
 @pytest.fixture
@@ -59,9 +66,9 @@ async def notice_path(monkeypatch):
         ),
         card_config={
             "chat_overrides": {
-                "group": {"suppressed_notice_kinds": ["self-improvement"]},
+                "group": {"suppressed_notice_kinds": ["self-improvement", "background-task"]},
                 "chats": {
-                    "oc_group_1": {"suppressed_notice_kinds": ["self-improvement"]},
+                    "oc_group_1": {"suppressed_notice_kinds": ["self-improvement", "background-task"]},
                     "oc_group_allow": {"suppressed_notice_kinds": []},
                 },
             }
@@ -124,7 +131,7 @@ def old_review(ctx):
             log_message='background_review_callback scheduling error',
         )
     return _deliver_bg_review_message
-""", safe_schedule_threadsafe=scheduler.safe_schedule_threadsafe)
+    """, safe_schedule_threadsafe=scheduler.safe_schedule_threadsafe)
     progress = module("gateway.run_turn_progress", """
 class GatewayTurnProgressMixin:
     def _schedule(self, coro, log_message, loop=None):
@@ -180,7 +187,9 @@ def cold_review(adapter, source, metadata, loop):
     [
         ("resident", "oc_group_policy", "group", _SELF_IMPROVEMENT_EN, "suppressed"),
         ("resident", "oc_group_policy", "group", _SELF_IMPROVEMENT_ZH, "suppressed"),
+        ("resident", "oc_group_policy", "group", _SELF_IMPROVEMENT_ZH_HANT, "suppressed"),
         ("cold", "oc_group_policy", "group", _SELF_IMPROVEMENT_ZH, "suppressed"),
+        ("cold", "oc_group_policy", "group", _SELF_IMPROVEMENT_ZH_HANT, "suppressed"),
         ("legacy", "oc_group_policy", "group", _SELF_IMPROVEMENT_EN, "suppressed"),
         ("resident", "oc_review_p2p", "p2p", _SELF_IMPROVEMENT_ZH, "card"),
         ("resident", "oc_group_allow", "group", _SELF_IMPROVEMENT_EN, "card"),
@@ -309,6 +318,7 @@ async def test_pure_skill_progress_keeps_its_notice_and_edit_path(notice_path, r
         f"> {_SELF_IMPROVEMENT_EN}",
         _SELF_IMPROVEMENT_EN,
         _SELF_IMPROVEMENT_ZH,
+        _SELF_IMPROVEMENT_ZH_HANT,
         "After reading skill notes, we discussed context compression.",
         "The sample says the session automatically reset; actual sessions may differ.",
         "If it caps context, explain how auto-compaction affects the output.",
@@ -319,7 +329,7 @@ async def test_pure_skill_progress_keeps_its_notice_and_edit_path(notice_path, r
         "Session automatically reset",
     ],
     ids=["zh-body", "en-body", "quoted", "verbatim-en", "verbatim-zh",
-         "skill", "reset", "cap", "compression", "verbatim-skill", "verbatim-compression",
+         "verbatim-zh-hant", "skill", "reset", "cap", "compression", "verbatim-skill", "verbatim-compression",
          "verbatim-cap", "verbatim-reset"],
 )
 async def test_ordinary_adapter_text_is_delivered_once(entry, content, notice_path):
@@ -406,3 +416,44 @@ async def test_detached_review_uses_observed_group_type(notice_path):
     assert body["suppressed"] is True
     assert body["delivery"]["outcome"] == "accepted"
     assert len(feishu.sent) == sent_before
+
+
+@pytest.mark.parametrize("outcome", ["not_sent", "unknown", "delivered"])
+async def test_platform_notice_awaits_independent_card_before_native_fallback(notice_path, outcome):
+    adapter = notice_path.adapter
+    notice_path.feishu.outcome = outcome
+
+    class Gateway:
+        adapters = {"feishu": adapter}
+
+        async def _deliver_platform_notice(self, source, content):
+            # Older managed Hermes source can still contain the synchronous hook.
+            if hook_runtime.handle_platform_notice_from_hermes(self, source, content):
+                return
+            return await adapter.send(source.chat_id, content, metadata={"thread_id": source.thread_id})
+
+    gateway = Gateway()
+    assert hook_runtime.install_feishu_command_card_adapter_methods(gateway)
+    source = SimpleNamespace(platform="feishu", chat_id="oc_group_1", chat_type="group", thread_id="omt_notice")
+    content = "📬 No home channel is set for Feishu. Type /sethome to make this chat your home channel."
+    assert await hook_runtime._hfc_direct_card_allowed_async(
+        source.chat_id, notice_context=hook_runtime._hfc_notice_context_from_source(source),
+    )
+    result = await gateway._deliver_platform_notice(source, content)
+    await asyncio.wait_for(notice_path.feishu.card_attempted.wait(), timeout=2)
+
+    if outcome == "not_sent":
+        assert adapter.sent == [(source.chat_id, content, None, {"thread_id": source.thread_id})]
+        assert result.message_id == "om_native_send"
+    elif outcome == "unknown":
+        assert adapter.sent == [(source.chat_id, hook_runtime._NOTICE_UNCERTAIN_WARNING, None, {
+            "thread_id": source.thread_id,
+        })]
+        assert result.message_id == "om_native_send"
+    else:
+        assert adapter.sent == []
+    assert result.success is True
+    [event] = notice_path.notices
+    assert event["data"]["notice_scope"] == "independent"
+    assert len(notice_path.feishu.sent) == 1
+    assert notice_path.feishu.updated == []

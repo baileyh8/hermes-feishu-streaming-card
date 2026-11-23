@@ -43,8 +43,8 @@ def test_private_setup_notice_keeps_original_private_delivery(monkeypatch):
     adapter = SimpleNamespace(name='feishu', config=SimpleNamespace(extra={'notice_delivery': 'private'}))
     runner = SimpleNamespace(adapters={'feishu': adapter})
     source = SimpleNamespace(platform='feishu', chat_id='oc_group', message_id='om_current', thread_id='omt_thread')
-    monkeypatch.setattr(hook_runtime, '_hfc_direct_card_allowed_sync', lambda chat_id, **kwargs: True)
-    scheduled = []
-    monkeypatch.setattr(hook_runtime, '_hfc_schedule_platform_notice_card', lambda **kwargs: scheduled.append(kwargs))
+    async def unexpected_card(*args, **kwargs):
+        pytest.fail("private notice reached the public card sender")
+
+    monkeypatch.setattr(hook_runtime, '_hfc_send_system_notice_card', unexpected_card)
     assert not hook_runtime.handle_platform_notice_from_hermes(runner, source, '📬 No home channel is set for Feishu. Type /sethome.')
-    assert scheduled == []

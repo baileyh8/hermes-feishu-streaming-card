@@ -5112,25 +5112,6 @@ def _hfc_direct_policy_locals(
     }
 
 
-def _hfc_direct_card_allowed_sync(
-    chat_id: Any,
-    *,
-    event_name: str = "system.notice",
-    notice_context: dict[str, Any] | None = None,
-) -> bool:
-    try:
-        config = load_runtime_config()
-        if not config.enabled:
-            return False
-        return _policy_gate_sync(
-            config,
-            _hfc_direct_policy_locals(chat_id, notice_context),
-            event_name,
-        ).card
-    except Exception:
-        return False
-
-
 async def _hfc_direct_card_allowed_async(
     chat_id: Any,
     *,
@@ -5313,7 +5294,7 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_kind": "session-reset",
             "notice_id": "session-reset",
         }
-    for prefix in ("💾 Self-improvement review:", "💾 自我改进回顾："):
+    for prefix in ("💾 Self-improvement review:", "💾 自我改进回顾：", "💾 自我改進檢閱："):
         if text.startswith(prefix) and text[len(prefix):].strip():
             return {
                 "title": "自我改进",
@@ -5342,12 +5323,12 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
 
 
 def _hfc_classify_adapter_notice(
-    chat_id: str, content: str, *, review_source: Any = None,
+    chat_id: str, content: str, *, adapter: Any, metadata: Any, review_source: Any = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     notice = _hfc_classify_system_notice(content)
     if notice is None:
         return None, None
-    from .notice_producers import adapter_card_notice_source
+    from .notice_producers import adapter_card_notice_source, background_card_notice_source
 
     frame = inspect.currentframe()
     try:
@@ -5355,13 +5336,19 @@ def _hfc_classify_adapter_notice(
         # caller is the native egress. The task-local turn route is not proof.
         wrapper = frame.f_back if frame is not None else None
         caller = wrapper.f_back if wrapper is not None else None
+        event = None
         if review_source is not None:
             known, source = notice["notice_kind"] == "self-improvement", review_source
+        elif notice["notice_kind"] in {"background-task", "background-process"}:
+            known, source, event = background_card_notice_source(
+                notice["notice_kind"], caller, adapter=adapter, chat_id=chat_id,
+                content=content, metadata=metadata,
+            )
         else:
             known, source = adapter_card_notice_source(notice["notice_kind"], caller)
         if not known:
             return None, None
-        context = _hfc_notice_context_from_source(source) if source is not None else None
+        context = _hfc_notice_context_from_source(source, event=event) if source is not None else None
         if source is not None and (context is None or context["chat_id"] != chat_id):
             return None, None
         return notice, context
@@ -5578,8 +5565,10 @@ async def _hfc_send_system_notice_card(
                 return _send_result(True, message_id=payload["message_id"])
             if not (
                 isinstance(post_result, dict)
-                and post_result.get("ok") is not False
+                and post_result.get("ok") is True
                 and post_result.get("applied") is False
+                and "delivery" not in post_result
+                and "disposition" not in post_result
             ):
                 return _send_result(
                     False,
@@ -5626,7 +5615,7 @@ async def _hfc_send_system_notice_card(
 
 
 def _hfc_notice_post_applied(result: Any) -> bool:
-    if not isinstance(result, dict) or result.get("ok") is False:
+    if not isinstance(result, dict) or result.get("ok") is not True:
         return False
     outcome = _hfc_notice_delivery_outcome(result)
     if outcome == "accepted":
@@ -5635,23 +5624,24 @@ def _hfc_notice_post_applied(result: Any) -> bool:
 
 
 def _hfc_notice_delivery_outcome(result: Any) -> str:
-    if not isinstance(result, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
         return "unknown"
+    if (result["ok"] is True and result.get("applied") is False
+            and result.get("disposition") == "native" and "delivery" not in result):
+        return "not_sent"
     delivery = result.get("delivery")
     if not isinstance(delivery, dict):
         return "unknown"
     outcome = delivery.get("outcome")
-    if outcome in {"accepted", "delivered", "not_sent", "unknown"}:
+    if outcome in ("accepted", "delivered", "not_sent", "unknown"):
         return outcome
     return "unknown"
 
 
 def _hfc_send_result_delivery_outcome(result: Any) -> str:
     error = getattr(result, "error", None)
-    if error == "delivery_outcome=not_sent":
+    if error in ("delivery_outcome=not_sent", "delivery_disposition=native"):
         return "not_sent"
-    if error == "delivery_outcome=unknown":
-        return "unknown"
     return "unknown"
 
 
@@ -6772,7 +6762,9 @@ async def _hfc_send_with_native_command_result_card(
             _HFC_NATIVE_HANDOFF_CONTEXT.set(None)
         return result
     review_source = take_review_source(self, chat_id, content)
-    card_notice, notice_context = _hfc_classify_adapter_notice(chat_id, content, review_source=review_source)
+    card_notice, notice_context = _hfc_classify_adapter_notice(
+        chat_id, content, adapter=self, metadata=metadata, review_source=review_source,
+    )
     policy_context = {"notice_context": notice_context} if notice_context is not None else {}
     if not await _hfc_direct_card_allowed_async(chat_id, **policy_context):
         _HFC_NATIVE_MEDIA_TEXT_SUPPRESSION.set(None)
@@ -6788,8 +6780,10 @@ async def _hfc_send_with_native_command_result_card(
     if _should_suppress_matching_native_media_text(chat_id, content):
         return _send_result(True, message_id="media_text_suppressed")
     # A cold /refine receipt can inherit the command's context. Apply the
-    # confirmed review policy without consuming the command feedback slot.
-    if review_source is None:
+    # confirmed review or background notice policy before command rendering.
+    if review_source is None and (
+        card_notice is None or card_notice["notice_kind"] not in {"background-task", "background-process"}
+    ):
         context = _hfc_take_feishu_command_result_context(chat_id=chat_id, content=content)
         if context is not None:
             result = await _hfc_send_native_command_result_card(
@@ -6815,10 +6809,9 @@ async def _hfc_send_with_native_command_result_card(
         if getattr(notice_result, "success", False):
             return notice_result
         if callable(original):
-            native = getattr(notice_result, "error", None) == "delivery_disposition=native"
             outcome = _hfc_send_result_delivery_outcome(notice_result)
             fallback_content = (
-                content if native or outcome == "not_sent" else _NOTICE_UNCERTAIN_WARNING
+                content if outcome == "not_sent" else _NOTICE_UNCERTAIN_WARNING
             )
             return await original(
                 self,
@@ -6894,7 +6887,7 @@ async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwa
     parsed = _hfc_parse_edit_message_args(args, kwargs)
     if parsed is not None:
         chat_id, message_id, content, metadata = parsed
-        notice, notice_context = _hfc_classify_adapter_notice(chat_id, content)
+        notice, notice_context = _hfc_classify_adapter_notice(chat_id, content, adapter=self, metadata=metadata)
         if notice is not None:
             notice_result = await _hfc_send_system_notice_card(
                 self,
@@ -6926,22 +6919,30 @@ async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwa
 
 
 def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -> bool:
-    """Route Hermes native platform notices into Feishu cards before text fallback."""
+    """Compatibility entry for previously generated synchronous Hermes hooks."""
     try:
-        if _platform_name({}, source) != "feishu":
-            return False
-        chat_id = str(getattr(source, "chat_id", "") or "").strip()
-        if not chat_id:
-            return False
+        asyncio.get_running_loop()
+    except RuntimeError:
+        result = asyncio.run(_hfc_try_platform_notice_card(runner, source, content))
+        return getattr(result, "success", False) is True
+    # An async gateway uses the wrapper below. In an unwrapped older gateway,
+    # let the injected synchronous hook fall through to Hermes' native send.
+    return False
+
+
+async def _hfc_try_platform_notice_card(runner: Any, source: Any, content: str) -> Any:
+    try:
+        if getattr(source, "is_bot", False) is True:
+            return None
+        notice_context = _hfc_notice_context_from_source(source)
+        if notice_context is None:
+            return None
         notice = _hfc_classify_system_notice(content)
         if notice is None:
-            return False
-        notice_context = _hfc_notice_context_from_source(source)
-        if not _hfc_direct_card_allowed_sync(chat_id, notice_context=notice_context):
-            return False
+            return None
         adapter = _hfc_feishu_adapter_from_runner(runner, source)
         if adapter is None:
-            return False
+            return None
         # Preserve Hermes' private-notice policy, including per-profile adapter
         # overrides; a recognized setup message must not become a public card.
         extra = getattr(getattr(adapter, "config", None), "extra", None)
@@ -6950,23 +6951,31 @@ def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -
             resolve_delivery = getattr(getattr(runner, "config", None), "get_notice_delivery", None)
             if callable(resolve_delivery):
                 delivery = resolve_delivery(getattr(source, "platform", None))
-        if delivery == "private":
-            return False
-        _hfc_schedule_platform_notice_card(
-            adapter=adapter,
-            chat_id=chat_id,
-            content=str(content or ""),
-            reply_to=str(getattr(source, "message_id", "") or "").strip() or None,
-            notice=notice,
-            notice_context=notice_context,
-        )
-        return True
+        if isinstance(delivery, str) and delivery.strip().lower() == "private":
+            return None
+        reply_to = str(getattr(source, "message_id", "") or "").strip() or None
+        if _hfc_notice_plain_text(notice) is not None and not await _hfc_direct_card_allowed_async(
+            notice_context["chat_id"], notice_context=notice_context,
+        ):
+            return None
     except Exception as exc:
         _hfc_warn(
             "platform notice hook failed: "
             f"{_hfc_exception_summary(exc)}"
         )
-        return False
+        return None
+    token = _HFC_FEISHU_NOTICE_CONTEXT.set(notice_context)
+    try:
+        return await _hfc_send_system_notice_card(
+            adapter,
+            chat_id=notice_context["chat_id"],
+            content=content,
+            reply_to=reply_to,
+            notice=notice,
+            notice_context=notice_context,
+        )
+    finally:
+        _HFC_FEISHU_NOTICE_CONTEXT.reset(token)
 
 
 async def _hfc_deliver_platform_notice_with_card(
@@ -6975,11 +6984,12 @@ async def _hfc_deliver_platform_notice_with_card(
     content: str,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_deliver_platform_notice", None)
-    if handle_platform_notice_from_hermes(self, source, content):
-        return _send_result(
-            True,
-            message_id=str(getattr(source, "message_id", "") or "").strip() or None,
-        )
+    result = await _hfc_try_platform_notice_card(self, source, content)
+    if result is not None:
+        if getattr(result, "success", False) or not callable(original):
+            return result
+        if _hfc_send_result_delivery_outcome(result) != "not_sent":
+            content = _NOTICE_UNCERTAIN_WARNING
     if callable(original):
         return await original(self, source, content)
     return None
@@ -7040,47 +7050,6 @@ def _hfc_feishu_adapter_from_runner(runner: Any, source: Any) -> Any:
         if _is_feishu_adapter_key(key, adapter):
             return adapter
     return None
-
-
-def _hfc_schedule_platform_notice_card(
-    *,
-    adapter: Any,
-    chat_id: str,
-    content: str,
-    reply_to: str | None,
-    notice: dict[str, Any],
-    notice_context: dict[str, Any] | None,
-) -> None:
-    async def send_notice() -> None:
-        token = _HFC_FEISHU_NOTICE_CONTEXT.set(notice_context) if notice_context is not None else None
-        try:
-            notice_result = await _hfc_send_system_notice_card(
-                adapter,
-                chat_id=chat_id,
-                content=content,
-                reply_to=reply_to,
-                notice=notice,
-                notice_context=notice_context,
-            )
-            if not getattr(notice_result, "success", False):
-                _hfc_warn(
-                    "system notice card delivery failed; native notice suppressed"
-                )
-        except Exception as exc:
-            _hfc_warn(
-                "system notice card delivery failed; native notice suppressed: "
-                f"{_hfc_exception_summary(exc)}"
-            )
-        finally:
-            if token is not None:
-                _HFC_FEISHU_NOTICE_CONTEXT.reset(token)
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(send_notice())
-        return
-    loop.create_task(send_notice())
 
 
 def _hfc_parse_edit_message_args(
