@@ -72,6 +72,8 @@
 - 重定向必须从已校验的 agent turn binding 取回原 conversation ID，不能退化为 source.thread_id；server 的 conversation/profile/chat 边界保持不变。
 - 显式 `turn_id` 必须作为 canonical turn hard fence，直接决定 session ownership、ordering 和 native handoff，绝不查 reply alias；只有缺少 `turn_id` 的 legacy topic 后续事件使用不同内部 `message_id` 时，才查 `reply_to_message_id` anchor。
 - 群聊新轮清理必须同时匹配可验证的 `sender_open_id`；缺少发送者时保留旧卡。hook 的首事件 fallback 也必须携带发送者和 `chat_type`。原生插件通道使用 Gateway session key 的哈希 `execution_scope` 隔离；缺少可匹配范围时不猜测接管。redirect 只清理明确指定的来源 turn，不能结束同群其他成员的卡片。参见 Issue #348。
+- 缺少 `turn_id` 的旧版终局通过引用找到卡片时，使用卡片所有者的锁。相同事件的并发重放共用一次处理结果；恢复显示检查点时，确认过的终局摘要仍归原卡。核验请求归属时，分别比较会话、显式话题根和请求人标识。
+- 同一话题重开主卡后，续卡按已确认主卡 ID 和分段序号去重。主卡创建回执丢失时，重发同一开卡请求应复用创建 UUID。升级使用旧续卡 UUID 的版本时，先让正在投递的分段长答结束；跨版本重发已部分送达的旧长答仍可能重复显示部分续卡。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
 - decomposed Hermes 的 stale-generation 分支只在返回值明确 `interrupted is True`、原 source/turn 身份一致且不是 queued 子轮结果时补发原任务终态；stale 本身不证明失败。安装器须精确验证该接点并保持逐字可逆。
 - Base 的受控 `/stop` 取消可能早于工具结果返回。仅在精确处理 task 的原 owner、会话和路由一致且该 task 确已取消时补发终态；`/new`、`/reset` 与未知取消不猜测。显示投递复用 adapter 的受管后台任务，限制数量和期限，不阻塞原 pending-message drain，也不恢复执行或授权。
