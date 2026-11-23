@@ -13609,6 +13609,24 @@ async def test_legacy_terminal_exact_retry_and_new_turn_with_same_quote(client):
         assert http.app[SESSIONS_KEY][key].answer_text == f"final {index}"
 
 
+async def test_legacy_terminal_retry_after_checkpoint_restore(tmp_path):
+    transport = FakeFeishuClient()
+    options = {"session_store_directory": tmp_path}
+    anchor = {"reply_to_message_id": "om_anchor"}
+    terminal = event_payload("message.completed", 1, {**anchor, "answer": "done"},
+                             message_id="om_alias")
+    async with TestClient(TestServer(create_app(transport, **options))) as http:
+        start = event_payload("message.started", 0, anchor, message_id="om_owner")
+        assert (await http.post("/events", json=start)).status == 200
+        assert (await http.post("/events", json=terminal)).status == 200
+    async with TestClient(TestServer(create_app(transport, **options))) as http:
+        await http.app[sidecar_server.SESSION_RESTORE_TASK_KEY]
+        assert http.app[sidecar_server.DIAGNOSTICS_KEY]["card_checkpoints_restored"] == 1
+        retry = await http.post("/events", json=terminal)
+        assert (await retry.json())["applied"] is True
+        assert len(transport.sent) == 1
+
+
 @pytest.mark.parametrize("boundary", ["chat", "thread", "sender", "profile", "turn", "new_start"])
 async def test_legacy_quote_cannot_replace_an_independent_owner(client, boundary):
     http, feishu = client

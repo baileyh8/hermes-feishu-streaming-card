@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, fields
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 
@@ -61,6 +62,9 @@ class SessionStore:
                       bot_id=bot_id, profile_id=profile_id, aliases=aliases, client_identity=client_identity,
                       had_interaction=(session.active_interaction is not None and session.active_interaction.status in {"pending","paused"}),
                       saved_at=time.time())
+        if session.status in {'completed', 'failed'} and session.legacy_terminal_fingerprint:
+            # Optional record metadata keeps the v1 session field set readable on rollback.
+            record['legacy_terminal_fingerprint'] = session.legacy_terminal_fingerprint
         if auxiliary_receipt:
             if (not valid_auxiliary_receipt(auxiliary_receipt)
                     or auxiliary_receipt['message_id'] == message_id):
@@ -131,6 +135,9 @@ class SessionStore:
                 if not valid_legacy_receipt(data['legacy_owner_receipt']):
                     continue
                 session = CardSession(**{k:data[k] for k in _FIELDS})
+                digest = r.get('legacy_terminal_fingerprint', '')
+                if session.status in {'completed', 'failed'} and isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest):
+                    session.legacy_terminal_fingerprint = digest
                 if not all(isinstance(getattr(session,k),str) and getattr(session,k)
                            for k in ('conversation_id','message_id','chat_id')):
                     continue

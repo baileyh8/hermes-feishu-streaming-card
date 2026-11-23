@@ -222,7 +222,7 @@ class CardSession:
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
-    # One process-local exact retry may rejoin this completed display owner.
+    # Optional checkpoint metadata binds an exact legacy retry to the completed card.
     legacy_terminal_fingerprint: str = field(default="", repr=False)
     notice_kind: str = ""
     notice_title: str = ""
