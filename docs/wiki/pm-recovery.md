@@ -16,6 +16,8 @@ v5.0.25 的 PowerShell 凭据探针使用独占临时 Python 文件，避免 Win
 
 保存安装器给出的 `management CLI` 和 `status` 命令。管理 CLI 可以在安装失败或 PM 代际路径失效时独立运行。用同一条命令前缀可调用 `doctor`、`repair` 或 `integrity`，无需 HFC 源码目录。管理 CLI 可能已经更新，PM runtime 的实际版本以 `doctor` 的运行时检查和 PM 登记为准。
 
+如果 `status` 显示 `manual_review_required`，复制它输出的 `doctor --explain` 命令。命令沿用当前管理 Python、配置文件和指定的 Hermes HOME，也保留本次使用的环境文件，可在另一个目录执行。
+
 ## PM 重建与源码重置同时发生（#524）
 
 旧 PM generation 消失时，observer 记录仍可能绑定旧 Python；Hermes 更新又可能把受管 hook 重置。普通 `install/setup` 会先拒绝 observer runtime identity 变化，而 `rebind-legacy` 要求源码已是 `installed`。这两个拒绝都应保留，不能靠删除 marker、fence 或 service 记录解除。

@@ -175,10 +175,24 @@ def test_diagnostics_with_wrong_home_do_not_offer_explicit_upgrade(
     config = root.parent / "hfc.yaml"
     config.write_text("{}\n")
     monkeypatch.setattr(cli, "status_sidecar", lambda _: {"running": False, "pid": None})
-    args = ["--config", str(config), "--hermes-dir", str(root), "--hermes-home", str(wrong_home)]
+    env_file = root.parent / "sidecar env"
+    env_file.write_text("# isolated fixture\n")
+    monkeypatch.chdir(root.parent)
+    args = ["--config", config.name, "--hermes-dir", root.name, "--hermes-home", str(wrong_home),
+            "--env-file", env_file.name]
     assert cli.main(["status", *args]) == 1
-    assert "hook.status: manual_review_required" in capsys.readouterr().out
-    assert cli.main(["doctor", *args, "--explain"]) in (0, 1)
+    status = capsys.readouterr().out
+    assert "hook.status: manual_review_required" in status
+    command, = [shlex.split(line.removeprefix("hook.next: ")) for line in status.splitlines()
+                if line.startswith("hook.next: ")]
+    assert command[0] == sys.executable
+    doctor_args = command[command.index("hermes_feishu_card.cli") + 1:]
+    assert doctor_args[0] == "doctor" and "--explain" in doctor_args
+    for key, path in [("--config", config), ("--hermes-dir", root), ("--hermes-home", wrong_home),
+                      ("--env-file", env_file)]:
+        assert Path(doctor_args[doctor_args.index(key) + 1]) == path
+    monkeypatch.chdir(wrong_home)
+    assert cli.main(doctor_args) in (0, 1)
     doctor = capsys.readouterr().out
     assert "Legacy observer config ownership requires review" in doctor
     assert "--accept-hermes-upgrade" not in doctor

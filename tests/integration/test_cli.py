@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -277,20 +278,29 @@ def test_status_reports_sanitized_integrity_repair_action(monkeypatch, capsys):
     assert "integrity.reason: verified_git_upgrade" in output
     assert "integrity.next_action:" in output
     assert "integrity migrate-safe" in output
-    assert "integrity.next_command: hermes-feishu-card doctor --config config.yaml --explain" in output
+    command, = [shlex.split(line.removeprefix("integrity.next_command: "))
+                for line in output.splitlines() if line.startswith("integrity.next_command: ")]
+    assert command[0] == sys.executable
+    assert command[command.index("hermes_feishu_card.cli") + 1] == "doctor"
+    assert command[command.index("--config") + 1] == str(Path.cwd() / "config.yaml")
+    assert "--explain" in command
 
 
-def test_integrity_next_command_preserves_explicit_paths(capsys):
+def test_integrity_next_command_preserves_explicit_paths(tmp_path, monkeypatch, capsys):
     import argparse
-    import shlex
+    monkeypatch.chdir(tmp_path)
     cli_module._print_status_integrity(
         {"last_status": "manual_review_required"},
-        args=argparse.Namespace(config="/test/card config.yaml", env_file="/test/card.env", hermes_dir="/test/hermes agent"),
+        args=argparse.Namespace(config="card config.yaml", env_file="card.env", hermes_dir="hermes agent",
+                                hermes_home=tmp_path / "bound home", profile_id="other"),
     )
     line = next(line for line in capsys.readouterr().out.splitlines() if line.startswith("integrity.next_command:"))
-    assert shlex.split(line.split(": ", 1)[1]) == [
-        "hermes-feishu-card", "doctor", "--config", "/test/card config.yaml",
-        "--env-file", "/test/card.env", "--hermes-dir", "/test/hermes agent", "--explain",
+    command = shlex.split(line.split(": ", 1)[1])
+    assert command[0] == sys.executable
+    assert command[command.index("hermes_feishu_card.cli") + 1:] == [
+        "doctor", "--config", str(tmp_path / "card config.yaml"),
+        "--env-file", str(tmp_path / "card.env"), "--hermes-dir", str(tmp_path / "hermes agent"),
+        "--hermes-home", str(tmp_path / "bound home"), "--profile-id", "other", "--explain",
     ]
 
 

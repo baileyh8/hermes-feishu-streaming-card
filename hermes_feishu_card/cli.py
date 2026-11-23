@@ -2310,7 +2310,7 @@ def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:
     return combined[-800:]
 
 
-def _source_repair_cli() -> list[str]:
+def _management_cli() -> list[str]:
     # A one-line PM install leaves an independent, absolute management Python.
     # Keep the command runnable from that installation even when PATH has no CLI.
     python = [sys.executable]
@@ -2340,10 +2340,10 @@ def _upgrade_recovery_guidance(
         hermes_home = Path(observer[0]["home"])
     if hermes_home is not None:
         scope.extend(["--hermes-home", str(hermes_home)])
-    command = [*_source_repair_cli(), "repair"] if decomposed else ["hermes-feishu-card", "install"]
+    command = [*_management_cli(), "repair"] if decomposed else ["hermes-feishu-card", "install"]
     guidance = {"repair_command": shlex.join([*command, *scope, "--accept-hermes-upgrade", "--yes"])}
     if decomposed and observer is not None:
-        preview = shlex.join([*_source_repair_cli(), "integrity", "rebind-legacy", *scope])
+        preview = shlex.join([*_management_cli(), "integrity", "rebind-legacy", *scope])
         guidance["after_repair"] = (
             f"If the PM generation was replaced, preview {preview} and follow "
             "docs/wiki/pm-recovery.md before restarting Gateway."
@@ -2862,8 +2862,23 @@ def _lifecycle_hook_check(args: argparse.Namespace) -> dict[str, object] | None:
     }
 
 
+def _doctor_explain_command(args: argparse.Namespace, root: Path | None) -> str:
+    command = [*_management_cli(), "doctor", "--config", str(Path(args.config).expanduser().absolute())]
+    env_file = getattr(args, "env_file", None) or os.environ.get("HFC_ENV_FILE")
+    if env_file:
+        command.extend(["--env-file", str(Path(env_file).expanduser().absolute())])
+    if root is not None:
+        command.extend(["--hermes-dir", str(root.expanduser().absolute())])
+    if getattr(args, "hermes_home", None):
+        # Preserve an invalid relative HOME so doctor reports the binding error.
+        command.extend(["--hermes-home", str(Path(args.hermes_home).expanduser())])
+    if getattr(args, "profile_id", None):
+        command.extend(["--profile-id", args.profile_id])
+    return shlex.join([*command, "--explain"])
+
+
 def _print_lifecycle_hook_check(
-    check: dict[str, object], *, file: Any = None
+    check: dict[str, object], args: argparse.Namespace, *, file: Any = None
 ) -> None:
     output = sys.stdout if file is None else file
     status = str(check["status"])
@@ -2876,17 +2891,7 @@ def _print_lifecycle_hook_check(
         elif check.get("restart_command"):
             print(f"hook.restart: {check['restart_command']}", file=output)
     elif status == "manual_review_required":
-        doctor_command = shlex.join(
-            [
-                "hermes-feishu-card",
-                "doctor",
-                "--config",
-                str(Path(check.get("config", "config.yaml.example"))),
-                "--hermes-dir",
-                str(hermes_root),
-                "--explain",
-            ]
-        )
+        doctor_command = _doctor_explain_command(args, hermes_root)
         print(f"hook.next: {doctor_command}", file=output)
 
 
@@ -2939,8 +2944,7 @@ def _run_enable(args: argparse.Namespace) -> int:
     hook_check = _lifecycle_hook_check(args)
     if hook_check is None or bool(hook_check["blocking"]):
         if hook_check is not None:
-            hook_check["config"] = args.config
-            _print_lifecycle_hook_check(hook_check, file=sys.stderr)
+            _print_lifecycle_hook_check(hook_check, args, file=sys.stderr)
         else:
             print("error: an explicit verified Hermes root is required", file=sys.stderr)
         return 1
@@ -3027,8 +3031,7 @@ def _run_start(args: argparse.Namespace) -> int:
 
     hook_check = _lifecycle_hook_check(args)
     if hook_check is not None and bool(hook_check["blocking"]):
-        hook_check["config"] = args.config
-        _print_lifecycle_hook_check(hook_check, file=sys.stderr)
+        _print_lifecycle_hook_check(hook_check, args, file=sys.stderr)
         return 1
 
     start_kwargs: dict[str, Any] = {}
@@ -3539,8 +3542,7 @@ def _run_status(args: argparse.Namespace) -> int:
     hook_check = _lifecycle_hook_check(args)
     if hook_check is None:
         return 1 if readiness_degraded or native_handoff_manual_review else 0
-    hook_check["config"] = args.config
-    _print_lifecycle_hook_check(hook_check)
+    _print_lifecycle_hook_check(hook_check, args)
     return (
         1
         if readiness_degraded
@@ -3607,14 +3609,8 @@ def _print_status_integrity(snapshot: dict[str, Any], *, args: argparse.Namespac
     if action:
         print(f"integrity.next_action: {action}")
         if args is not None and integrity["last_status"] in {"repair_available", "manual_review_required"}:
-            command = ["hermes-feishu-card", "doctor", "--config", str(args.config)]
-            if getattr(args, "env_file", None):
-                command.extend(["--env-file", str(args.env_file)])
             root = _configured_lifecycle_hermes_root(args)
-            if root is not None:
-                command.extend(["--hermes-dir", str(root)])
-            command.append("--explain")
-            print(f"integrity.next_command: {shlex.join(command)}")
+            print(f"integrity.next_command: {_doctor_explain_command(args, root)}")
 
 
 def _print_status_routing(health: dict[str, Any]) -> None:
