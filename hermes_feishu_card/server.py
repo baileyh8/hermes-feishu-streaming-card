@@ -30,6 +30,7 @@ from .config_rules import (
     card_width_config, card_completion_mention_enabled,
     card_interaction_mention_enabled, merge_card_config,
     apply_chat_card_overrides, normalize_native_chats,
+    normalize_suppressed_notice_kinds,
 )
 from .delivery import CardDeliveryResult
 from .config_snapshot import (
@@ -4683,6 +4684,23 @@ async def _apply_event_locked_inner(
                 }
             ), None
 
+    if _is_suppressed_system_notice(
+        request,
+        session=session,
+        session_key=session_key,
+        event=incoming_event,
+        profile_id=policy_profile_id,
+    ):
+        metrics.events_ignored += 1
+        return web.json_response(
+            {
+                "ok": True,
+                "applied": True,
+                "suppressed": True,
+                "delivery": {"outcome": "accepted"},
+            }
+        ), None
+
     if starts_new_lifecycle and not lifecycle_fence_recorded:
         lifecycle_state = _prepare_native_handoff_lifecycle(
             request.app,
@@ -7426,6 +7444,69 @@ def _resolve_session_card_config(
         chat_type=event.data.get("chat_type") if isinstance(event.data, dict) else None,
         chat_id=event.chat_id,
     )
+
+
+def _resolve_notice_chat_type(
+    app: web.Application,
+    session: CardSession | None,
+    event: SidecarEvent,
+    profile_id: str | None,
+) -> str:
+    raw = event.data.get("chat_type") if isinstance(event.data, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    if session is not None and isinstance(session.chat_type, str) and session.chat_type.strip():
+        return session.chat_type.strip().lower()
+    expected_profile = profile_id or "default"
+    for candidate in reversed(list(app[SESSIONS_KEY].values())):
+        if (
+            candidate.chat_id == event.chat_id
+            and (candidate.route_profile_id or "default") == expected_profile
+            and isinstance(candidate.chat_type, str)
+            and candidate.chat_type.strip()
+        ):
+            return candidate.chat_type.strip().lower()
+    return ""
+
+
+def _is_suppressed_system_notice(
+    request: web.Request,
+    *,
+    session: CardSession | None,
+    session_key: str,
+    event: SidecarEvent,
+    profile_id: str | None,
+) -> bool:
+    if event.event != "system.notice" or not isinstance(event.data, dict):
+        return False
+    notice_kind = str(event.data.get("notice_kind") or "").strip().lower()
+    if not notice_kind:
+        return False
+    card_config = (
+        request.app[SESSION_CARD_CONFIGS_KEY].get(session_key)
+        if session is not None
+        else None
+    )
+    if not isinstance(card_config, dict):
+        effective_chat_type = _resolve_notice_chat_type(
+            request.app, session, event, profile_id
+        )
+        effective_event = event
+        if effective_chat_type and not event.data.get("chat_type"):
+            from dataclasses import replace as _replace_event
+            effective_event = _replace_event(
+                event, data={**event.data, "chat_type": effective_chat_type}
+            )
+        route = _resolve_route(request, effective_event)
+        card_config = _resolve_session_card_config(
+            request.app,
+            route.bot_id if route is not None else None,
+            effective_event,
+        )
+    suppressed = normalize_suppressed_notice_kinds(
+        card_config.get("suppressed_notice_kinds", [])
+    )
+    return notice_kind in suppressed
 
 
 def _card_config_for_client(
