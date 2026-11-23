@@ -58,7 +58,9 @@ python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --
 
 `setup` 同样支持 `--accept-hermes-upgrade`。该开关不会用旧 backup 覆盖升级后的 Hermes 源码，只会清理经过校验的旧 HFC backup/manifest；随后安装器以当前升级后源码为全部必需目标创建新 backup 并重新打补丁。它仍要求当前源码可解析且具备受支持的 hook anchors、manifest 有效、每份旧 backup 未变化并与 manifest hash 一致。backup 缺失或损坏、manifest 无效、symlink、文件不可读、未知 marker、required Base 不兼容、当前源码不受支持，或仍残留本项目 owned patch 时都会继续 fail-closed。
 
-`status` 和 `start` 会从显式 `--hermes-dir`、选定 env file、配置旁 `.env` 或进程环境读取 `HERMES_DIR`，只读检查 hook 安装状态。若 Hermes 升级替换了源码但旧 backup/manifest 仍可验证，输出 `hook.status: upgrade_repair_required`，并提示上述显式恢复命令及 `hermes gateway start`；`start` 会在启动 sidecar 前拒绝继续，避免“sidecar 正常但 Gateway hook 已丢失”的静默降级。若检测到用户改动、损坏或不受支持的源码，则输出 `manual_review_required`，不提供 `--accept-hermes-upgrade` 捷径。
+`status` 和 `start` 会从显式 `--hermes-dir`、选定 env file、配置旁 `.env` 或进程环境读取 `HERMES_DIR`，只读检查 hook 安装状态。若 Hermes 升级替换了源码但旧 backup/manifest 仍可验证，输出 `hook.status: upgrade_repair_required` 并给出当前布局对应的命令。`start` 会在启动 sidecar 前拒绝继续。若检测到用户改动、损坏或不受支持的源码，则输出 `manual_review_required`。
+
+对绑定了 legacy observer 的 decomposed 安装，执行 `status` 或 `doctor --explain` 给出的 `repair`，沿用命令中的 `--hermes-home`。PM 另选代际时，重启前还需核验 observer 绑定。见 [PM 恢复](wiki/pm-recovery.md)。
 
 ## V4.1 runtime 完整性
 

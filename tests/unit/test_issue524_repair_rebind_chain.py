@@ -21,6 +21,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import sys
 from types import SimpleNamespace
@@ -60,8 +61,8 @@ def orphan_chain(tmp_path, monkeypatch):
     from hermes_feishu_card.install import posix_transaction
     if not posix_transaction._cli_dirfd_binding_supported():
         pytest.skip("observer transaction fixture requires secure directory-relative I/O")
-    root = tmp_path / "checkout"
-    home = tmp_path / "home"
+    root = tmp_path / "checkout with spaces"
+    home = tmp_path / "bound home"
     shutil.copytree(Path(__file__).parents[1] / "fixtures/hermes_decomposed", root,
                     ignore=shutil.ignore_patterns("__pycache__"))
     _copy_fixed_support(root)
@@ -99,6 +100,90 @@ def orphan_chain(tmp_path, monkeypatch):
     return SimpleNamespace(root=root, home=home, binding=binding, config=config,
                            target=target, original=original,
                            marker_before=marker_before)
+
+
+@pytest.mark.parametrize("runtime_state", ["original", "replaced", "missing"])
+def test_status_and_doctor_output_the_same_runnable_repair(
+    orphan_chain, runtime_state, monkeypatch, capsys,
+):
+    root, home = orphan_chain.root, orphan_chain.home
+    if runtime_state != "missing":
+        binding = orphan_chain.binding
+        if runtime_state == "replaced":
+            python = binding.runtime_python.with_name("replacement-python")
+            binding = replace(binding, runtime_python=python, runtime_python_resolved=python,
+                              python_identity="sha256:" + "b" * 64)
+        monkeypatch.setattr(cli, "resolve_runtime_binding", lambda **_: binding)
+        monkeypatch.setattr(plugin, "resolve_runtime_binding", lambda **_: binding)
+
+    config = root.parent / "hfc.yaml"
+    config.write_text("{}\n")
+    # Status reads the configured HOME from a separate dotenv. Doctor has only
+    # the checkout and must take the split HOME from the verified observer.
+    env_file = root.parent / "selected.env"
+    env_file.write_text(f"HERMES_FEISHU_CARD_HERMES_HOME={home}\n")
+    monkeypatch.setattr(cli, "status_sidecar", lambda _: {"running": False, "pid": None})
+    monkeypatch.setattr(cli, "_run_install", lambda _: pytest.fail("source repair must not run install"))
+    if runtime_state == "missing":
+        for name in ("_doctor_runtime_import_report", "_doctor_feishu_sdk_report"):
+            monkeypatch.setattr(cli, name, lambda *a, **k: {
+                "status": "failed", "message": "Hermes PM runtime is missing",
+            })
+    config_before = orphan_chain.config.read_bytes()
+    source_before = orphan_chain.target.read_bytes()
+    args = ["--config", str(config), "--hermes-dir", str(root)]
+    assert cli.main(["status", *args, "--env-file", str(env_file)]) == 1
+    status = capsys.readouterr().out
+    assert "hook.status: upgrade_repair_required" in status
+    command, = [line.split("hook.next: ", 1)[1] for line in status.splitlines()
+                if line.startswith("hook.next: ")]
+    assert "hook.restart:" not in status
+    assert "integrity rebind-legacy" in status
+
+    doctor_args = [] if runtime_state == "original" else ["--env-file", str(env_file)]
+    assert cli.main(["doctor", *args, *doctor_args, "--explain"]) in (0, 1)
+    doctor = capsys.readouterr().out
+    assert f"  Next: {command}" in doctor.splitlines()
+    assert "install --hermes-dir" not in doctor
+    assert "Run setup/install again" not in doctor
+    assert "Restart both services" not in doctor
+    assert "integrity rebind-legacy" in doctor
+    assert orphan_chain.target.read_bytes() == source_before
+    assert orphan_chain.config.read_bytes() == config_before
+    assert (root / legacy_observer.MARKER).read_bytes() == orphan_chain.marker_before
+
+    command_args = shlex.split(command)
+    assert command_args[0] == sys.executable
+    cli_args = command_args[command_args.index("hermes_feishu_card.cli") + 1:]
+    assert cli_args == [
+        "repair", "--hermes-dir", str(root), "--hermes-home", str(home),
+        "--accept-hermes-upgrade", "--yes",
+    ]
+    assert cli.main(cli_args) == 0
+    assert decomposed_ownership._inspect(root)[3] == "installed"
+    assert orphan_chain.config.read_bytes() == config_before
+    assert (root / legacy_observer.MARKER).read_bytes() == orphan_chain.marker_before
+
+
+def test_diagnostics_with_wrong_home_do_not_offer_explicit_upgrade(
+    orphan_chain, monkeypatch, capsys,
+):
+    root = orphan_chain.root
+    wrong_home = root.parent / "unrelated home"
+    wrong_home.mkdir()
+    (wrong_home / "config.yaml").write_text("{}\n")
+    config = root.parent / "hfc.yaml"
+    config.write_text("{}\n")
+    monkeypatch.setattr(cli, "status_sidecar", lambda _: {"running": False, "pid": None})
+    args = ["--config", str(config), "--hermes-dir", str(root), "--hermes-home", str(wrong_home)]
+    assert cli.main(["status", *args]) == 1
+    assert "hook.status: manual_review_required" in capsys.readouterr().out
+    assert cli.main(["doctor", *args, "--explain"]) in (0, 1)
+    doctor = capsys.readouterr().out
+    assert "Legacy observer config ownership requires review" in doctor
+    assert "--accept-hermes-upgrade" not in doctor
+    assert decomposed_ownership._inspect(root)[3] == "stale_unpatched"
+    assert (root / legacy_observer.MARKER).read_bytes() == orphan_chain.marker_before
 
 
 def test_repair_chain_without_runtime(orphan_chain):

@@ -174,7 +174,7 @@ PM 回滚可能为旧包重新生成运行环境。注册栈恢复后，须凭�
 - 升级迁移只能停止 PID/token/health 三者一致的旧进程，未知进程保持 fail-closed。
 - CLI 与插件 binding 共用 `install/runtime_python.py` 的隔离 PM 探测。存在 committed venv 时优先选择它并保留 venv launcher 路径；探测失败、相对路径或已删除的 generation 必须拒绝，不能落回旧 `.venv`。只有没有 PM 模块或 PM 明确返回无选择时保留 legacy 行为；插件仍验证 prefix/site-packages/可执行目标，显式 Hermes home 传给 PM 探测。
 - Hermes PM 重建会删除旧环境；独立 sidecar 不能假定长驻解释器路径永远存在。可用 `service.python_executable` 绑定独立 HFC venv；setup/start/enable 均遵守此选择，先验证 Hermes hook，再验证侧车的版本与普通 site-packages 来源。配置缺省保持原行为；指定环境失效必须拒绝启动，不静默切回 PM。
-- 旧侧车仍响应 health 不代表运行文件可用。升级后的恢复顺序是检查当前 PM 与进程来源，备份并停止侧车，通过官方 install 修复已验证的升级状态；仅 installed 且侧车停止时 acknowledge-review，再启动侧车与 Gateway。不得清除未知围栏或手工改 hook。
+- 旧侧车仍响应 health 时也要检查当前 PM 与进程来源。对 decomposed legacy observer，备份并停服后执行诊断给出的 `repair`，沿用已绑定的 HOME。若 PM 另选代际，先核验并重绑 observer。仅在 installed 且侧车停止时 acknowledge-review，随后启动侧车与 Gateway。
 - PM 迁移、schema 1 flat wheel、旧 runtime 重绑、VCS 安装边界、实际服务管理器/KeepAlive 与旧 fence target CAS 的完整顺序见 [PM 恢复](pm-recovery.md)。当前 509 management CLI 负责本候选的 schema 1 flat 重绑；v5.0.8 命令基线保留为历史，v5.0.7 CLI 没有 `rebind-legacy`。
 - `auto` 不得探测 system bus、调用 sudo/pkexec、写 `/etc` 或静默 fallback 到 system manager；`systemd-system` 只能显式使用 transient unit。
 - macOS `enable` 不可用时只提供平台解释。自建登录 LaunchAgent 可用 `RunAtLoad=true` 一次运行会分离子进程的 `start`，不可推荐 `KeepAlive=true`。无 verified pidfile 必须先确认进程归属；只有证实自建 LaunchAgent 直接运行 runner 才提供对应 `launchctl` 停止路径，不据 pidfile 缺失推断 launchd。
@@ -403,6 +403,8 @@ Issue [#428](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/428
 审批 hook 位于 `_render_approval_sync` 的 context binding 后，保留原 `_approval_notify_sync` 的 generation check 和 observer registration。等待期间及解析前再核对原 generation，通过 Hermes 的原 request ID/queue resolver 解析一次。`PendingControls` 仍只是原队列的视图；重复或已撤销的 request 不能批准下一项。原生 fallback 与异常退出仍由 Hermes 处理，不持久化执行 handle。
 
 Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431) 的故障来自直接 pip 安装只覆盖当前 PM venv。PM 代次从声明重建时，这种临时安装会消失。`install/pm_dependency.py` 现在在所选 Hermes HOME 的 `plugins/hfc-runtime-dependency/` 保存精确普通 wheel、仅含依赖的 virtual `pyproject.toml` 与 `.hfc-owner.json`。它通过官方 `hermes_cli.plugins_admission.admit_plugin_set_change` 登记 `plugins.enabled`，保留其他 enabled/disabled 与配置项；不直接编辑 PM facts 或 lock。该目录无 runtime manifest 和 `register()`，实际 producer 仍是 wheel 的唯一 `hermes_agent.plugins` entry point。`tool.uv.sources` 使用目录内 wheel path，PM 复制 workspace 后继续使用相同包字节。
+
+macOS/Linux 的 `install.sh` 在绑定 HOME 下复用私有管理 venv。管理 CLI 的 Git 安装与 PM admission 分开，`setup` 在切换代际前仍能核验旧 wheel 和 observer。稳定发布沿用 tag 登记标识，移动 ref 则固定为管理 CLI 实际安装的 commit。见 [PM 安装入口](pm-recovery.md#macoslinux-的-pm-安装入口)。
 
 已经能够 import 同版本也必须完成登记。登记后重新读取 committed venv，并核对 `site-packages`、wheel 来源摘要及每个包资源字节。显式 install spec 不会换成同版本 PyPI 包；wheel 缓存不依赖原下载临时目录。POSIX 路径使用绑定目录描述符的 rename，Windows 沿用显式 lstat/目录身份复检的 portable 安装边界；未知 PM API、明确 disabled、未归属目录、用户修改及不确定文件状态均拒绝覆盖。跨 profile 的共享依赖冲突交给 PM 原 resolver 拒绝，不自动移除另一 profile 的依赖。
 
