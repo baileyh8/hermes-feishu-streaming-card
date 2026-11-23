@@ -442,6 +442,15 @@ def _build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument("--yes", action="store_true", required=True)
         if command == "install":
             command_parser.add_argument("--no-repair", action="store_true")
+        if command == "uninstall":
+            command_parser.add_argument(
+                "--remove-adopted-pm-dependency",
+                action="store_true",
+                help=(
+                    "explicitly remove a verified schema-2 HFC PM dependency "
+                    "member whose selection pre-existed (selection_added: false)"
+                ),
+            )
         if command in {"install", "repair"}:
             command_parser.add_argument(
                 "--accept-hermes-upgrade",
@@ -4632,6 +4641,7 @@ def _run_restore(args: argparse.Namespace) -> int:
 
 def _run_uninstall(args: argparse.Namespace) -> int:
     root = Path(args.hermes_dir).expanduser()
+    remove_adopted_pm_dependency = bool(getattr(args, "remove_adopted_pm_dependency", False))
     try:
         from .install import legacy_observer
         raw = legacy_observer._read(root / legacy_observer.MARKER)
@@ -4639,6 +4649,8 @@ def _run_uninstall(args: argparse.Namespace) -> int:
             from .install import legacy_9b904_uninstall
             if getattr(args, "profile_id", None):
                 raise ValueError("legacy uninstall requires the bound HOME; pass --hermes-home")
+            if remove_adopted_pm_dependency:
+                raise ValueError("legacy adoption PM removal is not yet supported; dependency retained")
             home = getattr(args, "hermes_home", None)
             legacy_9b904_uninstall.uninstall(root, home=Path(home) if home else None)
             print("uninstall ok: this Hermes HOME is disabled; shared source, dependency and receipt retained")
@@ -4652,22 +4664,42 @@ def _run_uninstall(args: argparse.Namespace) -> int:
     fixed_tag_result = _run_fixed_tag_v3_restore(args, command="uninstall")
     if fixed_tag_result is not None:
         return fixed_tag_result
+    from .install import pm_dependency
+    home = getattr(args, "hermes_home", None)
+    home_path = Path(home) if home else None
+    try:
+        if pm_dependency.available(root):
+            python = _detect_hermes_runtime_python(root, **({"hermes_home": home_path} if home_path else {}))
+            if python is None:
+                raise ValueError("PM runtime unavailable; owned dependency retained")
+            pm_dependency.preflight_remove(
+                root,
+                python,
+                home=home_path,
+                allow_adopted_selection=remove_adopted_pm_dependency,
+            )
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     try:
         _restore(Path(args.hermes_dir), refuse_adoption=True, **(
-            {"hermes_home": Path(args.hermes_home)} if getattr(args, "hermes_home", None) else {}
+            {"hermes_home": home_path} if home_path else {}
         ))
     except (OSError, UnicodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    from .install import pm_dependency
     try:
         if pm_dependency.available(root):
-            home = getattr(args, "hermes_home", None)
-            python = _detect_hermes_runtime_python(root, **({"hermes_home": Path(home)} if home else {}))
+            python = _detect_hermes_runtime_python(root, **({"hermes_home": home_path} if home_path else {}))
             if python is None:
                 raise ValueError("PM runtime unavailable; owned dependency retained")
-            pm_dependency.remove(root, python, home=Path(home) if home else None)
+            pm_dependency.remove(
+                root,
+                python,
+                home=home_path,
+                allow_adopted_selection=remove_adopted_pm_dependency,
+            )
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

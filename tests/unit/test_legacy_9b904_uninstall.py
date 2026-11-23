@@ -185,6 +185,19 @@ def test_cli_dispatches_bound_v2_to_home_uninstall(transaction, monkeypatch, cap
     assert 'restart Hermes Gateway through its service owner' in capsys.readouterr().out
 
 
+def test_cli_refuses_remove_adopted_flag_on_legacy_9b904_adoption(transaction, monkeypatch, capsys):
+    case = transaction
+    monkeypatch.setattr(uninstall, 'uninstall', lambda *_a, **_k: pytest.fail('must refuse before mutating'))
+    monkeypatch.setattr(cli, '_restore', lambda *_a, **_k: pytest.fail('must retain shared source'))
+    rc = cli._run_uninstall(SimpleNamespace(
+        hermes_dir=case.root,
+        hermes_home=case.home,
+        remove_adopted_pm_dependency=True,
+    ))
+    assert rc == 1
+    assert 'legacy adoption PM removal is not yet supported' in capsys.readouterr().err
+
+
 def test_cli_refuses_orphaned_ticket_before_source_restore(transaction, monkeypatch):
     case = transaction
     ticket = legacy_home_revocation.ticket_path(case.root, case.home)

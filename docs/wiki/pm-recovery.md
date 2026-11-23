@@ -114,6 +114,19 @@ PM dependency member 的 `tool.uv.sources` 引用 HOME 内 workspace 之外的�
 
 新安装与迁移使用 schema 2 摘要目录；旧 flat store 可能仍被旧 PM generation 引用，finish、rollback 和 uninstall 保守保留它。此流程不扫描未知 PM 状态，也不提供自动垃圾回收；不要手工删除仍被代次使用的对象。保存的对象不是 HFC runtime producer，不会重复注册事件。
 
+## `selection_added: false` 与卸载释放（#540）
+
+首次写入 `~/.hermes/plugins/hfc-runtime-dependency/.hfc-owner.json` 时，如果 `config.yaml` 的 `plugins.enabled` 中已经存在 `hfc-runtime-dependency`，安装器会记录 `selection_added: false` 并在后续常规升级中沿用。如果仅把 `plugins/hfc-runtime-dependency` 目录移走再重装而不移除 `plugins.enabled` 中的条目，新装仍会继续写入 `selection_added: false`。
+
+- **升级前 park 受管 hook**：使用 `hermes-feishu-card restore --hermes-dir <dir> --hermes-home <home> --yes`。`restore` 恢复受管源码与 observer 配置，并保留已归属的 PM dependency，不必执行 `uninstall` 或手工移走 member 目录。
+- **彻底卸载或释放 adopted-selection member**：默认 `uninstall` 仍对 `selection_added: false` 保守拒绝，并在修改受管源码前完成前置校验，避免出现半卸载状态。确认需要彻底移除经完整归属与摘要校验的 schema 2 `hfc-runtime-dependency` 时，显式执行：
+
+```bash
+hermes-feishu-card uninstall --hermes-dir /actual/hermes --hermes-home /actual/home --yes --remove-adopted-pm-dependency
+```
+
+该参数仅接受通过 `_owned` 与外部 wheel-store 摘要校验的 schema 2 member，经 Hermes 官方 PM admission API 同步移除 `hfc-runtime-dependency` 选择项后再删除 member 目录。未归属目录、文件漂移、schema 1 与 schema 3（`legacy_9b904`）仍保持拒绝并保留现场。
+
 创建与读取校验目录身份、普通文件和摘要；POSIX 校验属主与权限，Windows 使用继承 ACL 的 portable 边界，不将 Unix mode 视为 ACL 证明，拒绝符号链接、Windows junction/reparse point 与不确定文件状态。已证明的 PR458 schema 1 flat 迁移会把预先记录的 store 身份带入同一目录绑定，重新验证 exact member/声明/flat digest 后才收紧到 0700；rename、同路径替换或错 digest 不会修改替换目录的权限或内容。新建 schema 2 store、没有 PR458 owner/声明/摘要证明的父目录，以及每个 schema 2 摘要子目录仍要求 0700。只有 exact legacy validator 可以读取原始 0755 flat store，group/world 写始终拒绝。
 
 ## PM 启动与配置写入
