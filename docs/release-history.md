@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.19](release-notes-v5.0.19.md) | 自管理 PM sticky profile 目标修复与 Windows NTFS 文件签名误报修复 |
 | [v5.0.18](release-notes-v5.0.18.md) | Hermes v0.23.0 完成回调、admission 与 PM 安装兼容 |
 | [v5.0.16](release-notes-v5.0.16.md) | 安装诊断与 #462 可定位失败 |
 | [v5.0.14](release-notes-v5.0.14.md) | 逐轮速率关联与已核验 Hermes 兼容 |

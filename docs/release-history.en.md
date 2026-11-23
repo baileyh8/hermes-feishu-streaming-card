@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v5.0.19](release-notes-v5.0.19.en.md) | Sticky-profile enable target and Windows NTFS signature fixes |
 | [v5.0.18](release-notes-v5.0.18.en.md) | Hermes v0.23.0 completion, admission and PM installation compatibility |
 | [v5.0.16](release-notes-v5.0.16.en.md) | Install diagnostics and diagnosable #462 failures |
 | [v5.0.14](release-notes-v5.0.14.en.md) | Per-turn rate correlation and verified Hermes compatibility |

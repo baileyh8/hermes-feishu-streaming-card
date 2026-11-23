@@ -1,5 +1,10 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V5.0.29
+
+- #500 / PR #547：新增可选 `card.suppressed_notice_kinds`（默认 `[]`）并接入 `card.chat_overrides`（`group` / `p2p` / `chats.<chat_id>`）与 `card-config` 诊断；同步识别中英文自我改进通知并透传 `chat_type`，命中抑制时不发卡片也不回落原生纯文本。
+- 发行验收以 [发行说明](docs/release-notes-v5.0.29.md) 和 GitHub Release 为准。
+
 ## V5.0.28
 
 - #540 / PR #543：`uninstall` 在 `_restore()` 前执行 PM 依赖前置校验，默认继续保守拒绝 `selection_added: false` 并提示升级改用 `restore`；新增 `uninstall --remove-adopted-pm-dependency` 显式释放经完整校验的 schema 2 `hfc-runtime-dependency` member，保留漂移、未知目录、schema 1 与 schema 3（`legacy_9b904`）拒绝。

@@ -1,5 +1,10 @@
 # Changelog
 
+## v5.0.29 — 2026-11-23
+
+- 新增 `card.suppressed_notice_kinds`（默认 `[]`，#500 / PR #547），支持在 global / profile / bot 及 `card.chat_overrides`（`group` / `p2p` / `chats.<chat_id>`）按层覆盖并由 `card-config --chat-type/--chat-id` 核对生效值与来源（不回显真实 `chat_id`）；非法 `notice_kind` 在配置加载时报错拒绝。
+- 同步识别英文 `Self-improvement review` 与中文 `自我改进回顾` 为 `notice_kind: "self-improvement"`，`hook_runtime` 透传 `chat_type`，后台 detached 回调缺 `chat_type` 时在 sidecar 侧回退到同 `(profile, chat_id)` 已观测会话类型；命中抑制的通知既不发飞书卡片也不回落原生纯文本，不影响 Hermes 后台执行与日志。
+
 ## v5.0.28 — 2026-11-23
 
 - 修复自管理 PM 布局下 `uninstall` 在 `selection_added: false` 成员上先还原受管源码再报错退出的半卸载问题（#540 / PR #543）：新增 `pm_dependency.preflight_remove()` 在 `_restore()` 之前校验 PM runtime、member 归属与移除策略；默认 `uninstall` 继续保守拒绝 `selection_added: false` 并提示升级前改用 `hermes-feishu-card restore`。

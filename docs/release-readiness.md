@@ -2,6 +2,10 @@
 
 ## 当前候选
 
+本分支目标版本为 `5.0.29`，实现 #500（PR #547）按全局 / profile / bot 与 `card.chat_overrides`（`group` / `p2p` / 单群）抑制指定类别系统通知卡（默认 `[]`），同步支持中英文自我改进通知识别与静默不回落原生文本。公开包、完整 CI 和现场验收的证据分别记录在 [发行说明](release-notes-v5.0.29.md) 及 GitHub Release。
+
+## v5.0.28
+
 本分支目标版本为 `5.0.28`，修复 #540（PR #543）中自管理 PM 布局下 `uninstall` 在 `selection_added: false` 成员上先还原受管源码再拒绝依赖移除的问题，保留默认保守拒绝并增加仅限经校验 schema 2 member 的 `--remove-adopted-pm-dependency` 显式释放入口，同时纳入 PR #542 的 Ruff 0.17.6 更新。公开包、完整 CI 和现场验收的证据分别记录在 [发行说明](release-notes-v5.0.28.md) 及 GitHub Release。
 
 ## v5.0.27
