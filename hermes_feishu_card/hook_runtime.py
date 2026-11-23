@@ -308,6 +308,8 @@ class _PinnedPolicyDecision:
 class _LegacyTerminalReplay:
     sequence: int
     marked_as_new: bool
+    duration: float
+    rate: dict[str, Any] | None
     fingerprint: bytes
 
 
@@ -1890,7 +1892,14 @@ def _build_policy_event(
     if identity.legacy_replay:
         if replay is None:
             return None
-        replay_locals = {**event_locals, "_hfc_policy_new_turn": replay.marked_as_new}
+        # A re-entered callback can report a later elapsed time. Rebuild the
+        # original measurements while taking the answer and route from this call.
+        replay_locals = {
+            **event_locals,
+            "_hfc_policy_new_turn": replay.marked_as_new,
+            "_hfc_legacy_terminal_replay": replay,
+            "duration": replay.duration,
+        }
         payload = build_event(event_name, replay_locals, preview=True)
         if payload is None:
             return None
@@ -1899,13 +1908,14 @@ def _build_policy_event(
         payload = build_event(event_name, event_locals)
         if payload is None:
             return None
-    # A rebuilt callback is replayable only if it represents the same wire
-    # event. Keep only its header and digest, never a copy of the response.
+    # Compare the entire reconstructed wire event, including its answer and route.
     fingerprint = sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).digest()
     if identity.legacy_replay:
         return payload if replay is not None and replay.fingerprint == fingerprint else None
     legacy.replay = _LegacyTerminalReplay(
-        payload["sequence"], identity.is_new_turn, fingerprint,
+        sequence=payload["sequence"], marked_as_new=identity.is_new_turn,
+        duration=payload["data"]["duration"], rate=payload["data"].get("rate"),
+        fingerprint=fingerprint,
     )
     return payload
 
@@ -11772,7 +11782,11 @@ def _event_data(
             data["provider"] = provider
         # Preview checks body/media only; the actual terminal payload consumes
         # observations once and is reused by exact staging and transport retries.
-        rate = None if preview else _completion_observed_rate(local_vars)
+        if preview:
+            replay = local_vars.get("_hfc_legacy_terminal_replay")
+            rate = replay.rate if isinstance(replay, _LegacyTerminalReplay) else None
+        else:
+            rate = _completion_observed_rate(local_vars)
         if rate is not None:
             data["rate"] = rate
         delivery_kind = _first_string(local_vars, ("delivery_kind",))

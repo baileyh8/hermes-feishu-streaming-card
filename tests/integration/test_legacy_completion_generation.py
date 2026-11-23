@@ -17,7 +17,7 @@ from hermes_feishu_card.install import patcher
 from hermes_feishu_card.native_handoff import NativeHandoffStore
 from tests.integration.test_issue550_direct_terminal import _long_answer
 from tests.integration.test_reopened_delivery_identity import DeduplicatingClient
-from tests.integration.test_server import TRANSPORT_ROOT_SECRET, FakeFeishuClient
+from tests.integration.test_server import TRANSPORT_ROOT_SECRET, FakeFeishuClient, wait_for_condition
 
 
 @pytest.fixture
@@ -33,9 +33,10 @@ def gateway_runtime(monkeypatch):
 def _generated_completion(renderer):
     namespace = {}
     exec(
-        "async def complete(self, source, event, event_message_id, response, created_at):\n"
-        "    _response_time = 0.0\n"
-        "    agent_result = {}\n"
+        "async def complete(self, source, event, event_message_id, response, created_at, "
+        "_response_time=0.0, agent_result=None):\n"
+        "    if agent_result is None:\n"
+        "        agent_result = {}\n"
         + "".join(renderer("    ", "\n"))
         + "    return response\n",
         namespace,
@@ -52,6 +53,64 @@ def _sidecar_app(transport, directory, **options):
         operations_transport_root_secret=TRANSPORT_ROOT_SECRET,
         event_auth_required=True,
     )
+
+
+@pytest.mark.parametrize("observed_rate", [False, True], ids=["duration", "one-shot-rate"])
+async def test_delivered_completion_replays_original_measurements(
+    tmp_path, gateway_runtime, monkeypatch, observed_rate,
+):
+    transport = DeduplicatingClient()
+    source = SimpleNamespace(platform="feishu", chat_id="oc_abc", thread_id="omt_topic")
+    event = SimpleNamespace()
+    message_id = "om_reused"
+    answer = "Answer confirmed on the original card"
+    start = time.time()
+    wires = []
+
+    @web.middleware
+    async def record(request, handler):
+        if request.path == "/events":
+            wires.append(await request.read())
+        return await handler(request)
+
+    app = _sidecar_app(transport, tmp_path)
+    app.middlewares.insert(0, record)
+    complete = _generated_completion(patcher._render_complete_hook_block)
+    result = {}
+    rate = {"output_tps": 24.0, "basis": "decode"}
+    if observed_rate:
+        observation = iter([(rate, 48)])
+        runtime = SimpleNamespace(take_observed_rate=lambda *_: next(observation, None))
+        monkeypatch.setattr(hook_runtime, "_plugin_runtime", lambda: runtime)
+        result = {"api_calls": 1, "_hfc_observed_rate_scope": {"session_id": "s", "turn_id": "t"}}
+
+    async with TestServer(app) as sidecar:
+        monkeypatch.setenv("HERMES_FEISHU_CARD_EVENT_URL", str(sidecar.make_url("/events")))
+        assert await hook_runtime.emit_from_hermes_locals_async(
+            {"source": source, "event": event, "message_id": message_id, "created_at": start},
+            "message.started",
+        )
+        assert await complete(None, source, event, message_id, answer, start, 0.25, result) is None
+        await wait_for_condition(lambda: answer in str(transport.cards["card-0"]))
+        first = wires[-1]
+        data = json.loads(first)["data"]
+        assert data["duration"] == 0.25
+        assert data.get("rate") == (rate if observed_rate else None)
+        request_count = len(wires)
+        original_creates = list(transport.attempted_uuids)
+        original_updates = list(transport.updated)
+        duration = 0.25 if observed_rate else 0.50
+        assert await complete(None, source, event, message_id, answer, start, duration, result) is None
+        assert wires[request_count:] == [first]
+        assert transport.attempted_uuids == original_creates
+        assert transport.updated == original_updates
+
+        changed = "Revised response on the same event"
+        assert await complete(None, source, event, message_id, changed, start, duration, result) == changed
+        assert len(wires) == request_count + 1
+        assert await complete(None, source, SimpleNamespace(), message_id, answer, start + 1, 0.75) is None
+        assert len(transport.cards) == 2 and all(answer in str(card) for card in transport.cards.values())
+        assert json.loads(wires[-1])["data"]["duration"] == 0.75
 
 
 @pytest.fixture
