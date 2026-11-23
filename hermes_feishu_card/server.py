@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import json
@@ -3622,6 +3622,29 @@ def _policy_decision(
     return decision
 
 
+@asynccontextmanager
+async def _event_owner_lock(app, event):
+    locks = app[MESSAGE_LOCKS_KEY]
+    users = app[MESSAGE_LOCK_USERS_KEY]
+    while True:
+        key = _resolve_session_key(app, event)
+        lock = locks.setdefault(key, asyncio.Lock())
+        users[key] = users.get(key, 0) + 1
+        try:
+            async with lock:
+                # The previous owner may have finished or a new turn may have
+                # claimed the quote while this request waited.
+                if key != _resolve_session_key(app, event):
+                    continue
+                yield
+                return
+        finally:
+            users[key] -= 1
+            if not users[key]:
+                users.pop(key)
+                cleanup_orphan_message_lock(_cleanup_state_for_app(app), key, lock)
+
+
 async def _events(request: web.Request) -> web.Response:
     metrics: SidecarMetrics = request.app[METRICS_KEY]
     if request.app[EVENT_AUTH_REQUIRED_KEY]:
@@ -3680,15 +3703,10 @@ async def _events(request: web.Request) -> web.Response:
         assert fence_claim.kind == "owner" and fence_claim.entry is not None
 
     metrics.events_received += 1
-    message_locks: Dict[str, asyncio.Lock] = request.app[MESSAGE_LOCKS_KEY]
-    lock_users: Dict[str, int] = request.app[MESSAGE_LOCK_USERS_KEY]
-    lock_key = _session_key(event)
-    lock = message_locks.setdefault(lock_key, asyncio.Lock())
-    lock_users[lock_key] = lock_users.get(lock_key, 0) + 1
     response_finalized = False
     cancelled_after_runtime_delivery = False
     try:
-        async with lock:
+        async with _event_owner_lock(request.app, event):
             response, post_lock_task = await _apply_event_locked(request, event)
         if isinstance(post_lock_task, RuntimeInteractionDeliveryReservation):
             completion_task = asyncio.create_task(
@@ -3736,13 +3754,6 @@ async def _events(request: web.Request) -> web.Response:
                 fence.abandon(event.event_id, fence_claim.entry)
             )
         raise
-    finally:
-        remaining_users = lock_users.get(lock_key, 1) - 1
-        if remaining_users > 0:
-            lock_users[lock_key] = remaining_users
-        else:
-            lock_users.pop(lock_key, None)
-            cleanup_orphan_message_lock(_cleanup_state_for_app(request.app), lock_key, lock)
     if post_lock_task is not None and _should_await_card_update(event):
         await post_lock_task
     if _event_is_terminal(event) and post_lock_task is None:
@@ -4313,10 +4324,38 @@ def _active_session_key(app: web.Application, session_key: str) -> str | None:
 
 
 def _resolve_session_key(app: web.Application, event: SidecarEvent) -> str:
-    return resolve_session_key(
-        event, sessions=app[SESSIONS_KEY], aliases=app[SESSION_ALIASES_KEY],
+    direct_key = _session_key(event)
+    sessions = app[SESSIONS_KEY]
+    aliases = app[SESSION_ALIASES_KEY]
+    if not event.turn_id and not event.event_id and event.event in TERMINAL_EVENTS:
+        prior_key = aliases.get(direct_key)
+        prior = sessions.get(prior_key)
+        if (prior is not None and prior.status in {"completed", "failed"}
+                and prior.legacy_terminal_fingerprint
+                and prior.legacy_terminal_fingerprint == _legacy_terminal_fingerprint(event)):
+            return prior_key
+    key = resolve_session_key(
+        event, sessions=sessions, aliases=aliases,
         redirect_aliases=app.get(REDIRECT_SESSION_ALIASES_KEY) or {},
     )
+    if not event.turn_id and key != direct_key:
+        owner = sessions[key]
+        sender = event.data.get("sender_open_id")
+        thread = _thread_id_for_event(event)
+        if (
+            owner.chat_id != event.chat_id
+            or (owner.conversation_id.startswith("omt_") and thread and owner.conversation_id != thread)
+            or (owner.sender_open_id and sender and owner.sender_open_id != sender)
+        ):
+            return direct_key
+    return key
+
+
+def _legacy_terminal_fingerprint(event: SidecarEvent) -> str:
+    try:
+        return _event_id_fingerprint(event)
+    except (TypeError, ValueError):
+        return ""
 
 
 def _register_session_aliases(
@@ -4521,7 +4560,12 @@ async def _apply_event_locked(request, event, *, advance_sequence=True):
         for state_key, value in retained.items():
             if value is not None:
                 app[state_key][key] = value
-    key = _resolve_session_key(request.app, event)
+    current = app[SESSIONS_KEY].get(key)
+    if (key != _session_key(event) and not event.turn_id and not event.event_id
+            and event.event in TERMINAL_EVENTS and current is not None
+            and current.status in {"completed", "failed"} and result[0].status == 200
+            and _json_response_payload(result[0]).get("applied") is True):
+        current.legacy_terminal_fingerprint = _legacy_terminal_fingerprint(event)
     _remember_legacy_owner_receipt(request.app, key)
     profile = _policy_profile_id(event)
     if profile is not None:

@@ -235,9 +235,9 @@ def resolve_session_key(
     aliases: Mapping[str, str], redirect_aliases: Mapping[str, str],
 ) -> str:
     direct_key = session_key(event)
+    if event.event == "message.started":
+        return direct_key
     if event.turn_id:
-        if event.event == "message.started":
-            return direct_key
         redirect_key = redirect_aliases.get(direct_key)
         if redirect_key:
             active_key = active_session_key(sessions, aliases, redirect_key)
@@ -247,14 +247,6 @@ def resolve_session_key(
     active_key = active_session_key(sessions, aliases, direct_key)
     if active_key is not None:
         return active_key
-    # A brand-new user message must ALWAYS start a fresh card, even when
-    # the user replied to (quoted) a previous message. Resolving through
-    # the reply_to alias here would route the new turn into the old card
-    # session and overwrite the previous reply's content. Alias resolution
-    # stays available for in-turn stream events (thinking/answer deltas,
-    # tool updates) whose Hermes-internal message_id may differ.
-    if event.event == "message.started":
-        return direct_key
     if is_independent_notice_event(event):
         # An independent notice only joins a session that is ITSELF a notice session — never the
         # turn's. That distinction is the whole fix, and both halves are load-bearing:

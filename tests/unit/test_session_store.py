@@ -49,10 +49,14 @@ def test_task_presentation_state_is_ephemeral_and_does_not_change_checkpoint_sch
     store = SessionStore(tmp_path)
     value = CardSession('conversation', 'turn', 'chat')
     value.presentation_state = 'reconnecting'
+    value.legacy_terminal_fingerprint = 'a' * 64
     store.save('turn', value, 'om_fixture', None, '', {}, 'fixture_client')
     payload = json.loads(next(store.root.glob('*.json')).read_text())
     assert 'presentation_state' not in payload['record']['session']
-    assert store.load()[0]['session'].presentation_state == ''
+    assert 'legacy_terminal_fingerprint' not in payload['record']['session']
+    restored = store.load()[0]['session']
+    assert restored.presentation_state == ''
+    assert restored.legacy_terminal_fingerprint == ''
 
 
 def test_pre_task_layout_checkpoint_still_loads_with_full_answer(tmp_path):

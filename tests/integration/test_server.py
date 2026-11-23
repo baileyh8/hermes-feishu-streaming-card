@@ -13559,6 +13559,81 @@ async def test_legacy_quoted_reply_without_turn_id_keeps_alias_routing(client):
     assert quote not in test_client.app[SESSIONS_KEY]
 
 
+async def test_legacy_alias_terminal_waits_for_owner_create(client, monkeypatch):
+    http, feishu = client
+    entered, release = asyncio.Event(), asyncio.Event()
+    send_card = feishu.send_card
+
+    async def blocked(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await send_card(*args, **kwargs)
+
+    monkeypatch.setattr(feishu, "send_card", blocked)
+    anchor = {"reply_to_message_id": "om_anchor"}
+    start = asyncio.ensure_future(http.post("/events", json=event_payload(
+        "message.started", 0, anchor, message_id="om_owner")))
+    await asyncio.wait_for(entered.wait(), 2)
+    terminal = asyncio.ensure_future(http.post("/events", json=event_payload(
+        "message.completed", 1, {**anchor, "answer": "final"}, message_id="om_internal")))
+    try:
+        async def admitted():
+            while (not terminal.done()
+                   and http.app[sidecar_server.MESSAGE_LOCK_USERS_KEY].get("om_owner", 0) < 2):
+                await asyncio.sleep(0)
+        await asyncio.wait_for(admitted(), 2)
+    finally:
+        release.set()
+    assert (await start).status == 200
+    response = await terminal
+    assert response.status == 200 and (await response.json())["applied"] is True
+    assert len(feishu.sent) == 1
+    assert http.app[SESSIONS_KEY]["om_owner"].answer_text == "final"
+
+
+async def test_legacy_terminal_exact_retry_and_new_turn_with_same_quote(client):
+    http, feishu = client
+    anchor = {"reply_to_message_id": "om_anchor"}
+    for index in (1, 2):
+        key = f"om_owner_{index}"
+        start = event_payload("message.started", 0, anchor, message_id=key)
+        assert (await http.post("/events", json=start)).status == 200
+        terminal = event_payload("message.completed", 1,
+                                 {**anchor, "answer": f"final {index}"},
+                                 message_id=f"om_internal_{index}")
+        first = await http.post("/events", json=terminal)
+        assert (await first.json())["applied"] is True
+        retry = await http.post("/events", json=terminal)
+        assert retry.status == 200 and (await retry.json())["applied"] is True
+        assert len(feishu.sent) == index
+        assert http.app[SESSIONS_KEY][key].answer_text == f"final {index}"
+
+
+@pytest.mark.parametrize("boundary", ["chat", "thread", "sender", "profile", "turn", "new_start"])
+async def test_legacy_quote_cannot_replace_an_independent_owner(client, boundary):
+    http, feishu = client
+    anchor = {"reply_to_message_id": "om_shared", "profile_id": "work",
+              "sender_open_id": "ou_" + "a" * 32}
+    await http.post("/events", json=event_payload(
+        "message.started", 0, anchor, message_id="om_original", conversation_id="omt_a"))
+    other = {**anchor, "answer": "second"}
+    if boundary == "sender":
+        other["sender_open_id"] = "ou_" + "b" * 32
+    elif boundary == "profile":
+        other["profile_id"] = "personal"
+    response = await http.post("/events", json=event_payload(
+        "message.started" if boundary == "new_start" else "message.completed", 1, other,
+        conversation_id="omt_b" if boundary == "thread" else "omt_a",
+        message_id="om_shared", chat_id="oc_else" if boundary == "chat" else "oc_abc",
+        turn_id="om_separate" if boundary == "turn" else ""))
+    assert response.status == 200
+    assert len(feishu.sent) == 2
+    original = http.app[SESSIONS_KEY]["work:om_original"]
+    assert "second" not in original.answer_text
+    if boundary in {"chat", "sender", "profile"}:
+        assert original.answer_text == ""
+
+
 async def test_shared_alias_cleanup_preserves_new_canonical_owner(client):
     test_client, _feishu_client = client
     quote = "om_shared_cleanup_quote"
