@@ -110,6 +110,44 @@ async def test_confirmed_update_survives_replacement_and_restart(tmp_path, segme
         assert transport.io_counts() == writes
 
 
+async def test_unmarked_completion_after_lost_checkpoint_delivers_before_remembering(tmp_path, monkeypatch):
+    transport = RecordingTransport()
+    start = time.time()
+    old = _event("message.completed", 1, start, answer="First complete answer",
+                 native_handoff={"generation": "a" * 32})
+    new = _terminal(start + 1, "Replacement answer", native_handoff={"generation": "b" * 32})
+
+    def reject_checkpoint(*args, **kwargs):
+        raise PermissionError("checkpoint is read-only")
+
+    async with TestClient(TestServer(_with_store(transport, tmp_path))) as client:
+        store = client.app[server.SESSION_STORE_KEY]
+        monkeypatch.setattr(store, "_write_record", reject_checkpoint)
+        assert await _post_event(client, _event("message.started", 0, start)) == DELIVERED
+        assert client.app[server.DIAGNOSTICS_KEY]["card_checkpoint_failures"] > 0
+        assert not store.load()
+        placeholder = copy.deepcopy(transport.cards["card-0"])
+
+    async with TestClient(TestServer(_with_store(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        assert not client.app[server.SESSIONS_KEY]
+        assert await _post_event(client, old) == DELIVERED
+        assert transport.attempted_uuids[0] != transport.attempted_uuids[1]
+        assert "First complete answer" in str(transport.cards["card-1"])
+        assert await _post_event(client, new) == DELIVERED
+        assert "Replacement answer" in str(transport.cards["card-2"])
+        writes = transport.io_counts()
+        assert await _post_event(client, old) == DELIVERED
+        assert transport.io_counts() == writes
+
+    async with TestClient(TestServer(_with_store(transport, tmp_path))) as client:
+        await client.app[server.SESSION_RESTORE_TASK_KEY]
+        writes = transport.io_counts()
+        assert await _post_event(client, old) == DELIVERED
+        assert transport.io_counts() == writes
+        assert transport.cards["card-0"] == placeholder
+
+
 async def test_partly_delivered_segmented_update_does_not_confirm_full_body(tmp_path, monkeypatch):
     transport = RecordingTransport()
     start = time.time()

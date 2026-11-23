@@ -5244,17 +5244,19 @@ async def _apply_event_locked_inner(
                 request.app,
                 handoff_identity,
             )
-    # Without a display owner, a reused legacy message ID can refer to an
-    # earlier card still in Feishu's UUID cache. Only the exact marked terminal
-    # should reuse this create, including after a lost ACK or restart.
+    # After checkpoint loss Feishu may still have the start card's UUID.
+    # A cold terminal create must identify the final payload even when the
+    # producer observed the start and therefore omitted the new-turn marker.
     reopen_delivery_key = ""
     if starts_after_legacy_handoff or (
-        session is None and incoming_event.data.get("policy_new_turn") is True
-        and _is_legacy_chat_terminal(incoming_event)
+        session is None and incoming_event.event in TERMINAL_EVENTS
+        and _delivery_kind(incoming_event) in {"", "chat"}
     ):
         create_fingerprint = terminal_fingerprint or _legacy_terminal_fingerprint(incoming_event)
-        if create_fingerprint:
-            reopen_delivery_key = f"{session_key}:terminal:{create_fingerprint}"
+        if not create_fingerprint:
+            metrics.events_rejected += 1
+            return web.json_response({"ok": False, "error": "event payload is not canonicalizable"}, status=400), None
+        reopen_delivery_key = f"{session_key}:terminal:{create_fingerprint}"
     reopen_predecessor = None
     if reopens_completed_session:
         # A completed topic session can share the next turn's message id. A

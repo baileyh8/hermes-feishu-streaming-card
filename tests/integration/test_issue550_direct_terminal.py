@@ -414,3 +414,31 @@ async def test_marked_direct_terminal_without_checkpoint_keeps_its_own_delivery_
     assert len(transport.cards) == 2
     first_uuid, new_uuid, retry_uuid = transport.attempted_uuids
     assert first_uuid != new_uuid == retry_uuid
+
+
+@pytest.mark.parametrize("turn_id", ["", "turn-explicit"])
+@pytest.mark.parametrize(("kind", "field"), [("message.completed", "answer"), ("message.failed", "error")])
+async def test_cold_unmarked_terminal_reuses_only_its_own_create(tmp_path, turn_id, kind, field):
+    transport = DeduplicatingClient()
+    at = time.time()
+    started = event_payload("message.started", 0, turn_id=turn_id, created_at=at)
+    terminal = event_payload(kind, 1, {field: "Final result"}, turn_id=turn_id, created_at=at + 1)
+    for index, payload in enumerate((started, terminal, terminal)):
+        async with TestClient(TestServer(_app(transport, tmp_path / str(index)))) as client:
+            await client.app[server.SESSION_RESTORE_TASK_KEY]
+            assert await _post(client, payload) == _DELIVERED
+    placeholder_uuid, terminal_uuid, retry_uuid = transport.attempted_uuids
+    assert placeholder_uuid != terminal_uuid == retry_uuid
+    assert "Final result" not in str(transport.cards["card-0"])
+    assert "Final result" in str(transport.cards["card-1"])
+    assert len(transport.cards) == 2
+
+
+async def test_cold_terminal_without_a_fingerprint_cannot_claim_a_create(tmp_path):
+    transport = DeduplicatingClient()
+    event = event_payload("message.completed", 1, {"answer": "Unsuitable payload", "metric": float("nan")})
+    async with TestClient(TestServer(_app(transport, tmp_path))) as client:
+        response = await client.post("/events", json=event)
+        assert response.status == 400
+        assert await response.json() == {"ok": False, "error": "event payload is not canonicalizable"}
+        assert not transport.attempted_uuids
