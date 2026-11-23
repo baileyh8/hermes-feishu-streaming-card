@@ -14,6 +14,7 @@ NO_REPAIR="${HFC_NO_REPAIR:-}"
 PYTHON_BIN="${HFC_PYTHON:-}"
 PIP_USER_FLAG="${HFC_PIP_USER-}"
 PM_MANAGEMENT_DIR=""
+PM_MANAGEMENT_INSPECTOR=""
 
 log() {
   printf '[hermes-feishu-card] %s\n' "$*"
@@ -222,14 +223,12 @@ prompt_credentials() {
 prepare_pm_management() {
   # Setup validates the old observer's owned wheel before PM admits its replacement.
   # Keep the CLI usable independently of PM, including when a generation is missing.
-  local base_python="${PYTHON_BIN:-${PYTHON:-python3}}"
-  have "$base_python" || fail "$base_python was not found. Install Python 3.9+ first."
-  PM_MANAGEMENT_DIR="$("$base_python" -I -B -c '
+  PM_MANAGEMENT_INSPECTOR="$1"
+  shift
+  PM_MANAGEMENT_DIR="$("$PM_MANAGEMENT_INSPECTOR" -I -B -S -c '
 import os, stat, sys
 from pathlib import Path
 
-if sys.version_info < (3, 9):
-    raise SystemExit("The HFC management CLI requires Python 3.9+.")
 state = Path(sys.argv[1]).resolve(strict=True) / ".hermes_feishu_card"
 management = state / "management"
 for directory in (state, management):
@@ -241,38 +240,166 @@ for directory in (state, management):
 print(management)
 ' "$HERMES_HOME_DIR")" || fail "could not prepare the PM management directory"
 
-  # The original directory descriptor stays open in Bash until setup exits.
+  # Bash keeps the locked directory descriptor open through setup.
   exec 9<"$PM_MANAGEMENT_DIR"
-  "$base_python" -I -B -c '
-import fcntl, os, stat, sys, venv
+  pm_management_venv lock || fail "could not lock the PM management directory"
+  trap 'rollback_pm_management "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  pm_management_venv prepare "$@" || fail "could not prepare the PM management Python"
+  PYTHON_BIN="$PM_MANAGEMENT_DIR/venv/bin/python"
+}
+
+pm_management_venv() {
+  "$PM_MANAGEMENT_INSPECTOR" -I -B -S -c '
+import errno, fcntl, os, stat, subprocess, sys, tempfile
 from pathlib import Path
 
-directory = Path(sys.argv[1])
-metadata = directory.lstat()
+directory, action = Path(sys.argv[1]), sys.argv[2]
+target = directory / "venv"
+previous = directory / ".venv-before-rebuild"
+
+
+def owned_directory(path, mask=0o077):
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
+            or metadata.st_mode & mask):
+        raise SystemExit("The HFC management venv must be private and owned by the current user.")
+    return metadata
+
+
+def owned_venv(path):
+    if owned_directory(path) is None:
+        return False
+    config = path / "pyvenv.cfg"
+    try:
+        metadata = config.lstat()
+    except FileNotFoundError:
+        # A failed older installer can leave an empty or partly provisioned venv.
+        if set(os.listdir(path)) - {"include", "lib", "lib64", "bin", ".gitignore"}:
+            raise SystemExit("The HFC management venv ownership could not be verified.")
+    else:
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or metadata.st_mode & 0o022 or metadata.st_nlink != 1):
+            raise SystemExit("The HFC management venv ownership could not be verified.")
+    if owned_directory(path / "bin", mask=0o022) is not None:
+        try:
+            launcher = (path / "bin" / "python").lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if (launcher.st_uid != os.getuid() or not (
+                    stat.S_ISLNK(launcher.st_mode) or
+                    stat.S_ISREG(launcher.st_mode) and not launcher.st_mode & 0o022)):
+                raise SystemExit("The HFC management Python ownership could not be verified.")
+    return True
+
+
+def move(source, destination):
+    os.rename(source.relative_to(directory), destination.relative_to(directory),
+              src_dir_fd=9, dst_dir_fd=9)
+
+
+def discard(path, restore=False):
+    # Move the directory out of the live names before any recursive cleanup.
+    with tempfile.TemporaryDirectory(prefix=".venv-cleanup-", dir=directory) as scratch:
+        move(path, Path(scratch) / "venv")
+        if restore:
+            move(previous, target)
+
+
+def rollback():
+    if owned_venv(previous):
+        if owned_venv(target):
+            discard(target, restore=True)
+        else:
+            move(previous, target)
+
+
+def probe(python, code, *, without_site=False):
+    options = ["-I", "-B"]
+    if without_site:
+        options.append("-S")
+    try:
+        result = subprocess.run([python, *options, "-c", code],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, timeout=10)
+    except FileNotFoundError:
+        return None
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        if without_site and (isinstance(exc, subprocess.TimeoutExpired)
+                             or exc.errno in (errno.EACCES, errno.ENOEXEC)):
+            return None
+        raise
+    return result.stdout.rstrip("\n") if result.returncode == 0 else None
+
+
+def runnable(path):
+    code = """import sys
+if sys.version_info >= (3, 9) and sys.prefix != sys.base_prefix:
+    print(sys.prefix)
+"""
+    return probe(path / "bin/python", code) == str(path)
+
+
+def select_base(candidates):
+    code = """import sys, venv
+if sys.version_info >= (3, 9):
+    print(sys._base_executable)
+"""
+    for candidate in dict.fromkeys(filter(None, candidates)):
+        base = probe(candidate, code, without_site=True)
+        if (base and Path(base).is_absolute() and target not in Path(base).parents
+                and probe(base, code, without_site=True) == base):
+            return base
+    raise SystemExit("A working Python 3.9+ is required to build the HFC management venv.")
+
+
 opened = os.fstat(9)
-if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
-        or metadata.st_mode & 0o077
+metadata = owned_directory(directory)
+if (owned_directory(directory.parent) is None or metadata is None
         or (metadata.st_dev, metadata.st_ino) != (opened.st_dev, opened.st_ino)):
     raise SystemExit("The HFC management directory changed.")
-try:
-    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    raise SystemExit("Another HFC installer is using this Hermes HOME.") from None
+if action == "lock":
+    try:
+        fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit("Another HFC installer is using this Hermes HOME.") from None
+elif action == "rollback":
+    rollback()
+elif action == "commit":
+    if owned_venv(previous):
+        discard(previous)
+elif action == "prepare":
+    # A previous installer may have exited before its rollback could run.
+    rollback()
+    existing = owned_venv(target)
+    if not existing or not runnable(target):
+        base = select_base(sys.argv[3:])
+        if existing:
+            move(target, previous)
+        os.umask(0o077)
+        target.mkdir(mode=0o700)
+        try:
+            # Use native POSIX venv symlinks, including for dynamically linked macOS Python.
+            subprocess.run([base, "-I", "-B", "-S", "-m", "venv", "--without-pip", target], check=True)
+            if not runnable(target):
+                raise SystemExit("The replacement HFC management Python is not usable.")
+        except (OSError, subprocess.SubprocessError, SystemExit):
+            if not existing:
+                discard(target)
+            raise
+' "$PM_MANAGEMENT_DIR" "$@"
+}
 
-target = directory / "venv"
-target.mkdir(mode=0o700, exist_ok=True)
-metadata = target.lstat()
-if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid()
-        or metadata.st_mode & 0o077):
-    raise SystemExit("The HFC management venv must be private and owned by the current user.")
-if not os.access(target / "bin" / "python", os.X_OK):
-    # Match the POSIX venv CLI. Relocating a copy of a dynamically linked
-    # Python can break its library search path, including on macOS.
-    venv.EnvBuilder(symlinks=True).create(target)
-' "$PM_MANAGEMENT_DIR" || fail "could not prepare the PM management Python"
-  PYTHON_BIN="$PM_MANAGEMENT_DIR/venv/bin/python"
-  run_python -c 'import sys; from pathlib import Path; raise SystemExit(Path(sys.prefix).resolve() != Path(sys.argv[1]))' \
-    "$PM_MANAGEMENT_DIR/venv" || fail "could not verify the PM management Python"
+rollback_pm_management() {
+  local previous_exit="$1"
+  trap - EXIT
+  pm_management_venv rollback || fail "could not restore the previous PM management venv"
+  exit "$previous_exit"
 }
 
 detect_legacy_python() {
@@ -280,16 +407,8 @@ detect_legacy_python() {
     [ -x "$PYTHON_BIN" ] || fail "HFC_PYTHON is not executable: $PYTHON_BIN"
     return
   fi
-  local candidates=(
-    "$HERMES_DIR/venv/bin/python"
-    "$HERMES_DIR/venv/bin/python3"
-    "$HERMES_DIR/.venv/bin/python"
-    "$HERMES_DIR/.venv/bin/python3"
-    "$HERMES_DIR/gateway/.venv/bin/python"
-    "$HERMES_DIR/gateway/venv/bin/python"
-  )
   local candidate
-  for candidate in "${candidates[@]}"; do
+  for candidate in "$@"; do
     if [ -x "$candidate" ]; then
       PYTHON_BIN="$candidate"
       return
@@ -298,16 +417,8 @@ detect_legacy_python() {
   PYTHON_BIN="${PYTHON:-python3}"
 }
 
-detect_python() {
-  local inspector
-  local kind
-  inspector="$(command -v python3 2>/dev/null || true)"
-  if [ -z "$inspector" ]; then
-    # The platform Python is normally available; fall back to the explicit
-    # override or checkout interpreter for this stdlib-only probe.
-    inspector="$(detect_legacy_python; printf '%s' "$PYTHON_BIN")"
-  fi
-  kind="$("$inspector" -I -B -S -c '
+inspect_hermes_layout() {
+  "$1" -I -B -S -c '
 import stat, sys
 from pathlib import Path
 
@@ -315,16 +426,41 @@ try:
     metadata = (Path(sys.argv[1]) / "pm" / "environments.py").lstat()
 except FileNotFoundError:
     print("legacy")
+except OSError:
+    print("blocked")
 else:
-    if not stat.S_ISREG(metadata.st_mode):
-        raise SystemExit("Hermes PM environment module is not a regular file.")
-    print("pm")
-' "$HERMES_DIR")" || fail "could not inspect the Hermes PM environment module"
-  case "$kind" in
-    pm) prepare_pm_management ;;
-    legacy) detect_legacy_python ;;
-    *) fail "could not detect the Hermes install layout" ;;
-  esac
+    print("pm" if stat.S_ISREG(metadata.st_mode) else "blocked")
+' "$HERMES_DIR"
+}
+
+detect_python() {
+  local candidates=(
+    "$HERMES_DIR/venv/bin/python"
+    "$HERMES_DIR/venv/bin/python3"
+    "$HERMES_DIR/.venv/bin/python"
+    "$HERMES_DIR/.venv/bin/python3"
+    "$HERMES_DIR/gateway/.venv/bin/python"
+    "$HERMES_DIR/gateway/venv/bin/python"
+  )
+  local inspector kind alternative
+  local fallbacks=("$PYTHON_BIN" "${candidates[@]}" "${PYTHON:-}" python)
+  # A launcher on PATH can exist even when the Python it calls is unavailable.
+  while IFS= read -r alternative; do
+    fallbacks+=("$alternative")
+  done < <(type -ap python3)
+  for inspector in python3 "${fallbacks[@]}"; do
+    [ -n "$inspector" ] && have "$inspector" || continue
+    kind="$(inspect_hermes_layout "$inspector" 2>/dev/null)" || continue
+    case "$kind" in
+      pm)
+        prepare_pm_management "$inspector" "$PYTHON_BIN" "${PYTHON:-}" "$inspector" "${fallbacks[@]}"
+        return
+        ;;
+      legacy) detect_legacy_python "${candidates[@]}"; return ;;
+      blocked) break ;;
+    esac
+  done
+  fail "could not inspect the Hermes PM environment module"
 }
 
 run_python() {
@@ -389,6 +525,8 @@ if not spec or not re.fullmatch(re.escape(source) + r"@(?:[0-9a-f]{40}|[0-9a-f]{
 print(requested if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", ref) else spec)
 ' "$spec")" || fail "could not pin the HFC runtime wheel source"
     export HFC_INSTALL_SPEC
+    pm_management_venv commit || fail "could not finalize the PM management venv"
+    trap - EXIT INT TERM
     printf '[hermes-feishu-card] management CLI: %q -I -m hermes_feishu_card.cli\n' "$PYTHON_BIN"
     return
   fi
@@ -456,6 +594,36 @@ run_setup() {
   run_python "${setup_args[@]}"
 }
 
+absolute_status_path() {
+  case "$2" in
+    /*) printf '%s' "$2" ;;
+    *) printf '%s/%s' "${1%/}" "$2" ;;
+  esac
+}
+
+print_status_command() {
+  local cwd python="$PYTHON_BIN"
+  cwd="$(pwd -P)"
+  case "$python" in
+    */*) python="$(absolute_status_path "$cwd" "$python")" ;;
+  esac
+  local command=("$python")
+  if [ -n "$PM_MANAGEMENT_DIR" ]; then
+    command+=(-I)
+  fi
+  # Prefix the current directory without folding symlinks or parent components.
+  command+=(-m hermes_feishu_card.cli status
+    --config "$(absolute_status_path "$cwd" "$CONFIG_PATH")"
+    --env-file "$(absolute_status_path "$cwd" "$ENV_FILE")")
+  if [ -n "$PM_MANAGEMENT_DIR" ]; then
+    command+=(--hermes-dir "$(absolute_status_path "$cwd" "$HERMES_DIR")"
+      --hermes-home "$(absolute_status_path "$cwd" "$HERMES_HOME_DIR")")
+  fi
+  printf '[hermes-feishu-card] status:'
+  printf ' %q' "${command[@]}"
+  printf '\n'
+}
+
 main() {
   parse_args "$@"
   if [ -z "$ENV_FILE" ]; then
@@ -505,12 +673,7 @@ main() {
   run_setup
 
   log "done"
-  if [ -n "$PM_MANAGEMENT_DIR" ]; then
-    printf '[hermes-feishu-card] status: %q -I -m hermes_feishu_card.cli status --config %q --env-file %q --hermes-dir %q --hermes-home %q\n' \
-      "$PYTHON_BIN" "$CONFIG_PATH" "$ENV_FILE" "$HERMES_DIR" "$HERMES_HOME_DIR"
-  else
-    log "status: $PYTHON_BIN -m hermes_feishu_card.cli status --config \"$CONFIG_PATH\""
-  fi
+  print_status_command
 }
 
 main "$@"
