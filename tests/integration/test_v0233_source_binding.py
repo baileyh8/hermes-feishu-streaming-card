@@ -7,15 +7,20 @@ sources and never mutate the pinned checkout.
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+import builtins
+from contextlib import contextmanager, suppress
 import dataclasses
+from datetime import datetime
+from functools import partial
 import hashlib
+import logging
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-from types import ModuleType
+import threading
+from types import FunctionType, ModuleType, SimpleNamespace
 
 import pytest
 
@@ -26,6 +31,7 @@ from hermes_feishu_card.install.source_layout import (
     DECOMPOSED_SOURCE_TARGETS,
     read_peer_contract_sources,
 )
+from tests.integration.test_issue_500_notice_suppression import notice_path as notice_path
 
 ENV_0232 = "HFC_UPSTREAM_0232_ROOT"
 ENV_0233 = "HFC_UPSTREAM_0233_ROOT"
@@ -207,7 +213,7 @@ def test_v0233_cohort_and_store_signature_contracts():
 def test_v0233_loaded_admission_verifies_persistence_bindings(tmp_path, monkeypatch):
     from hermes_feishu_card import admission_completion, admission_topology_0226 as topology
     from hermes_feishu_card.install import decomposed_ownership
-    from test_v0230_admission_sources import _build_modules
+    from tests.integration.test_v0230_admission_sources import _build_modules
 
     root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
     copy = tmp_path / "installed"
@@ -305,6 +311,337 @@ class _Box:
         self.__dict__.update(values)
 
 
+def _pinned_notice_functions(root, module, owner, functions):
+    from tests.integration.test_v0230_admission_sources import _compiled_code
+
+    path = root / (module.__name__.replace(".", "/") + ".py")
+    compiled = compile(path.read_bytes(), str(path), "exec", dont_inherit=True)
+    module.__dict__.setdefault("__builtins__", vars(builtins))
+    return {
+        name: FunctionType(_compiled_code(compiled, name, owner), vars(module), name, defaults)
+        for name, defaults in functions.items()
+    }
+
+
+@pytest.mark.parametrize("entry", ["base_send", "edit"])
+@pytest.mark.parametrize("template", [
+    '✅ Background task complete\nPrompt: "Synthetic task"\n\nBody.',
+    '🔄 Background task started: "Synthetic task"\nTask ID: bg_123456_abcdef\n'
+    'You can keep chatting — results will appear when done.',
+    "❌ Background task bg_123456_abcdef failed: synthetic failure",
+])
+async def test_pinned_v0233_ordinary_background_template_is_not_a_notice(
+    notice_path, monkeypatch, entry, template,
+):
+    from hermes_feishu_card import hook_runtime
+
+    root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
+    source = SimpleNamespace(platform="feishu", chat_id="oc_group_1", chat_type="group", thread_id="omt_topic")
+    adapter = notice_path.adapter
+    runner = SimpleNamespace(adapters={"feishu": adapter})
+    assert hook_runtime.install_feishu_command_card_adapter_methods(
+        runner, event=SimpleNamespace(source=source, message_id="om_current"),
+    )
+    with _isolated_hermes_modules(root):
+        from gateway.platforms.base import BasePlatformAdapter
+        from hermes_cli.observability import shared_metrics_gateway
+
+        monkeypatch.setattr(shared_metrics_gateway, "_submit", lambda *args, **kwargs: None)
+        if entry == "base_send":
+            metadata = {"thread_id": source.thread_id}
+            result = await BasePlatformAdapter._send_with_retry(
+                adapter, source.chat_id, template, reply_to="om_current", metadata=metadata,
+            )
+            assert adapter.sent == [(source.chat_id, template, "om_current", metadata)]
+            assert adapter.edited == []
+        else:
+            result = await adapter.edit_message(source.chat_id, "om_existing", template, finalize=True)
+            assert adapter.sent == []
+            assert adapter.edited == [(source.chat_id, "om_existing", template, True)]
+    assert result.success is True
+    assert notice_path.notices == []
+    assert notice_path.feishu.sent == notice_path.feishu.updated == []
+
+
+@pytest.mark.parametrize("suppressed", [True, False])
+async def test_pinned_v0233_background_start_uses_the_real_base_reply(notice_path, monkeypatch, suppressed):
+    from hermes_feishu_card import hook_runtime
+
+    root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
+    chat_id = "oc_group_1" if suppressed else "oc_group_allow"
+    source = SimpleNamespace(platform="feishu", chat_id=chat_id, chat_type="group", thread_id="omt_bg")
+    event = SimpleNamespace(
+        source=source, message_id="om_bg_request", text="/bg Check the release",
+        get_command=lambda: "bg", get_command_args=lambda: "Check the release", media_urls=[], media_types=[],
+    )
+    adapter = notice_path.adapter
+    with _isolated_hermes_modules(root):
+        from agent.i18n import t
+        from gateway.platforms import base
+        from hermes_cli.observability import shared_metrics_gateway
+
+        monkeypatch.setattr(shared_metrics_gateway, "_submit", lambda *args, **kwargs: None)
+        commands = ModuleType("gateway.slash_commands")
+        commands.__dict__.update(datetime=datetime, os=os, t=partial(t, lang="en"))
+        commands.__dict__.update(_pinned_notice_functions(root, commands, None, {"_preview": (60,)}))
+        monkeypatch.setitem(sys.modules, commands.__name__, commands)
+        runner_type = type("Gateway", (), _pinned_notice_functions(
+            root, commands, "GatewaySlashCommandsMixin", {"_handle_background_command": None},
+        ))
+        runner = runner_type()
+        runner.adapters = {"feishu": adapter}
+        runner._reply_anchor_for_event = base._reply_anchor_for_event
+        launches = []
+        runner._run_background_task = lambda *args, **kwargs: launches.append((args, kwargs))
+        runner._track_background_task = lambda _coro: None
+
+        adapter_type = type(adapter)
+        adapter_type._dispatch_inline_reply = base.BasePlatformAdapter._dispatch_inline_reply
+        adapter_type._send_with_retry = base.BasePlatformAdapter._send_with_retry
+        adapter._unwrap_ephemeral = lambda response: (response, 0)
+        assert hook_runtime.install_feishu_command_card_adapter_methods(runner, event=event)
+        adapter._message_handler = runner._handle_background_command
+        await adapter._dispatch_inline_reply(event)
+
+        # Calling the real producer outside Base must give no delivery proof to
+        # a later reply, even if the later reply is byte-for-byte identical.
+        template = await runner._handle_background_command(event)
+        adapter._message_handler = lambda _event: asyncio.sleep(0, result=template)
+        await adapter._dispatch_inline_reply(event)
+
+    assert len(launches) == 2
+    [notice] = notice_path.notices
+    assert notice["message_id"] == "om_bg_request"
+    assert notice["thread_id"] == "omt_bg"
+    assert notice["data"]["notice_kind"] == "background-task"
+    assert notice["data"]["notice_terminal"] is False
+    assert notice["data"]["notice_id"] == "background-task:" + launches[0][0][2]
+    assert len(notice_path.feishu.sent) == int(not suppressed)
+    [(native_chat, native_content, _, _)] = adapter.sent
+    assert (native_chat, native_content) == (chat_id, template)
+
+
+async def test_pinned_v0233_traditional_chinese_review_uses_real_callback(notice_path, monkeypatch):
+    from hermes_feishu_card import hook_runtime
+
+    root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
+    adapter = notice_path.adapter
+    source = SimpleNamespace(platform="feishu", chat_id="oc_group_1", chat_type="group", thread_id="omt_review")
+    with _isolated_hermes_modules(root):
+        from agent import async_utils
+        from agent.i18n import t
+        from gateway.platforms.base import Platform
+
+        gateway = ModuleType("gateway.run")
+        gateway.GatewayRunner = type("GatewayRunner", (), {})
+        gateway.safe_schedule_threadsafe = async_utils.safe_schedule_threadsafe
+        gateway._interim_metadata = lambda metadata: {**metadata, "_interim_send": True}
+        gateway._non_conversational_metadata = lambda metadata, **kwargs: metadata
+        monkeypatch.setitem(sys.modules, gateway.__name__, gateway)
+        runner = gateway.GatewayRunner()
+        runner.adapters = {"feishu": adapter}
+        assert hook_runtime.install_feishu_command_card_adapter_methods(runner)
+
+        progress = ModuleType("gateway.run_turn_progress")
+        progress.logger = logging.getLogger("test.review")
+        monkeypatch.setitem(sys.modules, progress.__name__, progress)
+        progress_methods = _pinned_notice_functions(root, progress, "GatewayTurnProgressMixin", {
+            "_schedule": (None,), "_send_status_text": None, "_status_live": None,
+        })
+        turn = ModuleType("gateway.run_turn_runner")
+        turn.__dict__.update(threading=threading, Platform=Platform)
+        monkeypatch.setitem(sys.modules, turn.__name__, turn)
+        turn_methods = _pinned_notice_functions(root, turn, "TurnRunner", {"_make_bg_review_callbacks": None})
+        turn_runner = type("TestTurn", (), {**progress_methods, **turn_methods})()
+        turn_runner._approval_owner = None
+        turn_runner._ctx = SimpleNamespace(
+            source=source, _status_adapter=adapter, _status_chat_id=source.chat_id,
+            _status_thread_metadata={"thread_id": source.thread_id},
+            _loop_for_step=asyncio.get_running_loop(), _run_still_current=lambda: True,
+        )
+        review = ModuleType("agent.background_review")
+        review.__dict__.update(t=partial(t, lang="zh-hant"), suppress=suppress)
+        publish = _pinned_notice_functions(root, review, None, {"_publish_review_summary": None})
+        futures = []
+        schedule = asyncio.run_coroutine_threadsafe
+
+        def record_schedule(coro, loop):
+            future = schedule(coro, loop)
+            futures.append(future)
+            return future
+
+        monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", record_schedule)
+        send, release = turn_runner._make_bg_review_callbacks()
+        agent = SimpleNamespace(background_review_callback=send, _safe_print=lambda _text: None)
+        await asyncio.to_thread(publish["_publish_review_summary"], agent, ["已儲存記憶"])
+        assert futures == []
+        release()
+        [future] = futures
+        assert (await asyncio.wrap_future(future)).success is True
+
+    [notice] = notice_path.notices
+    assert notice["data"]["notice_kind"] == "self-improvement"
+    assert notice["data"]["content"] == "💾 自我改進檢閱：已儲存記憶"
+    assert notice["thread_id"] == "omt_review"
+    assert adapter.sent == notice_path.feishu.sent == []
+
+
+@pytest.mark.parametrize("suppressed", [True, False])
+async def test_pinned_v0233_background_worker_delivers_its_own_result(notice_path, monkeypatch, suppressed):
+    from hermes_feishu_card import hook_runtime
+
+    root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
+    chat_id = "oc_group_1" if suppressed else "oc_group_allow"
+    source = SimpleNamespace(platform="feishu", chat_id=chat_id, chat_type="group", thread_id="omt_bg")
+    adapter = notice_path.adapter
+    with _isolated_hermes_modules(root):
+        from agent.i18n import t
+        from gateway.run_background import GatewayBackgroundMixin
+
+        class Gateway(GatewayBackgroundMixin):
+            adapters = {"feishu": adapter}
+            _provider_routing = {}
+
+            def _delivery_adapter_for(self, target):
+                assert target is source
+                return adapter
+
+            def _thread_metadata_for_source(self, target, message_id):
+                return {"thread_id": target.thread_id, "reply_to_message_id": message_id}
+
+            def _resolve_session_agent_runtime(self, **kwargs):
+                return "fixture", {"api_key": "synthetic"}
+
+            def _resolve_turn_toolsets(self, *args):
+                return [], []
+
+            def _resolve_session_reasoning_config(self, **kwargs):
+                return None
+
+            def _resolve_session_service_tier(self, source):
+                return None
+
+            def _resolve_turn_agent_config(self, *args, **kwargs):
+                return {}
+
+            async def _run_in_executor_with_context(self, _agent_run):
+                return {"final_response": ""}
+
+        gateway_module = ModuleType("gateway.run")
+        gateway_module._load_gateway_config = dict
+        gateway_module._checkpoint_agent_kwargs = lambda _cfg: {}
+        gateway_module._current_max_iterations = lambda: 1
+        gateway_module._platform_config_key = lambda platform: platform
+        monkeypatch.setitem(sys.modules, gateway_module.__name__, gateway_module)
+        agent_module = ModuleType("run_agent")
+        agent_module.AIAgent = object
+        monkeypatch.setitem(sys.modules, agent_module.__name__, agent_module)
+        monkeypatch.setattr(sys.modules["gateway.run_background"], "t", partial(t, lang="en"))
+        runner = Gateway()
+        assert hook_runtime.install_feishu_command_card_adapter_methods(runner)
+        await runner._run_background_task_inner("Check the release", source, "bg_123456_abcdef", "om_bg")
+
+    [notice] = notice_path.notices
+    assert notice["data"]["content"] == '✅ Background task complete\nPrompt: "Check the release"\n\n(No response generated)'
+    assert notice["data"]["notice_kind"] == "background-task"
+    assert notice["data"]["notice_terminal"] is True
+    assert notice["data"]["reply_to_message_id"] == "om_bg"
+    assert notice["thread_id"] == "omt_bg"
+    assert len(notice_path.feishu.sent) == int(not suppressed)
+    assert adapter.sent == []
+
+
+async def test_pinned_v0233_process_watcher_keeps_native_text_and_success_recall(notice_path, monkeypatch):
+    from hermes_feishu_card import hook_runtime
+
+    root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
+    adapter = notice_path.adapter
+    adapter._app_id = "synthetic-app"
+    source = SimpleNamespace(platform="feishu", chat_id="oc_group_1", chat_type="group", thread_id="omt_process")
+    recalled = []
+
+    async def record_recall(message_id, **kwargs):
+        recalled.append((message_id, kwargs))
+        return True
+
+    monkeypatch.setattr(hook_runtime, "schedule_message_recall_async", record_recall)
+    with _isolated_hermes_modules(root):
+        from agent.i18n import t
+        from gateway.run_notifications import GatewayNotificationsMixin
+
+        class Gateway(GatewayNotificationsMixin):
+            adapters = {"feishu": adapter}
+
+            def _build_process_event_source(self, watcher):
+                return source
+
+            def _resolve_injection_adapter(self, platform_name, target):
+                return adapter
+
+        gateway_module = ModuleType("gateway.run")
+        gateway_module.t = partial(t, lang="en")
+        gateway_module._non_conversational_metadata = lambda metadata, **kwargs: metadata
+        gateway_module.__dict__.update(_pinned_notice_functions(root, gateway_module, None, {
+            "_format_concise_process_notification": (None,), "_shorten_command_for_display": (80,),
+        }))
+        monkeypatch.setitem(sys.modules, gateway_module.__name__, gateway_module)
+        gateway = Gateway()
+        assert hook_runtime.install_feishu_command_card_adapter_methods(gateway)
+        success = gateway_module._format_concise_process_notification("proc_111111111111", "test", 0, "", 6)
+        full = t("gateway.background.final_output", lang="en", header=success, output="recorded output")
+        for text in (success, full):
+            await gateway._send_watcher_message("feishu", source.chat_id, source.thread_id, text, {})
+
+    assert [send[1] for send in adapter.sent] == [success, full]
+    [(message_id, recall)] = recalled
+    assert message_id == "om_native_send"
+    assert recall["route"]["conversation_id"] == source.thread_id
+    assert notice_path.notices == notice_path.feishu.sent == []
+
+
+@pytest.mark.parametrize("outcome", ["not_sent", "unknown", "delivered"])
+async def test_pinned_v0233_platform_notice_uses_native_delivery_route(notice_path, monkeypatch, outcome):
+    from hermes_feishu_card import hook_runtime
+
+    root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
+    notice_path.feishu.outcome = outcome
+    adapter = notice_path.adapter
+    source = SimpleNamespace(platform="feishu", chat_id="oc_group_allow", chat_type="group", thread_id="omt_notice")
+    content = "📬 No home channel is set for Feishu. Type /sethome to make this chat your home channel."
+    with _isolated_hermes_modules(root):
+        from gateway.run_notifications import GatewayNotificationsMixin
+        gateway_module = ModuleType("gateway.run")
+        gateway_module._is_slack_ignored_channel = lambda *args: False
+        monkeypatch.setitem(sys.modules, gateway_module.__name__, gateway_module)
+
+        class Gateway(GatewayNotificationsMixin):
+            adapters = {"feishu": adapter}
+
+            def _delivery_adapter_for(self, target):
+                assert target is source
+                return adapter
+
+            def _thread_metadata_for_source(self, target):
+                return {"thread_id": target.thread_id, "native_metadata": True}
+
+        gateway = Gateway()
+        assert hook_runtime.install_feishu_command_card_adapter_methods(gateway)
+        result = await gateway._deliver_platform_notice(source, content)
+
+    [notice] = notice_path.notices
+    assert notice["data"]["notice_scope"] == "independent"
+    assert len(notice_path.feishu.sent) == 1
+    if outcome == "delivered":
+        assert result.success is True
+        assert adapter.sent == []
+    else:
+        assert result is None  # Hermes' own method delivered the fallback.
+        native_content = content if outcome == "not_sent" else hook_runtime._NOTICE_UNCERTAIN_WARNING
+        assert adapter.sent == [(source.chat_id, native_content, None, {
+            "thread_id": source.thread_id, "native_metadata": True,
+        })]
+
+
 @pytest.mark.asyncio
 async def test_v0233_real_persistence_store_admission_completion_and_negative_controls(
     tmp_path, monkeypatch,
@@ -312,7 +649,7 @@ async def test_v0233_real_persistence_store_admission_completion_and_negative_co
     from hermes_feishu_card import admission_completion as ac
     from hermes_feishu_card.install import decomposed_ownership
     from hermes_feishu_card.install.patcher import apply_base_patch
-    from test_v0230_admission_sources import _build_modules
+    from tests.integration.test_v0230_admission_sources import _build_modules
 
     root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
     copy = tmp_path / "hermes"

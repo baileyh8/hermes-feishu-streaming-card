@@ -9,6 +9,7 @@ import time
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from .install.decomposed_ownership import EXPLICIT_UPGRADE_STATES
 from .install.detect import HermesDetection
 from .install.integrity import (
     IntegrityRepairPlan,
@@ -328,6 +329,9 @@ def build_diagnostic_report(
         {"status": "not_checked", "message": "Hermes streaming config was not checked."},
     )
     install_state = _build_install_state(recovery_plan, health_data.get("install_state"))
+    source_recovery_pending = bool(install_state.get("after_repair")) or (
+        detection.decomposed and recovery_plan.state in EXPLICIT_UPGRADE_STATES
+    )
     runtime_import = _section(
         health_data.get("runtime_import"),
         {
@@ -365,11 +369,16 @@ def build_diagnostic_report(
             "card_update": "terminal_only" if split_home or shared_source else "requires_runtime_evidence",
         }
         if split_home or shared_source:
+            next_step = (
+                "Follow the source recovery and PM verification steps before restarting services."
+                if source_recovery_pending
+                else "Restart both services and verify authenticated readiness. Use the original service owner for terminal updates."
+            )
             binding_findings = (DiagnosticFinding(
                 "split_home_requires_manual_update", "warning",
                 "Hermes uses a split HOME or shared source checkout.",
                 "Source compatibility does not prove live Gateway identity; shared-source updates require coordinated terminal maintenance.",
-                ("Restart both services and verify authenticated readiness. Use the original service owner for terminal updates.",),
+                (next_step,),
             ),)
     except (OSError, ValueError):
         runtime["maintenance_binding"] = {"selection": "invalid", "runtime_verified": False}
@@ -388,6 +397,7 @@ def build_diagnostic_report(
         feishu_sdk,
         routing,
         recovery_plan,
+        source_recovery_pending=source_recovery_pending,
     )
     acknowledgement_eligible = bool(
         integrity_plan is not None
@@ -645,6 +655,8 @@ def format_diagnostic_text(report: DiagnosticReport, explain: bool) -> str:
         lines.append(f"- [{finding.severity}] {finding.message}")
         if finding.actions:
             lines.append(f"  Next: {finding.actions[0]}")
+    if report.install_state.get("after_repair"):
+        lines.append(f"- After repair: {report.install_state['after_repair']}")
     return "\n".join(lines)
 
 
@@ -657,6 +669,8 @@ def _build_findings(
     feishu_sdk: dict[str, object],
     routing: dict[str, object],
     recovery_plan: RecoveryPlan,
+    *,
+    source_recovery_pending: bool,
 ) -> tuple[DiagnosticFinding, ...]:
     findings: list[DiagnosticFinding] = []
     if not detection.supported:
@@ -699,7 +713,7 @@ def _build_findings(
                 "warning",
                 str(runtime_import.get("message") or "Hermes runtime import failed."),
                 "Hermes cannot load the sidecar hook runtime.",
-                (
+                () if source_recovery_pending else (
                     "Run setup/install again so hermes-feishu-streaming-card is installed into the Hermes Gateway venv Python.",
                 ),
             )
@@ -714,7 +728,7 @@ def _build_findings(
                     or "Hermes Feishu SDK is incompatible."
                 ),
                 "Hermes Gateway can run while the Feishu WebSocket connector stays offline.",
-                (
+                () if source_recovery_pending else (
                     "Run setup/install again to install a lark-oapi version that supports extra_ua_tags, then restart Hermes Gateway.",
                 ),
             )
@@ -757,7 +771,7 @@ def _build_findings(
                 "warning",
                 str(recovery_finding.get("message") or "Recovery evidence needs attention."),
                 "The current install state may need recovery.",
-                tuple(recovery_plan.actions),
+                tuple(action for action in recovery_plan.actions if action != "accept_hermes_upgrade"),
             )
         )
     return tuple(findings)
@@ -864,7 +878,7 @@ def _append_install_finding(
                 actions=("No install-state action is required.",),
             )
         )
-    elif status in {"changed", "incomplete", "error"}:
+    elif status in {"changed", "incomplete", "error", "refused", *EXPLICIT_UPGRADE_STATES}:
         if install_state.get("contract") == "v3":
             code = "v3_install_incomplete"
             action = (
@@ -874,11 +888,17 @@ def _append_install_finding(
         else:
             code = "install_state_changed" if status == "changed" else "install_state_incomplete"
             automatic = bool(install_state.get("automatic_repair_available"))
-            action = (
-                "Run repair --hermes-dir PATH --yes to rebuild known-safe backup/manifest state, then rerun doctor."
-                if automatic
-                else "Back up the Hermes directory, inspect gateway/run.py and the manifest, then restore or reinstall only after confirming the local edits are intentional."
-            )
+            repair_command = install_state.get("repair_command")
+            if isinstance(repair_command, str):
+                action = repair_command
+            elif status in {"refused", *EXPLICIT_UPGRADE_STATES}:
+                action = "Review the source and ownership evidence in docs/wiki/pm-recovery.md."
+            else:
+                action = (
+                    "Run repair --hermes-dir PATH --yes to rebuild known-safe backup/manifest state, then rerun doctor."
+                    if automatic
+                    else "Back up the Hermes directory, inspect gateway/run.py and the manifest, then restore or reinstall only after confirming the local edits are intentional."
+                )
         findings.append(
             DiagnosticFinding(
                 code,

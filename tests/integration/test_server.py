@@ -1267,12 +1267,12 @@ async def test_event_fence_exception_does_not_poison_retry(client, monkeypatch):
     original = sidecar_server._apply_event_locked
     calls = 0
 
-    async def fail_once(request, event):
+    async def fail_once(request, event, *, session_key):
         nonlocal calls
         calls += 1
         if calls == 1:
             raise RuntimeError("injected apply failure")
-        return await original(request, event)
+        return await original(request, event, session_key=session_key)
 
     monkeypatch.setattr(sidecar_server, "_apply_event_locked", fail_once)
     payload = identified(
@@ -1405,10 +1405,10 @@ async def test_owner_cancellation_before_response_releases_pending_claim(client,
     release = asyncio.Event()
     original = sidecar_server._apply_event_locked
 
-    async def blocked_apply(request, event):
+    async def blocked_apply(request, event, *, session_key):
         entered.set()
         await release.wait()
-        return await original(request, event)
+        return await original(request, event, session_key=session_key)
 
     class DirectRequest:
         app = test_client.app
@@ -12718,8 +12718,9 @@ async def test_repeated_failed_messages_do_not_retain_runtime_state(
             session_key = f"om_failed_{index}"
             reply_alias = f"om_reply_{index}"
             parent_alias = f"om_parent_{index}"
+            thread_id = f"omt_topic_{index}"
             if replacement:
-                old_session = CardSession("oc_abc", session_key, "oc_abc")
+                old_session = CardSession(thread_id, session_key, "oc_abc", legacy_route_thread_id=thread_id)
                 old_session.status = "completed"
                 old_session.answer_text = f"old answer {index}"
                 old_session.active_interaction = InteractionState(
@@ -12742,6 +12743,8 @@ async def test_repeated_failed_messages_do_not_retain_runtime_state(
                             1,
                             {"answer": old_session.answer_text},
                             message_id=session_key,
+                                conversation_id=thread_id,
+                                thread_id=thread_id,
                         )
                     ),
                     old_session,
@@ -12758,7 +12761,8 @@ async def test_repeated_failed_messages_do_not_retain_runtime_state(
                         "parent_message_id": parent_alias,
                     },
                     message_id=session_key,
-                    thread_id=f"omt_topic_{index}",
+                    conversation_id=thread_id,
+                    thread_id=thread_id,
                 ),
             )
             assert response.status == 502
@@ -13557,6 +13561,323 @@ async def test_legacy_quoted_reply_without_turn_id_keeps_alias_routing(client):
         test_client.app[SESSIONS_KEY]["om_legacy_turn"].answer_text
     )
     assert quote not in test_client.app[SESSIONS_KEY]
+
+
+async def test_legacy_alias_terminal_waits_for_owner_create(client, monkeypatch):
+    http, feishu = client
+    entered, release = asyncio.Event(), asyncio.Event()
+    send_card = feishu.send_card
+
+    async def blocked(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await send_card(*args, **kwargs)
+
+    monkeypatch.setattr(feishu, "send_card", blocked)
+    anchor = {"reply_to_message_id": "om_anchor"}
+    start = asyncio.ensure_future(http.post("/events", json=event_payload(
+        "message.started", 0, anchor, message_id="om_owner")))
+    await asyncio.wait_for(entered.wait(), 2)
+    terminal = asyncio.ensure_future(http.post("/events", json=event_payload(
+        "message.completed", 1, {**anchor, "answer": "final"}, message_id="om_internal")))
+    try:
+        async def admitted():
+            while (not terminal.done()
+                   and http.app[sidecar_server.MESSAGE_LOCK_USERS_KEY].get("om_owner", 0) < 2):
+                await asyncio.sleep(0)
+        await asyncio.wait_for(admitted(), 2)
+    finally:
+        release.set()
+    assert (await start).status == 200
+    response = await terminal
+    assert response.status == 200 and (await response.json())["applied"] is True
+    assert len(feishu.sent) == 1
+    assert http.app[SESSIONS_KEY]["om_owner"].answer_text == "final"
+
+
+async def test_legacy_terminal_exact_retry_and_new_turn_with_same_quote(client):
+    http, feishu = client
+    anchor = {"reply_to_message_id": "om_anchor"}
+    for index in (1, 2):
+        key = f"om_owner_{index}"
+        start = event_payload("message.started", 0, anchor, message_id=key)
+        assert (await http.post("/events", json=start)).status == 200
+        terminal = event_payload("message.completed", 1,
+                                 {**anchor, "answer": f"final {index}"},
+                                 message_id=f"om_internal_{index}")
+        first = await http.post("/events", json=terminal)
+        assert (await first.json())["applied"] is True
+        retry = await http.post("/events", json=terminal)
+        assert retry.status == 200 and (await retry.json())["applied"] is True
+        assert len(feishu.sent) == index
+        assert http.app[SESSIONS_KEY][key].answer_text == f"final {index}"
+
+
+async def test_legacy_terminal_retry_after_checkpoint_restore(tmp_path):
+    transport = FakeFeishuClient()
+    options = {"session_store_directory": tmp_path}
+    anchor = {"reply_to_message_id": "om_anchor"}
+    terminal = event_payload("message.completed", 1, {**anchor, "answer": "done"},
+                             message_id="om_alias")
+    async with TestClient(TestServer(create_app(transport, **options))) as http:
+        start = event_payload("message.started", 0, anchor, message_id="om_owner")
+        assert (await http.post("/events", json=start)).status == 200
+        assert (await http.post("/events", json=terminal)).status == 200
+    async with TestClient(TestServer(create_app(transport, **options))) as http:
+        await http.app[sidecar_server.SESSION_RESTORE_TASK_KEY]
+        assert http.app[sidecar_server.DIAGNOSTICS_KEY]["card_checkpoints_restored"] == 1
+        retry = await http.post("/events", json=terminal)
+        assert (await retry.json())["applied"] is True
+        assert len(transport.sent) == 1
+
+
+@pytest.mark.parametrize("boundary", ["chat", "thread", "sender", "profile", "turn", "new_start"])
+async def test_legacy_quote_cannot_replace_an_independent_owner(client, boundary):
+    http, feishu = client
+    anchor = {"reply_to_message_id": "om_shared", "profile_id": "work",
+              "sender_open_id": "ou_" + "a" * 32}
+    await http.post("/events", json=event_payload(
+        "message.started", 0, anchor, message_id="om_original", conversation_id="omt_a"))
+    other = {**anchor, "answer": "second"}
+    if boundary == "sender":
+        other["sender_open_id"] = "ou_" + "b" * 32
+    elif boundary == "profile":
+        other["profile_id"] = "personal"
+    response = await http.post("/events", json=event_payload(
+        "message.started" if boundary == "new_start" else "message.completed", 1, other,
+        conversation_id="omt_b" if boundary == "thread" else "omt_a",
+        message_id="om_shared", chat_id="oc_else" if boundary == "chat" else "oc_abc",
+        turn_id="om_separate" if boundary == "turn" else ""))
+    assert response.status == 200
+    assert len(feishu.sent) == 2
+    original = http.app[SESSIONS_KEY]["work:om_original"]
+    assert "second" not in original.answer_text
+    if boundary in {"chat", "sender", "profile"}:
+        assert original.answer_text == ""
+
+
+@pytest.mark.parametrize(("thread", "sender", "tenant", "same_owner"), [
+    ("om_root", "ou_" + "a" * 32, "user-a", True),
+    ("om_other", "ou_" + "a" * 32, "user-a", False),
+    ("om_root", "", "user-b", False),
+    ("om_root", "", "user-a", True),
+    ("om_root", "", "", False),
+])
+async def test_legacy_topic_and_requester_scope(client, thread, sender, tenant, same_owner):
+    http, feishu = client
+    start_data = {"chat_type": "group", "sender_open_id": "ou_" + "a" * 32,
+                  "admission_user_id": "user-a", "reply_to_message_id": "om_quote"}
+    await http.post("/events", json=event_payload(
+        "message.started", 0, start_data, conversation_id="omt_topic",
+        thread_id="om_root", message_id="om_a"))
+    terminal = event_payload("message.completed", 1, {**start_data, "sender_open_id": sender,
+                             "admission_user_id": tenant, "answer": "final"},
+                             conversation_id="omt_topic", thread_id=thread, message_id="om_quote")
+    assert (await http.post("/events", json=terminal)).status == 200
+    original = http.app[SESSIONS_KEY]["om_a"]
+    assert (original.answer_text == "final") == same_owner
+    if not same_owner:
+        assert original.status == "thinking"
+    assert len(feishu.sent) == (1 if same_owner else 2)
+
+
+@pytest.mark.parametrize(("first_route", "second_route"), [
+    (("oc_abc", "", "ou_alice"), ("oc_abc", "", "ou_bob")),
+    (("oc_abc", "om_topic_a", "ou_alice"), ("oc_abc", "om_topic_b", "ou_alice")),
+    (("oc_abc", "", "ou_alice"), ("omt_topic", "omt_topic", "ou_alice")),
+    (("oc_abc", "", "ou_alice"), ("oc_abc", "om_topic_a", "ou_alice")),
+], ids=["requester", "explicit-thread", "topic-conversation", "topic-root"])
+@pytest.mark.parametrize("same_start_id", [False, True], ids=["distinct-starts", "shared-start-id"])
+async def test_legacy_group_shared_quote_keeps_both_card_owners(
+    client, first_route, second_route, same_start_id,
+):
+    http, feishu = client
+    anchor = "om_shared"
+
+    def payload(index, event, sequence, message_id, **content):
+        conversation, thread, sender = (first_route, second_route)[index]
+        return event_payload(event, sequence, {
+            "chat_type": "group", "sender_open_id": sender, "reply_to_message_id": anchor,
+            **content,
+        }, conversation_id=conversation, thread_id=thread, message_id=message_id)
+
+    for index in (0, 1):
+        started = await http.post("/events", json=payload(
+            index, "message.started", 0, anchor if same_start_id else f"om_start_{index}",
+        ))
+        assert await started.json() == DELIVERED_RESPONSE
+    assert len(feishu.sent) == 2
+    assert all(session.status == "thinking" for session in http.app[SESSIONS_KEY].values())
+
+    for index in (1, 0):
+        delta = await http.post("/events", json=payload(
+            index, "answer.delta", 1, anchor, text=f"DRAFT {index}",
+        ))
+        assert (await delta.json())["applied"] is True
+        message_id, _card = await wait_for_card_update(feishu, f"DRAFT {index}")
+        assert message_id == f"feishu-message-{index + 1}"
+
+    for index in (0, 1):
+        terminal = payload(index, "message.completed", 2, "om_internal", answer=f"FINAL {index}")
+        first, retry = await asyncio.gather(*[http.post("/events", json=terminal) for _ in range(2)])
+        assert await first.json() == await retry.json() == {"ok": True, "applied": True}
+        message_id, _card = await wait_for_card_update(feishu, f"FINAL {index}")
+        assert message_id == f"feishu-message-{index + 1}"
+
+    assert len(feishu.sent) == 2
+    assert len(http.app[SESSIONS_KEY]) == 2
+    assert all(session.status == "completed" for session in http.app[SESSIONS_KEY].values())
+    assert all("本轮已被新对话替代" not in str(card) for _, card in feishu.updated)
+
+
+@pytest.mark.parametrize("topic_message_id", ["om_topic_internal", "om_main"])
+@pytest.mark.parametrize("conversation", ["oc_abc", "conversation-shared"])
+async def test_legacy_group_topic_terminal_cannot_claim_main_chat_quote(
+    client, topic_message_id, conversation,
+):
+    http, feishu = client
+    quote = {"chat_type": "group", "sender_open_id": "ou_alice", "reply_to_message_id": "om_shared"}
+    start = await http.post("/events", json=event_payload(
+        "message.started", 0, quote, conversation_id=conversation, message_id="om_main",
+    ))
+    assert await start.json() == DELIVERED_RESPONSE
+    topic = await http.post("/events", json=event_payload(
+        "message.completed", 1, {**quote, "answer": "TOPIC FINAL"},
+        conversation_id=conversation, thread_id="om_topic_root", message_id=topic_message_id,
+    ))
+    assert (await topic.json())["applied"] is True
+    assert len(feishu.sent) == 2
+    assert "TOPIC FINAL" in str(feishu.sent[1][1])
+    assert feishu.sent[1][2:] == ("om_topic_root", "om_shared")
+
+    home = await http.post("/events", json=event_payload(
+        "message.completed", 2, {**quote, "answer": "MAIN FINAL"},
+        conversation_id=conversation, message_id="om_shared",
+    ))
+    assert (await home.json())["applied"] is True
+    message_id, _card = await wait_for_card_update(feishu, "MAIN FINAL")
+    assert message_id == "feishu-message-1"
+    assert len(feishu.sent) == 2
+
+
+async def test_legacy_group_alias_terminal_waits_only_for_its_owner(client, monkeypatch):
+    http, feishu = client
+    entered, release = asyncio.Event(), asyncio.Event()
+    send_card = feishu.send_card
+
+    async def block_first_create(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        return await send_card(*args, **kwargs)
+
+    def payload(sender, kind, sequence, message_id, **extra):
+        return event_payload(kind, sequence, {
+            "chat_type": "group", "sender_open_id": sender,
+            "reply_to_message_id": "om_shared", **extra,
+        }, conversation_id="oc_abc", message_id=message_id)
+
+    monkeypatch.setattr(feishu, "send_card", block_first_create)
+    alice_start = payload("ou_alice", "message.started", 0, "om_shared")
+    alice_create = asyncio.ensure_future(http.post("/events", json=alice_start))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        bob_start = payload("ou_bob", "message.started", 0, "om_shared")
+        bob_create = await asyncio.wait_for(http.post("/events", json=bob_start), 2)
+        assert await bob_create.json() == DELIVERED_RESPONSE
+
+        alice_terminal = asyncio.ensure_future(http.post("/events", json=payload(
+            "ou_alice", "message.completed", 1, "om_internal", answer="ALICE FINAL",
+        )))
+        alice_key = sidecar_server._resolve_session_key(http.app, SidecarEvent.from_dict(alice_start))
+        locks = http.app[sidecar_server.MESSAGE_LOCK_USERS_KEY]
+        await _wait_until(lambda: locks.get(alice_key) == 2)
+        bob_terminal = await asyncio.wait_for(http.post("/events", json=payload(
+            "ou_bob", "message.completed", 1, "om_internal", answer="BOB FINAL",
+        )), 2)
+        assert (await bob_terminal.json())["applied"] is True
+        assert not alice_terminal.done()
+    finally:
+        release.set()
+
+    assert await (await alice_create).json() == DELIVERED_RESPONSE
+    assert (await (await alice_terminal).json())["applied"] is True
+    assert (await wait_for_card_update(feishu, "BOB FINAL"))[0] == "feishu-message-1"
+    assert (await wait_for_card_update(feishu, "ALICE FINAL"))[0] == "feishu-message-2"
+    assert len(feishu.sent) == 2
+
+
+async def test_legacy_group_shared_message_without_requester_leaves_owners_unchanged(client):
+    http, feishu = client
+    anchor = "om_shared"
+    group = {"chat_type": "group"}
+    route = {"conversation_id": "oc_abc", "message_id": anchor}
+    for sender in ("alice", "bob"):
+        started = await http.post("/events", json=event_payload(
+            "message.started", 0, {
+                **group, "reply_to_message_id": anchor,
+                "sender_open_id": f"ou_{sender}", "admission_user_id": f"tenant-{sender}",
+            }, **route,
+        ))
+        assert await started.json() == DELIVERED_RESPONSE
+
+    unknown = await http.post("/events", json=event_payload(
+        "message.completed", 1, {**group, "answer": "UNKNOWN REQUESTER"}, **route,
+    ))
+    assert (await unknown.json())["applied"] is True
+    assert len(feishu.sent) == 3
+    assert "UNKNOWN REQUESTER" in str(feishu.sent[-1][1])
+
+    for index, sender in enumerate(("alice", "bob"), 1):
+        answer = f"OWNED BY {sender}"
+        terminal = await http.post("/events", json=event_payload(
+            "message.completed", 2, {
+                **group, "admission_user_id": f"tenant-{sender}", "answer": answer,
+            }, **route,
+        ))
+        assert (await terminal.json())["applied"] is True
+        assert (await wait_for_card_update(feishu, answer))[0] == f"feishu-message-{index}"
+    assert len(feishu.sent) == 3
+
+
+async def test_independent_notice_keeps_legacy_group_reference_with_its_turn(client):
+    http, feishu = client
+    anchor = "om_shared"
+    scope = {
+        "chat_type": "group", "sender_open_id": "ou_alice", "reply_to_message_id": anchor,
+    }
+    started = await http.post("/events", json=event_payload(
+        "message.started", 0, scope, conversation_id="oc_abc", message_id=anchor,
+    ))
+    assert await started.json() == DELIVERED_RESPONSE
+    notice = await http.post("/events", json=event_payload(
+        "system.notice", 1, {
+            **scope, "notice_scope": "independent", "notice_terminal": False,
+            "content": "BACKGROUND NOTICE",
+        }, conversation_id="oc_abc", message_id="notice_background",
+    ))
+    assert await notice.json() == DELIVERED_RESPONSE
+    terminal = await http.post("/events", json=event_payload(
+        "message.completed", 2, {**scope, "answer": "TURN FINAL"},
+        conversation_id="oc_abc", message_id="om_terminal",
+    ))
+    assert (await terminal.json())["applied"] is True
+    assert (await wait_for_card_update(feishu, "TURN FINAL"))[0] == "feishu-message-1"
+    assert len(feishu.sent) == 2
+
+
+@pytest.mark.parametrize("owner_type", ["group", ""])
+async def test_group_quote_without_a_verified_requester_preserves_old_card(client, owner_type):
+    http, feishu = client
+    quote = {"reply_to_message_id": "om_quote"}
+    await http.post("/events", json=event_payload("message.started", 0,
+                    {**quote, "chat_type": owner_type}, message_id="om_prior"))
+    response = await http.post("/events", json=event_payload("message.completed", 1,
+                               {**quote, "chat_type": "group", "admission_user_id": "second",
+                                "answer": "independent"}, message_id="om_terminal"))
+    assert (await response.json())["applied"] is True
+    assert len(feishu.sent) == 2
+    assert http.app[SESSIONS_KEY]["om_prior"].status == "thinking"
 
 
 async def test_shared_alias_cleanup_preserves_new_canonical_owner(client):

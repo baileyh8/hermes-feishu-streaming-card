@@ -2678,13 +2678,11 @@ def _plan_decomposed_recovery(detection, *, accept_hermes_upgrade=False):
         if state == "stale_unpatched":
             findings = (RecoveryFinding("hermes_upgrade_hooks_missing", "warning",
                         "Hermes source changed without owned hooks (an updater/autostash may remove them). "
-                        "Use install --accept-hermes-upgrade --yes after reviewing the upgrade; "
-                        "restart Gateway after successful repair."),)
+                        "Review the upgrade before accepting source repair."),)
         elif state == "stale_reapplied":
             findings = (RecoveryFinding("hermes_upgrade_hooks_reapplied", "warning",
                         "Known hooks were reapplied over the exact current Git sources while ownership remained stale. "
-                        "Review the upgrade and use install --accept-hermes-upgrade --yes; "
-                        "restart Gateway after successful repair."),)
+                        "Review the upgrade before accepting source repair."),)
         return RecoveryPlan(detection.root, state, executable, fingerprint, actions, findings)
     except (OSError, ValueError, UnicodeError):
         try:

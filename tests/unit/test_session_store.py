@@ -49,10 +49,14 @@ def test_task_presentation_state_is_ephemeral_and_does_not_change_checkpoint_sch
     store = SessionStore(tmp_path)
     value = CardSession('conversation', 'turn', 'chat')
     value.presentation_state = 'reconnecting'
+    value.legacy_terminal_fingerprint = 'a' * 64
     store.save('turn', value, 'om_fixture', None, '', {}, 'fixture_client')
     payload = json.loads(next(store.root.glob('*.json')).read_text())
     assert 'presentation_state' not in payload['record']['session']
-    assert store.load()[0]['session'].presentation_state == ''
+    assert 'legacy_terminal_fingerprint' not in payload['record']['session']
+    restored = store.load()[0]['session']
+    assert restored.presentation_state == ''
+    assert restored.legacy_terminal_fingerprint == ''
 
 
 def test_pre_task_layout_checkpoint_still_loads_with_full_answer(tmp_path):
@@ -119,8 +123,25 @@ def test_auxiliary_payload_is_bounded_and_validated_again_when_loading(tmp_path)
     assert store.load() == []
 
 
-def test_sender_user_id_is_not_persisted_in_the_v1_checkpoint():
-    # Derived from every gateway event; persisting it would change the v1
-    # field set and make old/new checkpoints unreadable in both directions.
+def test_sender_user_id_is_not_persisted_in_the_v1_checkpoint(tmp_path):
+    # Optional evidence lives in the envelope and the v1 session field set is unchanged.
     from hermes_feishu_card.session_store import _FIELDS
     assert 'sender_user_id' not in _FIELDS
+    assert 'display_requester_digest' not in _FIELDS
+
+    store = SessionStore(tmp_path)
+    session = CardSession('conversation', 'turn', 'chat', sender_user_id='fixture-private-requester')
+    store.save('turn', session, 'om_fixture', None, '', {}, 'fixture_client')
+    serialized = next(store.root.glob('*.json')).read_text()
+    assert session.sender_user_id not in serialized
+    record = json.loads(serialized)['record']
+    assert 'sender_user_id' not in record['session']
+    assert 'display_requester_digest' not in record['session']
+    assert len(record['display_requester_digest']) == 64
+
+    restored = store.load()[0]['session']
+    assert not restored.sender_user_id
+    assert restored.compare_display_tenant_requester(session.sender_user_id) is True
+    assert restored.compare_display_tenant_requester('fixture-other-requester') is False
+    store.save('turn', restored, 'om_fixture', None, '', {}, 'fixture_client')
+    assert store.load()[0]['session'].display_requester_digest == record['display_requester_digest']

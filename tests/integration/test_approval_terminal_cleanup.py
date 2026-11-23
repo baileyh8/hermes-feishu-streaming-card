@@ -199,3 +199,38 @@ async def test_missing_text_receipt_render_keeps_full_owner_scope_and_answer(mon
         assert not app[SESSIONS_KEY]['turn'].active_interaction.receipt_fingerprint
         assert 'FINAL_EXACT' in str(c.cards['card-1']) and 'END_SCOPE' in str(c.cards['card-1'])
         assert len(c.cards)==2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_first", [False, True], ids=["blocked-receipt", "blocked-predecessor"])
+async def test_completed_interaction_cleanup_cannot_delay_answer_or_ack(terminal_first):
+    class SlowOldCard(Client):
+        def __init__(self):
+            super().__init__()
+            self.target = None
+            self.blocked = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def update_card_message(self, mid, card):
+            if mid == self.target:
+                self.blocked.set()
+                await self.release.wait()
+            await super().update_card_message(mid, card)
+
+    client = SlowOldCard()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await chosen(http, 1)
+        if not terminal_first:
+            await post(http, "answer.delta", 3, {"text": "progress"})
+        client.target = "card-1" if terminal_first else "card-2"
+        final = asyncio.create_task(post(http, "message.completed", 4, {"answer": "FINAL_BEFORE_CLEANUP"}))
+        try:
+            await asyncio.wait_for(client.blocked.wait(), timeout=3)
+            await asyncio.wait_for(asyncio.shield(final), timeout=1)
+            assert "FINAL_BEFORE_CLEANUP" in str(client.cards["card-3"])
+            assert "Run harmless fixture command" in str(client.cards["card-2"])
+        finally:
+            client.release.set()
+            await final

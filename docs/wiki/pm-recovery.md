@@ -10,18 +10,28 @@ v5.0.26 登记 Hermes v0.23.2（`ae2a81ccc0`）的 `pm-0232` 配置写入契约�
 
 v5.0.25 的 PowerShell 凭据探针使用独占临时 Python 文件，避免 Windows PowerShell 5.1 对 `python -c` 内嵌双引号的 native 参数转换。保持原凭据/profile 判定与失败退出，`finally` 清除临时文件。PowerShell 5.1 与 7 的实际执行证据分开记录。脱敏报告只补充已知状态的固定说明和下一步，不公开原始诊断值或私有路径，不改变安装状态、退出码和修复保护。
 
+## macOS/Linux 的 PM 安装入口
+
+`install.sh` 将管理 CLI 安装在绑定 HOME 下的 `.hermes_feishu_card/management/venv`，后续安装复用该路径和本机 Python。PM 负责构建并登记普通 wheel，切代前会核验旧代际与 observer 归属。发布 tag 沿用原登记标识。安装 `main` 等移动 ref 时，wheel 构建使用管理 CLI 已解析的 Git commit。再次安装同一来源时，PM 复用已验证的登记。
+
+更换管理 CLI 前，安装器会锁住该 HOME 的管理目录，在同一目录暂存一份旧环境。pip 中断或新包来源校验失败时会恢复旧 CLI。新 CLI 通过来源校验后，安装器会清除临时副本，再执行 `setup`。如果 `setup` 随后拒绝切代，可继续用已验证的新 CLI 诊断旧运行时。
+
+保存安装器给出的 `management CLI` 和 `status` 命令。`status` 包含 Hermes 源码、HOME、配置和环境文件的绝对路径，换目录后仍可使用。用同一条管理 CLI 命令前缀可调用 `doctor`、`repair` 或 `integrity`。PM runtime 的实际版本以 `doctor` 的运行时检查和 PM 登记为准。
+
+如果 `status` 显示 `manual_review_required`，复制它输出的 `doctor --explain` 命令。命令沿用当前管理 Python、配置文件和指定的 Hermes HOME，也保留本次使用的环境文件，可在另一个目录执行。
+
 ## PM 重建与源码重置同时发生（#524）
 
 旧 PM generation 消失时，observer 记录仍可能绑定旧 Python；Hermes 更新又可能把受管 hook 重置。普通 `install/setup` 会先拒绝 observer runtime identity 变化，而 `rebind-legacy` 要求源码已是 `installed`。这两个拒绝都应保留，不能靠删除 marker、fence 或 service 记录解除。
 
-对于 **decomposed legacy observer**，先按实际服务管理器停止已核实归属的 Gateway、sidecar 与配置写入器，保存当前配置、marker、manifest、备份和 journal。使用可运行的当前 management CLI，并指定同一 checkout/HOME：
+对于 **decomposed legacy observer**，`status` 和 `doctor --explain` 会在恢复计划可执行时给出 `repair` 命令，并带上核实过的 `--hermes-home`。先按实际服务管理器停止已核实归属的 Gateway、sidecar 与配置写入器，保存当前配置、marker、manifest、备份和 journal。使用诊断给出的 CLI 路径和参数。下面示例假设 `hermes-feishu-card` 已在 PATH 上。
 
 ```bash
 hermes-feishu-card repair --hermes-dir /actual/hermes --hermes-home /actual/home --accept-hermes-upgrade --yes
 hermes-feishu-card integrity rebind-legacy --hermes-dir /actual/hermes --hermes-home /actual/home
 ```
 
-第一条只修复已经证明归属的源码状态，不重建 PM runtime、不删除 observer 记录，也不重启 Gateway。显式 `--hermes-home` 必须与记录绑定一致；证据损坏、配置漂移或未知源码继续拒绝。第二条只读预览，仍要求当前 PM generation、原 owned member、wheel 资源和 entry point 的真实证明。当前 selected runtime 也不存在或不可检查时，先按 Hermes 自身的 PM 恢复流程恢复它；HFC 不将“旧路径不存在”当作新运行时可信的证明。不要在重绑前单独升级受旧 member 记录约束的 wheel。
+第一条修复已验证归属的源码状态，保留 PM runtime 和 observer 记录。显式 `--hermes-home` 必须与记录绑定一致。证据损坏、配置漂移或未知源码仍会拒绝。PM 另选代际时，再执行第二条只读预览，核验当前 generation、原 owned member、wheel 资源和 entry point。若当前 selected runtime 也不存在或不可检查，先按 Hermes 自身的 PM 流程恢复 runtime，再预览重绑。
 
 只有预览为 `ready`，才为同一条 `rebind-legacy` 命令加 `--yes` 提交。若仍有 review fence，随后按本页的 `acknowledge-review` 流程核对当前 plan、已停止的 sidecar 和精确旧 target；保留 CAS 与 `--rebind-target` 要求。完成这些步骤后再升级/安装 HFC、启动服务并做新回合验收。schema-3 adoption、未知运行时和 Windows 重绑仍遵守各自原有门禁，不由这份顺序说明扩大支持范围。
 

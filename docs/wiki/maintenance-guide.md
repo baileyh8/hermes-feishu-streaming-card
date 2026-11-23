@@ -72,12 +72,15 @@
 - 重定向必须从已校验的 agent turn binding 取回原 conversation ID，不能退化为 source.thread_id；server 的 conversation/profile/chat 边界保持不变。
 - 显式 `turn_id` 必须作为 canonical turn hard fence，直接决定 session ownership、ordering 和 native handoff，绝不查 reply alias；只有缺少 `turn_id` 的 legacy topic 后续事件使用不同内部 `message_id` 时，才查 `reply_to_message_id` anchor。
 - 群聊新轮清理必须同时匹配可验证的 `sender_open_id`；缺少发送者时保留旧卡。hook 的首事件 fallback 也必须携带发送者和 `chat_type`。原生插件通道使用 Gateway session key 的哈希 `execution_scope` 隔离；缺少可匹配范围时不猜测接管。redirect 只清理明确指定的来源 turn，不能结束同群其他成员的卡片。参见 Issue #348。
+- 缺少 `turn_id` 的旧版终局通过引用找到卡片时，使用卡片所有者的锁。相同事件的并发重放共用一次处理结果；恢复显示检查点时，确认过的终局摘要仍归原卡。核验请求归属时，分别比较会话、显式话题根和请求人标识。
+- 同一话题重开主卡后，续卡按已确认主卡 ID 和分段序号去重。主卡创建回执丢失时，重发同一开卡请求应复用创建 UUID。升级使用旧续卡 UUID 的版本时，先让正在投递的分段长答结束；跨版本重发已部分送达的旧长答仍可能重复显示部分续卡。
 - terminal 事件前要 flush pending delta，避免尾部文本丢失。
 - decomposed Hermes 的 stale-generation 分支只在返回值明确 `interrupted is True`、原 source/turn 身份一致且不是 queued 子轮结果时补发原任务终态；stale 本身不证明失败。安装器须精确验证该接点并保持逐字可逆。
 - Base 的受控 `/stop` 取消可能早于工具结果返回。仅在精确处理 task 的原 owner、会话和路由一致且该 task 确已取消时补发终态；`/new`、`/reset` 与未知取消不猜测。显示投递复用 adapter 的受管后台任务，限制数量和期限，不阻塞原 pending-message drain，也不恢复执行或授权。
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
 - legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
+- Terminal continuation UUIDs combine the confirmed Feishu main message ID and segment position with the existing turn and reply route. A v1 display checkpoint already carries the main ID. Successful segmented turns retain their display checkpoint for terminal replay and reopening. Startup leaves their cards as sent. A retry across the upgrade can repeat continuations that were partially sent with the old UUIDs, since older checkpoints only identify the main card.
 - 普通卡片初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；这不是通用 `/events` 重放或 PATCH 策略。terminal 事件另有保留原事件身份、包含锁等待的 75 秒传输预算；HTTP 4xx 不重试。`interaction.requested` 仍只 POST 一次。见[卡片连接恢复](card-restart-recovery.md)。
 - `feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings`、`notice_update_failures`、`last_send_error` 与 `last_update_error` 必须保持脱敏；更新失败只可附加白名单校验后的 `status_code` / `api_code`，不得记录 UUID、响应正文、URL 或原始标识符。
 - 无凭据的 Noop 模式必须在 `/health` 中标记 `degraded` / `noop_mode`，发送计入 `feishu_noop_attempts` 和 failure；不得生成假 message id 或计入 success。
@@ -171,7 +174,7 @@ PM 回滚可能为旧包重新生成运行环境。注册栈恢复后，须凭�
 - 升级迁移只能停止 PID/token/health 三者一致的旧进程，未知进程保持 fail-closed。
 - CLI 与插件 binding 共用 `install/runtime_python.py` 的隔离 PM 探测。存在 committed venv 时优先选择它并保留 venv launcher 路径；探测失败、相对路径或已删除的 generation 必须拒绝，不能落回旧 `.venv`。只有没有 PM 模块或 PM 明确返回无选择时保留 legacy 行为；插件仍验证 prefix/site-packages/可执行目标，显式 Hermes home 传给 PM 探测。
 - Hermes PM 重建会删除旧环境；独立 sidecar 不能假定长驻解释器路径永远存在。可用 `service.python_executable` 绑定独立 HFC venv；setup/start/enable 均遵守此选择，先验证 Hermes hook，再验证侧车的版本与普通 site-packages 来源。配置缺省保持原行为；指定环境失效必须拒绝启动，不静默切回 PM。
-- 旧侧车仍响应 health 不代表运行文件可用。升级后的恢复顺序是检查当前 PM 与进程来源，备份并停止侧车，通过官方 install 修复已验证的升级状态；仅 installed 且侧车停止时 acknowledge-review，再启动侧车与 Gateway。不得清除未知围栏或手工改 hook。
+- 旧侧车仍响应 health 时也要检查当前 PM 与进程来源。对 decomposed legacy observer，备份并停服后执行诊断给出的 `repair`，沿用已绑定的 HOME。若 PM 另选代际，先核验并重绑 observer。仅在 installed 且侧车停止时 acknowledge-review，随后启动侧车与 Gateway。
 - PM 迁移、schema 1 flat wheel、旧 runtime 重绑、VCS 安装边界、实际服务管理器/KeepAlive 与旧 fence target CAS 的完整顺序见 [PM 恢复](pm-recovery.md)。当前 509 management CLI 负责本候选的 schema 1 flat 重绑；v5.0.8 命令基线保留为历史，v5.0.7 CLI 没有 `rebind-legacy`。
 - `auto` 不得探测 system bus、调用 sudo/pkexec、写 `/etc` 或静默 fallback 到 system manager；`systemd-system` 只能显式使用 transient unit。
 - macOS `enable` 不可用时只提供平台解释。自建登录 LaunchAgent 可用 `RunAtLoad=true` 一次运行会分离子进程的 `start`，不可推荐 `KeepAlive=true`。无 verified pidfile 必须先确认进程归属；只有证实自建 LaunchAgent 直接运行 runner 才提供对应 `launchctl` 停止路径，不据 pidfile 缺失推断 launchd。
@@ -193,7 +196,7 @@ PM 回滚可能为旧包重新生成运行环境。注册栈恢复后，须凭�
 | 改动 | 先跑 | 发布前还要跑 |
 |---|---|---|
 | runtime event 抽取、topic、notice | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_server.py -q` | `python -m pytest -q` |
-| 完成通知时钟 / 终态分段 | `python -m pytest tests/unit/test_completion_notification.py tests/unit/test_config_over_limit.py tests/integration/test_server_segmented.py -q` | 精确提交完整 CI + 相关真实 Feishu API / 客户端验收 |
+| 完成通知时钟 / 终态分段 | `python -m pytest tests/unit/test_completion_notification.py tests/unit/test_config_over_limit.py tests/integration/test_server_segmented.py tests/integration/test_reopened_delivery_identity.py -q` | 精确提交完整 CI + 相关真实 Feishu API / 客户端验收 |
 | Lark WebSocket handler / command-card callback | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_feishu_sdk_compat.py -q` | Python 3.11 + `lark-oapi==1.6.8` + `websockets==15.0.1` CI、真实 Feishu 稳定性 smoke、`python -m pytest -q` |
 | `/resume` / `/model` 原生 picker | `python -m pytest tests/unit/test_hook_runtime.py tests/unit/test_patcher.py tests/integration/test_cli_install.py -q` | 真实 Feishu 私聊、群聊、topic smoke + `python -m pytest -q` |
 | 群聊路由诊断 / 工具详情 | `python -m pytest tests/unit/test_bots.py tests/unit/test_session.py tests/unit/test_render.py tests/integration/test_server.py -q` | `python -m pytest -q` |
@@ -400,6 +403,8 @@ Issue [#428](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/428
 审批 hook 位于 `_render_approval_sync` 的 context binding 后，保留原 `_approval_notify_sync` 的 generation check 和 observer registration。等待期间及解析前再核对原 generation，通过 Hermes 的原 request ID/queue resolver 解析一次。`PendingControls` 仍只是原队列的视图；重复或已撤销的 request 不能批准下一项。原生 fallback 与异常退出仍由 Hermes 处理，不持久化执行 handle。
 
 Issue [#431](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/431) 的故障来自直接 pip 安装只覆盖当前 PM venv。PM 代次从声明重建时，这种临时安装会消失。`install/pm_dependency.py` 现在在所选 Hermes HOME 的 `plugins/hfc-runtime-dependency/` 保存精确普通 wheel、仅含依赖的 virtual `pyproject.toml` 与 `.hfc-owner.json`。它通过官方 `hermes_cli.plugins_admission.admit_plugin_set_change` 登记 `plugins.enabled`，保留其他 enabled/disabled 与配置项；不直接编辑 PM facts 或 lock。该目录无 runtime manifest 和 `register()`，实际 producer 仍是 wheel 的唯一 `hermes_agent.plugins` entry point。`tool.uv.sources` 使用目录内 wheel path，PM 复制 workspace 后继续使用相同包字节。
+
+macOS/Linux 的 `install.sh` 在绑定 HOME 下复用私有管理 venv。管理 CLI 的 Git 安装与 PM admission 分开，`setup` 在切换代际前仍能核验旧 wheel 和 observer。稳定发布沿用 tag 登记标识，移动 ref 则固定为管理 CLI 实际安装的 commit。见 [PM 安装入口](pm-recovery.md#macoslinux-的-pm-安装入口)。
 
 已经能够 import 同版本也必须完成登记。登记后重新读取 committed venv，并核对 `site-packages`、wheel 来源摘要及每个包资源字节。显式 install spec 不会换成同版本 PyPI 包；wheel 缓存不依赖原下载临时目录。POSIX 路径使用绑定目录描述符的 rename，Windows 沿用显式 lstat/目录身份复检的 portable 安装边界；未知 PM API、明确 disabled、未归属目录、用户修改及不确定文件状态均拒绝覆盖。跨 profile 的共享依赖冲突交给 PM 原 resolver 拒绝，不自动移除另一 profile 的依赖。
 

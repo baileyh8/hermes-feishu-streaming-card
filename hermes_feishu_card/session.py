@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 
 from .approval_rule_hints import bounded_native_rule_keys
 from copy import deepcopy
+from hashlib import sha256
 import json
 import math
 import re
@@ -29,6 +30,20 @@ MIN_COMPLETED_SUFFIX_RATIO_DENOMINATOR = 5
 MIN_PRESERVED_STREAMED_ANSWER_CHARS = 64
 MAX_SHORT_COMPLETION_POSTSCRIPT_CHARS = 240
 MIN_STREAMED_ANSWER_TO_POSTSCRIPT_RATIO = 3
+MAX_CONFIRMED_LEGACY_TERMINAL_RECEIPTS = 16
+LEGACY_TERMINAL_RECEIPT_TTL_SECONDS = 3600.0
+
+LegacyTerminalReceipts = tuple[tuple[str, float], ...]
+
+
+def recent_legacy_terminal_receipts(
+    receipts: LegacyTerminalReceipts, *, now: float,
+) -> LegacyTerminalReceipts:
+    recent = {
+        fingerprint: confirmed_at for fingerprint, confirmed_at in receipts
+        if 0 <= now - confirmed_at < LEGACY_TERMINAL_RECEIPT_TTL_SECONDS
+    }
+    return tuple(sorted(recent.items(), key=lambda item: item[1])[-MAX_CONFIRMED_LEGACY_TERMINAL_RECEIPTS:])
 
 # Unsuccessful turn outcomes (the gateway reports these once the provider/API call
 # failed, the turn was interrupted, or no completion was confirmed).  On these the
@@ -69,6 +84,11 @@ def _exact_feishu_open_id(value: object) -> str:
         if type(value) is str and _FEISHU_OPEN_ID_RE.fullmatch(value)
         else ""
     )
+
+
+def _normalized_feishu_user_id(value: object) -> str:
+    candidate = value.strip() if type(value) is str else ""
+    return candidate if len(candidate) <= 256 else ""
 
 
 @dataclass
@@ -172,6 +192,28 @@ class InteractionState:
         return True
 
 
+@dataclass(frozen=True, repr=False)
+class PendingReopenCreate:
+    # A display candidate and the exact placement of its first create attempt.
+    # The preceding card remains the owner while the create is unconfirmed.
+    candidate: CardSession
+    start_event: str
+    start_sequence: int
+    start_at: float
+    attempted_at: float
+    predecessor_updated_at: float
+    generation: str
+    bot_id: str
+    client_identity: str
+    thread_id: str
+    reply_to_message_id: str
+    reply_in_thread: bool
+    streaming: bool
+    attempts: int = 0
+    uncertain: bool = False
+    terminal_at: float | None = None
+
+
 @dataclass
 class CardSession:
     conversation_id: str
@@ -222,6 +264,17 @@ class CardSession:
     sender_name: str = ""
     completion_notify_state: str = "idle"
     terminal_delivery_state: str = "idle"
+    # Identity of an accepted legacy terminal event, including unconfirmed writes.
+    legacy_terminal_fingerprint: str = field(default="", repr=False)
+    # Exact receipts from acknowledged legacy terminal creates on this route.
+    # Persisted separately from the v1 display payload and pending candidates.
+    confirmed_legacy_terminal_receipts: LegacyTerminalReceipts = field(default=(), repr=False)
+    # Producer time of the terminal event that opened this replacement card.
+    legacy_terminal_start_at: float | None = field(default=None, repr=False)
+    legacy_route_thread_id: str = field(default="", repr=False)
+    restored_legacy_terminal: bool = field(default=False, repr=False)
+    restored_unconfirmed_terminal: bool = field(default=False, repr=False)
+    pending_reopen_create: PendingReopenCreate | None = field(default=None, repr=False)
     notice_kind: str = ""
     notice_title: str = ""
     notice_level: str = "info"
@@ -244,10 +297,48 @@ class CardSession:
     # Immutable route provenance, populated by the server from the accepted
     # event or checkpoint envelope. Logical turn IDs may contain colons.
     route_profile_id: str | None = None
+    # Restored evidence for display routing only. Live Gateway events supply
+    # the separate sender_user_id field used by the completion mention.
+    display_requester_digest: str = field(default="", repr=False)
+
+    @property
+    def has_display_requester(self) -> bool:
+        return bool(self.sender_open_id or self.sender_user_id or self.display_requester_digest)
+
+    def _digest_display_requester(self, tenant_user: str) -> str:
+        # Bind the digest to the card's persisted chat, conversation and message.
+        material = (
+            "hfc-display-requester-v1", self.chat_id, self.conversation_id, self.message_id, tenant_user,
+        )
+        return sha256(json.dumps(material).encode("ascii")).hexdigest()
+
+    def checkpoint_requester_digest(self) -> str:
+        if self.sender_user_id:
+            return self._digest_display_requester(self.sender_user_id)
+        return self.display_requester_digest
+
+    def compare_display_tenant_requester(self, value: object) -> bool | None:
+        """Compare tenant identity, returning None when either side has no evidence."""
+        if value in (None, "") or not (self.sender_user_id or self.display_requester_digest):
+            return None
+        tenant_user = _normalized_feishu_user_id(value)
+        if not tenant_user:
+            return False
+        if self.sender_user_id:
+            return tenant_user == self.sender_user_id
+        return self._digest_display_requester(tenant_user) == self.display_requester_digest
 
     @property
     def tool_count(self) -> int:
         return self._tool_call_count
+
+    @property
+    def terminal_card_confirmed(self) -> bool:
+        return self.status in {"completed", "failed"} and (
+            self.terminal_disposition == "segmented" or (
+                not self.terminal_disposition and self.terminal_delivery_state in {"delivered", "recovered"}
+            )
+        )
 
     @property
     def runtime_header_text(self) -> str:
@@ -324,9 +415,9 @@ class CardSession:
             # A claimed but unparseable requester id is treated as spoofing:
             # the completion notice is suppressed rather than falling back.
             self.sender_open_id_rejected = True
-        sender_user_id = event.data.get("admission_user_id")
-        if (type(sender_user_id) is str and 0 < len(sender_user_id.strip()) <= 256):
-            self.sender_user_id = sender_user_id.strip()
+        sender_user_id = _normalized_feishu_user_id(event.data.get("admission_user_id"))
+        if sender_user_id:
+            self.sender_user_id = sender_user_id
         # Card-action callbacks are authenticated out-of-band transitions. They
         # may complete an interaction while Hermes is already preparing the next
         # batch clarify request, so they must not consume the transport sequence

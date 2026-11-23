@@ -6,6 +6,7 @@ from collections import OrderedDict
 import copy
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from datetime import datetime
 from hashlib import sha256
 from ipaddress import ip_address
 import importlib
@@ -273,6 +274,9 @@ class _PolicyIdentity:
     is_new_turn: bool
     home_binding: tuple[Path, Path] | None
     chat_type: str = ""
+    legacy_terminal: _LegacyTerminalPolicyEvent | None = None
+    legacy_unordered: bool = False
+    legacy_replay: bool = False
 
 
 @dataclass(frozen=True)
@@ -280,18 +284,54 @@ class _PolicyGateResult:
     card: bool
     identity: _PolicyIdentity | None
 
+    @property
+    def preserve_legacy_owner(self) -> bool:
+        return self.identity is not None and (
+            self.identity.legacy_replay or self.identity.legacy_unordered
+        )
+
 
 @dataclass(frozen=True)
 class _PolicyCacheEntry:
     disposition: str
     expires_at: float
-    home_binding: tuple[Path, Path] | None = None
 
 
 @dataclass(frozen=True)
 class _PinnedPolicyDecision:
     disposition: str
     home_binding: tuple[Path, Path] | None
+    legacy_terminal: _LegacyTerminalPolicyEvent | None = None
+
+
+@dataclass(frozen=True, repr=False)
+class _LegacyTerminalReplay:
+    sequence: int
+    marked_as_new: bool
+    duration: float
+    rate: dict[str, Any] | None
+    fingerprint: bytes
+
+
+@dataclass(repr=False)
+class _LegacyTerminalPolicyEvent:
+    scope_key: tuple[str, str, str, str]
+    message_id: str
+    generation: str
+    order_at: tuple[str, float] | None
+    created_at: float
+    disposition: str | None = None
+    replay: _LegacyTerminalReplay | None = None
+
+    def is_after(self, previous: _LegacyTerminalPolicyEvent) -> bool:
+        return (
+            self.scope_key == previous.scope_key
+            and self.created_at > previous.created_at
+            and self.order_at is not None
+            and previous.order_at is not None
+            and self.order_at[0] == previous.order_at[0]
+            and self.order_at[1] > previous.order_at[1]
+        )
 
 
 _SEQUENCES: dict[str, int] = {}
@@ -438,7 +478,7 @@ _ACTIVE_POLICY_TURNS: dict[
     tuple[str, str, str, str], tuple[str, str, str, str]
 ] = {}
 _TERMINAL_POLICY_DECISIONS: OrderedDict[
-    tuple[str, str, str, str], _PolicyCacheEntry
+    tuple[str, str, str, str], _PinnedPolicyDecision
 ] = OrderedDict()
 _POLICY_QUERY_LOCKS: OrderedDict[
     tuple[str, str, str, str], threading.Lock
@@ -453,7 +493,7 @@ _HFC_FEISHU_COMMAND_RESULT_CONTEXT: ContextVar[dict[str, Any] | None] = ContextV
     "hfc_feishu_command_result_context",
     default=None,
 )
-_HFC_FEISHU_NOTICE_CONTEXT: ContextVar[dict[str, str] | None] = ContextVar(
+_HFC_FEISHU_NOTICE_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
     "hfc_feishu_notice_context",
     default=None,
 )
@@ -1349,10 +1389,12 @@ def _policy_gate_sync(
     *,
     _admission_guard: Callable[[], bool] | None = None,
 ) -> _PolicyGateResult:
-    identity = _policy_identity(config, local_vars, event_name)
+    identity = _policy_identity(config, local_vars, event_name, observe_legacy_terminal=True)
     if identity is None:
         _cleanup_native_policy_state(local_vars)
-        return _PolicyGateResult(False, None)
+        return _PolicyGateResult(False, identity)
+    if identity.legacy_unordered:
+        return _PolicyGateResult(False, identity)
     disposition = _pinned_policy_disposition(identity)
     if disposition is None:
         query_lock = _policy_query_lock(identity)
@@ -1388,7 +1430,7 @@ def _policy_gate_sync(
                         disposition = "native"
                 _pin_policy_disposition(identity, disposition)
     result = _PolicyGateResult(disposition == "card", identity)
-    if not result.card:
+    if not result.card and not result.preserve_legacy_owner:
         _cleanup_native_policy_state(local_vars)
     if event_name in {"message.completed", "message.failed"}:
         _finish_policy_turn(identity, disposition)
@@ -1400,15 +1442,17 @@ async def _policy_gate_async(
     local_vars: dict[str, Any],
     event_name: str,
 ) -> _PolicyGateResult:
-    identity = _policy_identity(config, local_vars, event_name)
+    identity = _policy_identity(config, local_vars, event_name, observe_legacy_terminal=True)
     if identity is None:
-        result = _PolicyGateResult(False, None)
+        result = _PolicyGateResult(False, identity)
         _cleanup_native_policy_state(local_vars)
         return result
+    if identity.legacy_unordered:
+        return _PolicyGateResult(False, identity)
     disposition = _pinned_policy_disposition(identity)
     if disposition is not None:
         result = _PolicyGateResult(disposition == "card", identity)
-        if not result.card:
+        if not result.card and not result.preserve_legacy_owner:
             _cleanup_native_policy_state(local_vars)
         if event_name in {"message.completed", "message.failed"}:
             _finish_policy_turn(identity, disposition)
@@ -1435,7 +1479,7 @@ async def _policy_gate_async(
             result = await asyncio.to_thread(
                 _policy_gate_sync, config, local_vars, event_name, **kwargs
             )
-    if not result.card:
+    if not result.card and not result.preserve_legacy_owner:
         # ContextVar writes in the worker's copied context do not flow back to
         # this task, so repeat the idempotent native cleanup here.
         _cleanup_native_policy_state(local_vars)
@@ -1446,6 +1490,8 @@ def _policy_identity(
     config: RuntimeConfig,
     local_vars: dict[str, Any],
     event_name: str,
+    *,
+    observe_legacy_terminal: bool = False,
 ) -> _PolicyIdentity | None:
     if local_vars.get("_hfc_profile_invalid") is True:
         return None
@@ -1510,19 +1556,42 @@ def _policy_identity(
             else f"turn:{time.monotonic_ns()}"
         )
     turn_key = (endpoint, profile_id, chat_id, turn_token)
+    is_terminal = event_name in {"message.completed", "message.failed"}
+    stream_reopens_turn = event_name in {"thinking.delta", "answer.delta", "tool.updated"}
     with _POLICY_LOCK:
         _prune_policy_state_locked(time.monotonic())
-        terminal_known = turn_key in _TERMINAL_POLICY_DECISIONS
-    stream_reopens_turn = event_name in {
-        "thinking.delta",
-        "answer.delta",
-        "tool.updated",
-    }
-    is_new_turn = event_name == "message.started" or (
-        active_turn != turn_key
-        and (not terminal_known or stream_reopens_turn)
-        and (bool(message_id) or active_turn is None)
-    )
+        terminal = _TERMINAL_POLICY_DECISIONS.get(turn_key)
+        is_new_turn = event_name == "message.started" or (
+            active_turn != turn_key
+            and (terminal is None or stream_reopens_turn)
+            and (bool(message_id) or active_turn is None)
+        )
+        legacy_terminal = None
+        legacy_unordered = False
+        if not turn_id and message_id and (is_terminal or stream_reopens_turn or event_name == "message.started"):
+            legacy_terminal = _legacy_terminal_policy_event(
+                local_vars, scope_key, message_id, create=is_terminal and observe_legacy_terminal,
+            )
+            prior = terminal.legacy_terminal if terminal is not None else None
+            if legacy_terminal is not None and legacy_terminal.disposition is not None:
+                # The same Hermes event cannot promote another lifecycle.
+                is_new_turn = False
+                legacy_unordered = not is_terminal
+            elif is_terminal and terminal is not None and (prior is not None or "event" in local_vars):
+                if (prior is not None and legacy_terminal is not None
+                        and legacy_terminal.scope_key == prior.scope_key
+                        and legacy_terminal.generation == prior.generation):
+                    legacy_terminal = prior
+                else:
+                    # Generations are random. Without comparable timestamps
+                    # a different generation cannot take over this owner.
+                    is_new_turn = (
+                        active_turn is None
+                        and prior is not None
+                        and legacy_terminal is not None
+                        and legacy_terminal.is_after(prior)
+                    )
+                    legacy_unordered = not is_new_turn
     from .install.legacy_home_revocation import _authoritative_binding
     return _PolicyIdentity(
         endpoint=endpoint,
@@ -1536,7 +1605,47 @@ def _policy_identity(
         is_new_turn=is_new_turn,
         home_binding=_authoritative_binding(),
         chat_type=chat_type,
+        legacy_terminal=legacy_terminal,
+        legacy_unordered=legacy_unordered,
+        legacy_replay=legacy_terminal is not None and legacy_terminal.disposition is not None,
     )
+
+
+def _legacy_terminal_policy_event(
+    local_vars: dict[str, Any],
+    scope_key: tuple[str, str, str, str],
+    message_id: str,
+    *,
+    create: bool,
+) -> _LegacyTerminalPolicyEvent | None:
+    event = local_vars.get("event")
+    known = getattr(event, "_hfc_legacy_terminal_policy_event", None)
+    if isinstance(known, _LegacyTerminalPolicyEvent):
+        return known if (known.scope_key, known.message_id) == (scope_key, message_id) else None
+    if not create or event is None:
+        return None
+    raw_produced_at = local_vars.get("created_at")
+    produced_at = None if isinstance(raw_produced_at, bool) else _finite_float(raw_produced_at)
+    timestamp = getattr(event, "timestamp", None)
+    order_at = ("producer", produced_at) if produced_at is not None else None
+    if isinstance(timestamp, datetime):
+        # Hermes MessageEvent captures ingress time, even for a queued turn
+        # without a Feishu ID. Completion callback arrival order is weaker.
+        try:
+            ingress_at = _finite_float(timestamp.timestamp())
+        except (OSError, OverflowError, ValueError):
+            ingress_at = None
+        if ingress_at is not None:
+            order_at = ("ingress", ingress_at)
+    fact = _LegacyTerminalPolicyEvent(
+        scope_key, message_id, _native_handoff_generation(local_vars), order_at,
+        produced_at if produced_at is not None else time.time(),
+    )
+    try:
+        setattr(event, "_hfc_legacy_terminal_policy_event", fact)
+    except (AttributeError, TypeError):
+        return None
+    return fact
 
 
 def _policy_payload(identity: _PolicyIdentity) -> dict[str, str]:
@@ -1558,12 +1667,18 @@ def _policy_payload(identity: _PolicyIdentity) -> dict[str, str]:
 def _pinned_policy_disposition(identity: _PolicyIdentity, *, require_home: bool = False) -> str | None:
     now = time.monotonic()
     with _POLICY_LOCK:
+        if identity.legacy_unordered:
+            return None
         _prune_policy_state_locked(now)
         terminal = (
             None
             if identity.is_new_turn
             else _TERMINAL_POLICY_DECISIONS.get(identity.turn_key)
         )
+        legacy = identity.legacy_terminal
+        if (legacy is not None and legacy.disposition is not None
+                and (terminal is None or terminal.legacy_terminal is not legacy)):
+            return None if require_home else legacy.disposition
         if terminal is not None:
             if require_home and terminal.home_binding != identity.home_binding:
                 return None
@@ -1632,16 +1747,19 @@ def _pin_policy_disposition(identity: _PolicyIdentity, disposition: str) -> None
 
 def _finish_policy_turn(identity: _PolicyIdentity, disposition: str) -> None:
     with _POLICY_LOCK:
+        legacy = identity.legacy_terminal
+        if legacy is not None and legacy.disposition is not None:
+            return
         previous = _TURN_POLICY_DECISIONS.pop(identity.turn_key, None)
         prior_terminal = _TERMINAL_POLICY_DECISIONS.get(identity.turn_key)
         home_binding = (previous.home_binding if previous is not None else
                         prior_terminal.home_binding if prior_terminal is not None else identity.home_binding)
         if _ACTIVE_POLICY_TURNS.get(identity.scope_key) == identity.turn_key:
             _ACTIVE_POLICY_TURNS.pop(identity.scope_key, None)
-        _TERMINAL_POLICY_DECISIONS[identity.turn_key] = _PolicyCacheEntry(
-            disposition,
-            math.inf,
-            home_binding,
+        if legacy is not None:
+            legacy.disposition = disposition
+        _TERMINAL_POLICY_DECISIONS[identity.turn_key] = _PinnedPolicyDecision(
+            disposition, home_binding, legacy,
         )
         _TERMINAL_POLICY_DECISIONS.move_to_end(identity.turn_key)
         _bound_ordered_dict(_TERMINAL_POLICY_DECISIONS)
@@ -1756,7 +1874,50 @@ def _policy_event_locals(
         updates["turn_id"] = identity.turn_id
     if identity.is_new_turn:
         updates["_hfc_policy_new_turn"] = True
+    if identity.legacy_terminal is not None:
+        updates["_hfc_legacy_terminal_policy"] = identity
+        updates["_hfc_native_handoff_generation"] = identity.legacy_terminal.generation
+        updates["_hfc_legacy_terminal_wire_time"] = identity.legacy_terminal.created_at
     return {**local_vars, **updates} if updates else local_vars
+
+
+def _build_policy_event(
+    event_name: str, event_locals: dict[str, Any],
+) -> dict[str, Any] | None:
+    identity = event_locals.get("_hfc_legacy_terminal_policy")
+    if not isinstance(identity, _PolicyIdentity) or identity.legacy_terminal is None:
+        return build_event(event_name, event_locals)
+    legacy = identity.legacy_terminal
+    replay = legacy.replay if identity.legacy_replay else None
+    if identity.legacy_replay:
+        if replay is None:
+            return None
+        # A re-entered callback can report a later elapsed time. Rebuild the
+        # original measurements while taking the answer and route from this call.
+        replay_locals = {
+            **event_locals,
+            "_hfc_policy_new_turn": replay.marked_as_new,
+            "_hfc_legacy_terminal_replay": replay,
+            "duration": replay.duration,
+        }
+        payload = build_event(event_name, replay_locals, preview=True)
+        if payload is None:
+            return None
+        payload["sequence"] = replay.sequence
+    else:
+        payload = build_event(event_name, event_locals)
+        if payload is None:
+            return None
+    # Compare the entire reconstructed wire event, including its answer and route.
+    fingerprint = sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).digest()
+    if identity.legacy_replay:
+        return payload if replay is not None and replay.fingerprint == fingerprint else None
+    legacy.replay = _LegacyTerminalReplay(
+        sequence=payload["sequence"], marked_as_new=identity.is_new_turn,
+        duration=payload["data"]["duration"], rate=payload["data"].get("rate"),
+        fingerprint=fingerprint,
+    )
+    return payload
 
 
 def _discard_pending_deltas_for_local_vars(local_vars: dict[str, Any]) -> None:
@@ -2125,7 +2286,7 @@ async def _flush_build_send_ordered(
     event_name: str,
 ) -> None:
     await _flush_pending_deltas_for_local_vars(local_vars)
-    payload = build_event(event_name, local_vars)
+    payload = _build_policy_event(event_name, local_vars)
     if payload is None:
         return
     await _send_fail_open_ordered(
@@ -2147,12 +2308,13 @@ def emit_from_hermes_locals(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
-            _clear_answer_delta_hold(config, local_vars)
+            if not gate.preserve_legacy_owner:
+                _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
-        if event_name in {"message.started", "message.completed", "message.failed"}:
+        if not gate.preserve_legacy_owner and event_name in {"message.started", "message.completed", "message.failed"}:
             _clear_answer_delta_hold(config, event_locals)
-        payload = build_event(event_name, event_locals)
+        payload = _build_policy_event(event_name, event_locals)
         if payload is None:
             return False
         asyncio.get_running_loop()
@@ -2180,10 +2342,11 @@ def emit_from_hermes_locals_threadsafe(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
-            _clear_answer_delta_hold(config, local_vars)
+            if not gate.preserve_legacy_owner:
+                _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
-        if event_name in {"message.started", "message.completed", "message.failed"}:
+        if not gate.preserve_legacy_owner and event_name in {"message.started", "message.completed", "message.failed"}:
             _clear_answer_delta_hold(config, event_locals)
         if event_name == "answer.delta":
             delta_mode = _first_string(event_locals, ("mode", "_hfc_text_mode"))
@@ -2234,7 +2397,7 @@ def emit_from_hermes_locals_threadsafe(
                             )
         if _queue_coalesced_delta(config, event_locals, event_name):
             return True
-        if _has_pending_deltas_for_local_vars(event_locals):
+        if not gate.preserve_legacy_owner and _has_pending_deltas_for_local_vars(event_locals):
             if "_hfc_loop" in event_locals:
                 coroutine = _flush_build_send_ordered(config, event_locals, event_name)
                 try:
@@ -2251,7 +2414,7 @@ def emit_from_hermes_locals_threadsafe(
                     _flush_build_send_ordered(config, event_locals, event_name)
                 )
             return True
-        payload = build_event(event_name, event_locals)
+        payload = _build_policy_event(event_name, event_locals)
         if payload is None:
             return False
         if "_hfc_loop" in event_locals:
@@ -2382,15 +2545,19 @@ async def emit_from_hermes_locals_async(
         event_lock = _policy_async_event_lock(order_identity)
         async with event_lock:
             gate = await _policy_gate_async(config, local_vars, event_name)
+            if event_name == "message.completed" and gate.preserve_legacy_owner:
+                _HFC_NATIVE_MEDIA_TEXT_SUPPRESSION.set(None)
             if not gate.card:
-                _clear_answer_delta_hold(config, local_vars)
+                if not gate.preserve_legacy_owner:
+                    _clear_answer_delta_hold(config, local_vars)
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
-            if event_name not in {"thinking.delta", "answer.delta"}:
-                await _flush_pending_deltas_for_local_vars(event_locals)
-            if event_name in {"message.started", "message.completed", "message.failed"}:
-                _clear_answer_delta_hold(config, event_locals)
-            payload = build_event(event_name, event_locals)
+            if not gate.preserve_legacy_owner:
+                if event_name not in {"thinking.delta", "answer.delta"}:
+                    await _flush_pending_deltas_for_local_vars(event_locals)
+                if event_name in {"message.started", "message.completed", "message.failed"}:
+                    _clear_answer_delta_hold(config, event_locals)
+            payload = _build_policy_event(event_name, event_locals)
             if payload is None:
                 return False
             if event_name in {"message.completed", "message.failed"}:
@@ -2546,9 +2713,10 @@ async def stage_message_completed_from_hermes_locals_async(
                 _warn_stage_diagnostic("policy-native")
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
-            await _flush_pending_deltas_for_local_vars(event_locals)
-            _clear_answer_delta_hold(config, event_locals)
-            payload = build_event("message.completed", event_locals)
+            if not gate.preserve_legacy_owner:
+                await _flush_pending_deltas_for_local_vars(event_locals)
+                _clear_answer_delta_hold(config, event_locals)
+            payload = _build_policy_event("message.completed", event_locals)
             if payload is None:
                 _warn_stage_diagnostic("payload-unavailable")
                 return False
@@ -5092,14 +5260,17 @@ def _hfc_delivery_context_from_event(event: Any) -> dict[str, Any] | None:
     }
 
 
-def _hfc_direct_policy_locals(chat_id: Any) -> dict[str, Any]:
+def _hfc_direct_policy_locals(
+    chat_id: Any, notice_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     normalized_chat_id = str(chat_id or "").strip()
-    context = _HFC_FEISHU_DELIVERY_CONTEXT.get()
+    context = notice_context if notice_context is not None else _HFC_FEISHU_DELIVERY_CONTEXT.get()
     if not isinstance(context, dict):
         context = {}
     return {
         "platform": "feishu",
         "chat_id": normalized_chat_id,
+        "chat_type": str(context.get("chat_type") or "").strip(),
         "profile_id": str(context.get("profile_id") or "").strip(),
         "_hfc_profile_invalid": context.get("profile_invalid") is True,
         "message_id": str(context.get("message_id") or "").strip(),
@@ -5109,28 +5280,11 @@ def _hfc_direct_policy_locals(chat_id: Any) -> dict[str, Any]:
     }
 
 
-def _hfc_direct_card_allowed_sync(
-    chat_id: Any,
-    *,
-    event_name: str = "system.notice",
-) -> bool:
-    try:
-        config = load_runtime_config()
-        if not config.enabled:
-            return False
-        return _policy_gate_sync(
-            config,
-            _hfc_direct_policy_locals(chat_id),
-            event_name,
-        ).card
-    except Exception:
-        return False
-
-
 async def _hfc_direct_card_allowed_async(
     chat_id: Any,
     *,
     event_name: str = "system.notice",
+    notice_context: dict[str, Any] | None = None,
 ) -> bool:
     try:
         config = load_runtime_config()
@@ -5139,7 +5293,7 @@ async def _hfc_direct_card_allowed_async(
         return (
             await _policy_gate_async(
                 config,
-                _hfc_direct_policy_locals(chat_id),
+                _hfc_direct_policy_locals(chat_id, notice_context),
                 event_name,
             )
         ).card
@@ -5176,7 +5330,7 @@ def _hfc_take_feishu_command_result_context(
     return context
 
 
-def _hfc_notice_context_from_event(event: Any) -> dict[str, str] | None:
+def _hfc_notice_context_from_event(event: Any) -> dict[str, Any] | None:
     if event is None:
         return None
     source = getattr(event, "source", None)
@@ -5189,7 +5343,7 @@ def _hfc_notice_context_from_source(
     source: Any,
     *,
     event: Any = None,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     if _platform_name({}, source) != "feishu":
         return None
     chat_id = str(getattr(source, "chat_id", "") or "").strip()
@@ -5212,7 +5366,7 @@ def _hfc_notice_context_from_source(
         or (getattr(event, "thread_id", "") if event is not None else "")
         or ""
     ).strip()
-    profile_id, _profile_source = _profile_identity(
+    profile_id, profile_source = _profile_identity(
         {"source": source, "event": event},
         source,
         None,
@@ -5229,6 +5383,7 @@ def _hfc_notice_context_from_source(
         "conversation_id": thread_id or chat_id,
         "thread_id": thread_id,
         "profile_id": profile_id,
+        "profile_invalid": profile_source.startswith("sanitized_"),
     }
 
 
@@ -5272,13 +5427,7 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "title": "默认投递位置未设置", "level": "info",
             "notice_kind": "home-channel", "notice_id": "home-channel",
         }
-    if text.startswith("ℹ️ 上下文压缩已推迟"):
-        return {
-            "title": "上下文压缩提示", "level": "info",
-            "notice_kind": "compression",
-            "notice_id": _hfc_content_notice_id("compression", text),
-        }
-    if text.startswith("⏳") or lowered.startswith("working ") or "working —" in lowered:
+    if text.startswith("⏳") or lowered.startswith("working "):
         # Maintainer note (contract change): the ⏳ status line is NEVER a card.
         #
         # These lines used to become notice cards titled「运行中」. They are transient process state
@@ -5294,35 +5443,44 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
         # path also still works: `_hfc_edit_message_with_system_notice_card` falls back to the
         # original edit once classification returns None, so a refreshing status updates ONE line.
         return None
-    if "caps context" in lowered and "auto-compaction" in lowered:
+    if (text.startswith(("ℹ Codex ", "ℹ️ Codex ")) and " caps context at " in text
+            and ", so auto-compaction was raised to " in text):
         return {
             "title": "上下文窗口提示",
             "level": "info",
             "notice_kind": "context-cap",
             "notice_id": "context-cap",
         }
-    if "session automatically reset" in lowered:
+    if (text == "Session automatically reset" or text.startswith((
+        "◐ Session automatically reset (",
+        "◐ Session reset after being stopped. Conversation history cleared.\nUse /resume ",
+        "◐ 会话在停止后已重置。对话历史已清空。\n用 /resume ",
+    ))):
         return {
             "title": "会话已自动重置",
             "level": "success",
             "notice_kind": "session-reset",
             "notice_id": "session-reset",
         }
-    if "reading skill" in lowered:
+    for prefix in ("💾 Self-improvement review:", "💾 自我改进回顾：", "💾 自我改進檢閱："):
+        if text.startswith(prefix) and text[len(prefix):].strip():
+            return {
+                "title": "自我改进",
+                "level": "info",
+                "notice_kind": "self-improvement",
+                "notice_id": _hfc_content_notice_id("self-improvement", text),
+            }
+    if re.fullmatch(r"(?:📚 |📖 )?(?:Reading skill|阅读技能)[：: \t]+\S[^\r\n]*", text):
         return {
             "title": "技能加载",
             "level": "info",
             "notice_kind": "skill-loading",
             "notice_id": _hfc_content_notice_id("skill-loading", text),
         }
-    if "self-improvement review" in lowered or "自我改进回顾" in text:
-        return {
-            "title": "自我改进",
-            "level": "info",
-            "notice_kind": "self-improvement",
-            "notice_id": _hfc_content_notice_id("self-improvement", text),
-        }
-    if "context compression" in lowered or "compression model" in lowered:
+    if re.match(
+        r"^(?:ℹ️?|⚠️?) (?:Context compression |Compression (?:model |aborted \()"
+        r"|Configured compression model |上下文压缩已推迟|配置的压缩模型 )", text,
+    ):
         return {
             "title": "上下文压缩提示",
             "level": "info",
@@ -5330,6 +5488,42 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_id": _hfc_content_notice_id("compression", text),
         }
     return None
+
+
+def _hfc_classify_adapter_notice(
+    chat_id: str, content: str, *, adapter: Any, metadata: Any, review_source: Any = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    notice = _hfc_classify_system_notice(content)
+    if notice is None:
+        return None, None
+    from .notice_producers import adapter_card_notice_source, background_card_notice_source
+
+    frame = inspect.currentframe()
+    try:
+        # This helper is called by the Feishu send/edit shim; its caller's
+        # caller is the native egress. The task-local turn route is not proof.
+        wrapper = frame.f_back if frame is not None else None
+        caller = wrapper.f_back if wrapper is not None else None
+        event = None
+        if review_source is not None:
+            known, source = notice["notice_kind"] == "self-improvement", review_source
+        elif notice["notice_kind"] in {"background-task", "background-process"}:
+            known, source, event = background_card_notice_source(
+                notice["notice_kind"], caller, adapter=adapter, chat_id=chat_id,
+                content=content, metadata=metadata,
+            )
+        else:
+            known, source = adapter_card_notice_source(notice["notice_kind"], caller)
+        if not known:
+            return None, None
+        context = _hfc_notice_context_from_source(source, event=event) if source is not None else None
+        if source is not None and (context is None or context["chat_id"] != chat_id):
+            return None, None
+        return notice, context
+    except Exception:
+        return None, None
+    finally:
+        del frame, wrapper, caller
 
 
 def _hfc_classify_background_notice(text: str) -> dict[str, Any] | None:
@@ -5460,10 +5654,13 @@ async def _hfc_send_system_notice_card(
     reply_to: str | None = None,
     metadata: dict[str, Any] | None = None,
     existing_message_id: str | None = None,
+    notice: dict[str, Any] | None = None,
+    notice_context: dict[str, Any] | None = None,
 ) -> Any:
-    notice = _hfc_classify_system_notice(content)
     if notice is None:
-        return _send_result(False, error="not a system notice")
+        notice = _hfc_classify_system_notice(content)
+        if notice is None:
+            return _send_result(False, error="not a system notice")
     plain_text = _hfc_notice_plain_text(notice)
     if plain_text is not None:
         # Deliberately BEFORE the card policy gate: the delivery format of this notice is its own
@@ -5476,14 +5673,15 @@ async def _hfc_send_system_notice_card(
             reply_to=reply_to,
             metadata=metadata,
         )
-    if not await _hfc_direct_card_allowed_async(chat_id):
+    policy_context = {"notice_context": notice_context} if notice_context is not None else {}
+    if not await _hfc_direct_card_allowed_async(chat_id, **policy_context):
         return _send_result(False, error="delivery_disposition=native")
     try:
         config = load_runtime_config()
         if not config.enabled:
             return _send_result(False, error="delivery_outcome=not_sent")
-        context = _HFC_FEISHU_NOTICE_CONTEXT.get()
-        if not isinstance(context, dict):
+        context = notice_context if notice_context is not None else _HFC_FEISHU_NOTICE_CONTEXT.get()
+        if not isinstance(context, dict) or context.get("chat_id") != chat_id:
             context = {}
         message_id = str(existing_message_id or context.get("message_id") or "").strip()
         if message_id and not message_id.startswith("notice_"):
@@ -5535,8 +5733,10 @@ async def _hfc_send_system_notice_card(
                 return _send_result(True, message_id=payload["message_id"])
             if not (
                 isinstance(post_result, dict)
-                and post_result.get("ok") is not False
+                and post_result.get("ok") is True
                 and post_result.get("applied") is False
+                and "delivery" not in post_result
+                and "disposition" not in post_result
             ):
                 return _send_result(
                     False,
@@ -5583,7 +5783,7 @@ async def _hfc_send_system_notice_card(
 
 
 def _hfc_notice_post_applied(result: Any) -> bool:
-    if not isinstance(result, dict) or result.get("ok") is False:
+    if not isinstance(result, dict) or result.get("ok") is not True:
         return False
     outcome = _hfc_notice_delivery_outcome(result)
     if outcome == "accepted":
@@ -5592,23 +5792,24 @@ def _hfc_notice_post_applied(result: Any) -> bool:
 
 
 def _hfc_notice_delivery_outcome(result: Any) -> str:
-    if not isinstance(result, dict):
+    if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
         return "unknown"
+    if (result["ok"] is True and result.get("applied") is False
+            and result.get("disposition") == "native" and "delivery" not in result):
+        return "not_sent"
     delivery = result.get("delivery")
     if not isinstance(delivery, dict):
         return "unknown"
     outcome = delivery.get("outcome")
-    if outcome in {"accepted", "delivered", "not_sent", "unknown"}:
+    if outcome in ("accepted", "delivered", "not_sent", "unknown"):
         return outcome
     return "unknown"
 
 
 def _hfc_send_result_delivery_outcome(result: Any) -> str:
     error = getattr(result, "error", None)
-    if error == "delivery_outcome=not_sent":
+    if error in ("delivery_outcome=not_sent", "delivery_disposition=native"):
         return "not_sent"
-    if error == "delivery_outcome=unknown":
-        return "unknown"
     return "unknown"
 
 
@@ -5644,7 +5845,7 @@ def _hfc_build_system_notice_payload(
     content: str,
     reply_to: str | None,
     metadata: dict[str, Any] | None,
-    context: dict[str, str],
+    context: dict[str, Any],
     notice: dict[str, Any],
     notice_scope: str,
     message_id: str,
@@ -6656,7 +6857,7 @@ async def _hfc_send_with_native_command_result_card(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_send", None)
-    from .notice_producers import notice_for_send
+    from .notice_producers import notice_for_send, take_review_source
     try:
         notice = notice_for_send(self, chat_id, content, metadata)
     except Exception:
@@ -6728,7 +6929,12 @@ async def _hfc_send_with_native_command_result_card(
         if acknowledged or handoff_context.get("recovery") is True:
             _HFC_NATIVE_HANDOFF_CONTEXT.set(None)
         return result
-    if not await _hfc_direct_card_allowed_async(chat_id):
+    review_source = take_review_source(self, chat_id, content)
+    card_notice, notice_context = _hfc_classify_adapter_notice(
+        chat_id, content, adapter=self, metadata=metadata, review_source=review_source,
+    )
+    policy_context = {"notice_context": notice_context} if notice_context is not None else {}
+    if not await _hfc_direct_card_allowed_async(chat_id, **policy_context):
         _HFC_NATIVE_MEDIA_TEXT_SUPPRESSION.set(None)
         if callable(original):
             return await original(
@@ -6741,40 +6947,37 @@ async def _hfc_send_with_native_command_result_card(
         return _send_result(False, error="original Feishu send unavailable")
     if _should_suppress_matching_native_media_text(chat_id, content):
         return _send_result(True, message_id="media_text_suppressed")
-    context = _hfc_take_feishu_command_result_context(chat_id=chat_id, content=content)
-    if context is not None:
-        result = await _hfc_send_native_command_result_card(
+    # A cold /refine receipt can inherit the command's context. Apply the
+    # confirmed review or background notice policy before command rendering.
+    if review_source is None and (
+        card_notice is None or card_notice["notice_kind"] not in {"background-task", "background-process"}
+    ):
+        context = _hfc_take_feishu_command_result_context(chat_id=chat_id, content=content)
+        if context is not None:
+            result = await _hfc_send_native_command_result_card(
+                self,
+                chat_id=chat_id,
+                content=str(content or ""),
+                reply_to=reply_to,
+                metadata=metadata,
+                context=context,
+            )
+            if getattr(result, "success", False):
+                return result
+    if card_notice is not None:
+        notice_result = await _hfc_send_system_notice_card(
             self,
             chat_id=chat_id,
-            content=str(content or ""),
+            content=content,
             reply_to=reply_to,
             metadata=metadata,
-            context=context,
+            notice=card_notice,
+            notice_context=notice_context,
         )
-        if getattr(result, "success", False):
-            return result
-    notice_result = await _hfc_send_system_notice_card(
-        self,
-        chat_id=chat_id,
-        content=content,
-        reply_to=reply_to,
-        metadata=metadata,
-    )
-    if getattr(notice_result, "success", False):
-        return notice_result
-    if _hfc_classify_system_notice(content) is not None:
-        if getattr(notice_result, "error", None) == "delivery_disposition=native":
-            if callable(original):
-                return await original(
-                    self,
-                    chat_id,
-                    content,
-                    reply_to=reply_to,
-                    metadata=metadata,
-                )
-            return _send_result(False, error="original Feishu send unavailable")
-        outcome = _hfc_send_result_delivery_outcome(notice_result)
+        if getattr(notice_result, "success", False):
+            return notice_result
         if callable(original):
+            outcome = _hfc_send_result_delivery_outcome(notice_result)
             fallback_content = (
                 content if outcome == "not_sent" else _NOTICE_UNCERTAIN_WARNING
             )
@@ -6852,15 +7055,19 @@ async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwa
     parsed = _hfc_parse_edit_message_args(args, kwargs)
     if parsed is not None:
         chat_id, message_id, content, metadata = parsed
-        notice_result = await _hfc_send_system_notice_card(
-            self,
-            chat_id=chat_id,
-            content=content,
-            metadata=metadata,
-            existing_message_id=message_id,
-        )
-        if getattr(notice_result, "success", False):
-            return notice_result
+        notice, notice_context = _hfc_classify_adapter_notice(chat_id, content, adapter=self, metadata=metadata)
+        if notice is not None:
+            notice_result = await _hfc_send_system_notice_card(
+                self,
+                chat_id=chat_id,
+                content=content,
+                metadata=metadata,
+                existing_message_id=message_id,
+                notice=notice,
+                notice_context=notice_context,
+            )
+            if getattr(notice_result, "success", False):
+                return notice_result
     if callable(original):
         forwarded_kwargs = dict(kwargs)
         try:
@@ -6880,20 +7087,30 @@ async def _hfc_edit_message_with_system_notice_card(self: Any, *args: Any, **kwa
 
 
 def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -> bool:
-    """Route Hermes native platform notices into Feishu cards before text fallback."""
+    """Compatibility entry for previously generated synchronous Hermes hooks."""
     try:
-        if _platform_name({}, source) != "feishu":
-            return False
-        chat_id = str(getattr(source, "chat_id", "") or "").strip()
-        if not chat_id:
-            return False
-        if not _hfc_direct_card_allowed_sync(chat_id):
-            return False
-        if _hfc_classify_system_notice(str(content or "")) is None:
-            return False
+        asyncio.get_running_loop()
+    except RuntimeError:
+        result = asyncio.run(_hfc_try_platform_notice_card(runner, source, content))
+        return getattr(result, "success", False) is True
+    # An async gateway uses the wrapper below. In an unwrapped older gateway,
+    # let the injected synchronous hook fall through to Hermes' native send.
+    return False
+
+
+async def _hfc_try_platform_notice_card(runner: Any, source: Any, content: str) -> Any:
+    try:
+        if getattr(source, "is_bot", False) is True:
+            return None
+        notice_context = _hfc_notice_context_from_source(source)
+        if notice_context is None:
+            return None
+        notice = _hfc_classify_system_notice(content)
+        if notice is None:
+            return None
         adapter = _hfc_feishu_adapter_from_runner(runner, source)
         if adapter is None:
-            return False
+            return None
         # Preserve Hermes' private-notice policy, including per-profile adapter
         # overrides; a recognized setup message must not become a public card.
         extra = getattr(getattr(adapter, "config", None), "extra", None)
@@ -6902,22 +7119,31 @@ def handle_platform_notice_from_hermes(runner: Any, source: Any, content: str) -
             resolve_delivery = getattr(getattr(runner, "config", None), "get_notice_delivery", None)
             if callable(resolve_delivery):
                 delivery = resolve_delivery(getattr(source, "platform", None))
-        if delivery == "private":
-            return False
-        _hfc_schedule_platform_notice_card(
-            adapter=adapter,
-            chat_id=chat_id,
-            content=str(content or ""),
-            reply_to=str(getattr(source, "message_id", "") or "").strip() or None,
-            notice_context=_hfc_notice_context_from_source(source),
-        )
-        return True
+        if isinstance(delivery, str) and delivery.strip().lower() == "private":
+            return None
+        reply_to = str(getattr(source, "message_id", "") or "").strip() or None
+        if _hfc_notice_plain_text(notice) is not None and not await _hfc_direct_card_allowed_async(
+            notice_context["chat_id"], notice_context=notice_context,
+        ):
+            return None
     except Exception as exc:
         _hfc_warn(
             "platform notice hook failed: "
             f"{_hfc_exception_summary(exc)}"
         )
-        return False
+        return None
+    token = _HFC_FEISHU_NOTICE_CONTEXT.set(notice_context)
+    try:
+        return await _hfc_send_system_notice_card(
+            adapter,
+            chat_id=notice_context["chat_id"],
+            content=content,
+            reply_to=reply_to,
+            notice=notice,
+            notice_context=notice_context,
+        )
+    finally:
+        _HFC_FEISHU_NOTICE_CONTEXT.reset(token)
 
 
 async def _hfc_deliver_platform_notice_with_card(
@@ -6926,11 +7152,12 @@ async def _hfc_deliver_platform_notice_with_card(
     content: str,
 ) -> Any:
     original = getattr(type(self), "_hfc_original_deliver_platform_notice", None)
-    if handle_platform_notice_from_hermes(self, source, content):
-        return _send_result(
-            True,
-            message_id=str(getattr(source, "message_id", "") or "").strip() or None,
-        )
+    result = await _hfc_try_platform_notice_card(self, source, content)
+    if result is not None:
+        if getattr(result, "success", False) or not callable(original):
+            return result
+        if _hfc_send_result_delivery_outcome(result) != "not_sent":
+            content = _NOTICE_UNCERTAIN_WARNING
     if callable(original):
         return await original(self, source, content)
     return None
@@ -6991,47 +7218,6 @@ def _hfc_feishu_adapter_from_runner(runner: Any, source: Any) -> Any:
         if _is_feishu_adapter_key(key, adapter):
             return adapter
     return None
-
-
-def _hfc_schedule_platform_notice_card(
-    *,
-    adapter: Any,
-    chat_id: str,
-    content: str,
-    reply_to: str | None,
-    notice_context: dict[str, str] | None,
-) -> None:
-    async def send_notice() -> None:
-        token = None
-        if notice_context is not None:
-            token = _HFC_FEISHU_NOTICE_CONTEXT.set(notice_context)
-        try:
-            notice_result = await _hfc_send_system_notice_card(
-                adapter,
-                chat_id=chat_id,
-                content=content,
-                reply_to=reply_to,
-                metadata=None,
-            )
-            if not getattr(notice_result, "success", False):
-                _hfc_warn(
-                    "system notice card delivery failed; native notice suppressed"
-                )
-        except Exception as exc:
-            _hfc_warn(
-                "system notice card delivery failed; native notice suppressed: "
-                f"{_hfc_exception_summary(exc)}"
-            )
-        finally:
-            if token is not None:
-                _HFC_FEISHU_NOTICE_CONTEXT.reset(token)
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(send_notice())
-        return
-    loop.create_task(send_notice())
 
 
 def _hfc_parse_edit_message_args(
@@ -9700,8 +9886,9 @@ def install_feishu_command_card_adapter_methods(runner: Any, event: Any = None) 
             _HFC_FEISHU_DELIVERY_CONTEXT.set(None)
             return False
         runner_type = type(runner)
-        from .notice_producers import install_notice_producers
+        from .notice_producers import install_notice_producers, install_review_notice_scheduler
         install_notice_producers(runner_type)
+        install_review_notice_scheduler(runner_type, _hfc_send_with_native_command_result_card)
         _install_startup_resume_wait(runner_type)
         if callable(getattr(runner_type, "_thread_metadata_for_target", None)):
             _hfc_install_policy_adapter_method(
@@ -10896,7 +11083,7 @@ def _build_event(
         or chat_id
     )
     created_at_value = local_vars.get("created_at")
-    created_at = _created_at(created_at_value)
+    created_at = _created_at(local_vars.get("_hfc_legacy_terminal_wire_time", created_at_value))
     created_at_lifecycle_token = _created_at_lifecycle_token(created_at_value)
     fallback_key = (conversation_id, chat_id)
     explicit_message_id = _first_string(
@@ -11595,7 +11782,11 @@ def _event_data(
             data["provider"] = provider
         # Preview checks body/media only; the actual terminal payload consumes
         # observations once and is reused by exact staging and transport retries.
-        rate = None if preview else _completion_observed_rate(local_vars)
+        if preview:
+            replay = local_vars.get("_hfc_legacy_terminal_replay")
+            rate = replay.rate if isinstance(replay, _LegacyTerminalReplay) else None
+        else:
+            rate = _completion_observed_rate(local_vars)
         if rate is not None:
             data["rate"] = rate
         delivery_kind = _first_string(local_vars, ("delivery_kind",))

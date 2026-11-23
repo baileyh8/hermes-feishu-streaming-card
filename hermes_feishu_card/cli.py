@@ -1419,14 +1419,14 @@ def _build_doctor_report(
         install_state, recovery_plan = _diagnose_v3_install_state(detection, args, **home_options)
         integrity_plan = None
     else:
-        install_state = _diagnose_install_state(detection)
         recovery_plan = plan_recovery(detection)
+        install_state = _diagnose_install_state(detection, recovery_plan=recovery_plan, **home_options)
         try:
             integrity_plan = plan_integrity_repair(detection)
         except (IntegrityRepairRefused, OSError, RuntimeError, ValueError):
             integrity_plan = None
     from .install.legacy_observer import observer_status
-    install_state["legacy_observer"] = observer_status(detection.root)
+    install_state["legacy_observer"] = observer_status(detection.root, home=home_options.get("hermes_home"))
     profile_id = str(getattr(args, "_profile_id", "") or "")
     route = _diagnostic_route(config, profile_id)
     try:
@@ -2310,35 +2310,76 @@ def _summarize_process_output(result: subprocess.CompletedProcess[str]) -> str:
     return combined[-800:]
 
 
-def _diagnose_install_state(detection: HermesDetection) -> dict[str, Any]:
-    from .install import legacy_observer
+def _management_cli() -> list[str]:
+    # A one-line PM install leaves an independent, absolute management Python.
+    # Keep the command runnable from that installation even when PATH has no CLI.
+    python = [sys.executable]
+    if Path(sys.prefix).resolve() in Path(__file__).resolve().parents:
+        python.append("-I")
+    return [*python, "-m", "hermes_feishu_card.cli"]
+
+
+def _upgrade_recovery_guidance(
+    detection: HermesDetection, plan: RecoveryPlan, *, hermes_home: Path | None = None,
+) -> dict[str, str]:
+    from .install import decomposed_ownership, legacy_observer
+    from .install.recovery import _secure_dirfd_transactions_supported
+
+    if plan.state not in decomposed_ownership.EXPLICIT_UPGRADE_STATES:
+        return {}
+    observer = legacy_observer.inspect(detection.root, home=hermes_home)
+    accepted = plan_recovery(detection, accept_hermes_upgrade=True)
+    if (not accepted.executable or accepted.state != plan.state
+            or accepted.fingerprint != plan.fingerprint):
+        return {}
+    scope = ["--hermes-dir", str(accepted.root.resolve())]
+    decomposed = detection.decomposed or decomposed_ownership.is_managed(detection.root)
+    if decomposed and not _secure_dirfd_transactions_supported():
+        return {}
+    if observer is not None:
+        hermes_home = Path(observer[0]["home"])
+    if hermes_home is not None:
+        scope.extend(["--hermes-home", str(hermes_home)])
+    command = [*_management_cli(), "repair"] if decomposed else ["hermes-feishu-card", "install"]
+    guidance = {"repair_command": shlex.join([*command, *scope, "--accept-hermes-upgrade", "--yes"])}
+    if decomposed and observer is not None:
+        preview = shlex.join([*_management_cli(), "integrity", "rebind-legacy", *scope])
+        guidance["after_repair"] = (
+            f"If the PM generation was replaced, preview {preview} and follow "
+            "docs/wiki/pm-recovery.md before restarting Gateway."
+        )
+    else:
+        guidance["restart_command"] = "hermes gateway start"
+    return guidance
+
+
+def _diagnose_install_state(
+    detection: HermesDetection, *, hermes_home: Path | None = None,
+    recovery_plan: RecoveryPlan | None = None,
+) -> dict[str, Any]:
+    from .install import decomposed_ownership, legacy_observer
     try:
-        legacy_observer.inspect(detection.root)
+        legacy_observer.inspect(detection.root, home=hermes_home)
+        if detection.decomposed or decomposed_ownership.is_managed(detection.root):
+            plan = recovery_plan if recovery_plan is not None else plan_recovery(detection)
+            guidance = _upgrade_recovery_guidance(detection, plan, hermes_home=hermes_home)
+            message = "Decomposed ownership: " + plan.state
+            if guidance:
+                message = (
+                    "Hermes source changed and HFC hooks need reinstalling; an updater/autostash "
+                    "may have removed or reapplied them. Review the upgrade before recovering the source."
+                )
+            return {
+                "checked": True, "status": plan.state,
+                "manifest_exists": (detection.root / MANIFEST_NAME).exists(),
+                "manual_action_required": plan.state in {"refused", *decomposed_ownership.EXPLICIT_UPGRADE_STATES},
+                "automatic_repair_available": plan.executable, "message": message,
+                **guidance,
+            }
     except (OSError, UnicodeError, ValueError):
         return {"checked": True, "status": "refused", "manual_action_required": True,
                 "automatic_repair_available": False,
                 "message": "Legacy observer config ownership requires review"}
-    from .install import decomposed_ownership
-    from .install import recovery as recovery_owner
-    if detection.decomposed or decomposed_ownership.is_managed(detection.root):
-        plan = recovery_owner._plan_decomposed_recovery(detection)
-        report = {"checked": True, "status": plan.state,
-                "manifest_exists": (detection.root / MANIFEST_NAME).exists(),
-                "manual_action_required": plan.state in {"refused", *decomposed_ownership.EXPLICIT_UPGRADE_STATES},
-                "automatic_repair_available": plan.executable,
-                "message": "Decomposed ownership: " + plan.state}
-        if plan.state in decomposed_ownership.EXPLICIT_UPGRADE_STATES:
-            accepted = recovery_owner._plan_decomposed_recovery(detection, accept_hermes_upgrade=True)
-            if accepted.executable:
-                report["message"] = (
-                    "Hermes source changed and HFC hooks need reinstalling; an updater/autostash "
-                    "may have removed or reapplied them. Review the upgrade, run the explicit repair command, "
-                    "then restart Gateway.")
-                report["repair_command"] = shlex.join([
-                    "hermes-feishu-card", "install", "--hermes-dir", str(detection.root),
-                    "--accept-hermes-upgrade", "--yes"])
-                report["restart_command"] = "hermes gateway start"
-        return report
     run_py = detection.run_py
     backup_path = _backup_path(run_py)
     manifest_path = _manifest_path(detection.root)
@@ -2797,12 +2838,22 @@ def _lifecycle_hook_check(args: argparse.Namespace) -> dict[str, object] | None:
     if plan.state == "clean":
         return {"status": "not_installed", "blocking": False, "root": verified_root}
     if plan.state in {"stale_unpatched", "stale_reapplied"}:
-        accepted = plan_recovery(detection, accept_hermes_upgrade=True)
-        if accepted.executable:
+        try:
+            lifecycle_config = load_config(
+                args.config, env_file=getattr(args, "env_file", None) or os.environ.get("HFC_ENV_FILE"),
+            )
+            selected_home = setup_hermes_home(
+                verified_root, lifecycle_config, getattr(args, "hermes_home", None),
+            )
+            guidance = _upgrade_recovery_guidance(detection, plan, hermes_home=selected_home)
+        except (OSError, UnicodeError, ValueError):
+            guidance = {}
+        if guidance:
             return {
                 "status": "upgrade_repair_required",
                 "blocking": True,
                 "root": verified_root,
+                **guidance,
             }
     return {
         "status": "manual_review_required",
@@ -2811,38 +2862,36 @@ def _lifecycle_hook_check(args: argparse.Namespace) -> dict[str, object] | None:
     }
 
 
+def _doctor_explain_command(args: argparse.Namespace, root: Path | None) -> str:
+    command = [*_management_cli(), "doctor", "--config", str(Path(args.config).expanduser().absolute())]
+    env_file = getattr(args, "env_file", None) or os.environ.get("HFC_ENV_FILE")
+    if env_file:
+        command.extend(["--env-file", str(Path(env_file).expanduser().absolute())])
+    if root is not None:
+        command.extend(["--hermes-dir", str(root.expanduser().absolute())])
+    if getattr(args, "hermes_home", None):
+        # Preserve an invalid relative HOME so doctor reports the binding error.
+        command.extend(["--hermes-home", str(Path(args.hermes_home).expanduser())])
+    if getattr(args, "profile_id", None):
+        command.extend(["--profile-id", args.profile_id])
+    return shlex.join([*command, "--explain"])
+
+
 def _print_lifecycle_hook_check(
-    check: dict[str, object], *, file: Any = None
+    check: dict[str, object], args: argparse.Namespace, *, file: Any = None
 ) -> None:
     output = sys.stdout if file is None else file
     status = str(check["status"])
     hermes_root = Path(check["root"])
     print(f"hook.status: {status}", file=output)
     if status == "upgrade_repair_required":
-        repair_command = shlex.join(
-            [
-                "hermes-feishu-card",
-                "install",
-                "--hermes-dir",
-                str(hermes_root),
-                "--accept-hermes-upgrade",
-                "--yes",
-            ]
-        )
-        print(f"hook.next: {repair_command}", file=output)
-        print("hook.restart: hermes gateway start", file=output)
+        print(f"hook.next: {check['repair_command']}", file=output)
+        if check.get("after_repair"):
+            print(f"hook.after_repair: {check['after_repair']}", file=output)
+        elif check.get("restart_command"):
+            print(f"hook.restart: {check['restart_command']}", file=output)
     elif status == "manual_review_required":
-        doctor_command = shlex.join(
-            [
-                "hermes-feishu-card",
-                "doctor",
-                "--config",
-                str(Path(check.get("config", "config.yaml.example"))),
-                "--hermes-dir",
-                str(hermes_root),
-                "--explain",
-            ]
-        )
+        doctor_command = _doctor_explain_command(args, hermes_root)
         print(f"hook.next: {doctor_command}", file=output)
 
 
@@ -2895,8 +2944,7 @@ def _run_enable(args: argparse.Namespace) -> int:
     hook_check = _lifecycle_hook_check(args)
     if hook_check is None or bool(hook_check["blocking"]):
         if hook_check is not None:
-            hook_check["config"] = args.config
-            _print_lifecycle_hook_check(hook_check, file=sys.stderr)
+            _print_lifecycle_hook_check(hook_check, args, file=sys.stderr)
         else:
             print("error: an explicit verified Hermes root is required", file=sys.stderr)
         return 1
@@ -2983,8 +3031,7 @@ def _run_start(args: argparse.Namespace) -> int:
 
     hook_check = _lifecycle_hook_check(args)
     if hook_check is not None and bool(hook_check["blocking"]):
-        hook_check["config"] = args.config
-        _print_lifecycle_hook_check(hook_check, file=sys.stderr)
+        _print_lifecycle_hook_check(hook_check, args, file=sys.stderr)
         return 1
 
     start_kwargs: dict[str, Any] = {}
@@ -3495,8 +3542,7 @@ def _run_status(args: argparse.Namespace) -> int:
     hook_check = _lifecycle_hook_check(args)
     if hook_check is None:
         return 1 if readiness_degraded or native_handoff_manual_review else 0
-    hook_check["config"] = args.config
-    _print_lifecycle_hook_check(hook_check)
+    _print_lifecycle_hook_check(hook_check, args)
     return (
         1
         if readiness_degraded
@@ -3563,14 +3609,8 @@ def _print_status_integrity(snapshot: dict[str, Any], *, args: argparse.Namespac
     if action:
         print(f"integrity.next_action: {action}")
         if args is not None and integrity["last_status"] in {"repair_available", "manual_review_required"}:
-            command = ["hermes-feishu-card", "doctor", "--config", str(args.config)]
-            if getattr(args, "env_file", None):
-                command.extend(["--env-file", str(args.env_file)])
             root = _configured_lifecycle_hermes_root(args)
-            if root is not None:
-                command.extend(["--hermes-dir", str(root)])
-            command.append("--explain")
-            print(f"integrity.next_command: {shlex.join(command)}")
+            print(f"integrity.next_command: {_doctor_explain_command(args, root)}")
 
 
 def _print_status_routing(health: dict[str, Any]) -> None:

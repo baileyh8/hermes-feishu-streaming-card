@@ -6,6 +6,7 @@ import time
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from hermes_feishu_card import server
 from hermes_feishu_card.server import create_app, SESSIONS_KEY, FEISHU_MESSAGE_IDS_KEY
 
 
@@ -20,6 +21,10 @@ class Client:
         self.updated = []
         self.cross_dialect = []
         self.fail = False
+
+    def last_update_for(self, message_id):
+        # An older receipt may finish its optional PATCH after the answer.
+        return next(card for mid, card in reversed(self.updated) if mid == message_id)
 
     async def send_card(self, chat_id, card, **kwargs):
         if self.fail:
@@ -90,8 +95,7 @@ async def test_continuation_keeps_turn_history_and_updates_new_v2_owner(kind):
         await post(http, "message.completed", 7, {"answer": "FINAL_ANSWER"})
         await asyncio.sleep(.02)
         assert len(client.sent) == 3
-        assert client.updated[-1][0] == mid
-        assert "FINAL_ANSWER" in str(client.updated[-1][1])
+        assert "FINAL_ANSWER" in str(client.last_update_for(mid))
         assert session.tool_count == 2
 
 
@@ -178,8 +182,7 @@ async def test_real_callback_or_text_completion_then_stream_and_terminal(mode, s
         new_mid = client.sent[-1][0]
         await post(http, "message.completed", 4, {"answer": "REAL_TERMINAL"})
         await asyncio.sleep(.02)
-        assert client.updated[-1][0] == new_mid
-        assert "REAL_TERMINAL" in str(client.updated[-1][1])
+        assert "REAL_TERMINAL" in str(client.last_update_for(new_mid))
 
 
 @pytest.mark.asyncio
@@ -285,8 +288,7 @@ async def test_expired_interaction_continues_below_the_native_fallback(kind):
         await post(http, "message.completed", 7, {"answer": "FINAL_ANSWER"})
         await asyncio.sleep(.02)
         assert len(client.sent) == before + 1
-        assert client.updated[-1][0] == mid
-        assert "FINAL_ANSWER" in str(client.updated[-1][1])
+        assert "FINAL_ANSWER" in str(client.last_update_for(mid))
         assert not client.cross_dialect
 
 
@@ -332,7 +334,7 @@ async def test_local_expiry_before_native_failure_preserves_continuation(kind, e
         assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] == owner
         assert session.display_segment["generation"] == generation
         assert session.active_interaction.status == "failed"
-        assert "FINAL_LOCAL_EXPIRY" in str(client.updated[-1][1])
+        assert "FINAL_LOCAL_EXPIRY" in str(client.last_update_for(owner))
         assert not client.cross_dialect
 
 
@@ -629,25 +631,195 @@ async def test_terminal_ack_and_answer_do_not_wait_for_receipt_or_repeat_its_pat
         assert not client.cross_dialect
 
 
+class BlockingPredecessorClient(Client):
+    def __init__(self, *, patch_fails=False):
+        super().__init__()
+        self.patch_fails = patch_fails
+        self.predecessor_started = asyncio.Event()
+        self.release_predecessor = asyncio.Event()
+        self.predecessor_cancelled = asyncio.Event()
+        self.final_written = asyncio.Event()
+        self.predecessor_attempts = []
+
+    async def update_card_message(self, mid, card):
+        subtitle = card.get("header", {}).get("subtitle", {}).get("content", "")
+        if "本段已转入续答" in subtitle:
+            self.predecessor_attempts.append(mid)
+            self.predecessor_started.set()
+            try:
+                await self.release_predecessor.wait()
+            except asyncio.CancelledError:
+                self.predecessor_cancelled.set()
+                raise
+            if self.patch_fails:
+                raise RuntimeError("fixture old message unavailable")
+        await super().update_card_message(mid, card)
+        if mid == "om_segment_3" and "FINAL_NEW_OWNER" in str(card):
+            self.final_written.set()
+
+
 @pytest.mark.asyncio
-async def test_failed_predecessor_patch_keeps_new_owner_and_terminal_delivery():
-    from hermes_feishu_card.server import DIAGNOSTICS_KEY
-    class FailingOldUpdate(Client):
-        async def update_card_message(self, mid, card):
-            if '本段已转入续答' in card.get('header', {}).get('subtitle', {}).get('content', ''):
-                raise RuntimeError('fixture old message unavailable')
-            return await super().update_card_message(mid, card)
-    client = FailingOldUpdate()
-    app = create_app(client, card_config={'flush_interval_ms':0})
+@pytest.mark.parametrize("terminal", ["message.completed", "message.failed"])
+@pytest.mark.parametrize("patch_fails", [False, True])
+async def test_streaming_continuation_does_not_block_terminal_ack_or_body(terminal, patch_fails):
+    client = BlockingPredecessorClient(patch_fails=patch_fails)
+    app = create_app(client, card_config={"flush_interval_ms": 0})
     async with TestClient(TestServer(app)) as http:
-        await post(http, 'message.started', 0)
-        await interact(http, 1, 'question_one')
-        await post(http, 'answer.delta', 3, {'text':'NEW_OWNER_CONTENT'})
-        owner = app[FEISHU_MESSAGE_IDS_KEY]['turn_fixture']
-        await post(http, 'message.completed', 4, {'answer':'FINAL_NEW_OWNER'})
-        assert owner == 'om_segment_3'
-        assert 'FINAL_NEW_OWNER' in str(client.updated[-1][1])
-        assert app[DIAGNOSTICS_KEY]['last_continuation_predecessor'] == 'update_failed'
+        await post(http, "message.started", 0)
+        await post(http, "answer.delta", 1, {"text": "PREVIOUS_OWNER_CONTENT"})
+        await interact(http, 2, "question_one")
+        delta = asyncio.create_task(post(http, "answer.delta", 4, {"text": "NEW_OWNER_CONTENT"}))
+        requests = [delta]
+        try:
+            await asyncio.wait_for(client.predecessor_started.wait(), timeout=1)
+            owner = app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]
+            assert owner == "om_segment_3"
+            final = asyncio.create_task(post(http, terminal, 5, {
+                "answer": "FINAL_NEW_OWNER", "error": "FINAL_NEW_OWNER",
+            }))
+            requests.append(final)
+            done, _ = await asyncio.wait(requests, timeout=1)
+            assert final in done, "terminal /events ACK waited for the predecessor PATCH"
+            assert delta in done, "first answer.delta ACK waited for the predecessor PATCH"
+            assert final.result() == delta.result() == {"ok": True, "applied": True}
+            await asyncio.wait_for(client.final_written.wait(), timeout=1)
+            assert "FINAL_NEW_OWNER" in str(client.last_update_for(owner))
+            assert client.predecessor_attempts == ["om_segment_1"]
+            assert not client.release_predecessor.is_set()
+            retirement, = app[server.CONTINUATION_RETIREMENT_TASKS_KEY].values()
+            controller = app[server.FLUSH_CONTROLLERS_KEY]["turn_fixture"]
+            assert not retirement.done()
+        finally:
+            client.release_predecessor.set()
+            await asyncio.gather(*requests, return_exceptions=True)
+        assert await controller.drain(1)
+        assert not app[server.CONTINUATION_RETIREMENT_TASKS_KEY]
+        assert app[server.DIAGNOSTICS_KEY]["last_continuation_predecessor"] == (
+            "update_failed" if patch_fails else "retired"
+        )
+        if patch_fails:
+            assert client.predecessor_attempts == ["om_segment_1"] * server.UPDATE_MAX_ATTEMPTS
+        else:
+            retired = client.last_update_for("om_segment_1")
+            assert "PREVIOUS_OWNER_CONTENT" in str(retired)
+            assert "Choose fixture" not in str(retired)
+        assert not client.cross_dialect
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("patch_fails", [False, True])
+async def test_late_predecessor_patch_does_not_affect_reopened_turn(patch_fails):
+    client = BlockingPredecessorClient(patch_fails=patch_fails)
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "reopened_question")
+        try:
+            assert (await asyncio.wait_for(post(http, "answer.delta", 3, {
+                "text": "FIRST_CONTINUATION",
+            }), timeout=1))["applied"]
+            await asyncio.wait_for(client.predecessor_started.wait(), timeout=1)
+            retirement, = app[server.CONTINUATION_RETIREMENT_TASKS_KEY].values()
+            old_session = app[SESSIONS_KEY]["turn_fixture"]
+            assert await asyncio.wait_for(post(http, "message.completed", 4, {
+                "answer": "FINAL_NEW_OWNER",
+            }), timeout=1) == {"ok": True, "applied": True}
+            await asyncio.wait_for(client.final_written.wait(), timeout=1)
+            old_controller = app[server.FLUSH_CONTROLLERS_KEY]["turn_fixture"]
+
+            assert (await asyncio.wait_for(post(http, "message.started", 0), timeout=1))["applied"]
+            new_session = app[SESSIONS_KEY]["turn_fixture"]
+            new_message = app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]
+            assert new_session is not old_session and new_message == "om_segment_4"
+            assert (await asyncio.wait_for(post(http, "answer.delta", 1, {
+                "text": "REOPENED_OWNER_CONTENT",
+            }), timeout=1))["applied"]
+            assert await app[server.FLUSH_CONTROLLERS_KEY]["turn_fixture"].drain(1)
+            assert not retirement.done()
+        finally:
+            client.release_predecessor.set()
+
+        await asyncio.wait_for(asyncio.shield(retirement), timeout=1)
+        assert await old_controller.drain(1)
+        assert client.predecessor_attempts == ["om_segment_1"]
+        assert not app[server.CONTINUATION_RETIREMENT_TASKS_KEY]
+        assert not old_session.approval_retirements and not new_session.approval_retirements
+        assert app[SESSIONS_KEY]["turn_fixture"] is new_session
+        assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] == new_message
+        reopened_card = str(client.last_update_for(new_message))
+        assert "REOPENED_OWNER_CONTENT" in reopened_card and "FINAL_NEW_OWNER" not in reopened_card
+
+
+@pytest.mark.asyncio
+async def test_completion_push_reaches_old_turn_before_slow_predecessor_is_released(tmp_path):
+    client = BlockingPredecessorClient()
+    notified = asyncio.Event()
+    messages = []
+
+    async def send_text(chat_id, text, **route):
+        assert client.final_written.is_set()
+        messages.append((chat_id, text, route))
+        notified.set()
+        return "om_completion_notice"
+
+    client.send_text_message = send_text
+    app = create_app(client, session_store_directory=tmp_path, card_config={
+        "flush_interval_ms": 0, "completion_notify": {"enabled": True, "mention": False},
+    })
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "slow_old_card")
+        try:
+            await post(http, "answer.delta", 3, {"text": "CONTINUATION"})
+            await asyncio.wait_for(client.predecessor_started.wait(), timeout=1)
+            old_session = app[SESSIONS_KEY]["turn_fixture"]
+            terminal = {"answer": "FINAL_NEW_OWNER"}
+            assert (await post(http, "message.completed", 4, terminal))["applied"]
+            await asyncio.wait_for(client.final_written.wait(), timeout=1)
+            await asyncio.wait_for(notified.wait(), timeout=1)
+            assert old_session.completion_notify_state == "sent"
+            stored, = app[server.SESSION_STORE_KEY].load()
+            assert stored["session"].completion_notify_state == "sent"
+            assert (await post(http, "message.completed", 4, terminal))["applied"]
+            assert (await post(http, "message.started", 0))["applied"]
+            assert app[SESSIONS_KEY]["turn_fixture"] is not old_session
+            assert not client.release_predecessor.is_set()
+        finally:
+            client.release_predecessor.set()
+        assert len(messages) == 1
+        chat_id, text, route = messages[0]
+        assert chat_id == "chat_fixture" and "本轮回复结束" in text
+        assert route["reply_to_message_id"] == "om_fixture_anchor"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deadline_expires", [False, True])
+async def test_continuation_retirement_is_reclaimed_on_shutdown_or_deadline(monkeypatch, deadline_expires):
+    if deadline_expires:
+        monkeypatch.setattr(server, "CONTINUATION_RETIREMENT_TIMEOUT_SECONDS", 0.25)
+    client = BlockingPredecessorClient()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "shutdown_question")
+        await asyncio.wait_for(post(http, "answer.delta", 3, {"text": "CONTINUATION"}), timeout=1)
+        await asyncio.wait_for(client.predecessor_started.wait(), timeout=1)
+        retirement, = app[server.CONTINUATION_RETIREMENT_TASKS_KEY].values()
+        if deadline_expires:
+            await asyncio.wait_for(asyncio.shield(retirement), timeout=1)
+            assert app[server.DIAGNOSTICS_KEY]["last_continuation_predecessor"] == "timeout"
+        else:
+            assert (await asyncio.wait_for(post(http, "message.completed", 4, {
+                "answer": "FINAL_NEW_OWNER",
+            }), timeout=1))["applied"]
+            await asyncio.wait_for(client.final_written.wait(), timeout=1)
+            controller = app[server.FLUSH_CONTROLLERS_KEY]["turn_fixture"]
+            assert not retirement.done()
+    assert retirement.done() and retirement.cancelled() is (not deadline_expires)
+    assert client.predecessor_cancelled.is_set()
+    assert not app[server.CONTINUATION_RETIREMENT_TASKS_KEY]
+    if not deadline_expires:
+        assert not controller.snapshot()["task_active"]
 
 
 @pytest.mark.asyncio
@@ -679,7 +851,7 @@ async def test_resolved_receipts_keep_dialect_choices_and_live_turn(start_first,
                 assert '本轮回复结束' not in str(card)
             assert app[SESSIONS_KEY]['turn_fixture'].status not in {'completed','failed'}
         await post(http, 'message.completed', 6, {'answer':'FINAL_AFTER_TWO'})
-        assert 'FINAL_AFTER_TWO' in str(client.updated[-1][1])
+        assert 'FINAL_AFTER_TWO' in str(client.last_update_for(app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]))
 
 
 @pytest.mark.asyncio
@@ -814,8 +986,7 @@ async def test_confirmed_continuation_navigation_is_optional_and_checkpoint_free
         assert 'KEEP_PREVIOUS_CONTENT' in str(retired)
         assert not client.cross_dialect
         await post(http,'message.completed',5,{'answer':'FINAL_NEW_CONTENT'})
-        assert client.updated[-1][0]=='om_segment_3'
-        assert 'FINAL_NEW_CONTENT' in str(client.updated[-1][1])
+        assert 'FINAL_NEW_CONTENT' in str(client.last_update_for('om_segment_3'))
     checkpoints=list(tmp_path.rglob('*.json'))
     assert checkpoints
     for path in checkpoints:
@@ -853,8 +1024,7 @@ async def test_navigation_predecessor_patch_failure_does_not_undo_new_owner():
         await post(http,'answer.delta',3,{'text':'NEW_OWNER_BODY'})
         assert app[FEISHU_MESSAGE_IDS_KEY]['turn_fixture']=='om_segment_3'
         await post(http,'message.completed',4,{'answer':'FINAL_STILL_DELIVERED'})
-        assert client.updated[-1][0]=='om_segment_3'
-        assert 'FINAL_STILL_DELIVERED' in str(client.updated[-1][1])
+        assert 'FINAL_STILL_DELIVERED' in str(client.last_update_for('om_segment_3'))
 
 
 @pytest.mark.asyncio
@@ -887,7 +1057,8 @@ async def test_receipt_pruning_preserves_navigation_without_restoring_controls(m
         {'tag':'markdown','element_id':'interaction_result','content':'COMPLETED_RECEIPT'}]}}
     monkeypatch.setattr(server,'_render_static_display_card',lambda *args,**kwargs:copy.deepcopy(rendered))
     updated=[]
-    async def update(app,mid,card,bot_id):
+    async def update(app,mid,card,bot_id,*,is_current):
+        assert is_current()
         updated.append(copy.deepcopy(card))
         return True
     monkeypatch.setattr(server,'_update_card_for_app',update)
@@ -960,3 +1131,19 @@ async def test_navigation_lookup_owner_change_does_not_patch_predecessor(monkeyp
     assert not await server._retire_continuation_predecessor(
         app, 'turn_fixture', 'om_old_fixture', copy.deepcopy(owner), bot_id=None)
     assert not client.updated
+
+
+@pytest.mark.asyncio
+async def test_retirement_at_capacity_keeps_answer_on_new_owner(monkeypatch):
+    monkeypatch.setattr(server, "CONTINUATION_RETIREMENT_MAX_PENDING", 0)
+    client = BlockingPredecessorClient()
+    app = create_app(client, card_config={"flush_interval_ms": 0})
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "question_one")
+        assert (await post(http, "answer.delta", 3, {"text": "CONTINUATION"}))["applied"]
+        assert (await post(http, "message.completed", 4, {"answer": "FINAL_NEW_OWNER"}))["applied"]
+        await asyncio.wait_for(client.final_written.wait(), timeout=1)
+        assert not client.predecessor_attempts
+        assert not app[server.CONTINUATION_RETIREMENT_TASKS_KEY]
+        assert app[server.DIAGNOSTICS_KEY]["last_continuation_predecessor"] == "capacity"

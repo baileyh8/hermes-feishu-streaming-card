@@ -56,7 +56,9 @@ python3 -m hermes_feishu_card.cli install --hermes-dir ~/.hermes/hermes-agent --
 
 `setup` also accepts `--accept-hermes-upgrade`. It never writes an old backup over upgraded source. It clears only verified stale HFC artifacts, then backs up and patches every currently required target. All source must parse with supported anchors, the manifest must validate, and every old backup must remain unchanged and match its hash. Missing or corrupt backups, invalid manifests, symlinks, unreadable files, unknown markers, an incompatible required Base, unsupported source, or remaining owned patches still fail closed.
 
-`status` and `start` resolve `HERMES_DIR` from an explicit `--hermes-dir`, the selected env file, the config-adjacent `.env`, or process environment, then check hook state read-only. When a Hermes upgrade replaced the source but the old backup/manifest still verify, they report `hook.status: upgrade_repair_required` and print the explicit recovery command plus `hermes gateway start`; `start` refuses before launching the sidecar, preventing a silent “healthy sidecar, missing Gateway hook” state. User edits, corruption, unsupported source, or incomplete evidence report `manual_review_required` without offering the `--accept-hermes-upgrade` shortcut.
+`status` and `start` resolve `HERMES_DIR` from an explicit `--hermes-dir`, the selected env file, the config-adjacent `.env`, or process environment, then check hook state read-only. When a Hermes upgrade replaced the source but the old backup and manifest still verify, they report `hook.status: upgrade_repair_required` and print the recovery command for the detected layout. `start` stops before launching the sidecar. User edits, corruption, unsupported source, or incomplete evidence report `manual_review_required`.
+
+For a decomposed install with a legacy observer, run the `repair` command printed by `status` or `doctor --explain`, including its `--hermes-home` argument. If PM selected a different generation, verify the observer binding before restarting Gateway. See [PM recovery](wiki/pm-recovery.md).
 
 ## V4.1 Runtime Integrity
 

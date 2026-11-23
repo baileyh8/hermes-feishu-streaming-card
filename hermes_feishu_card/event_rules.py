@@ -5,15 +5,15 @@ turn identity stays distinct from reply aliases and Feishu thread anchors.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from hashlib import sha256
+import json
 import re
-from typing import Any, Protocol, TYPE_CHECKING
+from typing import Any, Protocol
 
 from .events import SidecarEvent
-
-if TYPE_CHECKING:
-    from .session import CardSession
+from .session import CardSession, _exact_feishu_open_id, _normalized_feishu_user_id
 
 
 TERMINAL_EVENTS = {"message.completed", "message.failed"}
@@ -88,6 +88,76 @@ def event_for_session(event: SidecarEvent, session: CardSession) -> SidecarEvent
         event,
         conversation_id=session.conversation_id,
         message_id=session.message_id,
+    )
+
+
+def explicit_thread_id(event: SidecarEvent) -> str:
+    value = event.thread_id or event.data.get("thread_id")
+    return value if isinstance(value, str) and value.startswith(("omt_", "om_")) else ""
+
+
+def _topic_root(conversation_id: str, thread_id: str) -> str:
+    # The conversation can also be repeated in the explicit thread field.
+    # A different explicit root is an additional part of the route.
+    return thread_id if thread_id != conversation_id else ""
+
+
+def event_conversation_matches(
+    owner: CardSession, event: SidecarEvent, *, allow_omitted_thread: bool = False,
+) -> bool:
+    if owner.chat_id != event.chat_id or owner.conversation_id != event.conversation_id:
+        return False
+    thread = explicit_thread_id(event)
+    interaction_placement = event.event == "interaction.requested" and not owner.legacy_route_thread_id
+    if allow_omitted_thread and (not thread or interaction_placement) and event.conversation_id != event.chat_id:
+        # Older direct callbacks can omit thread metadata. An approval can
+        # also provide its own placement before the main turn opens a thread.
+        if (not owner.has_display_requester and not any(_event_requester(event))
+                and "group" not in (owner.chat_type, _event_chat_type(event))):
+            return True
+    return _topic_root(event.conversation_id, thread) == _topic_root(
+        owner.conversation_id, owner.legacy_route_thread_id,
+    )
+
+
+def _event_requester(event: SidecarEvent) -> tuple[str, str]:
+    return (
+        _exact_feishu_open_id(event.data.get("sender_open_id")),
+        _normalized_feishu_user_id(event.data.get("admission_user_id")),
+    )
+
+
+def _event_chat_type(event: SidecarEvent) -> str:
+    chat_type = event.data.get("chat_type")
+    return chat_type.strip().lower() if isinstance(chat_type, str) else ""
+
+
+def _requester_matches(owner: CardSession, event: SidecarEvent, *, referenced: bool) -> bool:
+    sender, tenant_user = _event_requester(event)
+    if sender and owner.sender_open_id and sender != owner.sender_open_id:
+        return False
+    tenant_matches = owner.compare_display_tenant_requester(tenant_user)
+    if tenant_matches is False:
+        return False
+    if not referenced:
+        return True
+    if event.data.get("sender_open_id") not in (None, "") and not sender:
+        return False
+    if event.data.get("admission_user_id") not in (None, "") and not tenant_user:
+        return False
+    chat_type = _event_chat_type(event)
+    if "group" not in (owner.chat_type, chat_type):
+        direct_types = {"dm", "p2p", "private"}
+        if owner.chat_type in direct_types or chat_type in direct_types:
+            return True
+        if not (sender or tenant_user or owner.has_display_requester):
+            return True
+    return bool(sender and sender == owner.sender_open_id) or tenant_matches is True
+
+
+def legacy_alias_owner_matches(owner: CardSession, event: SidecarEvent) -> bool:
+    return event_conversation_matches(owner, event) and _requester_matches(
+        owner, event, referenced=True,
     )
 
 
@@ -230,8 +300,82 @@ def active_session_key(
     return None
 
 
+def _legacy_route_prefix(event: SidecarEvent, key: str, kind: str) -> str:
+    route = (
+        key, event.chat_id, event.conversation_id,
+        _topic_root(event.conversation_id, explicit_thread_id(event)),
+    )
+    digest = sha256(json.dumps(route).encode("ascii")).hexdigest()
+    return session_key_for_message_id(event, f"~legacy-{kind}-{digest}-")
+
+
+def _scoped_key(prefix: str, requester: tuple[str, str]) -> str:
+    return prefix + sha256(json.dumps(requester).encode("ascii")).hexdigest()
+
+
+def legacy_reference_owner_key(
+    event: SidecarEvent, key: str, *, sessions: Mapping[str, CardSession],
+    aliases: Mapping[str, str], accepts: Callable[[CardSession], bool],
+) -> str | None:
+    def matches(candidate: str) -> bool:
+        owner = sessions.get(candidate)
+        return owner is not None and accepts(owner) and legacy_alias_owner_matches(owner, event)
+
+    prefix = _legacy_route_prefix(event, key, "reference")
+    requester = _event_requester(event)
+    exact = aliases.get(_scoped_key(prefix, requester))
+    if exact and matches(exact):
+        return exact
+
+    # A callback may carry only one of the two requester IDs. An older
+    # checkpoint may only have the bare reference. Accept a unique owner.
+    candidates = {key, aliases.get(key, "")}
+    if any(requester):
+        candidates.update(owner for alias, owner in aliases.items() if alias.startswith(prefix))
+    candidates = {candidate for candidate in candidates if matches(candidate)}
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _legacy_direct_key(
+    event: SidecarEvent, key: str, *, sessions: Mapping[str, CardSession],
+    aliases: Mapping[str, str],
+) -> str:
+    references_message_id = key in session_alias_keys_for_event(event)
+    owner = sessions.get(key)
+    requester = _event_requester(event)
+    prefix = _legacy_route_prefix(event, key, "message")
+    scoped = _scoped_key(prefix, requester)
+    if scoped in sessions:
+        return scoped
+    raw_owner_matches = (
+        owner is not None
+        and event_conversation_matches(owner, event, allow_omitted_thread=not references_message_id)
+        and _requester_matches(owner, event, referenced=references_message_id)
+    )
+    # A stable direct message ID still works when a legacy callback omits its
+    # sender. A known reuse of that ID requires requester evidence instead.
+    shared_message_id = aliases.get(key, "").startswith(prefix)
+    if (raw_owner_matches and not shared_message_id and not any(requester)
+            and owner is not None and (owner.chat_type == "group" or owner.has_display_requester)):
+        shared_message_id = any(candidate.startswith(prefix) for candidate in sessions)
+    if raw_owner_matches and not shared_message_id:
+        return key
+    direct = legacy_reference_owner_key(
+        event, key, sessions=sessions, aliases=aliases,
+        accepts=lambda current: current.message_id == event.message_id,
+    )
+    if direct is not None:
+        return direct
+    if (owner is not None or shared_message_id
+            or (references_message_id and (_event_chat_type(event) == "group" or any(requester)))):
+        # Known reply anchors can be reused simultaneously. Keep their new
+        # session key stable even when a card create fails and is retried.
+        return scoped
+    return key
+
+
 def resolve_session_key(
-    event: SidecarEvent, *, sessions: Mapping[str, SessionRouteView],
+    event: SidecarEvent, *, sessions: Mapping[str, CardSession],
     aliases: Mapping[str, str], redirect_aliases: Mapping[str, str],
 ) -> str:
     direct_key = session_key(event)
@@ -240,70 +384,76 @@ def resolve_session_key(
             return direct_key
         redirect_key = redirect_aliases.get(direct_key)
         if redirect_key:
-            active_key = active_session_key(sessions, aliases, redirect_key)
+            active_key = active_session_key(sessions, redirect_aliases, redirect_key)
             if active_key is not None:
                 return active_key
         return direct_key
-    active_key = active_session_key(sessions, aliases, direct_key)
-    if active_key is not None:
-        return active_key
-    # A brand-new user message must ALWAYS start a fresh card, even when
-    # the user replied to (quoted) a previous message. Resolving through
-    # the reply_to alias here would route the new turn into the old card
-    # session and overwrite the previous reply's content. Alias resolution
-    # stays available for in-turn stream events (thinking/answer deltas,
-    # tool updates) whose Hermes-internal message_id may differ.
+
+    key = _legacy_direct_key(event, direct_key, sessions=sessions, aliases=aliases)
     if event.event == "message.started":
-        return direct_key
-    if is_independent_notice_event(event):
-        # An independent notice only joins a session that is ITSELF a notice session — never the
-        # turn's. That distinction is the whole fix, and both halves are load-bearing:
-        #
-        #   * orphaned heartbeat (no turn session for the anchor yet): the notice's own card IS the
-        #     card the turn will complete onto, so the alias MUST keep working — that is
-        #     test_orphaned_heartbeats_update_one_running_notice_card.
-        #   * live turn (a session already owns the anchor): resolving through the alias folds the
-        #     ⏳ Working line into the turn's card, where nothing can ever withdraw it —
-        #     /recall/schedule refuses an owned session card (409) and the card recall path wants
-        #     delivery_kind=="notice". The user reported exactly that ("变成卡片的时候好像不会自动
-        #     撤销了"). The notice takes its own key instead.
-        for alias_key in session_alias_keys_for_event(event):
-            active_key = active_session_key(sessions, aliases, alias_key)
-            if active_key is None:
-                continue
-            existing = sessions.get(active_key)
-            if existing is not None and existing.delivery_kind == "notice":
-                return active_key
-        return direct_key
-    for alias_key in session_alias_keys_for_event(event):
-        active_key = active_session_key(sessions, aliases, alias_key)
-        if active_key is not None:
-            return active_key
-    return direct_key
+        return key
+    redirect = redirect_aliases.get(key)
+    if redirect:
+        active = active_session_key(sessions, redirect_aliases, redirect)
+        if active and legacy_alias_owner_matches(sessions[active], event):
+            return active
+    if key in sessions:
+        return key
+
+    notice = is_independent_notice_event(event)
+
+    def accepts(owner: CardSession) -> bool:
+        # A heartbeat can refresh its own independent card while the chat
+        # turn continues on a separate card.
+        return owner.status not in {"completed", "failed"} and (
+            not notice or owner.delivery_kind == "notice"
+        )
+
+    for reference in dict.fromkeys([direct_key, *session_alias_keys_for_event(event)]):
+        active = legacy_reference_owner_key(event, reference, sessions=sessions,
+                                            aliases=aliases, accepts=accepts)
+        if active is not None:
+            return active
+    return key
 
 
 def session_alias_assignments(
-    event: SidecarEvent, canonical_key: str, *, sessions: Mapping[str, SessionRouteView],
+    event: SidecarEvent, canonical_key: str, *, sessions: Mapping[str, CardSession],
+    aliases: Mapping[str, str],
 ) -> dict[str, str]:
+    reference_keys = session_alias_keys_for_event(event)
     if is_independent_notice_event(event):
-        # Register the anchor alias ONLY while nothing else owns it. The mirror of
-        # resolve_session_key's guard, and it exists for the reverse hazard: active_session_key
-        # consults the alias table, so an alias pointing the TURN's key (reply_to_message_id) at this
-        # notice's session would let the turn's later events drift into the heartbeat's card.
-        # When the anchor is already owned — a live turn — the notice stays separate instead.
-        if any(sessions.get(key) is not None
-               for key in session_alias_keys_for_event(event)):
-            return {}
-    aliases: dict[str, str] = {}
+        # Leave an existing turn's anchor with that turn, including when the
+        # canonical message uses a scoped key.
+        for reference in reference_keys:
+            if reference in sessions or legacy_reference_owner_key(
+                event, reference, sessions=sessions, aliases=aliases,
+                accepts=lambda owner: owner.delivery_kind != "notice",
+            ) is not None:
+                return {}
+    assignments: dict[str, str] = {}
     keys = {
         session_key(event),
         session_key_for_message_id(event, event.message_id),
-        *session_alias_keys_for_event(event),
+        *reference_keys,
     }
+    owner = sessions.get(canonical_key)
     for alias_key in keys:
         if alias_key and alias_key != canonical_key:
-            aliases[alias_key] = canonical_key
-    return aliases
+            assignments[alias_key] = canonical_key
+            if owner is not None:
+                prefix = _legacy_route_prefix(event, alias_key, "reference")
+                if owner.display_requester_digest and not owner.sender_user_id:
+                    # Index a new reference without treating the restored owner
+                    # as anonymous. Lookup still verifies the candidate against
+                    # the incoming requester on the card's own route.
+                    key = _scoped_key(
+                        prefix + "checkpoint-", (owner.sender_open_id, owner.display_requester_digest),
+                    )
+                else:
+                    key = _scoped_key(prefix, (owner.sender_open_id, owner.sender_user_id))
+                assignments[key] = canonical_key
+    return assignments
 
 
 @dataclass(frozen=True)

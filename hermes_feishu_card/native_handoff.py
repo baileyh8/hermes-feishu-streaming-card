@@ -662,7 +662,10 @@ class NativeHandoffStore:
                 self._write_records(pending)
                 return True
 
-    def prepare_lifecycle(self, identity_key: str, *, event_created_at: float) -> str:
+    def prepare_lifecycle(
+        self, identity_key: str, *, event_created_at: float,
+        expected_record: NativeHandoffRecord | None = None,
+    ) -> str:
         """Clear a tombstone only for a strictly newer lifecycle event."""
 
         _validate_identity_key(identity_key)
@@ -671,6 +674,11 @@ class NativeHandoffStore:
             with self._persistent_lock():
                 records = self._load_records()
                 current = records.get(identity_key)
+                if expected_record is not None and (
+                    current is None or current.delivery_state != "legacy_consumed"
+                    or not _same_delivery_fence(current, expected_record)
+                ):
+                    return "stale"
                 if current is None:
                     return "absent"
                 if lifecycle_at <= current.event_created_at:

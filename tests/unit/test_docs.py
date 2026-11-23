@@ -19,6 +19,19 @@ def read_release_overview(english: bool = False) -> str:
     return readme + "\n" + index
 
 
+def test_v4_upgrade_instructions_pin_the_current_release():
+    version = re.search(r'^version = "([^"]+)"', read_doc("pyproject.toml"), re.M)[1]
+    expected = "v" + version
+    for path in ("README.md", "README.en.md", "docs/upgrade-v4-to-v5.md", "docs/upgrade-v4-to-v5.en.md"):
+        text = read_doc(path)
+        if path.startswith("README"):
+            text = re.search(r"^## (?:从 V4|Upgrade from V4).*?^## ", text, re.M | re.S)[0]
+        assert set(re.findall(r"\bv\d+\.\d+\.\d+\b", text)) == {expected}, path
+        assert f"/{expected}/install.sh" in text and f"--version {expected}" in text
+        if path.startswith("docs/"):
+            assert f"/{expected}/install.ps1" in text and f"-Version {expected}" in text
+
+
 def test_v441_release_notes_and_contributor_attribution():
     notes = read_doc("docs/release-notes-v4.4.1.md")
     notes_en = read_doc("docs/release-notes-v4.4.1.en.md")

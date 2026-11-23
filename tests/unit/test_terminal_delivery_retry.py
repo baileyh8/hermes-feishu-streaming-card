@@ -172,7 +172,7 @@ def _stub_emission(monkeypatch):
     monkeypatch.setattr(hook_runtime, "_policy_async_event_lock", lambda key: asyncio.Lock())
 
     async def gate(config, local_vars, event_name):
-        return SimpleNamespace(card=True)
+        return hook_runtime._PolicyGateResult(card=True, identity=None)
 
     async def flush(local_vars):
         return None

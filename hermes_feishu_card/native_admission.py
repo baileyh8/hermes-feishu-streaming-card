@@ -12,7 +12,9 @@ from dataclasses import dataclass
 import re
 from typing import Any, Literal, Protocol
 
-from .event_rules import event_is_terminal
+from .event_rules import (
+    TERMINAL_EVENTS, delivery_kind, event_is_terminal, is_intentional_silence_event, is_native_fallback_event,
+)
 from .events import SidecarEvent
 from .native_handoff import (
     NativeHandoffRecord,
@@ -43,10 +45,11 @@ class AdmissionStore(Protocol):
 class NativeTerminalSnapshot:
     native_terminal: bool = False
     cached_record: NativeHandoffRecord | None = None
+    allow_direct_terminal_start: bool = False
 
 
 AdmissionKind = Literal[
-    "continue", "ignore_lifecycle", "suppress_terminal", "use_record", "reject",
+    "continue", "ignore_lifecycle", "suppress_terminal", "use_record", "start_legacy_terminal", "reject",
 ]
 AdmissionReason = Literal[
     "lifecycle_unavailable", "stale_lifecycle", "read_unavailable",
@@ -297,6 +300,20 @@ def admit_native_handoff(
         )
 
     if prior is not None:
+        if (owner.allow_direct_terminal_start and not incoming_event.turn_id
+                and incoming_event.event in TERMINAL_EVENTS and delivery_kind(incoming_event) in {"", "chat"}
+                and incoming_event.data.get("policy_new_turn") is True
+                and not is_intentional_silence_event(incoming_event) and not is_native_fallback_event(incoming_event)):
+            # A consumed legacy handoff proves delivery for its own turn only.
+            # A newer marked terminal can be the first event of the next turn.
+            # The coordinator advances this record only after checking policy.
+            if (prior.delivery_state == "legacy_consumed" and not prior.has_exact_delivery_binding
+                    and incoming_event.created_at > prior.event_created_at
+                    and not (generation and generation == prior.generation)):
+                return result("start_legacy_terminal", record=prior)
+            if (prior.delivery_state == "lifecycle" and not prior.generation
+                    and incoming_event.created_at == prior.event_created_at):
+                return result("start_legacy_terminal", record=prior)
         if generation and prior.generation != generation:
             if incoming_event.created_at > prior.event_created_at:
                 prior = None
