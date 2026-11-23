@@ -114,7 +114,8 @@ def legacy_alias_owner_matches(owner: CardSession, event: SidecarEvent) -> bool:
         return False
     if tenant_user and owner.sender_user_id and tenant_user != owner.sender_user_id:
         return False
-    if owner.chat_type == "group" and (owner.sender_open_id or owner.sender_user_id):
+    chat_type = event.data.get("chat_type")
+    if owner.chat_type == "group" or (isinstance(chat_type, str) and chat_type.strip().lower() == "group"):
         return bool((sender and sender == owner.sender_open_id)
                     or (tenant_user and tenant_user == owner.sender_user_id))
     return True

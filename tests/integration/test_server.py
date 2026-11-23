@@ -13677,6 +13677,20 @@ async def test_legacy_topic_and_requester_scope(client, thread, sender, tenant, 
     assert len(feishu.sent) == (1 if same_owner else 2)
 
 
+@pytest.mark.parametrize("owner_type", ["group", ""])
+async def test_group_quote_without_a_verified_requester_preserves_old_card(client, owner_type):
+    http, feishu = client
+    quote = {"reply_to_message_id": "om_quote"}
+    await http.post("/events", json=event_payload("message.started", 0,
+                    {**quote, "chat_type": owner_type}, message_id="om_prior"))
+    response = await http.post("/events", json=event_payload("message.completed", 1,
+                               {**quote, "chat_type": "group", "admission_user_id": "second",
+                                "answer": "independent"}, message_id="om_terminal"))
+    assert (await response.json())["applied"] is True
+    assert len(feishu.sent) == 2
+    assert http.app[SESSIONS_KEY]["om_prior"].status == "thinking"
+
+
 async def test_shared_alias_cleanup_preserves_new_canonical_owner(client):
     test_client, _feishu_client = client
     quote = "om_shared_cleanup_quote"
