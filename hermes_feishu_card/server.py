@@ -4496,9 +4496,6 @@ async def _restore_card_checkpoints(app):
 
     async def refresh():
         for key, session, revision, auxiliary in restored:
-            # A delivered segmented result keeps the lead and continuations as sent.
-            if session.terminal_disposition == "segmented":
-                continue
 
             def current():
                 return app[SESSIONS_KEY].get(key) is session and session.updated_at == revision
@@ -4513,7 +4510,10 @@ async def _restore_card_checkpoints(app):
                 if display.display_segment.get("active"):
                     display.display_segment["answer"] += '\n\n连接已重建，等待本轮执行状态同步；原授权不会恢复。'
                 display.timeline.complete()
-            if session.terminal_delivery_state not in {"recovered", "unknown"}:
+            # Keep the confirmed segmented lead intact while restoring the
+            # separate interaction receipt on its original message.
+            if (session.terminal_disposition != "segmented"
+                    and session.terminal_delivery_state not in {"recovered", "unknown"}):
                 try:
                     updated = await asyncio.wait_for(_update_card_for_app(app, app[FEISHU_MESSAGE_IDS_KEY][key],
                         _render_session_card_for_app(app, display, session_key=key), app[MESSAGE_BOT_IDS_KEY].get(key),

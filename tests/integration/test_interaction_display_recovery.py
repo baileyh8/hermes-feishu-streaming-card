@@ -272,16 +272,24 @@ async def test_checkpoint_capacity_failure_keeps_actual_delivery_and_diagnostics
 
 
 @pytest.mark.asyncio
-async def test_completed_auxiliary_restores_decision_without_reopening_authority(tmp_path):
+@pytest.mark.parametrize("segmented", [False, True])
+async def test_completed_auxiliary_restores_decision_without_reopening_authority(tmp_path, segmented):
     fake = Client()
     async with TestClient(TestServer(make_app(fake, tmp_path))) as http:
         auxiliary, _ = await pending(http)
         assert (await http.post("/events", json=event("interaction.completed", 2, {
             "interaction_id": "fixture_approval", "choice": "once", "choice_label": "允许一次"}))).status == 200
+        if segmented:
+            session = http.app[server.SESSIONS_KEY]["turn_fixture"]
+            session.status = "completed"
+            session.terminal_disposition = "segmented"
+            server._checkpoint_session(http.app, "turn_fixture", "")
     fake.updated.clear()
     async with TestClient(TestServer(make_app(fake, tmp_path))) as http:
         await http.app[server.SESSION_RESTORE_TASK_KEY]
         receipt = next(card for mid, card in fake.updated if mid == auxiliary)
+        if segmented:
+            assert all(mid == auxiliary for mid, _ in fake.updated)
         assert receipt["header"]["template"] == "green"
         assert "已选择" in str(receipt) and "END_SCOPE" in str(receipt)
         assert not http.app[server.INTERACTION_RESULTS_KEY]
