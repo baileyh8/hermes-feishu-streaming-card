@@ -78,6 +78,7 @@
 - 接管终局后若 PATCH 与终局重试全部失败，sidecar 必须用同一原卡/事件的稳定 UUID 补发完整终局卡，保持原 topic、bot 和内容；不能再让 Gateway 原生发送同一答案。补发使用原 session 对象，不能读取复用 key 后的新轮内容。重复终局不能重复补发；补发不确定或失败须体现在 `last_terminal_delivery` 与 `terminal_delivery_state`，不能宣称已送达。
 - legacy completion 与 native `on_session_end` 共用明确结果字段解释；`completed=false` 和已知迭代/预算退出不得显示成功。未知退出码、非布尔字段和正文内容不作为失败推断依据。
 - 卡片已完成时不能让 Hermes 原生 resend 泄漏成灰色消息。
+- Terminal continuation UUIDs combine the confirmed Feishu main message ID and segment position with the existing turn and reply route. A v1 display checkpoint already carries the main ID. Successful segmented turns retain their display checkpoint for terminal replay and reopening. Startup leaves their cards as sent. A retry across the upgrade can repeat continuations that were partially sent with the old UUIDs, since older checkpoints only identify the main card.
 - 普通卡片初始 create/reply 只能在 Feishu API 边界用稳定 `delivery_uuid` 重试，最多 3 次；这不是通用 `/events` 重放或 PATCH 策略。terminal 事件另有保留原事件身份、包含锁等待的 75 秒传输预算；HTTP 4xx 不重试。`interaction.requested` 仍只 POST 一次。见[卡片连接恢复](card-restart-recovery.md)。
 - `feishu_send_retries`、`feishu_send_unknown_outcomes`、`notice_native_fallbacks`、`notice_uncertain_warnings`、`notice_update_failures`、`last_send_error` 与 `last_update_error` 必须保持脱敏；更新失败只可附加白名单校验后的 `status_code` / `api_code`，不得记录 UUID、响应正文、URL 或原始标识符。
 - 无凭据的 Noop 模式必须在 `/health` 中标记 `degraded` / `noop_mode`，发送计入 `feishu_noop_attempts` 和 failure；不得生成假 message id 或计入 success。
@@ -193,7 +194,7 @@ PM 回滚可能为旧包重新生成运行环境。注册栈恢复后，须凭�
 | 改动 | 先跑 | 发布前还要跑 |
 |---|---|---|
 | runtime event 抽取、topic、notice | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_server.py -q` | `python -m pytest -q` |
-| 完成通知时钟 / 终态分段 | `python -m pytest tests/unit/test_completion_notification.py tests/unit/test_config_over_limit.py tests/integration/test_server_segmented.py -q` | 精确提交完整 CI + 相关真实 Feishu API / 客户端验收 |
+| 完成通知时钟 / 终态分段 | `python -m pytest tests/unit/test_completion_notification.py tests/unit/test_config_over_limit.py tests/integration/test_server_segmented.py tests/integration/test_reopened_delivery_identity.py -q` | 精确提交完整 CI + 相关真实 Feishu API / 客户端验收 |
 | Lark WebSocket handler / command-card callback | `python -m pytest tests/unit/test_hook_runtime.py tests/integration/test_feishu_sdk_compat.py -q` | Python 3.11 + `lark-oapi==1.6.8` + `websockets==15.0.1` CI、真实 Feishu 稳定性 smoke、`python -m pytest -q` |
 | `/resume` / `/model` 原生 picker | `python -m pytest tests/unit/test_hook_runtime.py tests/unit/test_patcher.py tests/integration/test_cli_install.py -q` | 真实 Feishu 私聊、群聊、topic smoke + `python -m pytest -q` |
 | 群聊路由诊断 / 工具详情 | `python -m pytest tests/unit/test_bots.py tests/unit/test_session.py tests/unit/test_render.py tests/integration/test_server.py -q` | `python -m pytest -q` |

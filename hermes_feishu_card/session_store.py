@@ -37,8 +37,9 @@ class SessionStore:
 
     def save(self, key, session, message_id, bot_id, profile_id, aliases, client_identity,
              *, auxiliary_receipt=None):
-        # Handoff has its own durable proof protocol. Do not recreate that state.
-        if session.terminal_disposition or session.delivery_kind != 'chat':
+        # Keep confirmed segmented display ownership across restart.
+        # Native handoff uses its own delivery ledger.
+        if session.terminal_disposition not in {'', 'segmented'} or session.delivery_kind != 'chat':
             self.remove(key)
             return
         body = {k: getattr(session, k) for k in _FIELDS}

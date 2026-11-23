@@ -1,17 +1,23 @@
 """Issue #359: real IM create UUID deduplication must not overwrite old cards."""
+import asyncio
 import copy
 import json
 from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from hermes_feishu_card import server
+from hermes_feishu_card.feishu_client import FeishuAPIError
+from hermes_feishu_card.native_handoff import NativeHandoffStore
 from tests.integration.test_server import create_app, event_payload
+from tests.integration.test_server_segmented import oversize_answer
 
 class DeduplicatingClient:
     def __init__(self):
         self.ids = {}; self.cards = {}; self.updated = []
+        self.attempted_uuids = []
     async def send_card_delivery(self, chat_id, card, **kwargs):
         token = kwargs['delivery_uuid']
+        self.attempted_uuids.append(token)
         if token not in self.ids:
             mid = f'card-{len(self.ids)}';self.ids[token]=mid;self.cards[mid]=copy.deepcopy(card)
         return SimpleNamespace(message_id=self.ids[token],retry_count=0)
@@ -52,7 +58,6 @@ async def test_reopening_twice_keeps_previous_cards_and_checkpoint(first_event, 
         assert answer.rstrip() in json.dumps(transport.cards['card-0'])
 
 async def test_failed_reopen_keeps_original_until_followup_can_create(tmp_path):
-    from hermes_feishu_card.feishu_client import FeishuAPIError
     class FailedCreateClient(DeduplicatingClient):
         fail = False
         async def send_card_delivery(self, chat_id, card, **kwargs):
@@ -77,3 +82,167 @@ async def test_failed_reopen_keeps_original_until_followup_can_create(tmp_path):
         await post('message.completed',1,{'answer':'FOLLOWUP'})
         assert len(transport.cards)==2
         assert transport.cards['card-0']==original
+
+
+def _topic_event(name, sequence, turn, **data):
+    return event_payload(
+        name,
+        sequence,
+        {"reply_to_message_id": "om_topic_anchor", "reply_in_thread": True, **data},
+        thread_id="omt_topic",
+        created_at=1777017600.0 + 10 * turn + sequence,
+    )
+
+
+def _long_topic_terminal(turn):
+    marker = ("一轮要点", "二轮要点")[turn - 1]
+    answer = oversize_answer().replace("结论要点", marker)
+    return _topic_event("message.completed", 1, turn, answer=answer)
+
+
+async def _post_event(client, payload, *, status=200):
+    response = await client.post("/events", json=payload)
+    assert response.status == status, await response.text()
+    return await response.json()
+
+
+def _segmented_app(transport, tmp_path):
+    return create_app(
+        transport,
+        card_config={"over_limit": "segmented", "flush_interval_ms": 0},
+        native_handoff_store=NativeHandoffStore(tmp_path / "handoff"),
+        session_store_directory=tmp_path,
+    )
+
+
+@pytest.mark.parametrize("reopen_event", ["message.started", "answer.delta"])
+@pytest.mark.parametrize("cardless_first", [False, True], ids=["live", "cardless"])
+async def test_reopened_long_answer_sends_new_continuations(tmp_path, reopen_event, cardless_first):
+    transport = DeduplicatingClient()
+    async with TestClient(TestServer(_segmented_app(transport, tmp_path))) as client:
+        if not cardless_first:
+            await _post_event(client, _topic_event("message.started", 0, 1))
+        first = _long_topic_terminal(1)
+        assert (await _post_event(client, first))["applied"] is True
+        assert len(transport.cards) == 4
+        first_uuids = list(transport.attempted_uuids)
+        old_cards = copy.deepcopy(transport.cards)
+        old_updates = list(transport.updated)
+        assert (await _post_event(client, first))["applied"] is True
+        assert transport.attempted_uuids == first_uuids
+
+        second_start = _topic_event(reopen_event, 0, 2, policy_new_turn=True, text="第二轮")
+        assert (await _post_event(client, second_start))["applied"] is True
+        second = _long_topic_terminal(2)
+        assert (await _post_event(client, second))["applied"] is True
+        assert len(transport.cards) == 8
+        second_uuids = transport.attempted_uuids[len(first_uuids):]
+        assert len(second_uuids) == 4
+        assert set(first_uuids).isdisjoint(second_uuids)
+        assert all("一轮要点" in str(card) for card in old_cards.values())
+        for old_id, old_card in old_cards.items():
+            assert transport.cards[old_id] == old_card
+            assert transport.updated.count(old_id) == old_updates.count(old_id)
+        for index, token in enumerate(second_uuids[1:], start=1):
+            card = transport.cards[transport.ids[token]]
+            assert "二轮要点" in str(card)
+            assert card["header"]["title"]["content"].endswith(f"（续 {index}/3）")
+
+        updates_before_replay = list(transport.updated)
+        assert (await _post_event(client, second))["applied"] is True
+        assert transport.attempted_uuids == first_uuids + second_uuids
+        assert transport.updated == updates_before_replay
+
+
+async def test_failed_reopen_preserves_segmented_owner_for_retry_after_restart(tmp_path, monkeypatch):
+    transport = DeduplicatingClient()
+    first = _long_topic_terminal(1)
+    second_start = _topic_event("message.started", 0, 2)
+
+    async def refuse_create(*args, **kwargs):
+        raise FeishuAPIError("fixture refusal", outcome="not_sent")
+
+    app = _segmented_app(transport, tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        assert (await _post_event(client, first))["applied"] is True
+        old_cards = copy.deepcopy(transport.cards)
+        old_updates = list(transport.updated)
+        with monkeypatch.context() as patch:
+            patch.setattr(transport, "send_card_delivery", refuse_create)
+            result = await _post_event(client, second_start, status=502)
+        assert result["delivery"]["outcome"] == "not_sent"
+        assert app[server.FEISHU_MESSAGE_IDS_KEY]["hermes-message-1"] == "card-0"
+        assert app[server.SESSIONS_KEY]["hermes-message-1"].terminal_disposition == "segmented"
+
+    app = _segmented_app(transport, tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        await app[server.SESSION_RESTORE_TASK_KEY]
+        assert app[server.FEISHU_MESSAGE_IDS_KEY]["hermes-message-1"] == "card-0"
+        assert (await _post_event(client, first))["applied"] is True
+        assert len(transport.attempted_uuids) == len(old_cards) == 4
+        assert transport.updated == old_updates
+
+        assert (await _post_event(client, second_start))["applied"] is True
+        second = _long_topic_terminal(2)
+        assert (await _post_event(client, second))["applied"] is True
+        assert len(transport.cards) == 8
+        for old_id, old_card in old_cards.items():
+            assert transport.cards[old_id] == old_card
+            assert transport.updated.count(old_id) == old_updates.count(old_id)
+
+
+@pytest.mark.parametrize("reopened", [False, True], ids=["cardless", "reopened"])
+async def test_interrupted_segment_delivery_retries_same_slots_after_restart(tmp_path, monkeypatch, reopened):
+    transport = DeduplicatingClient()
+    segment_accepted = asyncio.Event()
+    send_cancelled = asyncio.Event()
+    send_card = transport.send_card_delivery
+
+    async def hold_first_segment_response(chat_id, card, **kwargs):
+        result = await send_card(chat_id, card, **kwargs)
+        title = card.get("header", {}).get("title", {}).get("content", "")
+        if title.endswith("（续 1/3）"):
+            segment_accepted.set()
+            try:
+                await asyncio.Future()
+            finally:
+                send_cancelled.set()
+        return result
+
+    app = _segmented_app(transport, tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        if reopened:
+            assert (await _post_event(client, _long_topic_terminal(1)))["applied"] is True
+            await _post_event(client, _topic_event("message.started", 0, 2))
+            # The existing v1 active checkpoint already has the confirmed main ID.
+            assert app[server.SESSION_STORE_KEY].load()[0]["message_id"] == "card-4"
+
+        terminal = _long_topic_terminal(2)
+        attempts_before = len(transport.attempted_uuids)
+        with monkeypatch.context() as patch:
+            patch.setattr(transport, "send_card_delivery", hold_first_segment_response)
+            post = asyncio.create_task(_post_event(client, terminal))
+            try:
+                await asyncio.wait_for(segment_accepted.wait(), timeout=5)
+            finally:
+                post.cancel()
+                await asyncio.gather(post, return_exceptions=True)
+            await asyncio.wait_for(send_cancelled.wait(), timeout=5)
+
+    interrupted_uuids = transport.attempted_uuids[attempts_before:]
+    assert len(interrupted_uuids) == (1 if reopened else 2)
+    accepted_card = transport.ids[interrupted_uuids[-1]]
+    assert "二轮要点" in str(transport.cards[accepted_card])
+    attempts_before = len(transport.attempted_uuids)
+
+    app = _segmented_app(transport, tmp_path)
+    async with TestClient(TestServer(app)) as client:
+        await app[server.SESSION_RESTORE_TASK_KEY]
+        assert app[server.DIAGNOSTICS_KEY]["card_checkpoints_restored"] == int(reopened)
+        assert (await _post_event(client, terminal))["applied"] is True
+        retried = transport.attempted_uuids[attempts_before:]
+        assert retried[:len(interrupted_uuids)] == interrupted_uuids
+        assert len(retried) == len(interrupted_uuids) + 2
+        assert len(transport.cards) == (8 if reopened else 4)
+        for token in retried[-3:]:
+            assert "二轮要点" in str(transport.cards[transport.ids[token]])

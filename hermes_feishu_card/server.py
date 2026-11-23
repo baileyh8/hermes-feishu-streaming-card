@@ -4496,6 +4496,10 @@ async def _restore_card_checkpoints(app):
 
     async def refresh():
         for key, session, revision, auxiliary in restored:
+            # A delivered segmented result keeps the lead and continuations as sent.
+            if session.terminal_disposition == "segmented":
+                continue
+
             def current():
                 return app[SESSIONS_KEY].get(key) is session and session.updated_at == revision
             if not current():
@@ -4545,7 +4549,8 @@ async def _apply_event_locked(request, event, *, advance_sequence=True):
     prior = app[SESSIONS_KEY].get(key)
     retained = None
     if (prior is not None and prior.status in {"completed", "failed"}
-            and not prior.terminal_disposition and app[FEISHU_MESSAGE_IDS_KEY].get(key)):
+            and prior.terminal_disposition in {"", "segmented"}
+            and app[FEISHU_MESSAGE_IDS_KEY].get(key)):
         retained = {state_key: app[state_key].get(key) for state_key in
                     (SESSIONS_KEY, FEISHU_MESSAGE_IDS_KEY, MESSAGE_BOT_IDS_KEY, SESSION_CARD_CONFIGS_KEY)}
     result = await _apply_event_locked_inner(request, event, advance_sequence=advance_sequence)
@@ -5120,6 +5125,7 @@ async def _apply_event_locked_inner(
                         chat_id=event.chat_id,
                         segments=render_result.segments,
                         session_key=session_key,
+                        main_message_id=message_id,
                         bot_id=route.bot_id,
                         thread_id=_thread_id_for_event(event) or None,
                         reply_to_message_id=_reply_to_message_id_for_event(event) or None,
@@ -5925,6 +5931,7 @@ async def _send_segment_cards(
     chat_id: str,
     segments: tuple[dict[str, Any], ...],
     session_key: str,
+    main_message_id: str,
     bot_id: str | None,
     thread_id: str | None,
     reply_to_message_id: str | None,
@@ -5933,8 +5940,8 @@ async def _send_segment_cards(
 ) -> bool:
     """Send continuation cards in order; False on the first failed delivery.
 
-    Deterministic delivery keys mean a redelivered terminal event cannot
-    duplicate cards the platform already accepted.
+    Tie retries to the confirmed main card and slot. Reopened topic turns
+    can share a session key and reply anchor while owning different main cards.
     """
     for index, segment_card in enumerate(segments, start=1):
         delivery = await _send_card_for_app(
@@ -5942,7 +5949,7 @@ async def _send_segment_cards(
             thread_id=thread_id,
             reply_to_message_id=reply_to_message_id,
             reply_in_thread=reply_in_thread,
-            delivery_key=f"{session_key}:segment:{index}",
+            delivery_key=f"{session_key}:segment:{main_message_id}:{index}",
             delivery_kind="chat",
             profile_id=profile_id,
         )
@@ -5989,6 +5996,7 @@ async def _deliver_segmented_terminal(
         chat_id=session.chat_id,
         segments=render_result.segments,
         session_key=session_key,
+        main_message_id=feishu_message_id,
         bot_id=bot_id,
         thread_id=_thread_id_for_event(event) or None,
         reply_to_message_id=session.reply_to_message_id or None,
