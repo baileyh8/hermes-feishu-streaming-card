@@ -309,7 +309,7 @@ def admit_native_handoff(
             # The coordinator advances this record only after checking policy.
             if (prior.delivery_state == "legacy_consumed" and not prior.has_exact_delivery_binding
                     and incoming_event.created_at > prior.event_created_at
-                    and (not prior.generation or bool(generation and generation != prior.generation))):
+                    and not (generation and generation == prior.generation)):
                 return result("start_legacy_terminal", record=prior)
             if (prior.delivery_state == "lifecycle" and not prior.generation
                     and incoming_event.created_at == prior.event_created_at):

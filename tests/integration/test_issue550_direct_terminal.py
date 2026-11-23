@@ -142,17 +142,18 @@ async def test_direct_terminal_segment_failure_hands_off_without_editing_old_car
 
 @pytest.mark.parametrize("restart", [False, True])
 @pytest.mark.parametrize("settle_placeholder", [False, True])
-@pytest.mark.parametrize("generated", [False, True], ids=["legacy", "with-generation"])
+@pytest.mark.parametrize("generations", [("", ""), ("a" * 32, "b" * 32), ("a" * 32, ""), ("", "b" * 32)],
+                         ids=["legacy", "both", "first-only", "second-only"])
 async def test_short_terminal_after_partial_segments_go_native(
-    tmp_path, old_v1_checkpoint, monkeypatch, restart, settle_placeholder, generated,
+    tmp_path, old_v1_checkpoint, monkeypatch, restart, settle_placeholder, generations,
 ):
     transport, _ = old_v1_checkpoint
     first_at = time.time()
     first = _terminal("message.completed", 0, first_at, answer=_long_answer())
     second = _terminal("message.completed", 0, first_at + 1, answer="NEXT SHORT BODY")
-    if generated:
-        first["data"]["native_handoff"] = {"generation": "a" * 32}
-        second["data"]["native_handoff"] = {"generation": "b" * 32}
+    for event, generation in zip((first, second), generations):
+        if generation:
+            event["data"]["native_handoff"] = {"generation": generation}
     send = transport.send_card_delivery
 
     async def refuse_one_segment(*args, **kwargs):
