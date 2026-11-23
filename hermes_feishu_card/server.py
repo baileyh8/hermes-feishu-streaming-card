@@ -5251,6 +5251,7 @@ async def _apply_event_locked_inner(
         applied = True
     render_result: CardRenderResult | None = None
     handoff_record: NativeHandoffRecord | None = None
+    retire_terminal_predecessor = None
     if applied and not terminal_already_handled:
         is_silence_or_fallback = _is_intentional_silence_event(event) or _is_native_fallback_event(event)
         render_result = _render_session_card_result_for_app(request.app, session)
@@ -5259,11 +5260,15 @@ async def _apply_event_locked_inner(
             and needs_continuation(session, event)
             and render_result.disposition == "card"
         ):
-            await _open_display_continuation(
+            retire_predecessor = await _open_display_continuation(
                 request, session_key, session, render_result.card,
                 profile_id=_policy_profile_id(event),
                 predecessor_snapshot=continuation_predecessor,
             )
+            if event_is_terminal:
+                retire_terminal_predecessor = retire_predecessor
+            elif retire_predecessor is not None:
+                await retire_predecessor()
             feishu_message_id = feishu_message_ids.get(session_key)
             render_result = _render_session_card_result_for_app(request.app, session)
         if event.event != "interaction.requested":
@@ -5641,11 +5646,6 @@ async def _apply_event_locked_inner(
                     display_state="display_receipt",
                 ) or latest_card
             if is_terminal and render_result.disposition == "card":
-                try:
-                    await _settle_approval_displays(request.app, session_key, latest_session)
-                except Exception:
-                    # Optional display cleanup must never withhold the final answer.
-                    request.app[DIAGNOSTICS_KEY]['last_approval_display_cleanup'] = 'retained'
                 if not is_silence_or_fallback:
                     await _populate_subscription_usage(request.app, latest_session)
                 populated_result = _render_session_card_result_for_app(
@@ -5711,21 +5711,31 @@ async def _apply_event_locked_inner(
                     bot_id=bot_id,
                     session=latest_session,
                 )
+            if retire_terminal_predecessor is not None:
+                await retire_terminal_predecessor()
+            if is_terminal and render_result.disposition == "card":
+                try:
+                    await _settle_approval_displays(request.app, session_key, latest_session)
+                except Exception:
+                    request.app[DIAGNOSTICS_KEY]["last_approval_display_cleanup"] = "retained"
             if terminal_receipt_update is not None:
                 await terminal_receipt_update()
+            if is_terminal and render_result.disposition == "card":
                 receipt = latest_session.active_interaction
                 if (updated and latest_session.terminal_delivery_state == "delivered"
                         and request.app[SESSIONS_KEY].get(session_key) is latest_session
-                        and receipt is not None and receipt.status == "failed"
+                        and receipt is not None and receipt.status in {"completed", "failed"}
                         and receipt.feishu_message_id != feishu_message_id
                         and receipt.receipt_fingerprint
                         and receipt.receipt_fingerprint == approval_receipt_fingerprint(latest_session, receipt)):
                     # The answer was delivered before the optional receipt I/O.
                     # Compact only after its full scope has an independent ACK.
                     compact = _render_session_card_for_app(request.app, latest_session, session_key=session_key)
-                    if inspect_card_limits(compact).safe:
+                    if compact != latest_card and inspect_card_limits(compact).safe:
                         await _update_card_for_app(request.app, feishu_message_id, compact, bot_id,
                             is_current=lambda: request.app[SESSIONS_KEY].get(session_key) is latest_session
+                            and request.app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == feishu_message_id
+                            and latest_session.display_segment.get("generation", 0) == owner_generation
                             and latest_session.active_interaction is receipt)
             if (
                 updated
@@ -5849,12 +5859,20 @@ async def _open_display_continuation(request, session_key, session, card, *, pro
         state["failed"] = True
         app[DIAGNOSTICS_KEY]["last_continuation_delivery"] = delivery.outcome
     _checkpoint_session(app, session_key, profile)
-    if delivery.delivered and predecessor_snapshot is not None:
-        await _retire_continuation_predecessor(
-            app, session_key, previous_message_id, predecessor_snapshot,
-            bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
-            navigation=delivery.navigation,
-        )
+    if not delivery.delivered or predecessor_snapshot is None:
+        return None
+
+    # The final body and its ACK can proceed before the old card is retired.
+    async def retire_predecessor():
+        if (app[SESSIONS_KEY].get(session_key) is session
+                and app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == delivery.message_id):
+            await _retire_continuation_predecessor(
+                app, session_key, previous_message_id, predecessor_snapshot,
+                bot_id=app[MESSAGE_BOT_IDS_KEY].get(session_key),
+                navigation=delivery.navigation,
+            )
+
+    return retire_predecessor
 
 
 async def _send_segment_cards(

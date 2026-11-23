@@ -21,6 +21,10 @@ class Client:
         self.cross_dialect = []
         self.fail = False
 
+    def last_update_for(self, message_id):
+        # An older receipt may finish its optional PATCH after the answer.
+        return next(card for mid, card in reversed(self.updated) if mid == message_id)
+
     async def send_card(self, chat_id, card, **kwargs):
         if self.fail:
             raise RuntimeError("fixture send unavailable")
@@ -90,8 +94,7 @@ async def test_continuation_keeps_turn_history_and_updates_new_v2_owner(kind):
         await post(http, "message.completed", 7, {"answer": "FINAL_ANSWER"})
         await asyncio.sleep(.02)
         assert len(client.sent) == 3
-        assert client.updated[-1][0] == mid
-        assert "FINAL_ANSWER" in str(client.updated[-1][1])
+        assert "FINAL_ANSWER" in str(client.last_update_for(mid))
         assert session.tool_count == 2
 
 
@@ -178,8 +181,7 @@ async def test_real_callback_or_text_completion_then_stream_and_terminal(mode, s
         new_mid = client.sent[-1][0]
         await post(http, "message.completed", 4, {"answer": "REAL_TERMINAL"})
         await asyncio.sleep(.02)
-        assert client.updated[-1][0] == new_mid
-        assert "REAL_TERMINAL" in str(client.updated[-1][1])
+        assert "REAL_TERMINAL" in str(client.last_update_for(new_mid))
 
 
 @pytest.mark.asyncio
@@ -285,8 +287,7 @@ async def test_expired_interaction_continues_below_the_native_fallback(kind):
         await post(http, "message.completed", 7, {"answer": "FINAL_ANSWER"})
         await asyncio.sleep(.02)
         assert len(client.sent) == before + 1
-        assert client.updated[-1][0] == mid
-        assert "FINAL_ANSWER" in str(client.updated[-1][1])
+        assert "FINAL_ANSWER" in str(client.last_update_for(mid))
         assert not client.cross_dialect
 
 
@@ -332,7 +333,7 @@ async def test_local_expiry_before_native_failure_preserves_continuation(kind, e
         assert app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"] == owner
         assert session.display_segment["generation"] == generation
         assert session.active_interaction.status == "failed"
-        assert "FINAL_LOCAL_EXPIRY" in str(client.updated[-1][1])
+        assert "FINAL_LOCAL_EXPIRY" in str(client.last_update_for(owner))
         assert not client.cross_dialect
 
 
@@ -646,7 +647,7 @@ async def test_failed_predecessor_patch_keeps_new_owner_and_terminal_delivery():
         owner = app[FEISHU_MESSAGE_IDS_KEY]['turn_fixture']
         await post(http, 'message.completed', 4, {'answer':'FINAL_NEW_OWNER'})
         assert owner == 'om_segment_3'
-        assert 'FINAL_NEW_OWNER' in str(client.updated[-1][1])
+        assert 'FINAL_NEW_OWNER' in str(client.last_update_for(owner))
         assert app[DIAGNOSTICS_KEY]['last_continuation_predecessor'] == 'update_failed'
 
 
@@ -679,7 +680,7 @@ async def test_resolved_receipts_keep_dialect_choices_and_live_turn(start_first,
                 assert '本轮回复结束' not in str(card)
             assert app[SESSIONS_KEY]['turn_fixture'].status not in {'completed','failed'}
         await post(http, 'message.completed', 6, {'answer':'FINAL_AFTER_TWO'})
-        assert 'FINAL_AFTER_TWO' in str(client.updated[-1][1])
+        assert 'FINAL_AFTER_TWO' in str(client.last_update_for(app[FEISHU_MESSAGE_IDS_KEY]["turn_fixture"]))
 
 
 @pytest.mark.asyncio
@@ -814,8 +815,7 @@ async def test_confirmed_continuation_navigation_is_optional_and_checkpoint_free
         assert 'KEEP_PREVIOUS_CONTENT' in str(retired)
         assert not client.cross_dialect
         await post(http,'message.completed',5,{'answer':'FINAL_NEW_CONTENT'})
-        assert client.updated[-1][0]=='om_segment_3'
-        assert 'FINAL_NEW_CONTENT' in str(client.updated[-1][1])
+        assert 'FINAL_NEW_CONTENT' in str(client.last_update_for('om_segment_3'))
     checkpoints=list(tmp_path.rglob('*.json'))
     assert checkpoints
     for path in checkpoints:
@@ -853,8 +853,7 @@ async def test_navigation_predecessor_patch_failure_does_not_undo_new_owner():
         await post(http,'answer.delta',3,{'text':'NEW_OWNER_BODY'})
         assert app[FEISHU_MESSAGE_IDS_KEY]['turn_fixture']=='om_segment_3'
         await post(http,'message.completed',4,{'answer':'FINAL_STILL_DELIVERED'})
-        assert client.updated[-1][0]=='om_segment_3'
-        assert 'FINAL_STILL_DELIVERED' in str(client.updated[-1][1])
+        assert 'FINAL_STILL_DELIVERED' in str(client.last_update_for('om_segment_3'))
 
 
 @pytest.mark.asyncio
