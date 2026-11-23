@@ -13,7 +13,9 @@ V5.0.22 adds exact Hermes v0.23.1 compatibility and config-schema-53 installatio
 
 V5.0.21 carries the actual turn model/provider through completion so eligible Codex turns can display subscription usage, and makes managed Python subprocess output decoding explicit for Windows PM paths (#518/#497). The reported Windows source_digest refusal is still under investigation; exact source checks remain required. See the [release notes](docs/release-notes-v5.0.21.en.md) for evidence and limits.
 
-**Release target: v5.0.29; published availability follows GitHub Releases.** The default `latest` selects the published stable release. V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
+These instructions target **v5.0.30**. Use the pinned examples after the tag appears in GitHub Releases. The default `latest` selects the published stable release. [Release notes](docs/release-notes-v5.0.30.en.md) · [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)
+
+V5.0.11 verifies admission completion and the first display-policy owner on pinned Hermes `9b904dcc22` (#471). The installation adapter is limited to an existing official PM generation, HFC already enabled with `allow_tool_override: false`, and a schema2 member without an observer marker. The SDK must be absent or PM-managed 1.7.5. Fresh installations, old v1 receipts, missing/true flags, and manually installed SDK 1.6.8 remain rejected before admission. See the [release notes](docs/release-notes-v5.0.11.en.md) for candidate validation and recovery/uninstall scope; availability follows the published Release. Do not delete protection records or edit Hermes source to bypass checks.
 
 This package contains lightweight installers for `hermes-feishu-streaming-card`.
 They install the Python package, configure Feishu credentials, install the Hermes
@@ -314,20 +316,20 @@ unknown same-name units, drift, or unsafe shutdown. Remove the owned unit with
 ## Extracting release assets (v5.0.6 and later)
 
 Use a new dedicated extraction directory and verify the published checksums first.
-Each archive contains nine files under `hermes-feishu-card-v5.0.29-linux/`,
-`hermes-feishu-card-v5.0.29-macos/` or `hermes-feishu-card-v5.0.29-windows/`.
+Each archive contains nine files under `hermes-feishu-card-v5.0.30-linux/`,
+`hermes-feishu-card-v5.0.30-macos/` or `hermes-feishu-card-v5.0.30-windows/`.
 The old flat layout allowed `./install.sh` immediately in the extraction target;
 enter the versioned platform directory first with these assets.
 
 ```bash
-mkdir hfc-install-v5.0.29
-tar -xzf hermes-feishu-card-v5.0.29-linux.tar.gz -C hfc-install-v5.0.29
-cd hfc-install-v5.0.29/hermes-feishu-card-v5.0.29-linux
-./install.sh --version v5.0.29
+mkdir hfc-install-v5.0.30
+tar -xzf hermes-feishu-card-v5.0.30-linux.tar.gz -C hfc-install-v5.0.30
+cd hfc-install-v5.0.30/hermes-feishu-card-v5.0.30-linux
+./install.sh --version v5.0.30
 ```
 
 For macOS, use the `macos` asset and subdirectory. On Windows, extract the ZIP,
-enter `hermes-feishu-card-v5.0.29-windows`, then run `.\install.ps1`.
+enter `hermes-feishu-card-v5.0.30-windows`, then run `.\install.ps1`.
 Tar metadata uses uid/gid 0, directories and shell installers 0755, other regular
 files 0644. These archive modes do not represent Windows ACL validation.
 Published v5.0.6 and earlier assets and tags are retained. See the [v5.0.6 release notes](docs/release-notes-v5.0.6.en.md)
@@ -338,6 +340,14 @@ for the #454 evidence and verification boundary.
 ```bash
 bash install.sh
 ```
+
+For supported Hermes PM installations, the shell installer keeps its management CLI in
+`.hermes_feishu_card/management/venv` under the selected Hermes HOME. It can rebuild that
+environment with an available compatible Python if the previous interpreter is retired.
+If pip is interrupted or the new package fails provenance checks, the installer rolls
+back the existing management environment. Once the new CLI passes those checks, it can
+diagnose any subsequent PM setup refusal. Save the printed `status` command with its
+absolute paths so you can run it from another directory. [PM installer and recovery](docs/wiki/pm-recovery.md)
 
 ## Windows PowerShell
 
@@ -408,7 +418,7 @@ a privileged container, or mount host system-service directories.
 ```
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.29
+export HFC_VERSION=v5.0.30
 bash install-docker.sh
 ```
 

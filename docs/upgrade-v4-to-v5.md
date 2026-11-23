@@ -2,7 +2,7 @@
 
 [English](upgrade-v4-to-v5.en.md) · [返回 README](../README.md)
 
-适用于已经安装 HFC 的用户。本文固定目标为 `v5.0.29`，请在该版本出现在 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 后执行。HFC 升级不会替你升级 Hermes，也不需要重新创建飞书机器人。兼容性由实际源码、能力和安装来源检查决定，不能保证任意旧版或手改安装都能直接覆盖。
+适用于已经安装 HFC 的用户。等 `v5.0.30` 正式发布后再执行本文的命令。保留现有 Hermes 和飞书机器人。安装器根据实际源码、能力和安装来源检查是否可以升级，手动修改过的安装也须通过这些检查。 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)
 
 ## 先确认当前安装
 
@@ -19,7 +19,9 @@ hermes-feishu-card doctor --config /path/to/config.yaml --hermes-dir /path/to/he
 
 ## 停止旧服务，再安装 V5
 
-等当前任务完成，通过原服务管理器停止 Gateway 与 Desktop，再停止 sidecar。Linux 常驻服务应使用原 systemd 管理方式；macOS 应避免 LaunchAgent 自动拉起第二个实例；容器应使用原 Compose/编排方式。不要同时运行两个接收同一机器人事件的 Gateway。
+等当前任务结束、分段回复发送完成，再通过原服务管理器停止 Gateway 与 Desktop，最后停止 sidecar。Linux 常驻服务沿用原 systemd 管理方式。macOS 要避免 LaunchAgent 自动拉起第二个实例，容器沿用原 Compose 或编排方式。同一机器人的事件只能由一个 Gateway 接收。
+
+如果旧版已发出建卡请求但丢失回执，又没有可用检查点，换版本后重投可能多出一张卡。分段回复在升级时仍有未确认的续卡，也可能出现重复。 [卡片恢复与重试](wiki/card-restart-recovery.md)
 
 临时 sidecar 可使用：
 
@@ -35,10 +37,12 @@ hermes-feishu-card stop --config /path/to/config.yaml --env-file /path/to/.env
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.29/install.sh | bash -s -- --version v5.0.29 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.30/install.sh | bash -s -- --version v5.0.30 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 若旧安装使用特定 profile，继续传入相同的 `--profile-id`。不要为了升级改成另一份配置或凭据文件。
+
+Hermes PM 布局请保存安装器打印的 `status` 命令。它使用绑定到同一 HOME 的管理 CLI，换工作目录后也可运行。 [PM 安装与恢复](wiki/pm-recovery.md)
 
 ### Windows PowerShell
 
@@ -48,16 +52,16 @@ curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-ca
 $env:HERMES_DIR = Join-Path $HOME ".hermes/hermes-agent"
 $HfcConfig = Join-Path $HOME ".hermes/config.yaml"
 $HfcEnvFile = Join-Path $HOME ".hermes/.env"
-$HfcInstaller = Join-Path $env:TEMP "hfc-install-v5.0.29.ps1"
-Invoke-WebRequest "https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.29/install.ps1" -OutFile $HfcInstaller
-& $HfcInstaller -Version v5.0.29 -Config $HfcConfig -EnvFile $HfcEnvFile
+$HfcInstaller = Join-Path $env:TEMP "hfc-install-v5.0.30.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.30/install.ps1" -OutFile $HfcInstaller
+& $HfcInstaller -Version v5.0.30 -Config $HfcConfig -EnvFile $HfcEnvFile
 ```
 
 使用 profile 的安装继续传入 `-ProfileId`。不需要更改机器范围的 PowerShell 执行策略；如被策略阻止，按本机既有管理方式运行。
 
 ### Docker / NAS
 
-在原镜像构建或容器安装流程中把 `HFC_VERSION` 固定为 `v5.0.29`，继续使用原 `HERMES_DIR`、`HFC_CONFIG`、`HFC_ENV_FILE`、HOME 和持久卷。按 [Docker 安装说明](../README-install.md)运行 `install-docker.sh`，然后通过原编排方式重建/重启服务。不要把宿主机示例路径复制进容器，也不要删除持久卷来“清理旧版”。[Compose 示例](../docker-compose.example.yml)是参考拓扑，不是可以覆盖现有配置的官方镜像。
+在原镜像构建或容器安装流程中把 `HFC_VERSION` 固定为 `v5.0.30`，继续使用容器内原有的 `HERMES_DIR`、`HFC_CONFIG`、`HFC_ENV_FILE`、HOME 和持久卷。按 [Docker 安装说明](../README-install.md)运行 `install-docker.sh`，然后通过原编排方式重建/重启服务。不要把宿主机示例路径复制进容器，也不要删除持久卷来“清理旧版”。[Compose 示例](../docker-compose.example.yml)是参考拓扑，不是可以覆盖现有配置的官方镜像。
 
 ### 安装器拒绝继续时
 

@@ -2,6 +2,13 @@
 
 ## 当前候选
 
+本分支目标版本为 `5.0.30`，包含普通飞书正文误判、跨轮卡片与完成通知投递、macOS/Linux PM 管理 CLI 恢复修复，以及上游 CI 分片校准。 [发行说明](release-notes-v5.0.30.md) · [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550) · [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
+
+- 产品 PR 的精确提交 `40017d48` 已通过完整 CI，独立验收覆盖普通 wheel 和 16 个签名 HTTP 回环场景。回环中的飞书服务为替身。 [CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45235020184) · [独立验收范围](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)
+- v5.0.30 发布提交与 tag 的门禁、发行资产和公开安装另行核验。本版现场验收范围为真实飞书测试群 API 和桌面显示，结果随 GitHub Release 记录。移动端及实际 Gateway/model 回合未验证。
+
+## v5.0.29
+
 本分支目标版本为 `5.0.29`，实现 #500（PR #547）按全局 / profile / bot 与 `card.chat_overrides`（`group` / `p2p` / 单群）抑制指定类别系统通知卡（默认 `[]`），同步支持中英文自我改进通知识别与静默不回落原生文本。公开包、完整 CI 和现场验收的证据分别记录在 [发行说明](release-notes-v5.0.29.md) 及 GitHub Release。
 
 ## v5.0.28

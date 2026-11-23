@@ -633,7 +633,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下示例固定 `v5.0.29`；默认 `latest` 解析已发布稳定版。本版的兼容与验收范围见[发行说明](release-notes-v5.0.29.md)。
+以下示例固定 `v5.0.30`，等 tag 发布后再执行。默认 `latest` 解析已发布稳定版。 [发行说明](release-notes-v5.0.30.md)
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 
@@ -642,7 +642,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v5.0.29`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v5.0.30`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -650,7 +650,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.29
+export HFC_VERSION=v5.0.30
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -701,6 +701,8 @@ python3 -m hermes_feishu_card.cli start --config ~/.hermes/config.yaml
 V3.6.2 会继续自动读取 `~/.hermes/config.yaml` 同目录的 `~/.hermes/.env`。更宽泛的 `.env` 搜索路径会作为独立小项评估，不和 venv 安装修复混在同一版里。
 
 ## 升级
+
+升级到 v5.0.30 前，等当前任务结束、分段回复发送完毕，再按现有服务管理方式停止进程。保留原配置、凭据和 HOME。macOS/Linux 的 PM 安装可用安装器打印的 `status` 命令核对安装状态，换目录也可执行。 [V5 升级指南](upgrade-v4-to-v5.md) · [PM 安装与恢复](wiki/pm-recovery.md)
 
 从 V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x/V3.7.x/V3.8.0-V3.8.17 升级到 V3.8.18 向后兼容，**单 Profile 配置无需任何修改**。如果 Hermes 使用自己的 venv，升级后请重新跑 `setup` 或 `install`，让插件同时进入 Hermes runtime Python 并刷新 hook。V3.8.18 保留 V3.8.10 的群聊诊断、V3.8.11 的 `/hfc` 命令接管修复、V3.8.12 的附件摘要重复 reply 抑制、V3.8.13 的 Hermes 升级兼容、V3.8.14 的 WebSocket interaction 按钮闭环、V3.8.15 的输入附件重复 reply 抑制、V3.8.16 的话题群复用 `message_id` 新卡修复、V3.8.17 的 cron 路由意图修复，并修复 cron 卡片无法回到飞书话题原线程的问题；建议升级后执行一次 `doctor --explain`，并在普通会话、话题和目标群聊里各发送一次普通问题、`/hfc status`、`/new`、`/model`，在同一话题里连续发送两条消息，并用一个从话题线程创建的 cron 任务验证卡片回到原线程。
 
@@ -981,7 +983,9 @@ Hermes hook 将事件 fail-open 转发给 sidecar。sidecar 持有完整会话�
 - **hook 已安装但 Hermes 卡片完全不工作**：跑 `doctor --explain`，查看 `Runtime import` 是否为 `ok`。如果 Hermes venv 不能 import `hook_runtime`，重新执行 `setup` 或 `install --hermes-dir ... --yes`。
 - **Gateway 在运行但飞书完全不回应**：跑 `doctor --explain`，查看 `Feishu SDK`。若出现 `feishu_sdk_incompatible`，重新执行 `setup` 或 `install --hermes-dir ... --yes`，让安装器补齐兼容 SDK，再重启 Hermes Gateway。
 - **卡片停在“思考中”**：看 `/health.diagnostics.last_terminal_event` 和 `feishu_update_failures`，确认终态事件是否到达、飞书 PATCH 是否成功。
-- **出现灰色原生文本**：通常说明 sidecar 未成功接收或更新终态；V3.5.x 已补 queued follow-up suppression 和终态优先更新。
+- **重启后看见新答复与旧占位卡**：飞书已接受占位卡、但检查点未写入时，正文可以另开一张卡。原占位卡可能仍可见。旧版如果已发建卡请求但丢失回执，且缺少检查点，升级后重投仍可能重复建卡或重复已发出的续卡。 [卡片恢复与重试](wiki/card-restart-recovery.md)
+- **静默系统通知后仍看到类似文字**：`card.suppressed_notice_kinds` 只作用于已验证来源的系统通知。普通回复和编辑即使逐字引用通知模板，也照常发送。 [通知来源与抑制规则](wiki/notice-ownership.md)
+- **出现灰色原生文本**。选用原生投递、全文超出卡片容量，或卡片写入无法确认时，Hermes 仍可用原生文本发送完整答案。出现重复正文时，检查终局是否已有飞书送达确认。 [卡片恢复与重试](wiki/card-restart-recovery.md)
 - **思考过程漏字/截断**：V3.5.x 已用 ordered send、append_block、PATCH 合并与终态优先修复；若仍出现，先检查 `/health.metrics.feishu_update_failures`。
 - **长表格/代码显示成 raw markdown**：V3.5.x 会结构化拆分；如果仍异常，减少单个表格列宽或代码块长度。
 - **重复卡片**：检查 `/health` metrics（`events_received`、`events_applied`、`feishu_send_successes`）。多 Profile 下 session key 为 `profile_id:message_id`。
