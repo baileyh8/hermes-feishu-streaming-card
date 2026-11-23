@@ -67,3 +67,11 @@ Linux 准备预算依据本轮全部 12 个 producer 的 GitHub job/step 时戳�
 ### v5.0.22 当前节点诊断
 
 worker 在独立 `.progress` 文件原子记录当前 node、顺序、剩余数与耗时，进程被取消时可留下最后进入的节点。它不与最终 `.json` 报告混用，不能证明用例完成；完整并集、每例一次和实际 commit 门禁仍由最终报告核验。#516 旧日志不足以证明精确卡点或 Ruff 因果，本版不盲增超时、不跳用例，也不宣称根因或20分钟目标已达成。
+
+### v5.0.29 上游分片耗时校准
+
+使用 v5.0.28、v5.0.29 的 main 全量首轮 Python 3.12 JUnit，按用例取成功执行的平均秒数。两次各收集 457 个用例，跳过的用例不参与估时。保留已有条目，新增平均至少 1 秒的用例；未测条目沿用原权重。上游仍分 12 片，每组 4 个独立 worker，每个 job 上限 25 分钟。
+
+在未参与校准的 v5.0.27 Python 3.12 样本上，用同一组实测用例时间回放，最长片从 1,091 秒降至 968 秒。v5.0.29 的 Python 3.13 样本从 912 秒降至 651 秒。这些结果仅计 JUnit 用例耗时，实际排队、安装和整轮耗时仍看新提交的 CI。失败或取消的 job 若能进入上传步骤，会另存按 attempt 命名的诊断工件，保留七天。后续重跑可更新用于汇总门禁的报告，同时保留已上传的失败现场。
+
+[校准样本 v5.0.28](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45123987985) · [校准与跨版本验证样本 v5.0.29](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45170086910) · [独立验证样本 v5.0.27](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/44889901551)
