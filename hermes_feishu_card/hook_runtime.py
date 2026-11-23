@@ -6,6 +6,7 @@ from collections import OrderedDict
 import copy
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from datetime import datetime
 from hashlib import sha256
 from ipaddress import ip_address
 import importlib
@@ -273,6 +274,9 @@ class _PolicyIdentity:
     is_new_turn: bool
     home_binding: tuple[Path, Path] | None
     chat_type: str = ""
+    legacy_terminal: _LegacyTerminalPolicyEvent | None = None
+    legacy_unordered: bool = False
+    legacy_replay: bool = False
 
 
 @dataclass(frozen=True)
@@ -280,18 +284,52 @@ class _PolicyGateResult:
     card: bool
     identity: _PolicyIdentity | None
 
+    @property
+    def preserve_legacy_owner(self) -> bool:
+        return self.identity is not None and (
+            self.identity.legacy_replay or self.identity.legacy_unordered
+        )
+
 
 @dataclass(frozen=True)
 class _PolicyCacheEntry:
     disposition: str
     expires_at: float
-    home_binding: tuple[Path, Path] | None = None
 
 
 @dataclass(frozen=True)
 class _PinnedPolicyDecision:
     disposition: str
     home_binding: tuple[Path, Path] | None
+    legacy_terminal: _LegacyTerminalPolicyEvent | None = None
+
+
+@dataclass(frozen=True, repr=False)
+class _LegacyTerminalReplay:
+    sequence: int
+    marked_as_new: bool
+    fingerprint: bytes
+
+
+@dataclass(repr=False)
+class _LegacyTerminalPolicyEvent:
+    scope_key: tuple[str, str, str, str]
+    message_id: str
+    generation: str
+    order_at: tuple[str, float] | None
+    created_at: float
+    disposition: str | None = None
+    replay: _LegacyTerminalReplay | None = None
+
+    def is_after(self, previous: _LegacyTerminalPolicyEvent) -> bool:
+        return (
+            self.scope_key == previous.scope_key
+            and self.created_at > previous.created_at
+            and self.order_at is not None
+            and previous.order_at is not None
+            and self.order_at[0] == previous.order_at[0]
+            and self.order_at[1] > previous.order_at[1]
+        )
 
 
 _SEQUENCES: dict[str, int] = {}
@@ -438,7 +476,7 @@ _ACTIVE_POLICY_TURNS: dict[
     tuple[str, str, str, str], tuple[str, str, str, str]
 ] = {}
 _TERMINAL_POLICY_DECISIONS: OrderedDict[
-    tuple[str, str, str, str], _PolicyCacheEntry
+    tuple[str, str, str, str], _PinnedPolicyDecision
 ] = OrderedDict()
 _POLICY_QUERY_LOCKS: OrderedDict[
     tuple[str, str, str, str], threading.Lock
@@ -1349,10 +1387,12 @@ def _policy_gate_sync(
     *,
     _admission_guard: Callable[[], bool] | None = None,
 ) -> _PolicyGateResult:
-    identity = _policy_identity(config, local_vars, event_name)
+    identity = _policy_identity(config, local_vars, event_name, observe_legacy_terminal=True)
     if identity is None:
         _cleanup_native_policy_state(local_vars)
-        return _PolicyGateResult(False, None)
+        return _PolicyGateResult(False, identity)
+    if identity.legacy_unordered:
+        return _PolicyGateResult(False, identity)
     disposition = _pinned_policy_disposition(identity)
     if disposition is None:
         query_lock = _policy_query_lock(identity)
@@ -1388,7 +1428,7 @@ def _policy_gate_sync(
                         disposition = "native"
                 _pin_policy_disposition(identity, disposition)
     result = _PolicyGateResult(disposition == "card", identity)
-    if not result.card:
+    if not result.card and not result.preserve_legacy_owner:
         _cleanup_native_policy_state(local_vars)
     if event_name in {"message.completed", "message.failed"}:
         _finish_policy_turn(identity, disposition)
@@ -1400,15 +1440,17 @@ async def _policy_gate_async(
     local_vars: dict[str, Any],
     event_name: str,
 ) -> _PolicyGateResult:
-    identity = _policy_identity(config, local_vars, event_name)
+    identity = _policy_identity(config, local_vars, event_name, observe_legacy_terminal=True)
     if identity is None:
-        result = _PolicyGateResult(False, None)
+        result = _PolicyGateResult(False, identity)
         _cleanup_native_policy_state(local_vars)
         return result
+    if identity.legacy_unordered:
+        return _PolicyGateResult(False, identity)
     disposition = _pinned_policy_disposition(identity)
     if disposition is not None:
         result = _PolicyGateResult(disposition == "card", identity)
-        if not result.card:
+        if not result.card and not result.preserve_legacy_owner:
             _cleanup_native_policy_state(local_vars)
         if event_name in {"message.completed", "message.failed"}:
             _finish_policy_turn(identity, disposition)
@@ -1435,7 +1477,7 @@ async def _policy_gate_async(
             result = await asyncio.to_thread(
                 _policy_gate_sync, config, local_vars, event_name, **kwargs
             )
-    if not result.card:
+    if not result.card and not result.preserve_legacy_owner:
         # ContextVar writes in the worker's copied context do not flow back to
         # this task, so repeat the idempotent native cleanup here.
         _cleanup_native_policy_state(local_vars)
@@ -1446,6 +1488,8 @@ def _policy_identity(
     config: RuntimeConfig,
     local_vars: dict[str, Any],
     event_name: str,
+    *,
+    observe_legacy_terminal: bool = False,
 ) -> _PolicyIdentity | None:
     if local_vars.get("_hfc_profile_invalid") is True:
         return None
@@ -1510,19 +1554,42 @@ def _policy_identity(
             else f"turn:{time.monotonic_ns()}"
         )
     turn_key = (endpoint, profile_id, chat_id, turn_token)
+    is_terminal = event_name in {"message.completed", "message.failed"}
+    stream_reopens_turn = event_name in {"thinking.delta", "answer.delta", "tool.updated"}
     with _POLICY_LOCK:
         _prune_policy_state_locked(time.monotonic())
-        terminal_known = turn_key in _TERMINAL_POLICY_DECISIONS
-    stream_reopens_turn = event_name in {
-        "thinking.delta",
-        "answer.delta",
-        "tool.updated",
-    }
-    is_new_turn = event_name == "message.started" or (
-        active_turn != turn_key
-        and (not terminal_known or stream_reopens_turn)
-        and (bool(message_id) or active_turn is None)
-    )
+        terminal = _TERMINAL_POLICY_DECISIONS.get(turn_key)
+        is_new_turn = event_name == "message.started" or (
+            active_turn != turn_key
+            and (terminal is None or stream_reopens_turn)
+            and (bool(message_id) or active_turn is None)
+        )
+        legacy_terminal = None
+        legacy_unordered = False
+        if not turn_id and message_id and (is_terminal or stream_reopens_turn or event_name == "message.started"):
+            legacy_terminal = _legacy_terminal_policy_event(
+                local_vars, scope_key, message_id, create=is_terminal and observe_legacy_terminal,
+            )
+            prior = terminal.legacy_terminal if terminal is not None else None
+            if legacy_terminal is not None and legacy_terminal.disposition is not None:
+                # The same Hermes event cannot promote another lifecycle.
+                is_new_turn = False
+                legacy_unordered = not is_terminal
+            elif is_terminal and terminal is not None and (prior is not None or "event" in local_vars):
+                if (prior is not None and legacy_terminal is not None
+                        and legacy_terminal.scope_key == prior.scope_key
+                        and legacy_terminal.generation == prior.generation):
+                    legacy_terminal = prior
+                else:
+                    # Generations are random. Without comparable timestamps
+                    # a different generation cannot take over this owner.
+                    is_new_turn = (
+                        active_turn is None
+                        and prior is not None
+                        and legacy_terminal is not None
+                        and legacy_terminal.is_after(prior)
+                    )
+                    legacy_unordered = not is_new_turn
     from .install.legacy_home_revocation import _authoritative_binding
     return _PolicyIdentity(
         endpoint=endpoint,
@@ -1536,7 +1603,47 @@ def _policy_identity(
         is_new_turn=is_new_turn,
         home_binding=_authoritative_binding(),
         chat_type=chat_type,
+        legacy_terminal=legacy_terminal,
+        legacy_unordered=legacy_unordered,
+        legacy_replay=legacy_terminal is not None and legacy_terminal.disposition is not None,
     )
+
+
+def _legacy_terminal_policy_event(
+    local_vars: dict[str, Any],
+    scope_key: tuple[str, str, str, str],
+    message_id: str,
+    *,
+    create: bool,
+) -> _LegacyTerminalPolicyEvent | None:
+    event = local_vars.get("event")
+    known = getattr(event, "_hfc_legacy_terminal_policy_event", None)
+    if isinstance(known, _LegacyTerminalPolicyEvent):
+        return known if (known.scope_key, known.message_id) == (scope_key, message_id) else None
+    if not create or event is None:
+        return None
+    raw_produced_at = local_vars.get("created_at")
+    produced_at = None if isinstance(raw_produced_at, bool) else _finite_float(raw_produced_at)
+    timestamp = getattr(event, "timestamp", None)
+    order_at = ("producer", produced_at) if produced_at is not None else None
+    if isinstance(timestamp, datetime):
+        # Hermes MessageEvent captures ingress time, even for a queued turn
+        # without a Feishu ID. Completion callback arrival order is weaker.
+        try:
+            ingress_at = _finite_float(timestamp.timestamp())
+        except (OSError, OverflowError, ValueError):
+            ingress_at = None
+        if ingress_at is not None:
+            order_at = ("ingress", ingress_at)
+    fact = _LegacyTerminalPolicyEvent(
+        scope_key, message_id, _native_handoff_generation(local_vars), order_at,
+        produced_at if produced_at is not None else time.time(),
+    )
+    try:
+        setattr(event, "_hfc_legacy_terminal_policy_event", fact)
+    except (AttributeError, TypeError):
+        return None
+    return fact
 
 
 def _policy_payload(identity: _PolicyIdentity) -> dict[str, str]:
@@ -1558,12 +1665,18 @@ def _policy_payload(identity: _PolicyIdentity) -> dict[str, str]:
 def _pinned_policy_disposition(identity: _PolicyIdentity, *, require_home: bool = False) -> str | None:
     now = time.monotonic()
     with _POLICY_LOCK:
+        if identity.legacy_unordered:
+            return None
         _prune_policy_state_locked(now)
         terminal = (
             None
             if identity.is_new_turn
             else _TERMINAL_POLICY_DECISIONS.get(identity.turn_key)
         )
+        legacy = identity.legacy_terminal
+        if (legacy is not None and legacy.disposition is not None
+                and (terminal is None or terminal.legacy_terminal is not legacy)):
+            return None if require_home else legacy.disposition
         if terminal is not None:
             if require_home and terminal.home_binding != identity.home_binding:
                 return None
@@ -1632,16 +1745,19 @@ def _pin_policy_disposition(identity: _PolicyIdentity, disposition: str) -> None
 
 def _finish_policy_turn(identity: _PolicyIdentity, disposition: str) -> None:
     with _POLICY_LOCK:
+        legacy = identity.legacy_terminal
+        if legacy is not None and legacy.disposition is not None:
+            return
         previous = _TURN_POLICY_DECISIONS.pop(identity.turn_key, None)
         prior_terminal = _TERMINAL_POLICY_DECISIONS.get(identity.turn_key)
         home_binding = (previous.home_binding if previous is not None else
                         prior_terminal.home_binding if prior_terminal is not None else identity.home_binding)
         if _ACTIVE_POLICY_TURNS.get(identity.scope_key) == identity.turn_key:
             _ACTIVE_POLICY_TURNS.pop(identity.scope_key, None)
-        _TERMINAL_POLICY_DECISIONS[identity.turn_key] = _PolicyCacheEntry(
-            disposition,
-            math.inf,
-            home_binding,
+        if legacy is not None:
+            legacy.disposition = disposition
+        _TERMINAL_POLICY_DECISIONS[identity.turn_key] = _PinnedPolicyDecision(
+            disposition, home_binding, legacy,
         )
         _TERMINAL_POLICY_DECISIONS.move_to_end(identity.turn_key)
         _bound_ordered_dict(_TERMINAL_POLICY_DECISIONS)
@@ -1756,7 +1872,42 @@ def _policy_event_locals(
         updates["turn_id"] = identity.turn_id
     if identity.is_new_turn:
         updates["_hfc_policy_new_turn"] = True
+    if identity.legacy_terminal is not None:
+        updates["_hfc_legacy_terminal_policy"] = identity
+        updates["_hfc_native_handoff_generation"] = identity.legacy_terminal.generation
+        updates["_hfc_legacy_terminal_wire_time"] = identity.legacy_terminal.created_at
     return {**local_vars, **updates} if updates else local_vars
+
+
+def _build_policy_event(
+    event_name: str, event_locals: dict[str, Any],
+) -> dict[str, Any] | None:
+    identity = event_locals.get("_hfc_legacy_terminal_policy")
+    if not isinstance(identity, _PolicyIdentity) or identity.legacy_terminal is None:
+        return build_event(event_name, event_locals)
+    legacy = identity.legacy_terminal
+    replay = legacy.replay if identity.legacy_replay else None
+    if identity.legacy_replay:
+        if replay is None:
+            return None
+        replay_locals = {**event_locals, "_hfc_policy_new_turn": replay.marked_as_new}
+        payload = build_event(event_name, replay_locals, preview=True)
+        if payload is None:
+            return None
+        payload["sequence"] = replay.sequence
+    else:
+        payload = build_event(event_name, event_locals)
+        if payload is None:
+            return None
+    # A rebuilt callback is replayable only if it represents the same wire
+    # event. Keep only its header and digest, never a copy of the response.
+    fingerprint = sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).digest()
+    if identity.legacy_replay:
+        return payload if replay is not None and replay.fingerprint == fingerprint else None
+    legacy.replay = _LegacyTerminalReplay(
+        payload["sequence"], identity.is_new_turn, fingerprint,
+    )
+    return payload
 
 
 def _discard_pending_deltas_for_local_vars(local_vars: dict[str, Any]) -> None:
@@ -2125,7 +2276,7 @@ async def _flush_build_send_ordered(
     event_name: str,
 ) -> None:
     await _flush_pending_deltas_for_local_vars(local_vars)
-    payload = build_event(event_name, local_vars)
+    payload = _build_policy_event(event_name, local_vars)
     if payload is None:
         return
     await _send_fail_open_ordered(
@@ -2147,12 +2298,13 @@ def emit_from_hermes_locals(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
-            _clear_answer_delta_hold(config, local_vars)
+            if not gate.preserve_legacy_owner:
+                _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
-        if event_name in {"message.started", "message.completed", "message.failed"}:
+        if not gate.preserve_legacy_owner and event_name in {"message.started", "message.completed", "message.failed"}:
             _clear_answer_delta_hold(config, event_locals)
-        payload = build_event(event_name, event_locals)
+        payload = _build_policy_event(event_name, event_locals)
         if payload is None:
             return False
         asyncio.get_running_loop()
@@ -2180,10 +2332,11 @@ def emit_from_hermes_locals_threadsafe(
         _hfc_eager_ensure_command_card_hooks(local_vars)
         gate = _policy_gate_sync(config, local_vars, event_name)
         if not gate.card:
-            _clear_answer_delta_hold(config, local_vars)
+            if not gate.preserve_legacy_owner:
+                _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
-        if event_name in {"message.started", "message.completed", "message.failed"}:
+        if not gate.preserve_legacy_owner and event_name in {"message.started", "message.completed", "message.failed"}:
             _clear_answer_delta_hold(config, event_locals)
         if event_name == "answer.delta":
             delta_mode = _first_string(event_locals, ("mode", "_hfc_text_mode"))
@@ -2234,7 +2387,7 @@ def emit_from_hermes_locals_threadsafe(
                             )
         if _queue_coalesced_delta(config, event_locals, event_name):
             return True
-        if _has_pending_deltas_for_local_vars(event_locals):
+        if not gate.preserve_legacy_owner and _has_pending_deltas_for_local_vars(event_locals):
             if "_hfc_loop" in event_locals:
                 coroutine = _flush_build_send_ordered(config, event_locals, event_name)
                 try:
@@ -2251,7 +2404,7 @@ def emit_from_hermes_locals_threadsafe(
                     _flush_build_send_ordered(config, event_locals, event_name)
                 )
             return True
-        payload = build_event(event_name, event_locals)
+        payload = _build_policy_event(event_name, event_locals)
         if payload is None:
             return False
         if "_hfc_loop" in event_locals:
@@ -2382,15 +2535,19 @@ async def emit_from_hermes_locals_async(
         event_lock = _policy_async_event_lock(order_identity)
         async with event_lock:
             gate = await _policy_gate_async(config, local_vars, event_name)
+            if event_name == "message.completed" and gate.preserve_legacy_owner:
+                _HFC_NATIVE_MEDIA_TEXT_SUPPRESSION.set(None)
             if not gate.card:
-                _clear_answer_delta_hold(config, local_vars)
+                if not gate.preserve_legacy_owner:
+                    _clear_answer_delta_hold(config, local_vars)
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
-            if event_name not in {"thinking.delta", "answer.delta"}:
-                await _flush_pending_deltas_for_local_vars(event_locals)
-            if event_name in {"message.started", "message.completed", "message.failed"}:
-                _clear_answer_delta_hold(config, event_locals)
-            payload = build_event(event_name, event_locals)
+            if not gate.preserve_legacy_owner:
+                if event_name not in {"thinking.delta", "answer.delta"}:
+                    await _flush_pending_deltas_for_local_vars(event_locals)
+                if event_name in {"message.started", "message.completed", "message.failed"}:
+                    _clear_answer_delta_hold(config, event_locals)
+            payload = _build_policy_event(event_name, event_locals)
             if payload is None:
                 return False
             if event_name in {"message.completed", "message.failed"}:
@@ -2546,9 +2703,10 @@ async def stage_message_completed_from_hermes_locals_async(
                 _warn_stage_diagnostic("policy-native")
                 return False
             event_locals = _policy_event_locals(local_vars, gate)
-            await _flush_pending_deltas_for_local_vars(event_locals)
-            _clear_answer_delta_hold(config, event_locals)
-            payload = build_event("message.completed", event_locals)
+            if not gate.preserve_legacy_owner:
+                await _flush_pending_deltas_for_local_vars(event_locals)
+                _clear_answer_delta_hold(config, event_locals)
+            payload = _build_policy_event("message.completed", event_locals)
             if payload is None:
                 _warn_stage_diagnostic("payload-unavailable")
                 return False
@@ -10915,7 +11073,7 @@ def _build_event(
         or chat_id
     )
     created_at_value = local_vars.get("created_at")
-    created_at = _created_at(created_at_value)
+    created_at = _created_at(local_vars.get("_hfc_legacy_terminal_wire_time", created_at_value))
     created_at_lifecycle_token = _created_at_lifecycle_token(created_at_value)
     fallback_key = (conversation_id, chat_id)
     explicit_message_id = _first_string(
