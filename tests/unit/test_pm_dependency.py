@@ -821,9 +821,150 @@ def test_preexisting_selection_is_not_uninstalled(pm_env):
     pm_env.state['enabled'].append(pm.NAME)
     receipt = register(pm_env)
     receipt.finish()
-    with pytest.raises(ValueError, match='pre-existing'):
+    with pytest.raises(ValueError, match='pre-existing') as exc_info:
         pm.remove(pm_env.root, Path('/fixture/python'), home=pm_env.home)
+    message = str(exc_info.value)
+    assert 'hermes-feishu-card restore' in message
+    assert '--remove-adopted-pm-dependency' in message
     assert pm.NAME in pm_env.state['enabled']
+    assert receipt.member.exists()
+
+
+def test_explicit_adopted_selection_removal_for_verified_schema2_member_breaks_sticky_loop(pm_env):
+    pm_env.state['enabled'].append(pm.NAME)
+    receipt = register(pm_env)
+    receipt.finish()
+    owner = json.loads((receipt.member / pm.OWNER).read_text())
+    assert owner['schema'] == 2
+    assert owner['selection_added'] is False
+
+    pm_env.calls.clear()
+    with pytest.raises(ValueError, match='pre-existing'):
+        pm.preflight_remove(pm_env.root, Path('/fixture/python'), home=pm_env.home)
+    assert [c['operation'] for c in pm_env.calls] == ['probe']
+    assert pm.NAME in pm_env.state['enabled']
+    assert receipt.member.exists()
+
+    pm_env.calls.clear()
+    pm.preflight_remove(
+        pm_env.root,
+        Path('/fixture/python'),
+        home=pm_env.home,
+        allow_adopted_selection=True,
+    )
+    assert [c['operation'] for c in pm_env.calls] == ['probe']
+    assert pm.NAME in pm_env.state['enabled']
+    assert receipt.member.exists()
+
+    pm.remove(
+        pm_env.root,
+        Path('/fixture/python'),
+        home=pm_env.home,
+        allow_adopted_selection=True,
+    )
+    assert pm.NAME not in pm_env.state['enabled']
+    assert not receipt.member.exists()
+
+    reinstalled = register(pm_env)
+    reinstalled.finish()
+    new_owner = json.loads((reinstalled.member / pm.OWNER).read_text())
+    assert new_owner['selection_added'] is True
+    pm.remove(pm_env.root, Path('/fixture/python'), home=pm_env.home)
+    assert pm.NAME not in pm_env.state['enabled']
+    assert not reinstalled.member.exists()
+
+
+def test_explicit_adopted_selection_removal_refuses_drift_schema1_and_schema3(pm_env, monkeypatch):
+    pm_env.state['enabled'].append(pm.NAME)
+    receipt = register(pm_env)
+    receipt.finish()
+
+    project = receipt.member / 'pyproject.toml'
+    original = project.read_text()
+    project.write_text(original + '\n# user edit\n')
+    with pytest.raises(ValueError, match='ownership'):
+        pm.preflight_remove(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            allow_adopted_selection=True,
+        )
+    with pytest.raises(ValueError, match='ownership'):
+        pm.remove(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            allow_adopted_selection=True,
+        )
+    assert pm.NAME in pm_env.state['enabled']
+    project.write_text(original)
+
+    monkeypatch.setattr(pm, '_owned', lambda _path: {'schema': 1, 'selection_added': False})
+    with pytest.raises(ValueError, match='schema-2'):
+        pm.preflight_remove(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            allow_adopted_selection=True,
+        )
+    with pytest.raises(ValueError, match='schema-2'):
+        pm.remove(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            allow_adopted_selection=True,
+        )
+
+    monkeypatch.setattr(pm, '_owned', lambda _path: {'schema': 3, 'selection_added': False})
+    with pytest.raises(ValueError, match='legacy adoption PM removal is not yet supported'):
+        pm.preflight_remove(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            allow_adopted_selection=True,
+        )
+    with pytest.raises(ValueError, match='legacy adoption PM removal is not yet supported'):
+        pm.remove(
+            pm_env.root, Path('/fixture/python'), home=pm_env.home,
+            allow_adopted_selection=True,
+        )
+    assert pm.NAME in pm_env.state['enabled']
+
+
+def test_cli_uninstall_preflights_pm_before_restore_and_supports_adopted_flag(pm_env, monkeypatch, capsys):
+    pm_env.state['enabled'].append(pm.NAME)
+    receipt = register(pm_env)
+    receipt.finish()
+
+    restored = []
+    monkeypatch.setattr(cli, '_detect_hermes_runtime_python', lambda *_a, **_k: Path('/fixture/python'))
+    monkeypatch.setattr(cli, '_restore', lambda *a, **k: restored.append((a, k)))
+
+    rc = cli.main([
+        'uninstall', '--hermes-dir', str(pm_env.root),
+        '--hermes-home', str(pm_env.home), '--yes',
+    ])
+    assert rc == 1
+    assert restored == []
+    assert pm.NAME in pm_env.state['enabled']
+    assert receipt.member.exists()
+    err = capsys.readouterr().err
+    assert 'pre-existing' in err
+    assert 'hermes-feishu-card restore' in err
+    assert '--remove-adopted-pm-dependency' in err
+
+    monkeypatch.setattr(cli, '_detect_hermes_runtime_python', lambda *_a, **_k: None)
+    rc_no_py = cli.main([
+        'uninstall', '--hermes-dir', str(pm_env.root),
+        '--hermes-home', str(pm_env.home), '--yes',
+    ])
+    assert rc_no_py == 1
+    assert restored == []
+    assert 'PM runtime unavailable' in capsys.readouterr().err
+
+    monkeypatch.setattr(cli, '_detect_hermes_runtime_python', lambda *_a, **_k: Path('/fixture/python'))
+    rc_explicit = cli.main([
+        'uninstall', '--hermes-dir', str(pm_env.root),
+        '--hermes-home', str(pm_env.home), '--yes',
+        '--remove-adopted-pm-dependency',
+    ])
+    assert rc_explicit == 0
+    assert len(restored) == 1
+    assert pm.NAME not in pm_env.state['enabled']
+    assert not receipt.member.exists()
+    out = capsys.readouterr()
+    assert 'uninstall ok' in out.out
+    assert out.err == ''
 
 
 def test_unknown_directory_and_explicit_disable_refuse(pm_env):

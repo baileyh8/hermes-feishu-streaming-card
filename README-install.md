@@ -359,6 +359,16 @@ of deleting ownership evidence by hand. The Windows CI entry runs the fixed,
 unmodified Hermes v0.22.5 fixture on Python 3.12 and 3.14; a local POSIX mock is
 not native Windows acceptance evidence.
 
+When parking managed hooks before an HFC upgrade on a PM-managed Hermes checkout,
+use `hermes-feishu-card restore --hermes-dir <dir> --hermes-home <home> --yes`
+to restore managed hooks while retaining the owned PM dependency. Default
+`uninstall` preflights PM dependency ownership before touching managed hooks and
+conservatively refuses members recorded with `selection_added: false`. To
+explicitly remove a verified schema-2 `hfc-runtime-dependency` member whose
+selection pre-existed, pass `--remove-adopted-pm-dependency` to `uninstall`
+(unknown directories, drifted files, schema-1, and schema-3 legacy adoption
+members remain refused). See `docs/wiki/pm-recovery.md`.
+
 ## Environment Variables
 
 | Variable | Default | Description |

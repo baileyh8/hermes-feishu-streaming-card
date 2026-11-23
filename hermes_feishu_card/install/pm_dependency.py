@@ -1047,24 +1047,83 @@ def _ensure(root: Path, python: Path, *, home: Path | None, spec: str | None,
                     shutil.rmtree(staging)
 
 
-def remove(root: Path, python: Path, *, home: Path | None) -> None:
-    from .transaction_lock import _root_lock
-    with _root_lock(root):
-        _remove(root, python, home=home)
-
-
-def _remove(root: Path, python: Path, *, home: Path | None) -> None:
-    probe = _call(root, python, home, {"operation": "probe"})
-    member = Path(probe['home']) / 'plugins' / NAME
-    owner = _owned(member)
+def _validate_removable_owner(
+    owner: dict[str, Any] | None,
+    *,
+    allow_adopted_selection: bool,
+) -> dict[str, Any] | None:
     if owner is None:
-        return
+        return None
     if owner['schema'] == 3:
         # The SDK-owning member requires a coordinated PM/observer removal;
         # the older single-wheel removal must not discard its generation.
         raise ValueError("legacy adoption PM removal is not yet supported; dependency retained")
     if not owner['selection_added']:
-        raise ValueError("HFC did not own the pre-existing PM selection; dependency retained")
+        if not allow_adopted_selection:
+            raise ValueError(
+                "HFC did not own the pre-existing PM selection; dependency retained "
+                "(use `hermes-feishu-card restore` to park hooks before upgrading, "
+                "or re-run `uninstall --remove-adopted-pm-dependency` to explicitly "
+                "remove a verified schema-2 member)"
+            )
+        if owner['schema'] != 2:
+            raise ValueError(
+                "HFC did not own the pre-existing PM selection; "
+                "--remove-adopted-pm-dependency only supports verified schema-2 members; "
+                "dependency retained"
+            )
+    return owner
+
+
+def preflight_remove(
+    root: Path,
+    python: Path,
+    *,
+    home: Path | None,
+    allow_adopted_selection: bool = False,
+) -> None:
+    from .transaction_lock import _root_lock
+    with _root_lock(root):
+        probe = _call(root, python, home, {"operation": "probe"})
+        member = Path(probe['home']) / 'plugins' / NAME
+        _validate_removable_owner(
+            _owned(member),
+            allow_adopted_selection=allow_adopted_selection,
+        )
+
+
+def remove(
+    root: Path,
+    python: Path,
+    *,
+    home: Path | None,
+    allow_adopted_selection: bool = False,
+) -> None:
+    from .transaction_lock import _root_lock
+    with _root_lock(root):
+        _remove(
+            root,
+            python,
+            home=home,
+            allow_adopted_selection=allow_adopted_selection,
+        )
+
+
+def _remove(
+    root: Path,
+    python: Path,
+    *,
+    home: Path | None,
+    allow_adopted_selection: bool = False,
+) -> None:
+    probe = _call(root, python, home, {"operation": "probe"})
+    member = Path(probe['home']) / 'plugins' / NAME
+    owner = _validate_removable_owner(
+        _owned(member),
+        allow_adopted_selection=allow_adopted_selection,
+    )
+    if owner is None:
+        return
     _call(root, python, Path(probe['home']), {"operation": "remove", "name": NAME,
                                             "expected": probe['expected']})
     if _owned(member) != owner:
