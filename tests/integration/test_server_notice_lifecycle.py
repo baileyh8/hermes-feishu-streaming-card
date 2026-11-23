@@ -374,8 +374,7 @@ async def test_completion_notification_waits_for_success_and_keeps_the_receipt()
     # intent is legal and the notice must deliver inside the thread.
     session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
                           reply_to_message_id="om_user_message")
-    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
-    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+    card_config = {
         "completion_notify": {"enabled": True, "mention": False},
     }
     event = SidecarEvent.from_dict({
@@ -387,12 +386,16 @@ async def test_completion_notification_waits_for_success_and_keeps_the_receipt()
         await register(http, "om_old", profile="work", thread="omt_target")
         await register(http, "om_other", thread="omt_target")
         fake.fail_send = True
-        await server._maybe_send_completion_notify(app, "work:om_user", session, event)
+        await server._maybe_send_completion_notify(
+            app, "work:om_user", session, event, card_config=card_config, bot_id="work:alpha",
+        )
         await drain()
         assert fake.deleted == []
         assert session.completion_notify_state == "idle"
         fake.fail_send = False
-        await server._maybe_send_completion_notify(app, "work:om_user", session, event)
+        await server._maybe_send_completion_notify(
+            app, "work:om_user", session, event, card_config=card_config, bot_id="work:alpha",
+        )
         await drain()
         assert fake.deleted == ["om_old"]
         assert len(fake.texts) == 1
@@ -421,12 +424,13 @@ async def test_completion_notify_resolves_mention_from_tenant_user_id():
     session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
                           reply_to_message_id="om_user_message",
                           sender_user_id="u_tenant")
-    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
-    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+    card_config = {
         "completion_notify": {"enabled": True, "mention": True},
     }
     async with TestClient(TestServer(app)) as http:
-        await server._maybe_send_completion_notify(app, "work:om_user", session, _completed_event())
+        await server._maybe_send_completion_notify(
+            app, "work:om_user", session, _completed_event(), card_config=card_config, bot_id="work:alpha",
+        )
         await drain()
     assert len(fake.texts) == 1
     assert '<at user_id="ou_resolved"></at>' in fake.texts[0][1]
@@ -439,12 +443,13 @@ async def test_completion_notify_sends_without_mention_when_identity_missing():
     fake = clients["work", "alpha"]
     session = CardSession("omt_target", "om_user", "oc_fixture", status="completed",
                           reply_to_message_id="om_user_message")
-    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
-    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+    card_config = {
         "completion_notify": {"enabled": True, "mention": True},
     }
     async with TestClient(TestServer(app)) as http:
-        await server._maybe_send_completion_notify(app, "work:om_user", session, _completed_event())
+        await server._maybe_send_completion_notify(
+            app, "work:om_user", session, _completed_event(), card_config=card_config, bot_id="work:alpha",
+        )
         await drain()
     assert len(fake.texts) == 1
     assert "<at " not in fake.texts[0][1]
@@ -601,12 +606,13 @@ async def test_completion_notify_skips_synthetic_turns():
     fake = clients["work", "alpha"]
     session = CardSession("omt_target", '["completion","proc_fixture",1794068840.3]',
                           "oc_fixture", status="completed")
-    app[server.MESSAGE_BOT_IDS_KEY]["work:om_user"] = "work:alpha"
-    app[server.SESSION_CARD_CONFIGS_KEY]["work:om_user"] = {
+    card_config = {
         "completion_notify": {"enabled": True, "mention": False},
     }
     async with TestClient(TestServer(app)) as http:
-        await server._maybe_send_completion_notify(app, "work:om_user", session, _completed_event())
+        await server._maybe_send_completion_notify(
+            app, "work:om_user", session, _completed_event(), card_config=card_config, bot_id="work:alpha",
+        )
         await drain()
     assert fake.texts == []
     assert session.completion_notify_state == "idle"

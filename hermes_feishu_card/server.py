@@ -5687,6 +5687,10 @@ async def _apply_event_locked_inner(
             profile_id=_policy_profile_id(event),
             event=event.event, sequence=event.sequence,
         ) if is_terminal else None
+        completion_card_config = (
+            request.app[SESSION_CARD_CONFIGS_KEY].get(session_key)
+            if event.event == "message.completed" else None
+        )
 
         async def _render_and_update() -> bool:
             # A new turn may reuse the key while this terminal PATCH retries.
@@ -5795,6 +5799,17 @@ async def _apply_event_locked_inner(
                     bot_id=bot_id,
                     session=latest_session,
                 )
+            if (updated and completion_card_config is not None and not is_silence_or_fallback
+                    and render_result.disposition in {"card", "segmented"}):
+                # Notify for the confirmed turn, before any optional old-card I/O.
+                await _maybe_send_completion_notify(
+                    request.app, session_key, latest_session, event,
+                    card_config=completion_card_config, bot_id=bot_id,
+                )
+                if (latest_session.completion_notify_state == "sent"
+                        and sessions.get(session_key) is latest_session):
+                    # A restart during old-card cleanup must retain the completed push.
+                    _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             if is_terminal and render_result.disposition == "card":
                 try:
                     # Receipt compaction can follow retirement once the new
@@ -5831,19 +5846,6 @@ async def _apply_event_locked_inner(
                             and request.app[FEISHU_MESSAGE_IDS_KEY].get(session_key) == feishu_message_id
                             and latest_session.display_segment.get("generation", 0) == owner_generation
                             and latest_session.active_interaction is receipt)
-            if (
-                updated
-                and is_terminal
-                and event.event == "message.completed"
-                and render_result.disposition in {"card", "segmented"}
-                and not is_silence_or_fallback
-            ):
-                await _maybe_send_completion_notify(
-                    request.app,
-                    session_key,
-                    latest_session,
-                    event,
-                )
             if is_terminal and request.app[SESSIONS_KEY].get(session_key) is latest_session:
                 _checkpoint_session(request.app, session_key, _policy_profile_id(event) or "")
             return updated
@@ -6373,8 +6375,10 @@ async def _maybe_send_completion_notify(
     session_key: str,
     session: CardSession,
     event: SidecarEvent,
+    *,
+    card_config: dict[str, Any],
+    bot_id: str | None,
 ) -> None:
-    card_config = app[SESSION_CARD_CONFIGS_KEY].get(session_key, {})
     notify_config = (
         card_config.get("completion_notify")
         if type(card_config) is dict
@@ -6408,7 +6412,6 @@ async def _maybe_send_completion_notify(
         # ``message.completed`` for the same turn cannot notify later.
         session.completion_notify_state = "sent"
         return
-    bot_id = app[MESSAGE_BOT_IDS_KEY].get(session_key)
     client = _client_for_bot(app, bot_id)
     send_text = getattr(client, "send_text_message", None)
     if not callable(send_text):

@@ -751,6 +751,48 @@ async def test_late_predecessor_patch_does_not_affect_reopened_turn(patch_fails)
 
 
 @pytest.mark.asyncio
+async def test_completion_push_reaches_old_turn_before_slow_predecessor_is_released(tmp_path):
+    client = BlockingPredecessorClient()
+    notified = asyncio.Event()
+    messages = []
+
+    async def send_text(chat_id, text, **route):
+        assert client.final_written.is_set()
+        messages.append((chat_id, text, route))
+        notified.set()
+        return "om_completion_notice"
+
+    client.send_text_message = send_text
+    app = create_app(client, session_store_directory=tmp_path, card_config={
+        "flush_interval_ms": 0, "completion_notify": {"enabled": True, "mention": False},
+    })
+    async with TestClient(TestServer(app)) as http:
+        await post(http, "message.started", 0)
+        await interact(http, 1, "slow_old_card")
+        try:
+            await post(http, "answer.delta", 3, {"text": "CONTINUATION"})
+            await asyncio.wait_for(client.predecessor_started.wait(), timeout=1)
+            old_session = app[SESSIONS_KEY]["turn_fixture"]
+            terminal = {"answer": "FINAL_NEW_OWNER"}
+            assert (await post(http, "message.completed", 4, terminal))["applied"]
+            await asyncio.wait_for(client.final_written.wait(), timeout=1)
+            await asyncio.wait_for(notified.wait(), timeout=1)
+            assert old_session.completion_notify_state == "sent"
+            stored, = app[server.SESSION_STORE_KEY].load()
+            assert stored["session"].completion_notify_state == "sent"
+            assert (await post(http, "message.completed", 4, terminal))["applied"]
+            assert (await post(http, "message.started", 0))["applied"]
+            assert app[SESSIONS_KEY]["turn_fixture"] is not old_session
+            assert not client.release_predecessor.is_set()
+        finally:
+            client.release_predecessor.set()
+        assert len(messages) == 1
+        chat_id, text, route = messages[0]
+        assert chat_id == "chat_fixture" and "本轮回复结束" in text
+        assert route["reply_to_message_id"] == "om_fixture_anchor"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("deadline_expires", [False, True])
 async def test_continuation_retirement_is_reclaimed_on_shutdown_or_deadline(monkeypatch, deadline_expires):
     if deadline_expires:
