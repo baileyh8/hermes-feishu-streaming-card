@@ -489,8 +489,18 @@ def test_install_sh_rolls_back_failed_rebuild_of_retired_pm_management_base(tmp_
     config_bytes = config.read_bytes()
     venv_config_bytes = (venv / "pyvenv.cfg").read_bytes()
     dotenv_bytes = dotenv.read_bytes()
+    # venv may resolve the base interpreter's symlink when creating its launcher.
+    # Bind the private fixture explicitly so retiring its base breaks this venv.
+    launcher = venv / "bin/python"
+    assert launcher.is_symlink()
+    launcher.unlink()
+    launcher.symlink_to(retired_base)
+    prefix = subprocess.check_output(
+        [str(launcher), "-I", "-c", "import sys; print(sys.prefix)"], env=env, text=True,
+    )
+    assert Path(prefix.strip()).resolve() == venv.resolve()
     retired_base.unlink()
-    assert (venv / "bin/python").is_symlink() and not (venv / "bin/python").exists()
+    assert launcher.is_symlink() and not launcher.exists()
 
     # A failed Git install exercises rollback after the new interpreter was selected.
     # Git is restricted to file URLs, so this request cannot contact the network.
@@ -499,6 +509,7 @@ def test_install_sh_rolls_back_failed_rebuild_of_retired_pm_management_base(tmp_
     assert result.returncode == 1
     assert "transport 'https' not allowed" in result.stderr, result.stdout + result.stderr
     assert venv.stat().st_ino == original.st_ino
+    assert launcher.readlink() == retired_base and not launcher.exists()
     assert list(manager.iterdir()) == [venv]
 
     # A second installer cannot recover an interrupted swap while the lock is held.
