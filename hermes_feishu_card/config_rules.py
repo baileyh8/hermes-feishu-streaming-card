@@ -19,6 +19,20 @@ PRESENTATION_MODE = "_presentation_mode"
 # Terminal rendering stays governed by the hide-completed switches so this
 # setting cannot change a finished card.
 TOOL_ACTIVITY_MODES = ("full", "summary", "hidden")
+# Non-conversation system notice kinds eligible for opt-in suppression (#500).
+SUPPRESSIBLE_NOTICE_KINDS = (
+    "self-improvement",
+    "skill-loading",
+    "compression",
+    "context-compaction",
+    "context-cap",
+    "session-reset",
+    "background-process",
+    "background-task",
+    "heartbeat",
+    "home-channel",
+    "gateway-restart",
+)
 READING_PRESETS = {
     "classic": {
         PRESENTATION_MODE: "classic",
@@ -61,6 +75,7 @@ READING_FIELDS = (
     "reading_preset", "show_reasoning", "stream_thinking_to_body",
     "hide_completed_tool_activity", "reasoning_format", "timeline_expanded",
     "tool_activity",
+    "suppressed_notice_kinds",
     "max_timeline_items", "max_reasoning_chars", "max_tool_result_chars",
     "table_overflow_mode",
     "native_tables",
@@ -128,6 +143,7 @@ DEFAULT_CONFIG: dict[str, dict[str, Any]] = {
         "thinking_body_tail_chars": 0,
         "hide_completed_tool_activity": False,
         "tool_activity": "full",
+        "suppressed_notice_kinds": [],
         "reasoning_format": "panel",
         "timeline_expanded": False,
         "timeline_order": "newest_first",
@@ -273,11 +289,36 @@ def normalize_tool_activity(
     return value.strip().lower()
 
 
+def normalize_suppressed_notice_kinds(
+    value: object, *, path: str = "card.suppressed_notice_kinds"
+) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{path} must be a list of supported notice kinds")
+    allowed = frozenset(SUPPRESSIBLE_NOTICE_KINDS)
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(f"{path} entries must be strings")
+        normalized = item.strip().lower()
+        if normalized not in allowed:
+            raise ValueError(
+                f"{path} contains unsupported notice_kind; supported: "
+                + ", ".join(SUPPRESSIBLE_NOTICE_KINDS)
+            )
+        if normalized not in seen:
+            seen.add(normalized)
+            result.append(normalized)
+    return result
+
+
 # Only display fields may be overlaid per chat. Delivery, credentials, routing
 # and runtime ownership stay in their existing scopes.
 CHAT_CARD_FIELDS = frozenset({
     "tool_activity", "show_reasoning", "stream_thinking_to_body",
-    "hide_completed_tool_activity",
+    "hide_completed_tool_activity", "suppressed_notice_kinds",
 })
 _GROUP_CHAT_TYPES = frozenset({"group", "forum", "channel", "thread"})
 _P2P_CHAT_TYPES = frozenset({"p2p", "dm", "private"})
@@ -330,7 +371,7 @@ def _normalize_chat_fields(fields: object, *, path: str) -> dict[str, Any]:
         raise ValueError(f"{path} contains unsupported display fields")
     resolved = copy.deepcopy(dict(fields))
     normalize_card_config(resolved, path=path)
-    for key in CHAT_CARD_FIELDS - {"tool_activity"}:
+    for key in CHAT_CARD_FIELDS - {"tool_activity", "suppressed_notice_kinds"}:
         if key in resolved:
             resolved[key] = normalize_boolean(resolved[key], f"{path}.{key}")
     return resolved
@@ -574,6 +615,10 @@ def normalize_card_config(value: object, *, path: str) -> None:
     if "tool_activity" in value:
         value["tool_activity"] = normalize_tool_activity(
             value["tool_activity"], path=f"{path}.tool_activity"
+        )
+    if "suppressed_notice_kinds" in value:
+        value["suppressed_notice_kinds"] = normalize_suppressed_notice_kinds(
+            value["suppressed_notice_kinds"], path=f"{path}.suppressed_notice_kinds"
         )
     if "over_limit" in value:
         value["over_limit"] = normalize_over_limit_mode(

@@ -16,6 +16,7 @@ from .config_rules import (
     card_chat_kind as card_chat_kind,
     normalize_chat_overrides as normalize_chat_overrides,
     normalize_native_chats as normalize_native_chats,
+    normalize_suppressed_notice_kinds as normalize_suppressed_notice_kinds,
 )
 
 
@@ -168,6 +169,9 @@ def explain_reading_config(
     resolved["reasoning_format"] = str(resolved["reasoning_format"]).strip().lower()
     resolved["table_overflow_mode"] = str(resolved["table_overflow_mode"]).strip().lower()
     resolved["width_mode"] = normalize_width_mode(resolved.get("width_mode", "default"))
+    resolved["suppressed_notice_kinds"] = normalize_suppressed_notice_kinds(
+        resolved.get("suppressed_notice_kinds", [])
+    )
     presentation = "task" if resolved.get(PRESENTATION_MODE) == "task" else "classic"
     size_defaults = TASK_TEXT_SIZE_DEFAULTS if presentation == "task" else CARD_TEXT_SIZE_DEFAULTS
     resolved["text_sizes"] = {

@@ -5217,8 +5217,14 @@ def _hfc_notice_context_from_source(
         source,
         None,
     )
+    chat_type = str(
+        getattr(source, "chat_type", "")
+        or (getattr(event, "chat_type", "") if event is not None else "")
+        or ""
+    ).strip().lower()
     return {
         "chat_id": chat_id,
+        "chat_type": chat_type,
         "message_id": message_id,
         "conversation_id": thread_id or chat_id,
         "thread_id": thread_id,
@@ -5309,7 +5315,7 @@ def _hfc_classify_system_notice(content: Any) -> dict[str, Any] | None:
             "notice_kind": "skill-loading",
             "notice_id": _hfc_content_notice_id("skill-loading", text),
         }
-    if "self-improvement review" in lowered:
+    if "self-improvement review" in lowered or "自我改进回顾" in text:
         return {
             "title": "自我改进",
             "level": "info",
@@ -5650,7 +5656,17 @@ def _hfc_build_system_notice_payload(
     conversation_id = str(
         context.get("conversation_id") or thread_id or chat_id
     ).strip() or chat_id
-    source = SimpleNamespace(platform="feishu", chat_id=chat_id, thread_id=thread_id)
+    chat_type = str(
+        context.get("chat_type")
+        or (metadata.get("chat_type") if isinstance(metadata, dict) else "")
+        or ""
+    ).strip().lower()
+    source = SimpleNamespace(
+        platform="feishu",
+        chat_id=chat_id,
+        thread_id=thread_id,
+        chat_type=chat_type,
+    )
     local_vars: dict[str, Any] = {
         "source": source,
         "chat_id": chat_id,

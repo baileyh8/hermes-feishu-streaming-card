@@ -64,6 +64,8 @@ profiles:
 
 配置顺序与其他阅读字段相同：全局 → profile → bot，同层显式值优先。`card-config` 的 `values` 与 `sources` 会显示生效值和来源，`--running` 可核对已加载值；修改后重启 sidecar 生效。按 chat 或会话类型覆盖由 `card.chat_overrides` 提供：在现有 global → profile → bot 合并结果之上，先叠加类型覆盖，再叠加精确 chat 覆盖，决策在会话创建时固定。`card-config --chat-type/--chat-id` 可核对生效值与来源，输出不回显 chat ID；`--minimal-yaml` 不支持 chat 选择器。投递方式的按类型默认与单 chat 例外见[用户指南](../user-guide.md)。
 
+`card.suppressed_notice_kinds`（默认 `[]`，同时支持在 `card.chat_overrides` 按 `group` / `p2p` / 单个 `chat_id` 覆盖，#500）用于按会话丢弃指定类别的非对话系统通知卡（如 `self-improvement`、`skill-loading`、`compression`、`context-compaction`、`context-cap`、`session-reset`、`background-process`、`background-task`、`heartbeat`、`home-channel`、`gateway-restart`）：命中后既不发飞书卡片也不回落原生纯文本，不影响 Hermes 自身后台执行与日志；非法 `notice_kind` 在配置加载时直接报错拒绝。
+
 ## 只读检查
 
 ```bash

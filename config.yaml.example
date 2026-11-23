@@ -84,6 +84,14 @@ card:
   #   p2p: { tool_activity: full }
   #   chats:
   #     oc_xxxxxxxxxxxx: { tool_activity: hidden }
+  # Optional list of system notice kinds to suppress (neither card nor native
+  # plain text is delivered on Feishu; Hermes background work and logs are
+  # unaffected). Defaults to [] (nothing suppressed). Can also be overridden
+  # under card.chat_overrides.group / p2p / chats.<chat_id>.
+  # Supported: self-improvement, skill-loading, compression,
+  #   context-compaction, context-cap, session-reset, background-process,
+  #   background-task, heartbeat, home-channel, gateway-restart.
+  # suppressed_notice_kinds: []
   timeline_expanded: false
   # Opt-in chronological panel order; card-body reasoning remains chronological.
   timeline_order: newest_first

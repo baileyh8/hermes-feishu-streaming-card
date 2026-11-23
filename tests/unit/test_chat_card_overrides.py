@@ -119,3 +119,54 @@ def test_scope_identity_is_unchanged_without_selectors():
     assert scope_identity("default", "support", chat_type="group") != scope_identity(
         "default", "support", chat_type="group", chat_id="oc_work"
     )
+
+
+def test_suppressed_notice_kinds_validation_precedence_and_explain():
+    from hermes_feishu_card.config_rules import (
+        normalize_card_config,
+        normalize_suppressed_notice_kinds,
+    )
+
+    assert normalize_suppressed_notice_kinds([]) == []
+    assert normalize_suppressed_notice_kinds([" Self-Improvement ", "skill-loading", "self-improvement"]) == [
+        "self-improvement",
+        "skill-loading",
+    ]
+    for bad in ("self-improvement", True, 123, {"self-improvement": True}, ["unknown-kind"], [123], [""]):
+        with pytest.raises(ValueError, match="suppressed_notice_kinds"):
+            normalize_suppressed_notice_kinds(bad)
+
+    card = {"suppressed_notice_kinds": ["self-improvement"]}
+    normalize_card_config(card, path="card")
+    assert card["suppressed_notice_kinds"] == ["self-improvement"]
+
+    with pytest.raises(ValueError, match="suppressed_notice_kinds"):
+        normalize_chat_overrides({"group": {"suppressed_notice_kinds": ["not-a-kind"]}})
+
+    raw = {
+        "card": {
+            "chat_overrides": {
+                "group": {"suppressed_notice_kinds": ["self-improvement", "skill-loading"]},
+                "p2p": {},
+                "chats": {
+                    "oc_allow": {"suppressed_notice_kinds": []},
+                },
+            }
+        }
+    }
+    default_report = explain_reading_config(raw)
+    assert default_report["values"]["suppressed_notice_kinds"] == []
+    assert default_report["sources"]["suppressed_notice_kinds"] == "default"
+
+    group_report = explain_reading_config(raw, chat_type="group")
+    assert group_report["values"]["suppressed_notice_kinds"] == ["self-improvement", "skill-loading"]
+    assert "chat_overrides.group" in group_report["sources"]["suppressed_notice_kinds"]
+
+    p2p_report = explain_reading_config(raw, chat_type="p2p")
+    assert p2p_report["values"]["suppressed_notice_kinds"] == []
+    assert p2p_report["sources"]["suppressed_notice_kinds"] == "default"
+
+    allow_report = explain_reading_config(raw, chat_type="group", chat_id="oc_allow")
+    assert allow_report["values"]["suppressed_notice_kinds"] == []
+    assert "chats[selected]" in allow_report["sources"]["suppressed_notice_kinds"]
+    assert "oc_allow" not in str(allow_report)
