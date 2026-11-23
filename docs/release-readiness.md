@@ -2,6 +2,10 @@
 
 ## 当前候选
 
+本分支目标版本为 `5.0.28`，修复 #540（PR #543）中自管理 PM 布局下 `uninstall` 在 `selection_added: false` 成员上先还原受管源码再拒绝依赖移除的问题，保留默认保守拒绝并增加仅限经校验 schema 2 member 的 `--remove-adopted-pm-dependency` 显式释放入口，同时纳入 PR #542 的 Ruff 0.17.6 更新。公开包、完整 CI 和现场验收的证据分别记录在 [发行说明](release-notes-v5.0.28.md) 及 GitHub Release。
+
+## v5.0.27
+
 本分支目标版本为 `5.0.27`，适配 #537 / PR #538 报告的 Hermes v0.23.3 安装与 `Persistence` 准入契约，并修复 #535 有意静默回合卡片泄漏 `NO_REPLY` 与未收尾问题。#536（`~silent`）缺少版本与日志证据，不宣称本版解决。公开包、完整 CI 和现场验收的证据分别记录在 [发行说明](release-notes-v5.0.27.md) 及 GitHub Release。
 
 ## v5.0.26

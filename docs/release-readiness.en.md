@@ -2,6 +2,10 @@
 
 ## Current candidate
 
+This branch targets `5.0.28`. It fixes #540 (PR #543) so `uninstall` preflights PM dependency removal before `_restore()` mutates managed hooks, keeps conservative default refusal for `selection_added: false` while adding an explicit `--remove-adopted-pm-dependency` release option limited to verified schema-2 members, and includes the Ruff 0.17.6 pin from PR #542. The [release notes](release-notes-v5.0.28.en.md) and GitHub Release track CI, public package and field evidence separately.
+
+## v5.0.27
+
 This branch targets `5.0.27`. It adapts HFC installation and `Persistence` admission verification to Hermes v0.23.3 (#537 / PR #538) and fixes intentional-silence `NO_REPLY` card leakage and stuck running cards (#535). #536 (`~silent`) lacks version and log evidence and is not claimed resolved. The [release notes](release-notes-v5.0.27.en.md) and GitHub Release track CI, public package and field evidence separately.
 
 ## v5.0.26

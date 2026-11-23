@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.28 — 2026-11-23
+
+- 修复自管理 PM 布局下 `uninstall` 在 `selection_added: false` 成员上先还原受管源码再报错退出的半卸载问题（#540 / PR #543）：新增 `pm_dependency.preflight_remove()` 在 `_restore()` 之前校验 PM runtime、member 归属与移除策略；默认 `uninstall` 继续保守拒绝 `selection_added: false` 并提示升级前改用 `hermes-feishu-card restore`。
+- 新增 `uninstall --remove-adopted-pm-dependency` 显式释放入口（#540 / PR #543）：仅允许移除通过 `_owned()` 与外部 `wheel-store` 完整摘要校验的 schema 2 `hfc-runtime-dependency` member，经官方 PM admission API 移除选择项并删除 member 目录；未归属目录、文件漂移、schema 1 与 schema 3（`legacy_9b904`）仍保持 fail-closed 拒绝。
+- 更新开发依赖 `ruff` 至 `0.17.6`（PR #542），并同步 `docs/wiki/pm-recovery.md`、`README-install.md` 与 `docs/wiki/development-rules.md`。
+
 ## v5.0.27 — 2026-11-21
 
 - 兼容固定的 Hermes v0.23.3 源码（`caafe5389ae585ef77387a962aee05b1bcf17029`，#537 / PR #538）：登记 `pm-0233` writer 与 launch 家族（含 `hermes_cli/main_resume_args.py` 与 `hermes_scope.py`）及 schema 54 配置写入契约；适配 `persistence_assembly.Persistence` 句柄与 `SQLiteAdmissionRepository` / `SQLiteSessionRuntimeRepository` 仓库接口（由 `current_epoch()` 读取持久 epoch，实例 ID 来自进程内 `SessionAuthority`），校验底层 `SQLiteStore`、`StoreHolder`、作用域与文件替换状态，保留未知来源拒绝与逐字恢复。
