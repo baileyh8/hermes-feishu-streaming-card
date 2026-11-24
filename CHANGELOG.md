@@ -1,5 +1,12 @@
 # Changelog
 
+## v5.0.30
+
+- 普通飞书正文及编辑即使逐字引用通知模板，也沿原路径投递。仅经来源核验的系统通知才应用既有抑制配置。 [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)
+- 同一群话题的主卡、续卡和启用的完成提醒按本轮和请求人路由。重启后，已确认的旧版终局支持有界的精确重放。无可恢复占位卡时，终局使用自己的建卡 UUID。旧占位卡和升级时仍未确认的投递存在重复边界。 [发行说明](docs/release-notes-v5.0.30.md)
+- macOS/Linux PM 安装使用同一 HOME 下的独立管理 CLI。pip 中断或新包来源验证失败可恢复旧管理环境，安装诊断可从不同工作目录执行。 [PM 安装与恢复](docs/wiki/pm-recovery.md)
+- 上游 CI 按实测用例耗时重新分片，继续覆盖原有矩阵，失败或取消时按 attempt 单独保留可上传的诊断。 [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
+
 ## v5.0.29 — 2026-11-23
 
 - 新增 `card.suppressed_notice_kinds`（默认 `[]`，#500 / PR #547），支持在 global / profile / bot 及 `card.chat_overrides`（`group` / `p2p` / `chats.<chat_id>`）按层覆盖并由 `card-config --chat-type/--chat-id` 核对生效值与来源（不回显真实 `chat_id`）；非法 `notice_kind` 在配置加载时报错拒绝。

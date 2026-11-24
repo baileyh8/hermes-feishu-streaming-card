@@ -1,5 +1,11 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V5.0.30
+
+- PR #550：核对普通回复与系统通知的来源，隔离同一话题中的跨轮投递，补齐终局重放、旧占位卡和 PM 管理 CLI 的恢复边界。产品提交 `40017d48` 已通过完整 CI 与独立签名回环。 [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)
+- PR #549：按实际用例耗时校准上游分片，并保留各次失败运行的诊断工件。 [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
+- 发布提交和 tag 门禁、发行资产与公开安装分别核验。本版测试群 API 和桌面结果随 GitHub Release 记录。移动端及实际 Gateway/model 回合未验证。 [发布准备](docs/release-readiness.md) · [发行说明](docs/release-notes-v5.0.30.md)
+
 ## V5.0.29
 
 - #500 / PR #547：新增可选 `card.suppressed_notice_kinds`（默认 `[]`）并接入 `card.chat_overrides`（`group` / `p2p` / `chats.<chat_id>`）与 `card-config` 诊断；同步识别中英文自我改进通知并透传 `chat_type`，命中抑制时不发卡片也不回落原生纯文本。

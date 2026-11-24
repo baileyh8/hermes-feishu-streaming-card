@@ -603,21 +603,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Examples pin `v5.0.29`; the default `latest` resolves the published stable release. See [release notes](release-notes-v5.0.29.en.md) for validation boundaries.
+Run these examples after `v5.0.30` is published. The default `latest` resolves the published stable release. [Release notes](release-notes-v5.0.30.en.md)
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v5.0.29`.
+The Compose example defaults `HFC_VERSION` to `v5.0.30`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.29
+export HFC_VERSION=v5.0.30
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -662,6 +662,8 @@ python3 -m hermes_feishu_card.cli doctor \
 - **Safe installer**: fail-closed, checks version and code structure before writing. `restore`/`uninstall` refuse on modified files
 
 ## Upgrading
+
+Before upgrading to v5.0.30, wait for active tasks and segmented replies to finish, then stop the existing services through their usual managers. Keep the same configuration, credentials and HOME. On macOS/Linux PM installations, the installer's printed `status` command works from any directory. [V5 upgrade guide](upgrade-v4-to-v5.en.md) · [PM installation and recovery](wiki/pm-recovery.md)
 
 Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x/V3.7.x/V3.8.0-V3.8.17 to V3.8.18 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed. V3.8.18 keeps V3.8.10 group diagnostics, the V3.8.11 `/hfc` command-claim fix, V3.8.12 attachment-summary duplicate reply suppression, V3.8.13 Hermes upgrade compatibility, V3.8.14 WebSocket interaction card actions, V3.8.15 input-attachment duplicate reply suppression, the V3.8.16 reused-topic-`message_id` card fix, and the V3.8.17 cron routing-intent fix, then fixes cron cards that could not return to their originating Feishu topic thread; run `doctor --explain` once after upgrading and verify a normal chat, a topic reply, the target group with `/hfc status`, `/new`, `/model`, two consecutive messages in the same topic, and one cron job created from a topic thread.
 
@@ -904,9 +906,11 @@ The Hermes hook converts `message.started` / `thinking.delta` / `answer.delta` /
 - **No real Feishu cards**: without credentials, the sidecar uses a no-op client. In multi-profile mode, check each profile's `feishu` config.
 - **Hook installed but cards never arrive**: run `doctor --explain` and check `Runtime import`. If Hermes runtime cannot import `hook_runtime`, rerun `setup` or `install --hermes-dir ... --yes`.
 - **Gateway is running but Feishu never responds**: run `doctor --explain` and check `Feishu SDK`. If it reports `feishu_sdk_incompatible`, rerun `setup` or `install --hermes-dir ... --yes` so the installer can repair the SDK, then restart Hermes Gateway.
-- **Duplicate cards**: inspect `/health` metrics (`events_received`, `feishu_send_successes`). V3.3.0 per-message lock + `profile_id:message_id` keys ensure one card per message.
+- **Duplicate cards**. Inspect `/health` metrics such as `events_received` and `feishu_send_successes`. Separate turns may legitimately open separate cards even when Hermes reuses a message ID.
+- **An old placeholder remains after restart**. If Feishu accepted the placeholder before the checkpoint write failed, the final answer can arrive in a new card and the placeholder may remain visible. An upgrade can also repeat an earlier unconfirmed create with no checkpoint, or resend a segment the older version sent without confirmation. [Card recovery and retries](wiki/card-restart-recovery.md)
+- **Text resembles a suppressed system notice**. `card.suppressed_notice_kinds` applies only to notices from verified producers. Ordinary replies and edits still go through, even when they quote a notice template verbatim. [Notice ownership and suppression](wiki/notice-ownership.md)
 - **Multi-profile route is unclear**: run `status --config ...` and inspect `routing.last_route`, `profile.<id>.events`, and `profile.<id>.last_profile_source`, then verify directly with `smoke-feishu-card --profile-id ...` or `bots test --profile-id ...`.
-- **Gray native text**: after sidecar accepts `message.completed`, Hermes hook suppresses native text; fail-open on sidecar unavailable. V3.3.0 fixes non-Feishu platforms being swallowed.
+- **Gray native text**. Hermes can send the complete reply as native text when policy selects it, the answer exceeds the card budget, or a card write cannot be confirmed. If you see duplicate text, check whether Feishu had confirmed the final card write. [Card recovery and retries](wiki/card-restart-recovery.md)
 - **`doctor` unsupported**: Hermes must have `gateway/run.py` anchors recognized by the current hook. Version metadata may be `VERSION`, a Git tag, descriptive text, or anchor fallback, but unreadable files and incompatible anchors fail closed.
 - **No cards after upgrading Hermes 0.13.0+/0.14.0/0.15.x/0.17.x/0.18.x**: run `doctor --config ... --hermes-dir ...` to inspect `hook_strategy`, `compatibility`, and anchors. If the installer reports that current unpatched source differs from the old backup and you have confirmed an intentional Hermes upgrade, run `install --hermes-dir ... --accept-hermes-upgrade --yes`; otherwise do not bypass the default refusal.
 - **Restore fails**: file modified → `restore`/`uninstall` refuse to overwrite. Run `doctor --explain` to inspect manifest/backup/run.py state; if it reports an automatic repair path, run `repair --hermes-dir ... --yes`. Use `repair --hermes-dir ... --accept-hermes-upgrade --yes` only after confirming that a Hermes upgrade replaced source; manually back up and inspect any other difference.

@@ -15,9 +15,7 @@
 
 [V5 新变化](#v5-新变化) · [从 V4x 升级](#从-v4x-升级到-v5) · [快速安装](#快速安装) · [配置方法](#配置方法) · [近期更新](#近期更新) · [使用手册](docs/user-guide.md) · [贡献者](#贡献者)
 
-**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.29；可安装版本以 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases) 为准。见[完整发行说明](docs/release-notes-v5.0.29.md)。
-
-v5.0.29 安装包与 checksums 以 [GitHub Release](https://github.com/baileyh8/hermes-feishu-streaming-card/releases/tag/v5.0.29) 为准。
+**V5：任务看得清，交互接得上，结果留得全。** 本页介绍 v5.0.30。发布后可在 GitHub 下载安装包并核对校验和。 [完整发行说明](docs/release-notes-v5.0.30.md) · [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)
 
 ## V5 新变化
 
@@ -125,7 +123,7 @@ V5 的桌面验收已核对“已超时”状态、失效选项和“查看续�
 **已有机器人不必重新创建。** 沿用实际 Hermes 目录、配置文件、凭据文件和 profile；不要把示例路径直接套到分离 HOME、Docker 或多实例环境。
 
 1. 记下当前 HFC / Hermes 版本及服务启动方式，备份现有配置、`.env` 和安装器恢复资料。等任务结束，使用原服务管理器停止 Gateway、Desktop 和 sidecar。
-2. 使用下面的安装脚本固定安装 `v5.0.29`，继续传入原来的配置与凭据路径。只有该 tag 正式发布后才执行；安装器会检查旧安装的来源与兼容性。
+2. 等 tag 正式发布后，使用下面的脚本固定安装 `v5.0.30`，继续传入原来的配置与凭据路径。安装器会检查旧安装的来源与兼容性。
 3. 如果诊断要求先恢复旧 hook，按其给出的官方 `restore` 命令处理后重装。未知源码漂移应停止并排查，不手改 `gateway/run.py`，不删除 manifest 或 backup 强行继续。
 4. 需要新版任务布局时合并上面的两行配置；其余凭据、路由、原生表格和阅读预设按原配置保留。
 5. 按安装输出恢复原服务管理器，重启 Gateway / Desktop，运行 `status`、`doctor --explain` 和 `card-config --running`，再给机器人发一条消息确认卡片和 footer。
@@ -136,7 +134,7 @@ macOS / Linux 示例（先把路径改为你当前安装所用的值）：
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.29/install.sh | bash -s -- --version v5.0.29 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.30/install.sh | bash -s -- --version v5.0.30 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 Windows、Docker、分离 HOME 的完整步骤，以及验证与回退方法，见 **[V4.x → V5 升级指南](docs/upgrade-v4-to-v5.md)**。升级 HFC 与升级 Hermes 是两件事；飞书 `/update` 不能当作本插件的版本升级命令。
@@ -172,7 +170,7 @@ python3 -m hermes_feishu_card.cli doctor --config ~/.hermes/config.yaml --hermes
 - **Docker：** 在已有 Hermes 容器中，使用仓库内的安装脚本：
 
 ```bash
-export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.29
+export FEISHU_APP_ID=cli_xxx FEISHU_APP_SECRET=xxx HFC_VERSION=v5.0.30
 bash install-docker.sh
 ```
 
@@ -309,6 +307,7 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.30](docs/release-notes-v5.0.30.md) | 修复普通飞书正文误判为系统通知、跨轮续卡与 macOS/Linux PM 管理 CLI 恢复 |
 | [v5.0.29](docs/release-notes-v5.0.29.md) | 按会话类型/单群配置 `suppressed_notice_kinds` 静默抑制系统通知卡（含中英文自我改进通知） |
 | [v5.0.28](docs/release-notes-v5.0.28.md) | `uninstall` PM 依赖前置校验、显式释放 schema 2 adopted-selection member 与 Ruff 0.17.6 同步 |
 | [v5.0.27](docs/release-notes-v5.0.27.md) | Hermes v0.23.3 兼容（schema 54 / `Persistence`）与有意静默 `NO_REPLY` 卡片收尾修复 |
@@ -318,12 +317,12 @@ HFC 采用 **sidecar-only** 架构：Hermes 运行任务，安装器管理必要
 | [v5.0.23](docs/release-notes-v5.0.23.md) | 完成通知最短时长、sender 身份路由与有界分段 |
 | [v5.0.22](docs/release-notes-v5.0.22.md) | Hermes v0.23.1 精确兼容、安装与 CI 诊断 |
 | [v5.0.21](docs/release-notes-v5.0.21.md) | Codex 完成事件归属与 Windows 子进程编码 |
-| [v5.0.20](docs/release-notes-v5.0.20.md) | 官方 Docker 多 profile 数据根识别修复 |
 
 更早版本见[历史更新](docs/release-history.md)；完整记录见 [CHANGELOG](CHANGELOG.md) 与 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)。
 
 ## 贡献者
 
+- V5.0.30：[baileyh8](https://github.com/baileyh8) 提交飞书投递与安装恢复修复，以及上游 CI 分片校准。 [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550) · [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
 - V5.0.29：感谢 [Lite-G](https://github.com/Lite-G) 在 [#500](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/500) 提出按会话类型与单群抑制系统通知卡的场景需求与边界说明。问题证据/建议与代码作者分开记录，原提交与历史署名保留。
 - V5.0.28：感谢 [tidytorch](https://github.com/tidytorch) 在 [#540](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/540) 提供跨多节点自管理 PM 升级窗口的 `selection_added: false` 诊断与复现证据，以及 [Dependabot](https://github.com/apps/dependabot) 的 [PR #542](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/542)。问题证据与代码作者分开记录，原提交与历史署名保留。
 - V5.0.27：感谢 [0x3st](https://github.com/0x3st) 在 [#537](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/537) 提供 119 文件漂移与 cohort 分析，并在 [#538](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/538) 提交 `pm-0233` 兼容实现；感谢 [mouyong](https://github.com/mouyong) 在 [#535](https://github.com/baileyh8/hermes-feishu-streaming-card/issues/535) 提供后台回执 `NO_REPLY` 截图与时间线证据。问题证据与代码作者分开记录，原提交与历史署名保留。

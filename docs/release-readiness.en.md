@@ -2,6 +2,13 @@
 
 ## Current candidate
 
+This branch targets `5.0.30`. It fixes misclassified Feishu replies, card and notification delivery across turns, and macOS/Linux PM management CLI recovery. It includes the upstream CI shard recalibration. [Release notes](release-notes-v5.0.30.en.md) · [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550) · [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
+
+- The implementation commit `40017d48` passed the full CI matrix. Independent validation used non-editable wheels and 16 signed HTTP loopback scenarios with a Feishu test double. [CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45235020184) · [Independent validation scope](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)
+- The v5.0.30 release commit, tag, packaged assets and public installation have their own gates. Field validation covers delivery to the Feishu test group and desktop rendering using an isolated wheel. See the GitHub Release for results. Mobile clients and live Gateway/model turns are unverified.
+
+## v5.0.29
+
 This branch targets `5.0.29`. It implements #500 (PR #547), adding opt-in `card.suppressed_notice_kinds` (default `[]`) across global, profile, bot, and `card.chat_overrides` (`group` / `p2p` / per-chat) scopes with localized self-improvement classification and silent suppression without native plain-text fallback. The [release notes](release-notes-v5.0.29.en.md) and GitHub Release track CI, public package and field evidence separately.
 
 ## v5.0.28
