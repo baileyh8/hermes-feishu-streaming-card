@@ -118,5 +118,10 @@
     "name": "Checkout Hermes v0.23.3",
     "path": ".upstream/0233",
     "ref": "caafe5389ae585ef77387a962aee05b1bcf17029"
+  },
+  {
+    "name": "Checkout Hermes v0.23.4",
+    "path": ".upstream/0234",
+    "ref": "8fc0374447313e276f6b9a2764bfc750190c966a"
   }
 ]

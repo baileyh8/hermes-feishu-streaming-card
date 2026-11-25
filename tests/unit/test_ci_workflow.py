@@ -57,6 +57,23 @@ def test_v0233_source_contracts_run_in_pinned_upstream_gate():
     assert "HFC_REQUIRE_0233_PIN" in FORWARD
 
 
+def test_v0234_source_contracts_run_in_pinned_upstream_gate():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    step = next(step for step in jobs["upstream-shards"]["steps"]
+                if step.get("name") == "Verify pinned upstream install, plugin, rate and PM contracts")
+    assert step["env"]["HFC_REQUIRE_0234_PIN"] == "1"
+    assert step["env"]["HFC_UPSTREAM_0234_ROOT"].endswith("/.upstream/0234")
+    assert step["env"]["HFC_CONFIG_WRITER_0234_ROOT"].endswith("/.upstream/0234")
+    assert {
+        "tests/integration/test_v0234_source_binding.py",
+        "tests/integration/test_v0234_writer_family.py",
+    } <= set(step["run"].split())
+    from tools.ci_run import FORWARD
+    assert "HFC_CONFIG_WRITER_0234_ROOT" in FORWARD
+    assert "HFC_UPSTREAM_0234_ROOT" in FORWARD
+    assert "HFC_REQUIRE_0234_PIN" in FORWARD
+
+
 def test_official_image_gate_covers_real_install_and_bytecode_states():
     workflow = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())
     job = workflow["jobs"]["official-image-acceptance"]
@@ -67,7 +84,7 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     identities = {(case["image"], case["pyc_mode"]) for case in cases}
     assert len(identities) == len(cases)
     assert {image for image, _ in identities} == {
-        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0", "v0.23.1", "v0.23.2", "v0.23.3"
+        "v0.22.1", "v0.22.2", "v0.22.3", "v0.22.4", "v0.22.5", "v0.23.0", "v0.23.1", "v0.23.2", "v0.23.3", "v0.23.4"
     }
     assert ("v0.22.5", "preserved") in identities
     assert ("v0.22.5", "cleared") in identities
@@ -79,6 +96,8 @@ def test_official_image_gate_covers_real_install_and_bytecode_states():
     assert ("v0.23.2", "cleared") in identities
     assert ("v0.23.3", "preserved") in identities
     assert ("v0.23.3", "cleared") in identities
+    assert ("v0.23.4", "preserved") in identities
+    assert ("v0.23.4", "cleared") in identities
     assert any(case["legacy"] for case in cases)
     assert "matrix.pyc_mode" in job["name"]
     windows = workflow["jobs"]["pytest-windows"]
@@ -263,6 +282,7 @@ def test_reusable_ci_checks_out_requested_ref_in_every_job():
         ".upstream/0231": "3b421578588243f920886e6fe79a6faa87ea026e",
         ".upstream/0232": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
         ".upstream/0233": "caafe5389ae585ef77387a962aee05b1bcf17029",
+        ".upstream/0234": "8fc0374447313e276f6b9a2764bfc750190c966a",
         **{
             f".upstream/background_{baseline}": evidence["commit"]
             for baseline, evidence in json.loads(

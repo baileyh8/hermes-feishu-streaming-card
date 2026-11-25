@@ -383,7 +383,7 @@ def _pm_post_enable_binding(
     from .runtime_python import pm_managed_runtime_python
 
     if (type(registration) is not pm_dependency.Registration
-            or registration.source_family not in ("pm-0232", "pm-0233")
+            or registration.source_family not in ("pm-0232", "pm-0233", "pm-0234")
             or registration.root != binding.checkout_root
             or registration.home != binding.hermes_home
             or registration.member != binding.hermes_home / "plugins" / pm_dependency.NAME
