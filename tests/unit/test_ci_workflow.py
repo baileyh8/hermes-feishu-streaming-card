@@ -542,3 +542,15 @@ def test_archive_safety_gate_preserves_real_platform_and_root_coverage():
     assert '--junitxml' in step['run']
     workflow = (ROOT / '.github/workflows/release-assets.yml').read_text()
     assert workflow.index('release_archives.py build') < workflow.index('release_archives.py validate') < workflow.index('gh release upload')
+
+
+def test_macos_shards_verify_fixed_tag_fixture_with_trusted_system_git():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8"))["jobs"]
+    step = next(
+        s for s in jobs["macos-shards"]["steps"]
+        if s.get("name") == "Restore exact Hermes fixed-tag source"
+    )
+    run = step["run"]
+    assert '/usr/bin/git -C "$fixed_root" rev-parse HEAD' in run
+    assert '/usr/bin/git -C "$fixed_root" status --porcelain' in run
+    assert '/usr/bin/git -C "$fixed_root" rev-list --objects --missing=print HEAD' in run
