@@ -53,6 +53,18 @@ card:
   # JSON 1.0 approval/legacy cards retain wide_screen_mode instead.
   # Final dimensions remain client-controlled; this does not set pixel height.
   width_mode: default
+  # Presentation-only glyph on the live header sub-title (the "正在执行命令：…" row).
+  # off (default): sub-title is byte-identical to the pre-emoji card.
+  # classic: one leading emoji per action phrase — 📖 读取 / ⌨️ 执行 / 🔍 搜索 /
+  #   ✍️ 写入编辑 / 🖼 浏览 / 👥 子任务 / 🧩 技能 / 📋 待办 / 🗜 压缩上下文.
+  #   Phrase-less tools fall back to keywords (👁 看图 / 🎨 画图 / ⏰ 定时 / 🧠 记忆 /
+  #   ❓ 提问 / 🏠 设备), then to the neutral 🔧.
+  #   tool_activity: summary gets 🔧 (the line carries no tool name there).
+  # lobster: classic + themed header STATE glyph (🦞 running / ✅ done / 😵 failed /
+  #   🛎 pending decision). off restores the pre-emoji ⏳/✅/⛔ literals.
+  # Terminal sub-titles ("本轮回复结束" / a failed turn's last action) and system
+  # notices are never decorated. An unknown value silently falls back to off.
+  # emoji_theme: lobster
   # auto: use Feishu CardKit buttons through the native WebSocket card-action path.
   # callback: explicitly keep native CardKit callback buttons.
   # text: explicitly render numbered text choices and let Hermes handle the reply.

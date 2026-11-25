@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .status import StatusConfig
+from .emoji_theme import normalize_emoji_theme
 
 
 def _boolean(value: Any, default: bool) -> bool:
@@ -36,7 +37,7 @@ def card_render_options(config: Mapping[str, Any]) -> dict[str, Any]:
     over_limit = over_limit.strip().lower() if isinstance(over_limit, str) else "native"
     tool_activity = config.get("tool_activity", "full")
     tool_activity = tool_activity.strip().lower() if isinstance(tool_activity, str) else "full"
-    result = {
+    result: dict[str, Any] = {
         key: _boolean(config.get(key), default)
         for key, default in (
             ("show_reasoning", True), ("stream_thinking_to_body", True),
@@ -64,5 +65,6 @@ def card_render_options(config: Mapping[str, Any]) -> dict[str, Any]:
         native_tables=_boolean(config.get("native_tables"), False),
         width_mode=config.get("width_mode", "default"),
         presentation=config.get("_presentation_mode", "classic"),
+        emoji_theme=normalize_emoji_theme(config.get("emoji_theme")),
     )
     return result

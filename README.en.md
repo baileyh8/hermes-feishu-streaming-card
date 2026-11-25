@@ -269,6 +269,7 @@ In V5, add `--running` to verify loaded defaults, or use `--minimal-yaml` to pri
 | Show only the latest live-thinking text | `card.thinking_body_tail_chars: 2400` (default `0`: unlimited) |
 | Reduce successful tool rows after completion | `card.hide_completed_tool_activity: true`, retaining unsuccessful tools |
 | Hide live tool commands in group chats | `card.tool_activity: summary` or `hidden` (default `full`); see [live tool activity](docs/wiki/reading-presets.md) |
+| Action emoji on the live sub-title | `card.emoji_theme: classic` (📖 read / ⌨️ execute / 🔍 search / …; default `off` keeps the pre-emoji card); `lobster` also themes the header state glyph (🦞/😵/🛎) |
 | Group chats default to native | `bindings.default_delivery` and `bindings.card_chats` |
 | Different display per chat | `card.chat_overrides`, verify with `card-config --chat-type/--chat-id` |
 | Text sizes, footer and subscription quota | `card.text_sizes`, `card.footer_fields`; optional `subscription_usage`, `output_rate` |

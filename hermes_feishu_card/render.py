@@ -18,6 +18,7 @@ from .card_segmentation import DEFAULT_LEAD_BYTES, plan_terminal_segments
 from .card_timeline import TERMINAL_TOOL_STATUSES
 from .approval_receipts import has_confirmed_approval_receipt
 from .config_rules import card_width_config
+from .emoji_theme import decorate_action, normalize_emoji_theme, state_glyph
 from .session import (
     CardSession,
     ToolState,
@@ -119,6 +120,7 @@ def render_card(
     native_tables: bool = False,
     over_limit: str = "native",
     approval_rule_hints: bool = False,
+    emoji_theme: str = "off",
 ) -> Dict[str, Any]:
     return render_card_result(
         session,
@@ -149,6 +151,7 @@ def render_card(
         native_tables=native_tables,
         over_limit=over_limit,
         approval_rule_hints=approval_rule_hints,
+        emoji_theme=emoji_theme,
     ).card
 
 
@@ -181,6 +184,7 @@ def render_card_result(
     native_tables: bool = False,
     over_limit: str = "native",
     approval_rule_hints: bool = False,
+    emoji_theme: str = "off",
 ) -> CardRenderResult:
     if presentation == "task" and session.status == "failed" and session.terminal_reasoning_notice:
         # This source marker comes from the terminal event, never a text match.
@@ -201,7 +205,7 @@ def render_card_result(
         primary_text,
         mode=table_overflow_mode,
     )
-    render_options = dict(
+    render_options: dict[str, Any] = dict(
         footer_fields=footer_fields,
         title=title,
         interaction_mode=interaction_mode,
@@ -228,6 +232,7 @@ def render_card_result(
         presentation=presentation,
         native_tables=native_tables,
         approval_rule_hints=approval_rule_hints,
+        emoji_theme=emoji_theme,
     )
     card = _render_card_unchecked(session, **render_options)
     inspection = inspect_card_limits(card)
@@ -342,6 +347,7 @@ def _render_card_unchecked(
     presentation: str = "classic",
     native_tables: bool = False,
     approval_rule_hints: bool = False,
+    emoji_theme: str = "off",
 ) -> Dict[str, Any]:
     if presentation == "task":
         text_sizes = {**TASK_TEXT_SIZE_DEFAULTS, **dict(text_sizes or {})}
@@ -391,6 +397,7 @@ def _render_card_unchecked(
         session,
         configured_title,
         display_status=display_status,
+        emoji_theme=emoji_theme,
     )
     pending_interaction = session.active_interaction
     pending_approval = (
@@ -408,7 +415,11 @@ def _render_card_unchecked(
             if pending_interaction.kind == "approval"
             else "待选择："
         )
-        header_title = f"{prefix}{header_title}"
+        pending_glyph = state_glyph(emoji_theme, "pending")
+        header_title = (
+            f"{pending_glyph} {prefix}{header_title}" if pending_glyph
+            else f"{prefix}{header_title}"
+        )
     main_role = "notice" if session.delivery_kind == "notice" else "body"
     elements = []
     if pending_approval:
@@ -551,10 +562,31 @@ def _render_card_unchecked(
     # ("标题的正在使用之类的，放到第二行"). The phase ("生成中"/"思考中") only takes the slot when no
     # tool is running, and "本轮回复结束" keeps it for a completed turn (both are mutually exclusive
     # with a running tool by construction — see ``_header_action_text``).
+    # Emoji theme (``card.emoji_theme``) decorates the LIVE action row only. Terminal
+    # sub-titles are diagnostic — "本轮回复结束" and the failed turn's "停在哪" — and keep
+    # their wording: a cheerful glyph sitting under the ⛔ in the title reads as a
+    # contradiction. Notices are system text, not agent state, and are left alone too.
+    theme = normalize_emoji_theme(emoji_theme)
+    decorate_live = (
+        theme != "off"
+        and session.delivery_kind == "chat"
+        and display_status not in {"completed", "failed"}
+        and session.status not in {"completed", "failed"}
+    )
     if header_action:
-        header["subtitle"] = {"tag": "plain_text", "content": header_action}
+        content = (
+            # ``generic`` for ``tool_activity: summary``: that line deliberately carries
+            # no tool name, so the phrase table must not be consulted there.
+            decorate_action(header_action, theme=theme, generic=tool_activity != "full")
+            if decorate_live
+            else header_action
+        )
+        header["subtitle"] = {"tag": "plain_text", "content": content}
     elif runtime_summary:
-        header["subtitle"] = {"tag": "plain_text", "content": runtime_summary}
+        content = (
+            decorate_action(runtime_summary, theme=theme) if decorate_live else runtime_summary
+        )
+        header["subtitle"] = {"tag": "plain_text", "content": content}
     elif status["subtitle"]:
         header["subtitle"] = {"tag": "plain_text", "content": status["subtitle"]}
 
@@ -1242,6 +1274,7 @@ def _header_title_with_state(
     configured_title: str,
     *,
     display_status: str,
+    emoji_theme: str = "off",
 ) -> str:
     """Answer "is it still working, and at what?" in the header — the card's most-read line.
 
@@ -1259,19 +1292,21 @@ def _header_title_with_state(
         return _sanitize_runtime_header(interaction.prompt) or configured_title
     metrics = _runtime_header_metrics(session, display_status=display_status)
     if display_status == "completed":
-        return f"✅ {configured_title}" + (f" · {metrics}" if metrics else "")
+        return f"{state_glyph(emoji_theme, 'completed')} {configured_title}" + (
+            f" · {metrics}" if metrics else ""
+        )
     if display_status == "failed":
         # Maintainer note (contract change): this used to collapse to "⛔ <name>", which hid where
         # the run stopped. The metrics stay for that reason; the action phrase moved to the
         # sub-title (see ``_header_action_text``) so the title stays an identity line.
-        parts = [f"⛔ {configured_title}"]
+        parts = [f"{state_glyph(emoji_theme, 'failed')} {configured_title}"]
         if metrics:
             parts.append(metrics)
         return " · ".join(parts)
     if not metrics:
         # Nothing measured: keep the legacy wording rather than a bare "⏳ <name>", which reads as
         # a label instead of a state. What it is doing now lives on the sub-title.
-        return f"⏳ 执行中 · {configured_title}"
+        return f"{state_glyph(emoji_theme, 'running')} 执行中 · {configured_title}"
     # Maintainer note (contract change): the reader's order is name → metrics → prose. The title
     # used to lead with the phrase ("⏳ 正在读取 · Sales Bot") and carry no numbers at all, so the
     # elapsed time and tool count lived only in the footer. The user asked for both in the title,
@@ -1280,7 +1315,7 @@ def _header_title_with_state(
     # Maintainer note (contract change 2): the action phrase was then the title's LAST segment
     # ("… · 正在读取文件"). The user asked for it on the next row ("标题的正在使用之类的，放到第二行"),
     # so it is rendered as the header sub-title instead.
-    return f"⏳ {configured_title} · {metrics}"
+    return f"{state_glyph(emoji_theme, 'running')} {configured_title} · {metrics}"
 
 
 def _runtime_header_metrics(session: CardSession, *, display_status: str) -> str:

@@ -41,7 +41,8 @@
       "tests/unit/test_plugin_turn_metrics.py",
       "tests/unit/test_card_segmentation.py",
       "tests/unit/test_render_segmented.py",
-      "tests/integration/test_server_segmented.py"
+      "tests/integration/test_server_segmented.py",
+      "tests/unit/test_emoji_theme.py"
     ],
     "config": [
       "tests/unit/test_config.py",
@@ -121,7 +122,8 @@
       "tests/unit/test_message_navigation.py",
       "tests/unit/test_display_redaction.py",
       "tests/unit/test_config_rules.py",
-      "tests/unit/test_existing_owner_projection.py"
+      "tests/unit/test_existing_owner_projection.py",
+      "tests/unit/test_emoji_theme.py"
     ],
     "quota": [
       "tests/unit/test_subscription_usage.py",
@@ -969,6 +971,10 @@
     ],
     "tests/integration/test_issue_535_silence.py": [
       "runtime"
+    ],
+    "hermes_feishu_card/emoji_theme.py": [
+      "appearance",
+      "render"
     ]
   }
 }
