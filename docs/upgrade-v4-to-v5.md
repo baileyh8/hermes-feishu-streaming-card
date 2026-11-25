@@ -2,7 +2,7 @@
 
 [English](upgrade-v4-to-v5.en.md) · [返回 README](../README.md)
 
-适用于已经安装 HFC 的用户。等 `v5.0.30` 正式发布后再执行本文的命令。保留现有 Hermes 和飞书机器人。安装器根据实际源码、能力和安装来源检查是否可以升级，手动修改过的安装也须通过这些检查。 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)
+适用于已经安装 HFC 的用户。等 `v5.0.31` 正式发布后再执行本文的命令。保留现有 Hermes 和飞书机器人。安装器根据实际源码、能力和安装来源检查是否可以升级，手动修改过的安装也须通过这些检查。 [GitHub Releases](https://github.com/baileyh8/hermes-feishu-streaming-card/releases)
 
 ## 先确认当前安装
 
@@ -37,7 +37,7 @@ hermes-feishu-card stop --config /path/to/config.yaml --env-file /path/to/.env
 export HERMES_DIR="$HOME/.hermes/hermes-agent"
 export HFC_CONFIG="$HOME/.hermes/config.yaml"
 export HFC_ENV_FILE="$HOME/.hermes/.env"
-curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.30/install.sh | bash -s -- --version v5.0.30 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
+curl -fsSL https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.31/install.sh | bash -s -- --version v5.0.31 --config "$HFC_CONFIG" --env-file "$HFC_ENV_FILE"
 ```
 
 若旧安装使用特定 profile，继续传入相同的 `--profile-id`。不要为了升级改成另一份配置或凭据文件。
@@ -52,16 +52,16 @@ Hermes PM 布局请保存安装器打印的 `status` 命令。它使用绑定到
 $env:HERMES_DIR = Join-Path $HOME ".hermes/hermes-agent"
 $HfcConfig = Join-Path $HOME ".hermes/config.yaml"
 $HfcEnvFile = Join-Path $HOME ".hermes/.env"
-$HfcInstaller = Join-Path $env:TEMP "hfc-install-v5.0.30.ps1"
-Invoke-WebRequest "https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.30/install.ps1" -OutFile $HfcInstaller
-& $HfcInstaller -Version v5.0.30 -Config $HfcConfig -EnvFile $HfcEnvFile
+$HfcInstaller = Join-Path $env:TEMP "hfc-install-v5.0.31.ps1"
+Invoke-WebRequest "https://raw.githubusercontent.com/baileyh8/hermes-feishu-streaming-card/v5.0.31/install.ps1" -OutFile $HfcInstaller
+& $HfcInstaller -Version v5.0.31 -Config $HfcConfig -EnvFile $HfcEnvFile
 ```
 
 使用 profile 的安装继续传入 `-ProfileId`。不需要更改机器范围的 PowerShell 执行策略；如被策略阻止，按本机既有管理方式运行。
 
 ### Docker / NAS
 
-在原镜像构建或容器安装流程中把 `HFC_VERSION` 固定为 `v5.0.30`，继续使用容器内原有的 `HERMES_DIR`、`HFC_CONFIG`、`HFC_ENV_FILE`、HOME 和持久卷。按 [Docker 安装说明](../README-install.md)运行 `install-docker.sh`，然后通过原编排方式重建/重启服务。不要把宿主机示例路径复制进容器，也不要删除持久卷来“清理旧版”。[Compose 示例](../docker-compose.example.yml)是参考拓扑，不是可以覆盖现有配置的官方镜像。
+在原镜像构建或容器安装流程中把 `HFC_VERSION` 固定为 `v5.0.31`，继续使用容器内原有的 `HERMES_DIR`、`HFC_CONFIG`、`HFC_ENV_FILE`、HOME 和持久卷。按 [Docker 安装说明](../README-install.md)运行 `install-docker.sh`，然后通过原编排方式重建/重启服务。不要把宿主机示例路径复制进容器，也不要删除持久卷来“清理旧版”。[Compose 示例](../docker-compose.example.yml)是参考拓扑，不是可以覆盖现有配置的官方镜像。
 
 ### 安装器拒绝继续时
 

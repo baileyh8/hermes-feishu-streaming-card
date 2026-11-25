@@ -633,7 +633,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 
 ## Docker 容器内安装 / 更新
 
-以下示例固定 `v5.0.30`，等 tag 发布后再执行。默认 `latest` 解析已发布稳定版。 [发行说明](release-notes-v5.0.30.md)
+以下示例固定 `v5.0.31`，等 tag 发布后再执行。默认 `latest` 解析已发布稳定版。 [发行说明](release-notes-v5.0.31.md)
 
 如果 Hermes 运行在已有 Docker 容器里，优先使用 `install-docker.sh`。它默认读取：
 
@@ -642,7 +642,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 | `HERMES_DIR` | `/opt/hermes` | 容器内 Hermes Agent Gateway 目录 |
 | `HFC_CONFIG` | `/opt/data/config.yaml` | sidecar 配置路径 |
 | `HFC_ENV_FILE` | `/opt/data/.env` | 飞书凭据文件 |
-| `HFC_VERSION` | `latest`（脚本）/ `v5.0.30`（Compose 示例） | 指定安装 tag 或分支 |
+| `HFC_VERSION` | `latest`（脚本）/ `v5.0.31`（Compose 示例） | 指定安装 tag 或分支 |
 | `HFC_PYTHON` | 自动检测 Hermes venv | 显式指定容器内 Python |
 
 示例：
@@ -650,7 +650,7 @@ python3 -m hermes_feishu_card.cli status --config ~/.hermes/config.yaml
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.30
+export HFC_VERSION=v5.0.31
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -702,7 +702,7 @@ V3.6.2 会继续自动读取 `~/.hermes/config.yaml` 同目录的 `~/.hermes/.en
 
 ## 升级
 
-升级到 v5.0.30 前，等当前任务结束、分段回复发送完毕，再按现有服务管理方式停止进程。保留原配置、凭据和 HOME。macOS/Linux 的 PM 安装可用安装器打印的 `status` 命令核对安装状态，换目录也可执行。 [V5 升级指南](upgrade-v4-to-v5.md) · [PM 安装与恢复](wiki/pm-recovery.md)
+升级到 v5.0.31 前，等当前任务结束、分段回复发送完毕，再按现有服务管理方式停止进程。保留原配置、凭据和 HOME。macOS/Linux 的 PM 安装可用安装器打印的 `status` 命令核对安装状态，换目录也可执行。 [V5 升级指南](upgrade-v4-to-v5.md) · [PM 安装与恢复](wiki/pm-recovery.md)
 
 从 V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x/V3.7.x/V3.8.0-V3.8.17 升级到 V3.8.18 向后兼容，**单 Profile 配置无需任何修改**。如果 Hermes 使用自己的 venv，升级后请重新跑 `setup` 或 `install`，让插件同时进入 Hermes runtime Python 并刷新 hook。V3.8.18 保留 V3.8.10 的群聊诊断、V3.8.11 的 `/hfc` 命令接管修复、V3.8.12 的附件摘要重复 reply 抑制、V3.8.13 的 Hermes 升级兼容、V3.8.14 的 WebSocket interaction 按钮闭环、V3.8.15 的输入附件重复 reply 抑制、V3.8.16 的话题群复用 `message_id` 新卡修复、V3.8.17 的 cron 路由意图修复，并修复 cron 卡片无法回到飞书话题原线程的问题；建议升级后执行一次 `doctor --explain`，并在普通会话、话题和目标群聊里各发送一次普通问题、`/hfc status`、`/new`、`/model`，在同一话题里连续发送两条消息，并用一个从话题线程创建的 cron 任务验证卡片回到原线程。
 

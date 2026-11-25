@@ -2,6 +2,13 @@
 
 ## 当前候选
 
+本分支目标版本为 `5.0.31`，适配 #553 报告的 Hermes `v0.23.4` 安装与 `Persistence` 准入契约，修复 #552 在 `interim_assistant_messages: true` 下流式卡片下方出现重复原生飞书回复的问题，并修复 macOS CI 固定夹具的 `/usr/bin/git` 校验。 [发行说明](release-notes-v5.0.31.md) · [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)
+
+- 产品 PR 的最终提交 `4bfaeb6f` 首轮一次性通过全部 70 项 CI（含 `official-image-acceptance` `v0.23.4` `preserved`/`cleared`、Linux Python 3.9–3.14、macOS、Windows、上游兼容与 CodeQL）；独立验证覆盖官方 `v0.23.4` 隔离普通 wheel 安装/恢复/PM 切代、119+45 文件逐项漂移拒绝与 `#552` 六场景复现。 [CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45572354976) · [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)
+- `v5.0.31` 发布提交、主分支与 tag 门禁、发行资产和公开安装另行核验，结果随 GitHub Release 记录。真实 Hermes Gateway/model 回合及真实飞书 API、桌面、Android、iOS 现场验收本版未验证。
+
+## v5.0.30
+
 本分支目标版本为 `5.0.30`，包含普通飞书正文误判、跨轮卡片与完成通知投递、macOS/Linux PM 管理 CLI 恢复修复，以及上游 CI 分片校准。 [发行说明](release-notes-v5.0.30.md) · [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550) · [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
 
 - 产品 PR 的精确提交 `40017d48` 已通过完整 CI，独立验收覆盖普通 wheel 和 16 个签名 HTTP 回环场景。回环中的飞书服务为替身。 [CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45235020184) · [独立验收范围](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)

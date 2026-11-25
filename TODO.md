@@ -1,5 +1,12 @@
 # Hermes Feishu Streaming Card — 主线任务清单
 
+## V5.0.31
+
+- #553 / [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)：兼容 Hermes `v0.23.4`（`8fc037444731`，schema 54）的 `pm-0234` writer/launch 家族（含 `profiles_run_elsewhere.py`）与 45 模块 `Persistence` admission 校验（绑定 `retry_input`），并补齐官方镜像与源码门禁。
+- #552 / [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)：修复 `interim_assistant_messages: true` 且 `already_streamed=True` 时流式卡片下方出现重复原生飞书回复的问题（契约升级为 `completion-native-fallthrough-v3`，保留 `v5.0.30` 补丁逐字节还原升级与 fail-open 边界）。
+- CI：修复 `Restore exact Hermes fixed-tag source` 使用 `/usr/bin/git` 对齐 `native_hooks._TRUSTED_GIT`，PR #554（`4bfaeb6f`）首轮 70/70 全绿。
+- 发布提交和 tag 门禁、发行资产与公开安装另行核验。真实 Hermes Gateway/model 执行及真实飞书 API/桌面/移动端现场验收未验证。 [发布准备](docs/release-readiness.md) · [发行说明](docs/release-notes-v5.0.31.md)
+
 ## V5.0.30
 
 - PR #550：核对普通回复与系统通知的来源，隔离同一话题中的跨轮投递，补齐终局重放、旧占位卡和 PM 管理 CLI 的恢复边界。产品提交 `40017d48` 已通过完整 CI 与独立签名回环。 [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)

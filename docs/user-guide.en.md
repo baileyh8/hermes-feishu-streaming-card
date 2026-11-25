@@ -603,21 +603,21 @@ High-frequency streaming knobs usually do not need manual tuning:
 
 ## Docker Containers
 
-Run these examples after `v5.0.30` is published. The default `latest` resolves the published stable release. [Release notes](release-notes-v5.0.30.en.md)
+Run these examples after `v5.0.31` is published. The default `latest` resolves the published stable release. [Release notes](release-notes-v5.0.31.en.md)
 
 Use `install-docker.sh` inside an existing Hermes container. It defaults to
 `/opt/hermes` for Hermes and `/opt/data/config.yaml` for sidecar config. The
 script selects Hermes venv Python and does not fall back to system Python unless
 `HFC_PYTHON` is set.
 
-The Compose example defaults `HFC_VERSION` to `v5.0.30`.
+The Compose example defaults `HFC_VERSION` to `v5.0.31`.
 
 Example:
 
 ```bash
 export FEISHU_APP_ID=cli_xxx
 export FEISHU_APP_SECRET=xxx
-export HFC_VERSION=v5.0.30
+export HFC_VERSION=v5.0.31
 bash install-docker.sh --profile-id child --event-url http://hfc-sidecar:8765/events
 ```
 
@@ -663,7 +663,7 @@ python3 -m hermes_feishu_card.cli doctor \
 
 ## Upgrading
 
-Before upgrading to v5.0.30, wait for active tasks and segmented replies to finish, then stop the existing services through their usual managers. Keep the same configuration, credentials and HOME. On macOS/Linux PM installations, the installer's printed `status` command works from any directory. [V5 upgrade guide](upgrade-v4-to-v5.en.md) · [PM installation and recovery](wiki/pm-recovery.md)
+Before upgrading to v5.0.31, wait for active tasks and segmented replies to finish, then stop the existing services through their usual managers. Keep the same configuration, credentials and HOME. On macOS/Linux PM installations, the installer's printed `status` command works from any directory. [V5 upgrade guide](upgrade-v4-to-v5.en.md) · [PM installation and recovery](wiki/pm-recovery.md)
 
 Upgrading from V3.2.x/V3.3.0/V3.4.x/V3.5.x/V3.6.x/V3.7.x/V3.8.0-V3.8.17 to V3.8.18 is backward-compatible. **Single-profile configs need no changes.** If Hermes uses its own venv, rerun `setup` or `install` after upgrading so the package also lands in the Hermes runtime Python and the hook is refreshed. V3.8.18 keeps V3.8.10 group diagnostics, the V3.8.11 `/hfc` command-claim fix, V3.8.12 attachment-summary duplicate reply suppression, V3.8.13 Hermes upgrade compatibility, V3.8.14 WebSocket interaction card actions, V3.8.15 input-attachment duplicate reply suppression, the V3.8.16 reused-topic-`message_id` card fix, and the V3.8.17 cron routing-intent fix, then fixes cron cards that could not return to their originating Feishu topic thread; run `doctor --explain` once after upgrading and verify a normal chat, a topic reply, the target group with `/hfc status`, `/new`, `/model`, two consecutive messages in the same topic, and one cron job created from a topic thread.
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## v5.0.31
+
+- 兼容固定的 Hermes `v0.23.4` 源码（`8fc0374447313e276f6b9a2764bfc750190c966a`，schema 54，#553 / [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)）：登记 `pm-0234` writer 与 launch 家族（含 `hermes_cli/profiles_run_elsewhere.py`）、新增 45 模块 `Persistence` 准入与渲染摘要校验（绑定 `persistence.authority.vocabulary.retry_input`）及 `v0.23.4` 官方镜像与上游 CI 门禁；保留未知/漂移源码与 `profiles_run_elsewhere` 标记 profile 的 fail-closed 拒绝。
+- 修复开启 `display.platforms.feishu.interim_assistant_messages: true` 且 `stream_deltas_enabled=False`（默认 `display.show_reasoning=True` 或全局 `streaming.enabled=False`）时，流式写入卡片后仍回落发送引用用户原消息的重复原生飞书回复问题（#552 / [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)）：渲染契约升级至 `completion-native-fallthrough-v3`，保留 `v5.0.30` 历史补丁块逐字节还原升级，非飞书路由与原生策略保持 fail-open。 [发行说明](docs/release-notes-v5.0.31.md)
+- 修复 CI 固定源码夹具校验未显式调用 `/usr/bin/git` 导致的 macOS 冷启动 `git_head` 探测超时问题，不放宽超时预算或来源校验。 [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)
+
 ## v5.0.30
 
 - 普通飞书正文及编辑即使逐字引用通知模板，也沿原路径投递。仅经来源核验的系统通知才应用既有抑制配置。 [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)

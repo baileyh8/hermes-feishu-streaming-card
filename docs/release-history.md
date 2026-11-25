@@ -4,6 +4,7 @@
 
 | 版本 | 重点 |
 |---|---|
+| [v5.0.21](release-notes-v5.0.21.md) | Codex 完成事件归属与 Windows 子进程编码 |
 | [v5.0.20](release-notes-v5.0.20.md) | 官方 Docker 多 profile 数据根识别修复 |
 | [v5.0.19](release-notes-v5.0.19.md) | 自管理 PM sticky profile 目标修复与 Windows NTFS 文件签名误报修复 |
 | [v5.0.18](release-notes-v5.0.18.md) | Hermes v0.23.0 完成回调、admission 与 PM 安装兼容 |
