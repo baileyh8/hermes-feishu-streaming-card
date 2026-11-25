@@ -19,7 +19,8 @@
       "tests/unit/test_512_authority_profile_matches.py",
       "tests/unit/test_completion_notification.py",
       "tests/integration/test_server_segmented.py",
-      "tests/integration/test_issue_535_silence.py"
+      "tests/integration/test_issue_535_silence.py",
+      "tests/unit/test_issue_552_interim_dedup.py"
     ],
     "render": [
       "tests/unit/test_approval_rule_hints.py",
@@ -928,6 +929,10 @@
       "upstream",
       "install",
       "install_transactions"
+    ],
+    "tests/unit/test_issue_552_interim_dedup.py": [
+      "runtime",
+      "install"
     ],
     "tests/integration/test_v0231_admission_topology.py": [
       "upstream",
