@@ -195,8 +195,8 @@ def test_v0233_cohort_and_store_signature_contracts():
     from hermes_feishu_card import admission_completion as ac, admission_topology_0226 as topology
 
     root = _pinned_root(ENV_0233, COMMIT_0233, "v0.23.3")
-    assert ac.SOURCE_COHORTS[-1] is ac._V0233_CORE_HASHES
-    assert ac.SOURCE_COHORTS[-1] == topology.CORE_HASHES_0233
+    assert any(cohort is ac._V0233_CORE_HASHES for cohort in ac.SOURCE_COHORTS)
+    assert topology.CORE_HASHES_0233 in ac.SOURCE_COHORTS
     assert "hermes_state_runtime" not in topology.SOURCE_HASHES_0233
     assert "hermes_state_runtime" not in topology.FUNCTIONS_0233
     assert "hermes_state_runtime" not in topology.OPTIONAL_MODULES_0233

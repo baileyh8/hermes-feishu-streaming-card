@@ -13,7 +13,7 @@ from . import admission_extraction, stop_cancellation, rate_scope
 
 # Rendering compatibility is independent of package metadata/local build suffixes.
 # Bump this together with the pinned rendered digests whenever hook bytes change.
-RENDER_CONTRACT_VERSION = "completion-native-fallthrough-v2"
+RENDER_CONTRACT_VERSION = "completion-native-fallthrough-v3"
 from .gateway_contracts import find_stale_interrupted_location
 from .cron_contracts import (
     find_cron_deliver_body_location as _find_cron_deliver_body_location,
@@ -2678,6 +2678,14 @@ def _find_simple_owned_patch(
                 _render_extracted_clarify_hook_block, indent, newline
             )
         )
+    if renderer is _render_thinking_delta_hook_block:
+        # v5.0.30 and earlier gated thinking.delta on ``not already_streamed`` (#552).
+        expected_blocks.extend([
+            _render_v5030_thinking_delta_hook_block(indent, newline),
+            _render_turn_context_hook_block(
+                _render_v5030_thinking_delta_hook_block, indent, newline
+            ),
+        ])
     actual = lines[begin_index : end_index + 1]
     if actual not in expected_blocks:
         raise ValueError(f"corrupt {error_label}")
@@ -3915,6 +3923,32 @@ def _render_answer_delta_hook_block(indent: str, newline: str):
 
 
 def _render_thinking_delta_hook_block(indent: str, newline: str):
+    inner_indent = _child_indent(indent)
+    deeper_indent = _child_indent(inner_indent)
+    return [
+        f"{indent}{THINKING_DELTA_PATCH_BEGIN}{newline}",
+        f"{indent}try:{newline}",
+        (
+            f"{inner_indent}from hermes_feishu_card.hook_runtime "
+            f"import emit_from_hermes_locals_threadsafe as _hfc_emit_threadsafe{newline}"
+        ),
+        f"{inner_indent}if text and _run_still_current():{newline}",
+        f"{deeper_indent}if _hfc_emit_threadsafe({{{newline}",
+        f"{deeper_indent}    **locals(),{newline}",
+        f"{deeper_indent}    \"source\": source,{newline}",
+        f"{deeper_indent}    \"message_id\": event_message_id,{newline}",
+        f"{deeper_indent}    \"_hfc_loop\": _loop_for_step,{newline}",
+        f"{deeper_indent}    \"text\": text,{newline}",
+        f"{deeper_indent}    \"mode\": \"append_block\",{newline}",
+        f"{deeper_indent}}}, event_name=\"thinking.delta\"):{newline}",
+        f"{deeper_indent}    return{newline}",
+        *_render_hook_exception_handler(indent, newline),
+        f"{indent}{THINKING_DELTA_PATCH_END}{newline}",
+    ]
+
+
+def _render_v5030_thinking_delta_hook_block(indent: str, newline: str):
+    """Historical v5.0.30 thinking-delta block kept for exact restore/upgrade (#552)."""
     inner_indent = _child_indent(indent)
     deeper_indent = _child_indent(inner_indent)
     return [

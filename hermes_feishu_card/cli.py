@@ -4193,7 +4193,7 @@ def _run_install_core(args: argparse.Namespace, registrations, observer_state=No
             else:
                 if adoption is not None:
                     observer_registration = legacy_observer.prepare(binding, adoption=adoption)
-                elif getattr(registration, "source_family", None) in ("pm-0232", "pm-0233"):
+                elif getattr(registration, "source_family", None) in ("pm-0232", "pm-0233", "pm-0234"):
                     observer_registration = legacy_observer.prepare(binding, pm_registration=registration)
                 else:
                     observer_registration = legacy_observer.prepare(binding)

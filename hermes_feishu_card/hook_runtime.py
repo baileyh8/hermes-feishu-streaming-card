@@ -2312,6 +2312,12 @@ def emit_from_hermes_locals(
                 _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
+        if event_name == "thinking.delta" and bool(event_locals.get("already_streamed")):
+            # Streamed interim text already reached the card via answer.delta.
+            # Keep card ownership and suppress Hermes's native commentary fallback
+            # (which still fires when stream_consumer.stream_deltas_enabled is False)
+            # without emitting a duplicate thinking.delta into the card (#552).
+            return build_event("thinking.delta", event_locals, preview=True) is not None
         if not gate.preserve_legacy_owner and event_name in {"message.started", "message.completed", "message.failed"}:
             _clear_answer_delta_hold(config, event_locals)
         payload = _build_policy_event(event_name, event_locals)
@@ -2346,6 +2352,12 @@ def emit_from_hermes_locals_threadsafe(
                 _clear_answer_delta_hold(config, local_vars)
             return False
         event_locals = _policy_event_locals(local_vars, gate)
+        if event_name == "thinking.delta" and bool(event_locals.get("already_streamed")):
+            # Streamed interim text already reached the card via answer.delta.
+            # Keep card ownership and suppress Hermes's native commentary fallback
+            # (which still fires when stream_consumer.stream_deltas_enabled is False)
+            # without emitting a duplicate thinking.delta into the card (#552).
+            return build_event("thinking.delta", event_locals, preview=True) is not None
         if not gate.preserve_legacy_owner and event_name in {"message.started", "message.completed", "message.failed"}:
             _clear_answer_delta_hold(config, event_locals)
         if event_name == "answer.delta":

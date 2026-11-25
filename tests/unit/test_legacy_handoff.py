@@ -140,7 +140,7 @@ def _restore_old_member(registration, precondition, monkeypatch):
     )
 
 
-@pytest.mark.parametrize("family", ["pm-0232", "pm-0233"])
+@pytest.mark.parametrize("family", ["pm-0232", "pm-0233", "pm-0234"])
 @pytest.mark.parametrize("selection", ["verified", "stale-launcher", "unverified-wheel"])
 def test_initial_pm_observer_keeps_only_verified_post_enable_binding(
     tmp_path, monkeypatch, selection, family,

@@ -974,8 +974,8 @@ def test_apply_patch_inserts_streaming_callback_hooks():
     assert '"mode": "append_block"' in patched
     assert '"_hfc_loop": locals().get("_loop_for_step")' in patched
     assert '}, event_name="tool.updated"):\n                    return\n' in patched
-    assert "if text and _run_still_current():" in patched
-    assert "if text and not already_streamed and _run_still_current():" in patched
+    assert patched.count("if text and _run_still_current():") == 2
+    assert "if text and not already_streamed and _run_still_current():" not in patched
     assert '}, event_name="answer.delta"):\n                    return\n' in patched
     assert '}, event_name="thinking.delta"):\n                    return\n' in patched
     assert '"_hfc_loop": _loop_for_step' in patched

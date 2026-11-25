@@ -200,6 +200,8 @@ jobs:
           HFC_REQUIRE_0232_PIN: "1"
           HFC_UPSTREAM_0233_ROOT: "${{ github.workspace }}/.upstream/0233"
           HFC_REQUIRE_0233_PIN: "1"
+          HFC_UPSTREAM_0234_ROOT: "${{ github.workspace }}/.upstream/0234"
+          HFC_REQUIRE_0234_PIN: "1"
           # Fixed legacy baseline fixture: an exact v0.22.4 checkout retained as
           # the config-writer 0224 baseline; the name predates the v0.23.0
           # stable channel and does not track the current stable release.
@@ -241,6 +243,7 @@ jobs:
           HFC_CONFIG_WRITER_0231_ROOT: "${{ github.workspace }}/.upstream/0231"
           HFC_CONFIG_WRITER_0232_ROOT: "${{ github.workspace }}/.upstream/0232"
           HFC_CONFIG_WRITER_0233_ROOT: "${{ github.workspace }}/.upstream/0233"
+          HFC_CONFIG_WRITER_0234_ROOT: "${{ github.workspace }}/.upstream/0234"
           HFC_CONFIG_WRITER_MAIN_4E58_ROOT: "${{ github.workspace }}/.upstream/latest_main"
           HFC_REQUIRE_PM_GENERATION: "1"
           HFC_REQUIRE_PM_REBIND: "1"
@@ -268,6 +271,8 @@ jobs:
           tests/integration/test_v0232_writer_family.py
           tests/integration/test_v0233_source_binding.py
           tests/integration/test_v0233_writer_family.py
+          tests/integration/test_v0234_source_binding.py
+          tests/integration/test_v0234_writer_family.py
           tests/integration/test_session_authority_completion.py::test_native_rate_identity_snapshot_matches_existing_pin
           tests/unit/test_issue_456_453_contracts.py
           tests/unit/test_plugin_turn_metrics.py::test_upstream_post_api_request_kwargs_feed_exact_rate
@@ -455,10 +460,14 @@ jobs:
           test ! -e "$fixed_root"
           tar -xzf "$RUNNER_TEMP/hermes-v2026.8.3-fixed-tag.tar.gz" \
             -C "$RUNNER_TEMP"
-          test "$(git -C "$fixed_root" rev-parse HEAD)" = \
+          # Verify with /usr/bin/git (the exact trusted binary native_hooks.py
+          # requires) rather than a PATH-resolved git binary, avoiding cold
+          # first-launch latency (e.g. macOS xcrun shim) inside the 5s _git_head
+          # probe budget under multi-worker load.
+          test "$(/usr/bin/git -C "$fixed_root" rev-parse HEAD)" = \
             "$HFC_FIXED_TAG_COMMIT"
-          test -z "$(git -C "$fixed_root" status --porcelain)"
-          test -z "$(git -C "$fixed_root" rev-list --objects --missing=print HEAD | sed -n '/^?/p')"
+          test -z "$(/usr/bin/git -C "$fixed_root" status --porcelain)"
+          test -z "$(/usr/bin/git -C "$fixed_root" rev-list --objects --missing=print HEAD | sed -n '/^?/p')"
           printf 'HFC_FIXED_TAG_SOURCE_ROOT=%s\n' "$fixed_root" >> "$GITHUB_ENV"
       - name: Install
         run: python -m pip install -e ".[test]"
@@ -694,10 +703,14 @@ jobs:
           test ! -e "$fixed_root"
           tar -xzf "$RUNNER_TEMP/hermes-v2026.8.3-fixed-tag.tar.gz" \
             -C "$RUNNER_TEMP"
-          test "$(git -C "$fixed_root" rev-parse HEAD)" = \
+          # Verify with /usr/bin/git (the exact trusted binary native_hooks.py
+          # requires) rather than a PATH-resolved git binary, avoiding cold
+          # first-launch latency (e.g. macOS xcrun shim) inside the 5s _git_head
+          # probe budget under multi-worker load.
+          test "$(/usr/bin/git -C "$fixed_root" rev-parse HEAD)" = \
             "$HFC_FIXED_TAG_COMMIT"
-          test -z "$(git -C "$fixed_root" status --porcelain)"
-          test -z "$(git -C "$fixed_root" rev-list --objects --missing=print HEAD | sed -n '/^?/p')"
+          test -z "$(/usr/bin/git -C "$fixed_root" status --porcelain)"
+          test -z "$(/usr/bin/git -C "$fixed_root" rev-list --objects --missing=print HEAD | sed -n '/^?/p')"
           printf 'HFC_FIXED_TAG_SOURCE_ROOT=%s\n' "$fixed_root" >> "$GITHUB_ENV"
       - name: Install
         run: python -m pip install -e ".[test]"
@@ -977,6 +990,12 @@ jobs:
             pyc_mode: preserved
             legacy: false
           - image: v0.23.3
+            pyc_mode: cleared
+            legacy: false
+          - image: v0.23.4
+            pyc_mode: preserved
+            legacy: false
+          - image: v0.23.4
             pyc_mode: cleared
             legacy: false
     steps:

@@ -32,23 +32,28 @@ from .admission_topology_0226 import (
     CORE_HASHES_0231 as _V0231_CORE_HASHES,
     CORE_HASHES_0232 as _V0232_CORE_HASHES,
     CORE_HASHES_0233 as _V0233_CORE_HASHES,
+    CORE_HASHES_0234 as _V0234_CORE_HASHES,
     DECORATED_0230 as _V0230_DECORATED,
     DECORATED_0231 as _V0231_DECORATED,
     DECORATED_0232 as _V0232_DECORATED,
     DECORATED_0233 as _V0233_DECORATED,
+    DECORATED_0234 as _V0234_DECORATED,
     FUNCTIONS_0230 as _V0230_FUNCTIONS,
     FUNCTIONS_0231 as _V0231_FUNCTIONS,
     FUNCTIONS_0232 as _V0232_FUNCTIONS,
     FUNCTIONS_0233 as _V0233_FUNCTIONS,
+    FUNCTIONS_0234 as _V0234_FUNCTIONS,
     OPTIONAL_MODULES_0230 as _V0230_OPTIONAL_MODULES,
     OPTIONAL_MODULES_0231 as _V0231_OPTIONAL_MODULES,
     OPTIONAL_MODULES_0232 as _V0232_OPTIONAL_MODULES,
     OPTIONAL_MODULES_0233 as _V0233_OPTIONAL_MODULES,
+    OPTIONAL_MODULES_0234 as _V0234_OPTIONAL_MODULES,
     SOURCE_HASHES_0227 as _V0227_SOURCE_HASHES,
     SOURCE_HASHES_0230 as _V0230_SOURCE_HASHES,
     SOURCE_HASHES_0231 as _V0231_SOURCE_HASHES,
     SOURCE_HASHES_0232 as _V0232_SOURCE_HASHES,
     SOURCE_HASHES_0233 as _V0233_SOURCE_HASHES,
+    SOURCE_HASHES_0234 as _V0234_SOURCE_HASHES,
 )
 
 # Public provenance names for pinned-source contract tests.
@@ -106,6 +111,9 @@ SOURCE_COHORTS += (_V0232_CORE_HASHES,)
 # v0.23.3 replaces hermes_state_runtime and authority.db with the
 # persistence_assembly.Persistence handle and repository interfaces (#537).
 SOURCE_COHORTS += (_V0233_CORE_HASHES,)
+# v0.23.4 keeps the v0.23.3 Persistence handle and SQLite repository layout
+# while adding retry_input in persistence.authority.vocabulary (#553).
+SOURCE_COHORTS += (_V0234_CORE_HASHES,)
 
 Finish = Callable[[Any, bool], Awaitable[None]]
 
@@ -287,6 +295,15 @@ def _verified() -> tuple[ModuleType, ModuleType] | None:
             functions=_V0233_FUNCTIONS,
             decorated=_V0233_DECORATED,
             optional_modules=_V0233_OPTIONAL_MODULES,
+        ):
+            return None
+    elif _V0234_CORE_HASHES in cohorts:
+        from .admission_topology_0226 import verified
+        if root is None or not verified(
+            root, modules[0], modules[1], _V0234_SOURCE_HASHES,
+            functions=_V0234_FUNCTIONS,
+            decorated=_V0234_DECORATED,
+            optional_modules=_V0234_OPTIONAL_MODULES,
         ):
             return None
     return modules[0], modules[1]

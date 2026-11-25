@@ -96,7 +96,7 @@ LEGACY_EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
-    "gateway/run_turn_runner.py": "e26c9d13c04c5821730aafb2583b8d36acbaa8e149d768817b89a1d7235d21f2",
+    "gateway/run_turn_runner.py": "b5738f97091e43b4b4d05fb005498854d471373d65afb864f7378057eab03914",
 }
 CORE_HASHES_0230 = {name: SOURCE_HASHES_0230[name] for name in (
     "gateway.session_ingress", "gateway.session_authority")}
@@ -231,11 +231,62 @@ SOURCE_HASHES_0233 = {
 }
 CORE_HASHES_0233 = {name: SOURCE_HASHES_0233[name] for name in (
     "gateway.session_ingress", "gateway.session_authority")}
+# v0.23.4 (8fc037444731) keeps the v0.23.3 Persistence handle and SQLite
+# repository layout while adding retry_input in persistence.authority.vocabulary.
+SOURCE_HASHES_0234 = {
+    "gateway.platforms.base": "9820518ed01e88737dd07bc0927ed63d949a41bbbc851f012af5e79159c29bec",
+    "gateway.platforms.event": "9cd0bb259089d41d4aa8e7f04ce84bfbb0bd1cbd1639f862281c9901ea8b0780",
+    "gateway.session_ingress": "060e9b3a65c876f1a3d4a10c3d2e4fea9251348611530bf60eebec1174ffa732",
+    "gateway.session_authority": "0145e0d877c80a29df8b9b6161f14dce8e04ee92b2ef5f93f5ef7c26042af840",
+    "gateway.session_producer_lifecycle": "10ac034ab08317b336afa8a479b3a6c49171db831a807c4833180695cace3dbe",
+    "gateway.platforms.base_post_delivery": "7e1865ef9484c3ad863f214ad07491fd468958d15e7a4ba58d6f1752dcf897df",
+    "gateway.run_turn_followup_ack": "f45f7b93d091ecb57f30d80e18d08bca0aa7aae92a7bb796ae9ce4b499852283",
+    "gateway.session_settlement_recovery": "4871ef45afb1e2815519fde1f6f31ed6d584c8f7121800f1d07f361a28598baf",
+    "gateway.session_runtime_workers": "56a1358b17328809ebac7b1775d671a03f8938bb0290812b14acd2fa3b03f538",
+    "gateway.session_results": "577b7dad0ccecfd1fd004e9589d5b6c901724bae0df8cc84a8e2d2a58b0679bc",
+    "gateway.session_queued_controls": "0fcc42c3ca31b054c5d500d8c55139714673d44712e5c4d063ef6d8761b36323",
+    "gateway.session_ingress_media": "3a47222d2fe85e3480c716c3aa0a664855b5b15eeb41db26fd441dfd8f49f13a",
+    "gateway.session_retirement": "225bcb76236e8c1661683bc9d7061414cf8461a61741235208ee17259c7b1584",
+    "gateway.session_contract": "624f45de8dcf2537266614ac14eaf98150ad6ed82ac3167f30f6f463733e7a41",
+    "gateway.bot_loop_guard": "bef2b671488f0b6a26713647ae832026d2fae4fdb4d689e2968839e3fb15e621",
+    "gateway.bot_peer_notices": "671e75da3ff3c6fb8af43f9cfa4b4ec8c67f8e3fe605f6b4b7b888481897b9d6",
+    "gateway.authz_mixin": "1e994d925ad1b3315cee5825dbc0b40a2aa525f514a9dc1a05d6a07c6e4c1fd5",
+    "gateway.run_turn_persistence": "388ed2200bfc5bc983585e28e3755c4e14daa57ed55b79b5d6afc15fe7ed3f30",
+    "gateway.run_turn": "834c924b1b5b83816ba228800f4b2daff39d10e9ef046ba32f28f2133752284b",
+    "gateway.run": "cadcb61e751d3f6f9bd5fca4a8260ff087982db6d6f6230534d77959ab55e294",
+    "gateway.run_background": "57bff0906f115c9694c48db16647b273b30c599968e6ee03bd82d09ffabc4a3d",
+    "gateway.run_turn_prepare": "5ff3ab81b38d019b8568126dcfb24424db0553c377fdbaeff9b19ce8b42f4848",
+    "gateway.run_turn_hygiene": "b5e59f36c1cefa1aacf19ff272e0603aadac200417e4cf84365559145a1204c4",
+    "gateway.run_turn_runner": "3843440af2cd02c925e6adebd093090d35dbec5df79d8bb627d4f60960da2c97",
+    "gateway.run_inbound": "f46b4b79c0b3bb175c3a6a3e0738e69e17cc7a81ead4f51c43d7a1a903f1ebf1",
+    "gateway.run_busy": "97400a866f83aea698ff4612ca78db6bc615a6de0bc6b86a41559aa10c1a6343",
+    "gateway.run_startup": "cc6a201423360a62b8c371b9cbaeb13782c9d05beb5e5dfd4252c52ff136d72f",
+    "gateway.run_notifications": "75de0c0166333fb452e5c6e2ad833c9115c1989f5fc1a6194e1bdf8479ed7dee",
+    "cron.scheduler": "111bb5768c9bf576d938535136eb37fd1f9074b37fea02e36a0b2c066380d285",
+    "cron.scheduler_delivery": "592b39785a54edbb9cc41d9076c2b77777bacadb568a47a40f0b0c92fb0d6a7f",
+    "agent.runtime_scope": "688fc3336f97e688976084af3d601186a3bc0a97b0951d475a2cb7c37f4baa53",
+    "gateway.platforms.base_delivery_ledger": "8c8aefe86a6ec3bc05f77136f26bfb2b3d6f82cf7d533777e9ea5da26e6bdee0",
+    "gateway.platforms.base_session_command": "d59c102b32fc1d3bdca74487496f96e7af6b52ff6ec05e4652aff714115bff33",
+    "gateway.session_persistence": "e2430093c68fa427f59f592ac43dd98f3a5f2da3e87cf20b88f4bc5b39da9eda",
+    "persistence_assembly": "c8e2502953355e25f0aa8b51da02d609c60f436e8aefd204f2b343849fc7d1c1",
+    "persistence.core.context": "45b4c51124f4af2482cf36aa24e432b4de07dc4e10480ea71f187206a450d183",
+    "persistence.authority.admissions": "94e4045734c0e76a8c6b13db8037e9ae1e657b92ae0128d4f67d6fc57284d0c1",
+    "persistence.authority.runtime": "ea46178b036e374e8f331a3272b3bb99392cad259a881d35bc4d0f9b9b8d22f3",
+    "persistence.sqlite._backend": "cfd0dcad6a30703992f73f8e783fdf618f5d5df22c1ec777a2e651176fcebfb1",
+    "persistence.sqlite.authority.admissions": "155a22668ec297299dd1e5e1d36b59af6b644f23e4ae6213e2397b3c5477e27f",
+    "persistence.sqlite.authority.runtime": "a1e12f7bcecc9bcba07f06f1117fc3a9ce1c60a90ee3df31f56db48ea35df120",
+    "persistence.sqlite.authority._admission_store": "80110082dd4fcb6daf1424dc1959330f8199424d7529c7964f1a4fa778e577d0",
+    "persistence.sqlite.authority._runtime": "c2399dc8cde5ea670415971d7b9bebd8a149dc2634f262357e4c62e78179d547",
+    "persistence.sqlite.authority._runtime_ends": "04bceb83966e762cf99e07dcd58bfff6742855d944ee1407457aa62e65ee5324",
+    "persistence.authority.vocabulary": "d744840c65b955cb117182a5abbc57bbe8e6211dd75aae40aadf27ad07fea328",
+}
+CORE_HASHES_0234 = {name: SOURCE_HASHES_0234[name] for name in (
+    "gateway.session_ingress", "gateway.session_authority")}
 # Exact rendered bytes produced by decomposed_ownership.render for the pinned
 # clean v0.23.0 sources and HFC 5.0.17. A full installer render is too costly
 # on a terminal admission request; the project test proves these hashes are
 # byte-for-byte equivalent to that render and rejects mixed/drifted files.
-RENDER_VERSION_0230 = "completion-native-fallthrough-v2"
+RENDER_VERSION_0230 = "completion-native-fallthrough-v3"
 EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run.py": "f2eabc2972822df232375a4e32b22e79daafcec9bc2f66a6cfb305c255cf11d3",
     "gateway/run_background.py": "7702a2b46dd13acfe82c2bbc0fecff63761498ba0ca257fcddcf21cea0288f54",
@@ -243,7 +294,7 @@ EXPECTED_RENDERED_HASHES_0230 = {
     "gateway/run_turn_persistence.py": "060d37dd63e4577ac6835bb51ebdbe688566460f872294f59185afd42021d553",
     "gateway/run_turn_prepare.py": "71512a46ac5f361eb75ff3c455ada7f8486e2f28a12fec30fe8e8f7f90f44461",
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
-    "gateway/run_turn_runner.py": "ddd1626eae7ec28ba387e33c17c85704580d42daa340fa1428386fba2143b1ca",
+    "gateway/run_turn_runner.py": "8b095313fa2d921f04baa88bd8e2b73e93e964b250414508d1752f7ad1b7ef97",
     "gateway/run_inbound.py": "974d23c4a4dc4dc07e532b06b75a130ac8edbf56a6a2239a0754ad591051c93f",
     "gateway/run_busy.py": "a5ea46067ed52619821a8e84101cc2ab49d44085abcd40556819e2d61b8dcc29",
     "gateway/run_startup.py": "68f549a53eebfd578002b748e6454a21229a312495bc5405cae0a633eb88c17d",
@@ -266,7 +317,7 @@ EXPECTED_RENDERED_HASHES_0231 = {
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_persistence.py": "bb77aae0da9cc392a5d7df294c10806c7434eff26acc419696209fe5cb12c0e6",
     "gateway/run_turn_prepare.py": "63fdc7cbdf694e7b7a22b309dd99f131b23adf0e606e107c608d895b2a24edda",
-    "gateway/run_turn_runner.py": "15d7c781b00484737743a6fc288c1f2c52230ab4b013345d5de5157ca9d54aaf",
+    "gateway/run_turn_runner.py": "cce4d90a451b27d439a78eb8f4259620d0e5b19bce88298ea5a8546d7e0fa3a5",
 }
 EXPECTED_RENDERED_HASHES_0232 = {
     "cron/scheduler.py": "16a04e47b6a117f1f6693e7eb74eb1cfbdc400902614572f74bc5e974144262b",
@@ -282,7 +333,7 @@ EXPECTED_RENDERED_HASHES_0232 = {
     "gateway/run_turn_hygiene.py": "ce9d47df93e786da4547b2bf019e608bf553f893c877a6d2d22c72a05da4cf64",
     "gateway/run_turn_persistence.py": "7d3b64ccb0d3a6763f91d1d418a4a8378c8e19a13b9bd639d9fa11bcea6f0294",
     "gateway/run_turn_prepare.py": "df1799aca1a0a094ec91bc0a74a9dc0136f3a5a90cb5ef75b780ef56e772cd67",
-    "gateway/run_turn_runner.py": "3defcac90464f87fa4ea9f5c6a96bd2a758377ed9f45baae3d8ded905e6e2c3b",
+    "gateway/run_turn_runner.py": "98e0d54dfc6944afb3bb36e3b775f3b80154d2ce17a3e2f086281500155b2275",
 }
 EXPECTED_RENDERED_HASHES_0233 = {
     "cron/scheduler.py": "3e62309da97546e4edf5cd5dcfe20af887a6467da3f7d6bf7f6ea1cc1678d96a",
@@ -298,10 +349,27 @@ EXPECTED_RENDERED_HASHES_0233 = {
     "gateway/run_turn_hygiene.py": "b5e59f36c1cefa1aacf19ff272e0603aadac200417e4cf84365559145a1204c4",
     "gateway/run_turn_persistence.py": "99911c03f9459480d947e13d4c0a94f095762bc8a3a544a01d0ad34461c32166",
     "gateway/run_turn_prepare.py": "5ff3ab81b38d019b8568126dcfb24424db0553c377fdbaeff9b19ce8b42f4848",
-    "gateway/run_turn_runner.py": "f0f8911ea93e0fc8ec1f527c8322623d4d89469d476583fc0460336bbb1b603a",
+    "gateway/run_turn_runner.py": "545a2f6d3f38c38a84fb7a67ca96a99f59871602028bb29772b854f432d75346",
+}
+EXPECTED_RENDERED_HASHES_0234 = {
+    "cron/scheduler.py": "111bb5768c9bf576d938535136eb37fd1f9074b37fea02e36a0b2c066380d285",
+    "cron/scheduler_delivery.py": "25db18d93339eb062b0227223dac229094a75123e3036eb5eb2a1c08a58c3ef1",
+    "gateway/platforms/base.py": "1fa3aa63be24b331a73a50174460d9db59e1d82f7abe41e89ea3577f976d1d97",
+    "gateway/run.py": "cadcb61e751d3f6f9bd5fca4a8260ff087982db6d6f6230534d77959ab55e294",
+    "gateway/run_background.py": "57bff0906f115c9694c48db16647b273b30c599968e6ee03bd82d09ffabc4a3d",
+    "gateway/run_busy.py": "7c87e0355228a12a9e8e807f7e4b7c0ffc29f2493eea9b494db4e304e156acbc",
+    "gateway/run_inbound.py": "dc19a76e4bd52fe392741ea5ed272e72916d7f5b305e9a6221baffcb79cc962c",
+    "gateway/run_notifications.py": "4c430265d8ab8e07a06a4ab4230af18387f7da673df0e7f1ee2edea805fc3cac",
+    "gateway/run_startup.py": "18b7e6464f70db7b4f940c93e7a4a853f657bf20c44d507aa9a6d7526748a221",
+    "gateway/run_turn.py": "eb7c05a99fd70793cd881251a2a354b9c8eaa74382469c42e1de7788668cdbb2",
+    "gateway/run_turn_hygiene.py": "b5e59f36c1cefa1aacf19ff272e0603aadac200417e4cf84365559145a1204c4",
+    "gateway/run_turn_persistence.py": "99911c03f9459480d947e13d4c0a94f095762bc8a3a544a01d0ad34461c32166",
+    "gateway/run_turn_prepare.py": "5ff3ab81b38d019b8568126dcfb24424db0553c377fdbaeff9b19ce8b42f4848",
+    "gateway/run_turn_runner.py": "545a2f6d3f38c38a84fb7a67ca96a99f59871602028bb29772b854f432d75346",
 }
 TOPOLOGY_HASHES = (SOURCE_HASHES, SOURCE_HASHES_0227, SOURCE_HASHES_0230,
-                   SOURCE_HASHES_0231, SOURCE_HASHES_0232, SOURCE_HASHES_0233)
+                   SOURCE_HASHES_0231, SOURCE_HASHES_0232, SOURCE_HASHES_0233,
+                   SOURCE_HASHES_0234)
 _FUNCTIONS = {
     "gateway.platforms.base": ("_split_post_delivery_entry",
                                "BasePlatformAdapter.send_typing", "BasePlatformAdapter.on_processing_start"),
@@ -472,6 +540,15 @@ OPTIONAL_MODULES_0233 = (OPTIONAL_MODULES_0232 - frozenset({"hermes_state_runtim
     "persistence.sqlite.authority._runtime",
     "persistence.sqlite.authority._runtime_ends",
 })
+FUNCTIONS_0234 = {
+    **FUNCTIONS_0233,
+    "persistence.authority.vocabulary": ("retry_input",),
+}
+DECORATED_0234 = DECORATED_0233
+SYNC_DECORATED_0234 = SYNC_DECORATED_0233
+OPTIONAL_MODULES_0234 = OPTIONAL_MODULES_0233 | frozenset({
+    "persistence.authority.vocabulary",
+})
 
 
 _MISSING_DEFAULT = object()
@@ -593,7 +670,7 @@ def _read_023_set_sources(
             key = None
             if name in owned:
                 peer_sources = None
-                if source_hashes in (SOURCE_HASHES_0232, SOURCE_HASHES_0233) and name == "gateway.platforms.base":
+                if source_hashes in (SOURCE_HASHES_0232, SOURCE_HASHES_0233, SOURCE_HASHES_0234) and name == "gateway.platforms.base":
                     from .install.source_layout import read_peer_contract_sources
                     peer_sources = read_peer_contract_sources(root)
                 key = _owned_removal_key(owned[name], raw, peer_sources)
@@ -672,6 +749,14 @@ def source_bytes_0233(
 ) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
     return _read_023_set_sources(
         root, SOURCE_HASHES_0233, (EXPECTED_RENDERED_HASHES_0233,),
+    )
+
+
+def source_bytes_0234(
+    root: Path,
+) -> tuple[dict[str, bytes], dict[str, bytes]] | None:
+    return _read_023_set_sources(
+        root, SOURCE_HASHES_0234, (EXPECTED_RENDERED_HASHES_0234,),
     )
 
 
@@ -789,6 +874,9 @@ def source_bytes(
     if expected == SOURCE_HASHES_0233:
         pair = source_bytes_0233(root)
         return None if pair is None else pair[0]
+    if expected == SOURCE_HASHES_0234:
+        pair = source_bytes_0234(root)
+        return None if pair is None else pair[0]
     try:
         result = {}
         for name, digest in (expected or SOURCE_HASHES).items():
@@ -871,6 +959,11 @@ def verified(
         if pair is None:
             return False
         sources, code_sources = pair
+    elif expected == SOURCE_HASHES_0234:
+        pair = source_bytes_0234(root)
+        if pair is None:
+            return False
+        sources, code_sources = pair
     else:
         legacy_sources = source_bytes(root, expected)
         if legacy_sources is None:
@@ -884,6 +977,7 @@ def verified(
         else SYNC_DECORATED_0231 if expected == SOURCE_HASHES_0231
         else SYNC_DECORATED_0232 if expected == SOURCE_HASHES_0232
         else SYNC_DECORATED_0233 if expected == SOURCE_HASHES_0233
+        else SYNC_DECORATED_0234 if expected == SOURCE_HASHES_0234
         else frozenset()
     )
     modules = {"gateway.session_ingress": ingress, "gateway.session_authority": authority}
@@ -937,7 +1031,7 @@ def verified(
                             _compiled_code(compiled, function_name, owner or None))):
                     return False
         lifecycle = modules["gateway.session_producer_lifecycle"]
-        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231, SOURCE_HASHES_0232, SOURCE_HASHES_0233):
+        if expected in (SOURCE_HASHES_0230, SOURCE_HASHES_0231, SOURCE_HASHES_0232, SOURCE_HASHES_0233, SOURCE_HASHES_0234):
             settlement = modules.get("gateway.session_settlement_recovery")
             workers = modules.get("gateway.session_runtime_workers")
             contract = modules.get("gateway.session_contract")
@@ -982,7 +1076,7 @@ def verified(
                         or "release_admission_media" not in
                         settlement._release_media.__code__.co_names):
                     return False
-        if expected == SOURCE_HASHES_0233:
+        if expected in (SOURCE_HASHES_0233, SOURCE_HASHES_0234):
             persistence_mod = modules.get("gateway.session_persistence")
             if persistence_mod is None:
                 return False
@@ -1023,6 +1117,18 @@ def verified(
             if (sqlite_runtime_mod is not None and sqlite_ends_mod is not None
                     and getattr(sqlite_runtime_mod, "_runtime_ends", None) is not sqlite_ends_mod):
                 return False
+            if expected == SOURCE_HASHES_0234:
+                vocabulary_mod = modules.get("persistence.authority.vocabulary")
+                if vocabulary_mod is not None:
+                    retry_helper = getattr(vocabulary_mod, "retry_input", None)
+                    if not inspect.isfunction(retry_helper):
+                        return False
+                    if (sqlite_admission_store_mod is not None
+                            and getattr(sqlite_admission_store_mod, "retry_input", None) is not retry_helper):
+                        return False
+                    if (sqlite_runtime_helper_mod is not None
+                            and getattr(sqlite_runtime_helper_mod, "retry_input", None) is not retry_helper):
+                        return False
         if any(getattr(ingress, n, None) is not getattr(lifecycle, n)
                for n in ("producer_turn", "close_producer_turn")):
             return False
