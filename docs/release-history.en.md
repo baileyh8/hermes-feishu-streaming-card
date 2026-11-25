@@ -4,6 +4,7 @@
 
 | Version | Highlights |
 |---|---|
+| [v5.0.21](release-notes-v5.0.21.en.md) | Codex completion attribution and Windows subprocess encoding |
 | [v5.0.20](release-notes-v5.0.20.en.md) | Official Docker multiplex profile-root recognition |
 | [v5.0.19](release-notes-v5.0.19.en.md) | Sticky-profile enable target and Windows NTFS signature fixes |
 | [v5.0.18](release-notes-v5.0.18.en.md) | Hermes v0.23.0 completion, admission and PM installation compatibility |

@@ -2,6 +2,13 @@
 
 ## Current candidate
 
+This branch targets `5.0.31`. It adapts HFC installation and `Persistence` admission verification to Hermes `v0.23.4` (#553), fixes duplicate native Feishu interim commentary replies below streamed cards under `interim_assistant_messages: true` (#552), and aligns CI fixed-tag fixture verification with `/usr/bin/git`. [Release notes](release-notes-v5.0.31.en.md) · [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)
+
+- The implementation commit `4bfaeb6f` passed all 70 CI checks on the first attempt (including `official-image-acceptance` `v0.23.4` `preserved`/`cleared`, Linux Python 3.9–3.14, macOS, Windows, upstream compatibility, and CodeQL). Independent validation covered isolated ordinary-wheel install/restore/PM generation checks on official `v0.23.4`, per-file drift rejection across all 119 writer/launch and 45 admission modules, and a 6-case `#552` reproduction matrix. [CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45572354976) · [PR #554](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/554)
+- The `v5.0.31` release commit, `main`/tag gates, packaged assets, and public installation have their own gates recorded on the GitHub Release. Live Hermes Gateway/model turns and real Feishu API, desktop, Android, and iOS field acceptance are unverified in this release.
+
+## v5.0.30
+
 This branch targets `5.0.30`. It fixes misclassified Feishu replies, card and notification delivery across turns, and macOS/Linux PM management CLI recovery. It includes the upstream CI shard recalibration. [Release notes](release-notes-v5.0.30.en.md) · [PR #550](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550) · [PR #549](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/549)
 
 - The implementation commit `40017d48` passed the full CI matrix. Independent validation used non-editable wheels and 16 signed HTTP loopback scenarios with a Feishu test double. [CI](https://github.com/baileyh8/hermes-feishu-streaming-card/actions/runs/45235020184) · [Independent validation scope](https://github.com/baileyh8/hermes-feishu-streaming-card/pull/550)
